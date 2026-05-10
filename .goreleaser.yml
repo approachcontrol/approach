@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: wtui
+
+builds:
+  - id: wtui
+    main: ./cmd/wtui
+    binary: wtui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/brian-bell/wtui/internal/version.Version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
+        -X github.com/brian-bell/wtui/internal/version.Commit={{ .ShortCommit }}
+        -X github.com/brian-bell/wtui/internal/version.Date={{ .Date }}
+
+archives:
+  - id: wtui
+    ids:
+      - wtui
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+brews:
+  - name: wtui
+    ids:
+      - wtui
+    repository:
+      owner: brian-bell
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    commit_msg_template: "Update wtui formula to {{ .Tag }}"
+    homepage: "https://github.com/brian-bell/wtui"
+    description: "Terminal UI for managing git worktrees across repositories"
+    license: "MIT"
+    test: |
+      system "#{bin}/wtui", "--version"

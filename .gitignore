@@ -2,3 +2,4 @@
 .claude/worktrees/
 .env
 bin/
+dist/
