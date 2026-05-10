@@ -1,12 +1,20 @@
 package version
 
-import "testing"
+import (
+	"runtime/debug"
+	"testing"
+)
 
 func TestString(t *testing.T) {
 	originalVersion, originalCommit, originalDate := Version, Commit, Date
+	originalReadBuildInfo := readBuildInfo
 	t.Cleanup(func() {
 		Version, Commit, Date = originalVersion, originalCommit, originalDate
+		readBuildInfo = originalReadBuildInfo
 	})
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return nil, false
+	}
 
 	tests := []struct {
 		name    string
@@ -46,5 +54,61 @@ func TestString(t *testing.T) {
 				t.Fatalf("String() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStringFallsBackToBuildInfoWhenLdflagsDefault(t *testing.T) {
+	originalVersion, originalCommit, originalDate := Version, Commit, Date
+	originalReadBuildInfo := readBuildInfo
+	t.Cleanup(func() {
+		Version, Commit, Date = originalVersion, originalCommit, originalDate
+		readBuildInfo = originalReadBuildInfo
+	})
+
+	Version, Commit, Date = defaultVersion, defaultCommit, defaultDate
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{
+			Main: debug.Module{
+				Path:    "github.com/brian-bell/wtui",
+				Version: "v0.1.0",
+			},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "abcdef1234567890"},
+				{Key: "vcs.time", Value: "2026-04-19T10:20:30Z"},
+			},
+		}, true
+	}
+
+	want := "wtui v0.1.0 (abcdef1234567890) built 2026-04-19T10:20:30Z"
+	if got := String(); got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
+	}
+}
+
+func TestStringPrefersLdflagsOverBuildInfo(t *testing.T) {
+	originalVersion, originalCommit, originalDate := Version, Commit, Date
+	originalReadBuildInfo := readBuildInfo
+	t.Cleanup(func() {
+		Version, Commit, Date = originalVersion, originalCommit, originalDate
+		readBuildInfo = originalReadBuildInfo
+	})
+
+	Version, Commit, Date = "v0.2.0", "ldflags-commit", "2026-05-10T12:00:00Z"
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{
+			Main: debug.Module{
+				Path:    "github.com/brian-bell/wtui",
+				Version: "v0.1.0",
+			},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "build-info-commit"},
+				{Key: "vcs.time", Value: "2026-04-19T10:20:30Z"},
+			},
+		}, true
+	}
+
+	want := "wtui v0.2.0 (ldflags-commit) built 2026-05-10T12:00:00Z"
+	if got := String(); got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
 	}
 }
