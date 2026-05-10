@@ -33,20 +33,3 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
-
-brews:
-  - name: wtui
-    ids:
-      - wtui
-    repository:
-      owner: brian-bell
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    commit_msg_template: "Update wtui formula to {{ .Tag }}"
-    homepage: "https://github.com/brian-bell/wtui"
-    description: "Terminal UI for managing git worktrees across repositories"
-    license: "MIT"
-    test: |
-      system "#{bin}/wtui", "--version"

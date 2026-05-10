@@ -1,24 +1,7 @@
 # Release Process
 
 This project releases with GoReleaser. A pushed semver tag creates GitHub
-Release artifacts and updates the Homebrew formula in `brian-bell/homebrew-tap`.
-
-## One-Time Prerequisites
-
-The release workflow assumes these are already done before the first tag:
-
-- Public repository `brian-bell/homebrew-tap` exists.
-- Repository secret `HOMEBREW_TAP_GITHUB_TOKEN` exists in `brian-bell/wtui`.
-- The token is a fine-grained GitHub PAT scoped to `brian-bell/homebrew-tap`
-  with `Contents: read and write`.
-- The token owner can push to the tap repository's default branch.
-
-GoReleaser writes `Formula/wtui.rb` on release. The formula declares the MIT
-license and runs `wtui --version` as its Homebrew test.
-
-GoReleaser marks formula publishing as deprecated upstream in favor of casks,
-but this project intentionally uses a formula because the install target is
-`brew install brian-bell/tap/wtui`.
+Release artifacts with checksums and generated release notes.
 
 ## First Release
 
@@ -47,15 +30,7 @@ The first release tag is `v0.1.0`.
    - `wtui_0.1.0_linux_arm64.tar.gz`
    - `wtui_0.1.0_checksums.txt`
 7. Verify the release notes were generated from commits since the previous tag.
-8. Verify the Homebrew formula was committed to `brian-bell/homebrew-tap`.
-9. Verify Homebrew install and version output:
-
-   ```bash
-   brew install brian-bell/tap/wtui
-   wtui --version
-   ```
-
-10. Verify the Go install fallback:
+8. Verify the Go install fallback:
 
     ```bash
     go install github.com/brian-bell/wtui/cmd/wtui@v0.1.0
@@ -73,5 +48,4 @@ The first release tag is `v0.1.0`.
    git push origin vX.Y.Z
    ```
 
-4. Verify GitHub Release artifacts, generated release notes, Homebrew formula
-   update, `brew upgrade wtui`, and `wtui --version`.
+4. Verify GitHub Release artifacts, generated release notes, and `wtui --version`.
