@@ -287,6 +287,9 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
 		}
+		if activePane == 1 && lockedSelected {
+			hints += "  u: unlock"
+		}
 		if !destructive {
 			hints += "  D: destructive mode"
 		}

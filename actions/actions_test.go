@@ -232,6 +232,22 @@ func TestPruneWorktree(t *testing.T) {
 	}
 }
 
+func TestUnlockWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	worktreePath := filepath.Join(filepath.Dir(repoPath), "wt-unlock")
+	mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "unlock-feat")
+	mustRun(t, repoPath, "git", "worktree", "lock", worktreePath)
+
+	if err := actions.UnlockWorktree(repoPath, worktreePath); err != nil {
+		t.Fatalf("UnlockWorktree returned error: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if strings.Contains(string(out), "locked") {
+		t.Errorf("worktree should not be locked after unlock:\n%s", out)
+	}
+}
+
 // TestRemoveWorktreeThenDeleteBranch verifies the combined flow the model
 // uses: remove worktree, then force-delete the branch.
 func TestRemoveWorktreeThenDeleteBranch(t *testing.T) {

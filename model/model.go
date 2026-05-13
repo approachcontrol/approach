@@ -102,6 +102,10 @@ type WorktreePrunedMsg struct {
 	RepoPath string
 }
 
+type WorktreeUnlockedMsg struct {
+	RepoPath string
+}
+
 type ReflogResultMsg struct {
 	RepoPath string
 	Reflogs  []gitquery.ReflogEntry
@@ -256,6 +260,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case WorktreePrunedMsg:
 		return m.handleWorktreePruned(msg)
+	case WorktreeUnlockedMsg:
+		return m.handleWorktreeUnlocked(msg)
 	case CommitResultMsg:
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:
@@ -449,6 +455,8 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleDelete()
 	case "p":
 		return m.handlePrune()
+	case "u":
+		return m.handleUnlock()
 	case "t":
 		return m.handleOpenTerminal()
 	case "c":
@@ -610,6 +618,25 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 		return m.confirmWorktreeDelete()
 	}
 	return m, nil
+}
+
+func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
+	if m.mode != ModeWorktrees {
+		return m, nil
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok || !wt.Locked {
+		return m, nil
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	worktreePath := wt.Path
+	return m, func() tea.Msg {
+		_ = actions.UnlockWorktree(repoPath, worktreePath)
+		return WorktreeUnlockedMsg{RepoPath: repoPath}
+	}
 }
 
 func (m Model) openAtPath(action func(string) error) (tea.Model, tea.Cmd) {
@@ -855,6 +882,13 @@ func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) 
 		if m.worktreeSelected >= len(m.worktrees)-1 && m.worktreeSelected > 0 {
 			m.worktreeSelected--
 		}
+		return m, m.fetchWorktrees()
+	}
+	return m, nil
+}
+
+func (m Model) handleWorktreeUnlocked(msg WorktreeUnlockedMsg) (tea.Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) {
 		return m, m.fetchWorktrees()
 	}
 	return m, nil

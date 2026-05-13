@@ -365,6 +365,20 @@ func TestModel_ViewWorktreesModeLockedHidesDeleteHint(t *testing.T) {
 	}
 }
 
+func TestModel_ViewWorktreesModeLockedShowsUnlockHint(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	view := m.View()
+	if !strings.Contains(view, "u: unlock") {
+		t.Error("locked worktree should show 'u: unlock'")
+	}
+}
+
 func TestModel_ViewWorktreesModeLockedStaleHidesDeleteAndPruneHints(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
