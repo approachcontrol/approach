@@ -64,6 +64,7 @@ var (
 	stashSelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true)
 	branchSelStyle    = lipgloss.NewStyle().Bold(true).Reverse(true)
 	rootStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -485,7 +486,16 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 		}
 
 		var indicators string
-		if wt.Stale {
+		if wt.Locked {
+			indicators = renderLockedIndicator(wt.LockReason)
+			if !wt.Stale {
+				if wt.Dirty {
+					indicators += renderDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
+				} else {
+					indicators += cleanStyle.Render(" ✔")
+				}
+			}
+		} else if wt.Stale {
 			indicators = dirtyRedStyle.Render(" ✗") + " " + dirtyRedStyle.Render("stale")
 		} else if wt.Dirty {
 			indicators = renderDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
@@ -621,6 +631,14 @@ func renderDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
 	s += fmt.Sprintf(" %d files ", filesChanged)
 	s += diffAddStyle.Render(fmt.Sprintf("+%d", linesAdded))
 	s += "/" + diffDelStyle.Render(fmt.Sprintf("-%d", linesDeleted))
+	return s
+}
+
+func renderLockedIndicator(reason string) string {
+	s := lockedStyle.Render(" 🔒") + " " + lockedStyle.Render("locked")
+	if reason != "" {
+		s += " " + lockedStyle.Render(reason)
+	}
 	return s
 }
 

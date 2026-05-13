@@ -898,6 +898,45 @@ func TestWorktreePane_StaleIndicator(t *testing.T) {
 	}
 }
 
+func TestWorktreePane_LockedIndicator(t *testing.T) {
+	wts := []gitquery.Worktree{
+		{Path: "/dev/locked", BranchName: "locked-branch", Locked: true},
+	}
+	lines := renderWorktreePane(wts, -1, 0, 80, 10)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "🔒") {
+		t.Error("expected lock icon for locked worktree")
+	}
+	if !strings.Contains(joined, "locked") {
+		t.Error("expected 'locked' label for locked worktree")
+	}
+}
+
+func TestWorktreePane_LockedReason(t *testing.T) {
+	wts := []gitquery.Worktree{
+		{Path: "/dev/locked", BranchName: "locked-branch", Locked: true, LockReason: "on external drive"},
+	}
+	lines := renderWorktreePane(wts, -1, 0, 80, 10)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "on external drive") {
+		t.Error("expected lock reason for locked worktree")
+	}
+}
+
+func TestWorktreePane_LockedStalePrefersLockedIndicator(t *testing.T) {
+	wts := []gitquery.Worktree{
+		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},
+	}
+	lines := renderWorktreePane(wts, -1, 0, 80, 10)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "🔒") || !strings.Contains(joined, "locked") {
+		t.Error("expected locked indicator for locked stale worktree")
+	}
+	if strings.Contains(joined, "✗") || strings.Contains(joined, "stale") {
+		t.Error("locked stale worktree should not render stale indicator")
+	}
+}
+
 func TestWorktreePane_CursorHighlight(t *testing.T) {
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},

@@ -101,10 +101,12 @@ func ParseNumstat(text string) (int, int) {
 
 // WorktreeInfo holds data parsed from one block of git worktree list --porcelain output.
 type WorktreeInfo struct {
-	Path     string
-	Branch   string
-	IsBare   bool
-	Detached bool
+	Path       string
+	Branch     string
+	IsBare     bool
+	Detached   bool
+	Locked     bool
+	LockReason string
 }
 
 // ParseWorktreeList parses the full output of git worktree list --porcelain
@@ -146,6 +148,11 @@ func parseOneWorktreeBlock(block string) WorktreeInfo {
 		case line == "detached":
 			wt.Detached = true
 			wt.Branch = "(detached)"
+		case line == "locked":
+			wt.Locked = true
+		case strings.HasPrefix(line, "locked "):
+			wt.Locked = true
+			wt.LockReason = strings.TrimPrefix(line, "locked ")
 		}
 	}
 	return wt
