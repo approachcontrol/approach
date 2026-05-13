@@ -1178,6 +1178,18 @@ func TestModel_DKeyNoOpOnStaleWorktree(t *testing.T) {
 	}
 }
 
+func TestModel_DKeyNoOpOnLockedWorktree(t *testing.T) {
+	m := modelWithWorktrees([]gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("d on locked worktree should be no-op, got overlay %d", m.Overlay())
+	}
+}
+
 func TestModel_DKeyOnWorktreeRequiresDestructiveMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)

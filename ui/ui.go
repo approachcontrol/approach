@@ -119,13 +119,14 @@ func Render(p RenderParams) string {
 		return renderOverlay(p)
 	}
 
-	var staleSelected, dirtySelected bool
+	var staleSelected, dirtySelected, lockedSelected bool
 	if p.Mode == 1 && p.WorktreeSelected >= 0 && p.WorktreeSelected < len(p.Worktrees) {
 		wt := p.Worktrees[p.WorktreeSelected]
 		staleSelected = wt.Stale
 		dirtySelected = wt.Dirty
+		lockedSelected = wt.Locked
 	}
-	statusBar := RenderStatusBar(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected)
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -239,6 +240,10 @@ func renderModeHeader(mode, width int) string {
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
+	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false)
+}
+
+func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool) string {
 	var hints string
 	switch {
 	case overlay == OverlayConfirm:
@@ -275,11 +280,11 @@ func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, dest
 				hints += "  enter: diff"
 			}
 			hints += "  t: terminal  c: code"
-			if destructive {
+			if destructive && !lockedSelected {
 				hints += "  " + dirtyRedStyle.Render("d: delete")
 			}
 		}
-		if activePane == 1 && staleSelected && destructive {
+		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
 		}
 		if !destructive {

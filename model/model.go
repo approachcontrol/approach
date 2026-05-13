@@ -701,6 +701,9 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 	if wt.IsMain {
 		return m, nil
 	}
+	if wt.Locked {
+		return m, nil
+	}
 	if wt.Stale {
 		return m, nil
 	}

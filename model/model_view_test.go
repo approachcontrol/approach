@@ -350,6 +350,38 @@ func TestModel_ViewWorktreesModeDestructiveShowsDeleteHint(t *testing.T) {
 	}
 }
 
+func TestModel_ViewWorktreesModeLockedHidesDeleteHint(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	view := m.View()
+	if strings.Contains(view, "d: delete") {
+		t.Error("locked worktree should not show 'd: delete'")
+	}
+}
+
+func TestModel_ViewWorktreesModeLockedStaleHidesDeleteAndPruneHints(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-gone", BranchName: "offline", Locked: true, Stale: true},
+	}})
+
+	view := m.View()
+	for _, hint := range []string{"d: delete", "p: prune"} {
+		if strings.Contains(view, hint) {
+			t.Errorf("locked stale worktree should not show %q", hint)
+		}
+	}
+}
+
 func TestModel_ViewWorktreesModeDestructiveStaleShowsPruneHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
