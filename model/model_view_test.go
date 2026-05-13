@@ -531,6 +531,65 @@ func TestModel_ViewWorktreeDiffOverlayShowsDiff(t *testing.T) {
 	}
 }
 
+func TestModel_ViewWorktreeUnlockFailureShowsStatusError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
+
+	view := m.View()
+	if !strings.Contains(view, "unlock failed") {
+		t.Error("view should show unlock failure in status bar")
+	}
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("unlock failure should not open overlay, got %d", m.Overlay())
+	}
+}
+
+func TestModel_ViewWorktreeUnlockFailureClearsOnNavigation(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-feat", BranchName: "feat"},
+	}})
+	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view := m.View()
+	if strings.Contains(view, "unlock failed") {
+		t.Error("unlock failure should clear on navigation")
+	}
+}
+
+func TestModel_ViewWorktreeUnlockFailureIgnoredForStaleRepo(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = selectBravo(m)
+	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
+
+	view := m.View()
+	if strings.Contains(view, "unlock failed") {
+		t.Error("stale unlock failure should not render status error")
+	}
+}
+
+func TestModel_ViewWorktreeUnlockFailureClearsOnSuccess(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
+
+	m, _ = update(m, model.WorktreeUnlockedMsg{RepoPath: "/dev/alpha"})
+
+	view := m.View()
+	if strings.Contains(view, "unlock failed") {
+		t.Error("unlock failure should clear after successful unlock")
+	}
+}
+
 func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})

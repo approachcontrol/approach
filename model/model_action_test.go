@@ -1274,6 +1274,23 @@ func TestModel_UKeyOnLockedWorktreeFiresUnlockCmd(t *testing.T) {
 	}
 }
 
+func TestModel_UKeyUnlockFailureReturnsFailureMsg(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if cmd == nil {
+		t.Fatal("expected unlock cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeUnlockFailedMsg); !ok {
+		t.Fatalf("expected WorktreeUnlockFailedMsg for failed unlock, got %T", msg)
+	}
+}
+
 func TestModel_UKeyOnUnlockedWorktreeIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)

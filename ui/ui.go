@@ -103,6 +103,7 @@ type RenderParams struct {
 	Reflogs          []gitquery.ReflogEntry
 	ReflogSelected   int
 	ReflogScroll     int
+	TransientError   string
 }
 
 // Render produces the full terminal view string.
@@ -126,7 +127,7 @@ func Render(p RenderParams) string {
 		dirtySelected = wt.Dirty
 		lockedSelected = wt.Locked
 	}
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError)
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -240,10 +241,14 @@ func renderModeHeader(mode, width int) string {
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
-	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false)
+	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "")
 }
 
-func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool) string {
+func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string) string {
+	if transientError != "" {
+		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
+	}
+
 	var hints string
 	switch {
 	case overlay == OverlayConfirm:
@@ -530,7 +535,7 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 }
 
 func renderOverlay(p RenderParams) string {
-	statusBar := RenderStatusBar(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError)
 	contentHeight := p.Height - 1
 
 	// Confirmation dialog overlay
