@@ -923,6 +923,21 @@ func TestWorktreePane_LockedReason(t *testing.T) {
 	}
 }
 
+func TestWorktreePane_LongLockReasonTruncated(t *testing.T) {
+	longReason := strings.Repeat("x", 100)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/locked", BranchName: "locked-branch", Locked: true, LockReason: longReason},
+	}
+	lines := renderWorktreePane(wts, -1, 0, 200, 10)
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, longReason) {
+		t.Error("expected long lock reason to be truncated, not rendered in full")
+	}
+	if !strings.Contains(joined, "…") {
+		t.Error("expected ellipsis marker for truncated lock reason")
+	}
+}
+
 func TestWorktreePane_LockedStalePrefersLockedIndicator(t *testing.T) {
 	wts := []gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},

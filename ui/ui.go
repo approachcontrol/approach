@@ -647,12 +647,30 @@ func renderDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
 	return s
 }
 
+// MaxLockReasonWidth caps the visible width of a lock reason in the worktree
+// pane so a long reason cannot push the path off the end of the line.
+const MaxLockReasonWidth = 40
+
 func renderLockedIndicator(reason string) string {
 	s := lockedStyle.Render(" 🔒") + " " + lockedStyle.Render("locked")
 	if reason != "" {
-		s += " " + lockedStyle.Render(reason)
+		s += " " + lockedStyle.Render(truncateReason(reason, MaxLockReasonWidth))
 	}
 	return s
+}
+
+func truncateReason(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func renderPlaceholderPane(width, height int) []string {
