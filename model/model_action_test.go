@@ -68,6 +68,23 @@ func TestModel_EnterOnStaleWorktreeIsNoOp(t *testing.T) {
 	}
 }
 
+func TestModel_EnterOnLockedDirtyWorktreeOpensDiffOverlay(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true, Dirty: true, FilesChanged: 2},
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != model.OverlayWorktreeDiff {
+		t.Errorf("expected OverlayWorktreeDiff for locked dirty worktree, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchWorktreeDiff cmd for locked dirty worktree")
+	}
+}
+
 func TestModel_EnterOnEmptyWorktreeListIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -157,6 +174,32 @@ func TestModel_CKey_Worktree_FiresCmd(t *testing.T) {
 	}
 }
 
+func TestModel_TKey_LockedWorktree_FiresCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if cmd == nil {
+		t.Error("expected non-nil cmd for t key on locked worktree")
+	}
+}
+
+func TestModel_CKey_LockedWorktree_FiresCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Error("expected non-nil cmd for c key on locked worktree")
+	}
+}
+
 func TestModel_TKey_StaleWorktree_NoCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -180,6 +223,21 @@ func TestModel_CKey_StaleWorktree_NoCmd(t *testing.T) {
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd != nil {
 		t.Error("expected nil cmd for c key on stale worktree")
+	}
+}
+
+func TestModel_TAndCKeys_LockedStaleWorktree_NoCmd(t *testing.T) {
+	for _, key := range []rune{'t', 'c'} {
+		m := model.New(testRepos())
+		m = inRightPane(m)
+		wts := []gitquery.Worktree{
+			{Path: "/dev/alpha-gone", BranchName: "gone", Locked: true, Stale: true},
+		}
+		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if cmd != nil {
+			t.Errorf("expected nil cmd for %q key on locked stale worktree", key)
+		}
 	}
 }
 
