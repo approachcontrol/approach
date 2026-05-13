@@ -791,7 +791,7 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if !wt.Stale {
+	if !wt.Stale || wt.Locked {
 		return m, nil
 	}
 

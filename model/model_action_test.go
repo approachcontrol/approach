@@ -769,6 +769,19 @@ func TestModel_PKeyOnStaleWorktreeShowsConfirm(t *testing.T) {
 	}
 }
 
+func TestModel_PKeyNoOpOnLockedStaleWorktree(t *testing.T) {
+	m := modelWithWorktrees([]gitquery.Worktree{
+		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},
+	})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("p on locked stale worktree should be no-op, got overlay %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Errorf("p on locked stale worktree should not return a cmd, got %T", cmd)
+	}
+}
+
 func TestModel_PKeyNoOpInBranchesMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
