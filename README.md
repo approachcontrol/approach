@@ -6,6 +6,19 @@ A terminal UI for managing git worktrees across repositories.
 
 ## Install
 
+### GitHub Releases
+
+Download a pre-built macOS or Linux binary from the
+[GitHub Releases](https://github.com/brian-bell/wtui/releases) page.
+
+### Go Install
+
+```bash
+go install github.com/brian-bell/wtui/cmd/wtui@latest
+```
+
+### Build from Source
+
 ```bash
 git clone https://github.com/brian-bell/wtui.git
 cd wtui

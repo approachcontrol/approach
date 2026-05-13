@@ -1,10 +1,15 @@
 BIN_DIR  = bin
 BINARY   = $(BIN_DIR)/wtui
+VERSION_PACKAGE = github.com/brian-bell/wtui/internal/version
+COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -X $(VERSION_PACKAGE).Version=dev -X $(VERSION_PACKAGE).Commit=$(COMMIT) -X $(VERSION_PACKAGE).Date=$(DATE)
 
 .PHONY: build test run clean tidy
 
 build:
-	go build -o $(BINARY) ./cmd/wtui
+	mkdir -p $(BIN_DIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/wtui
 
 test:
 	go test ./...
