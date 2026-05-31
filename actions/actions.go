@@ -1,11 +1,14 @@
 package actions
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"unicode"
 )
 
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
@@ -104,14 +107,121 @@ func CopyToClipboard(text string) error {
 	return cmd.Run()
 }
 
-// OpenTerminal opens a new Terminal window at the given path.
+// OpenTerminal opens a non-interactive multiplexer-backed terminal command for
+// the given path. Interactive launch specs need a caller-provided TTY; use
+// TerminalLaunch directly with Bubble Tea's ExecProcess for those.
 func OpenTerminal(path string) error {
-	return exec.Command("open", "-a", "Terminal", path).Run()
+	if info, err := os.Stat(path); err != nil {
+		return err
+	} else if !info.IsDir() {
+		return fmt.Errorf("terminal path is not a directory: %s", path)
+	}
+	launch, err := TerminalLaunch(path)
+	if err != nil {
+		return err
+	}
+	if launch.Interactive {
+		return fmt.Errorf("terminal launch for %s requires an interactive TTY; use TerminalLaunch with ExecProcess", path)
+	}
+	return launch.Cmd.Run()
 }
 
 // OpenVSCode opens VSCode at the given path.
 func OpenVSCode(path string) error {
 	return exec.Command("code", path).Run()
+}
+
+// TerminalLaunchSpec describes how wtui should open a shell for a worktree.
+// Interactive commands should be run with Bubble Tea's ExecProcess so the TUI
+// releases the current terminal until the multiplexer exits.
+type TerminalLaunchSpec struct {
+	Cmd         *exec.Cmd
+	Interactive bool
+}
+
+// TerminalLaunch returns a command that opens or switches to a multiplexer
+// session for path. It adapts to the current environment:
+//   - inside Zellij: switch to a Zellij session with the worktree name
+//   - inside tmux: create the tmux session if needed, then switch-client
+//   - outside a multiplexer: prefer tmux, then Zellij, then a plain shell
+func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
+	sessionName := WorktreeSessionName(path)
+
+	switch {
+	case inZellij() && hasExecutable("zellij"):
+		return TerminalLaunchSpec{
+			Cmd: exec.Command("zellij", "action", "switch-session", sessionName, "--cwd", path),
+		}, nil
+	case inTmux() && hasExecutable("tmux"):
+		return TerminalLaunchSpec{
+			Cmd: exec.Command("sh", "-c", tmuxSwitchScript, "wtui", sessionName, path),
+		}, nil
+	case hasExecutable("tmux"):
+		if runtime.GOOS == "darwin" && hasExecutable("osascript") {
+			return TerminalLaunchSpec{
+				Cmd: externalTerminalCommand(tmuxAttachCommand(sessionName, path)),
+			}, nil
+		}
+		return TerminalLaunchSpec{
+			Cmd:         exec.Command("tmux", "new-session", "-A", "-s", sessionName, "-c", path),
+			Interactive: true,
+		}, nil
+	case hasExecutable("zellij"):
+		if runtime.GOOS == "darwin" && hasExecutable("osascript") {
+			return TerminalLaunchSpec{
+				Cmd: externalTerminalCommand(zellijAttachCommand(sessionName, path)),
+			}, nil
+		}
+		cmd := exec.Command("zellij", "attach", "--create", sessionName)
+		cmd.Dir = path
+		return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+	default:
+		if runtime.GOOS == "darwin" && hasExecutable("open") {
+			return TerminalLaunchSpec{
+				Cmd: exec.Command("open", "-a", "Terminal", path),
+			}, nil
+		}
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "sh"
+		}
+		cmd := exec.Command(shell)
+		cmd.Dir = path
+		return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+	}
+}
+
+// WorktreeSessionName returns a tmux/Zellij-safe session name derived from
+// the worktree directory name plus a stable path fingerprint.
+func WorktreeSessionName(path string) string {
+	cleanPath := filepath.Clean(path)
+	hashPath := cleanPath
+	if absPath, err := filepath.Abs(cleanPath); err == nil {
+		hashPath = absPath
+	}
+
+	name := filepath.Base(cleanPath)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		allowed := unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.'
+		if allowed {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	name = strings.Trim(b.String(), ".-")
+	if name == "" {
+		name = "worktree"
+	}
+
+	sum := sha1.Sum([]byte(hashPath))
+	return fmt.Sprintf("%s-%x", name, sum[:4])
 }
 
 func refExists(repoPath, ref string) bool {
@@ -137,4 +247,47 @@ func sanitizePathPart(s string) string {
 		return "worktree"
 	}
 	return s
+}
+
+const tmuxSwitchScript = `
+session=$1
+path=$2
+tmux has-session -t "$session" 2>/dev/null || tmux new-session -d -s "$session" -c "$path"
+tmux switch-client -t "$session"
+`
+
+func inTmux() bool {
+	return os.Getenv("TMUX") != ""
+}
+
+func inZellij() bool {
+	return os.Getenv("ZELLIJ") != ""
+}
+
+func hasExecutable(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func externalTerminalCommand(shellCommand string) *exec.Cmd {
+	return exec.Command(
+		"osascript",
+		"-e", fmt.Sprintf(`tell application "Terminal" to do script %q`, shellCommand),
+		"-e", `tell application "Terminal" to activate`,
+	)
+}
+
+func tmuxAttachCommand(sessionName, path string) string {
+	return "tmux new-session -A -s " + shellQuote(sessionName) + " -c " + shellQuote(path)
+}
+
+func zellijAttachCommand(sessionName, path string) string {
+	return "cd " + shellQuote(path) + " && zellij attach --create " + shellQuote(sessionName)
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
