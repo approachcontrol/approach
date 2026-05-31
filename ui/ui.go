@@ -64,6 +64,7 @@ var (
 	stashSelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true)
 	branchSelStyle    = lipgloss.NewStyle().Bold(true).Reverse(true)
 	rootStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -102,6 +103,7 @@ type RenderParams struct {
 	Reflogs          []gitquery.ReflogEntry
 	ReflogSelected   int
 	ReflogScroll     int
+	TransientError   string
 }
 
 // Render produces the full terminal view string.
@@ -118,13 +120,14 @@ func Render(p RenderParams) string {
 		return renderOverlay(p)
 	}
 
-	var staleSelected, dirtySelected bool
+	var staleSelected, dirtySelected, lockedSelected bool
 	if p.Mode == 1 && p.WorktreeSelected >= 0 && p.WorktreeSelected < len(p.Worktrees) {
 		wt := p.Worktrees[p.WorktreeSelected]
 		staleSelected = wt.Stale
 		dirtySelected = wt.Dirty
+		lockedSelected = wt.Locked
 	}
-	statusBar := RenderStatusBar(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError)
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -238,6 +241,14 @@ func renderModeHeader(mode, width int) string {
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
+	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "")
+}
+
+func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string) string {
+	if transientError != "" {
+		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
+	}
+
 	var hints string
 	switch {
 	case overlay == OverlayConfirm:
@@ -274,12 +285,15 @@ func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, dest
 				hints += "  enter: diff"
 			}
 			hints += "  t: terminal  c: code"
-			if destructive {
+			if destructive && !lockedSelected {
 				hints += "  " + dirtyRedStyle.Render("d: delete")
 			}
 		}
-		if activePane == 1 && staleSelected && destructive {
+		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
+		}
+		if activePane == 1 && lockedSelected {
+			hints += "  u: unlock"
 		}
 		if !destructive {
 			hints += "  D: destructive mode"
@@ -485,7 +499,16 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 		}
 
 		var indicators string
-		if wt.Stale {
+		if wt.Locked {
+			indicators = renderLockedIndicator(wt.LockReason)
+			if !wt.Stale {
+				if wt.Dirty {
+					indicators += renderDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
+				} else {
+					indicators += cleanStyle.Render(" ✔")
+				}
+			}
+		} else if wt.Stale {
 			indicators = dirtyRedStyle.Render(" ✗") + " " + dirtyRedStyle.Render("stale")
 		} else if wt.Dirty {
 			indicators = renderDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
@@ -512,7 +535,7 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 }
 
 func renderOverlay(p RenderParams) string {
-	statusBar := RenderStatusBar(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError)
 	contentHeight := p.Height - 1
 
 	// Confirmation dialog overlay
@@ -622,6 +645,31 @@ func renderDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
 	s += diffAddStyle.Render(fmt.Sprintf("+%d", linesAdded))
 	s += "/" + diffDelStyle.Render(fmt.Sprintf("-%d", linesDeleted))
 	return s
+}
+
+// MaxLockReasonWidth caps the visible width of a lock reason in the worktree
+// pane so a long reason cannot push the path off the end of the line.
+const MaxLockReasonWidth = 40
+
+func renderLockedIndicator(reason string) string {
+	s := lockedStyle.Render(" 🔒") + " " + lockedStyle.Render("locked")
+	if reason != "" {
+		s += " " + lockedStyle.Render(truncateReason(reason, MaxLockReasonWidth))
+	}
+	return s
+}
+
+func truncateReason(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return truncateToWidth(s, max-lipgloss.Width("…")) + "…"
 }
 
 func renderPlaceholderPane(width, height int) []string {

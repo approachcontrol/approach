@@ -967,6 +967,96 @@ func TestListWorktrees_StaleWorktree(t *testing.T) {
 	}
 }
 
+func TestListWorktrees_LockedWorktree(t *testing.T) {
+	repo := realPath(t, initBranchRepo(t))
+	wtDir := realPath(t, t.TempDir())
+	wtPath := filepath.Join(wtDir, "wt-locked")
+	run(t, repo, "git", "branch", "locked-branch")
+	run(t, repo, "git", "worktree", "add", wtPath, "locked-branch")
+	run(t, repo, "git", "worktree", "lock", wtPath)
+
+	wts, err := gitquery.ListWorktrees(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var lockedWt *gitquery.Worktree
+	for i := range wts {
+		if wts[i].Path == wtPath {
+			lockedWt = &wts[i]
+			break
+		}
+	}
+	if lockedWt == nil {
+		t.Fatal("locked worktree not found")
+	}
+	if !lockedWt.Locked {
+		t.Error("expected Locked = true")
+	}
+}
+
+func TestListWorktrees_LockedWorktreeReason(t *testing.T) {
+	repo := realPath(t, initBranchRepo(t))
+	wtDir := realPath(t, t.TempDir())
+	wtPath := filepath.Join(wtDir, "wt-locked-reason")
+	run(t, repo, "git", "branch", "locked-reason-branch")
+	run(t, repo, "git", "worktree", "add", wtPath, "locked-reason-branch")
+	run(t, repo, "git", "worktree", "lock", "--reason", "on external drive", wtPath)
+
+	wts, err := gitquery.ListWorktrees(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var lockedWt *gitquery.Worktree
+	for i := range wts {
+		if wts[i].Path == wtPath {
+			lockedWt = &wts[i]
+			break
+		}
+	}
+	if lockedWt == nil {
+		t.Fatal("locked worktree not found")
+	}
+	if lockedWt.LockReason != "on external drive" {
+		t.Errorf("expected LockReason %q, got %q", "on external drive", lockedWt.LockReason)
+	}
+}
+
+func TestListWorktrees_LockedStaleWorktree(t *testing.T) {
+	repo := realPath(t, initBranchRepo(t))
+	wtDir := realPath(t, t.TempDir())
+	wtPath := filepath.Join(wtDir, "wt-locked-stale")
+	run(t, repo, "git", "branch", "locked-stale-branch")
+	run(t, repo, "git", "worktree", "add", wtPath, "locked-stale-branch")
+	run(t, repo, "git", "worktree", "lock", wtPath)
+	if err := os.RemoveAll(wtPath); err != nil {
+		t.Fatal(err)
+	}
+
+	wts, err := gitquery.ListWorktrees(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var lockedWt *gitquery.Worktree
+	for i := range wts {
+		if wts[i].Path == wtPath {
+			lockedWt = &wts[i]
+			break
+		}
+	}
+	if lockedWt == nil {
+		t.Fatal("locked stale worktree not found")
+	}
+	if !lockedWt.Locked {
+		t.Error("expected Locked = true")
+	}
+	if !lockedWt.Stale {
+		t.Error("expected Stale = true")
+	}
+}
+
 func TestListWorktrees_DirtyWorktree(t *testing.T) {
 	repo := realPath(t, initBranchRepo(t))
 	wtDir := realPath(t, t.TempDir())

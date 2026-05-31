@@ -32,6 +32,11 @@ func PruneWorktree(repoPath string) error {
 	return exec.Command("git", "-C", repoPath, "worktree", "prune").Run()
 }
 
+// UnlockWorktree runs `git worktree unlock` for the given worktree path.
+func UnlockWorktree(repoPath, worktreePath string) error {
+	return exec.Command("git", "-C", repoPath, "worktree", "unlock", worktreePath).Run()
+}
+
 // DeleteBranch runs `git branch -d`.
 func DeleteBranch(repoPath, name string) error {
 	return exec.Command("git", "-C", repoPath, "branch", "-d", name).Run()

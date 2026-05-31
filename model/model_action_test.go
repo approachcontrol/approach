@@ -68,6 +68,23 @@ func TestModel_EnterOnStaleWorktreeIsNoOp(t *testing.T) {
 	}
 }
 
+func TestModel_EnterOnLockedDirtyWorktreeOpensDiffOverlay(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true, Dirty: true, FilesChanged: 2},
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != model.OverlayWorktreeDiff {
+		t.Errorf("expected OverlayWorktreeDiff for locked dirty worktree, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchWorktreeDiff cmd for locked dirty worktree")
+	}
+}
+
 func TestModel_EnterOnEmptyWorktreeListIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -157,6 +174,32 @@ func TestModel_CKey_Worktree_FiresCmd(t *testing.T) {
 	}
 }
 
+func TestModel_TKey_LockedWorktree_FiresCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if cmd == nil {
+		t.Error("expected non-nil cmd for t key on locked worktree")
+	}
+}
+
+func TestModel_CKey_LockedWorktree_FiresCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Error("expected non-nil cmd for c key on locked worktree")
+	}
+}
+
 func TestModel_TKey_StaleWorktree_NoCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -180,6 +223,21 @@ func TestModel_CKey_StaleWorktree_NoCmd(t *testing.T) {
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd != nil {
 		t.Error("expected nil cmd for c key on stale worktree")
+	}
+}
+
+func TestModel_TAndCKeys_LockedStaleWorktree_NoCmd(t *testing.T) {
+	for _, key := range []rune{'t', 'c'} {
+		m := model.New(testRepos())
+		m = inRightPane(m)
+		wts := []gitquery.Worktree{
+			{Path: "/dev/alpha-gone", BranchName: "gone", Locked: true, Stale: true},
+		}
+		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if cmd != nil {
+			t.Errorf("expected nil cmd for %q key on locked stale worktree", key)
+		}
 	}
 }
 
@@ -711,6 +769,19 @@ func TestModel_PKeyOnStaleWorktreeShowsConfirm(t *testing.T) {
 	}
 }
 
+func TestModel_PKeyNoOpOnLockedStaleWorktree(t *testing.T) {
+	m := modelWithWorktrees([]gitquery.Worktree{
+		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},
+	})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("p on locked stale worktree should be no-op, got overlay %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Errorf("p on locked stale worktree should not return a cmd, got %T", cmd)
+	}
+}
+
 func TestModel_PKeyNoOpInBranchesMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
@@ -1178,6 +1249,18 @@ func TestModel_DKeyNoOpOnStaleWorktree(t *testing.T) {
 	}
 }
 
+func TestModel_DKeyNoOpOnLockedWorktree(t *testing.T) {
+	m := modelWithWorktrees([]gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("d on locked worktree should be no-op, got overlay %d", m.Overlay())
+	}
+}
+
 func TestModel_DKeyOnWorktreeRequiresDestructiveMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
@@ -1243,6 +1326,105 @@ func TestModel_DKeyOnWorktreeShowsConfirm(t *testing.T) {
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "/dev/alpha-feat") {
 		t.Errorf("confirm prompt should contain worktree path, got %q", m.ConfirmPrompt())
+	}
+}
+
+func TestModel_UKeyOnLockedWorktreeFiresUnlockCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("u should not open an overlay, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected unlock cmd for locked worktree")
+	}
+}
+
+func TestModel_UKeyUnlockFailureReturnsFailureMsg(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if cmd == nil {
+		t.Fatal("expected unlock cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeUnlockFailedMsg); !ok {
+		t.Fatalf("expected WorktreeUnlockFailedMsg for failed unlock, got %T", msg)
+	}
+}
+
+func TestModel_UKeyOnUnlockedWorktreeIsNoOp(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("u on unlocked worktree should not open overlay, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatal("expected nil cmd for unlocked worktree")
+	}
+}
+
+func TestModel_UKeyOutsideWorktreesModeIsNoOp(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("u outside worktrees mode should not open overlay, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatal("expected nil cmd outside worktrees mode")
+	}
+}
+
+func TestModel_UKeyOnLockedMainWorktreeFiresUnlockCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if cmd == nil {
+		t.Fatal("expected unlock cmd for locked main worktree")
+	}
+}
+
+func TestModel_WorktreeUnlockedMsgRefetchesWorktrees(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+
+	_, cmd := update(m, model.WorktreeUnlockedMsg{RepoPath: "/dev/alpha"})
+	if cmd == nil {
+		t.Fatal("expected fetchWorktrees cmd after unlock")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeResultMsg); !ok {
+		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
+	}
+}
+
+func TestModel_StaleWorktreeUnlockedMsgIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+
+	_, cmd := update(m, model.WorktreeUnlockedMsg{RepoPath: "/dev/alpha"})
+	if cmd != nil {
+		t.Fatal("expected stale unlock result to be ignored")
 	}
 }
 

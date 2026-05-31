@@ -38,6 +38,8 @@ type Worktree struct {
 	Detached     bool
 	Stale        bool
 	IsMain       bool
+	Locked       bool
+	LockReason   string
 	Dirty        bool
 	FilesChanged int
 	LinesAdded   int
@@ -102,9 +104,11 @@ func ListWorktrees(repoPath string) ([]Worktree, error) {
 		}
 
 		w := Worktree{
-			Path:     wt.Path,
-			Detached: wt.Detached,
-			IsMain:   first,
+			Path:       wt.Path,
+			Detached:   wt.Detached,
+			IsMain:     first,
+			Locked:     wt.Locked,
+			LockReason: wt.LockReason,
 		}
 		if wt.Detached {
 			w.BranchName = ""

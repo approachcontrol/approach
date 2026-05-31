@@ -137,6 +137,25 @@ func TestModel_WorktreeCursorWraps(t *testing.T) {
 	}
 }
 
+func TestModel_LockedWorktreeParticipatesInNavigation(t *testing.T) {
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.WorktreeSelected() != 1 {
+		t.Errorf("expected locked worktree to be selectable, got index %d", m.WorktreeSelected())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.WorktreeSelected() != 0 {
+		t.Errorf("expected navigation away from locked worktree, got index %d", m.WorktreeSelected())
+	}
+}
+
 func TestModel_WorktreeScrollFollowsCursor(t *testing.T) {
 	wts := make([]gitquery.Worktree, 10)
 	for i := range wts {

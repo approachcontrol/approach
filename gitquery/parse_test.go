@@ -339,6 +339,38 @@ func TestParseWorktreeList_DetachedWorktree(t *testing.T) {
 	}
 }
 
+func TestParseWorktreeList_BareLockedLine(t *testing.T) {
+	input := "worktree /home/user/project\nbranch refs/heads/main\nlocked\n\n"
+
+	infos := gitquery.ParseWorktreeList(input)
+
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 worktree, got %d", len(infos))
+	}
+	if !infos[0].Locked {
+		t.Error("expected Locked = true")
+	}
+	if infos[0].LockReason != "" {
+		t.Errorf("expected empty LockReason, got %q", infos[0].LockReason)
+	}
+}
+
+func TestParseWorktreeList_LockedLineWithReason(t *testing.T) {
+	input := "worktree /home/user/project\nbranch refs/heads/main\nlocked on external drive\n\n"
+
+	infos := gitquery.ParseWorktreeList(input)
+
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 worktree, got %d", len(infos))
+	}
+	if !infos[0].Locked {
+		t.Error("expected Locked = true")
+	}
+	if infos[0].LockReason != "on external drive" {
+		t.Errorf("expected LockReason %q, got %q", "on external drive", infos[0].LockReason)
+	}
+}
+
 func TestParseWorktreeList_EmptyInput(t *testing.T) {
 	if infos := gitquery.ParseWorktreeList(""); infos != nil {
 		t.Errorf("expected nil, got %v", infos)

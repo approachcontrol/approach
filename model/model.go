@@ -102,6 +102,15 @@ type WorktreePrunedMsg struct {
 	RepoPath string
 }
 
+type WorktreeUnlockedMsg struct {
+	RepoPath string
+}
+
+type WorktreeUnlockFailedMsg struct {
+	RepoPath string
+	Err      string
+}
+
 type ReflogResultMsg struct {
 	RepoPath string
 	Reflogs  []gitquery.ReflogEntry
@@ -153,6 +162,7 @@ type Model struct {
 	stashScroll      int
 	activePane       int // 0=left (repos), 1=right (content)
 	destructive      bool
+	transientError   string
 }
 
 // New creates a Model from discovered repos.
@@ -222,6 +232,7 @@ func (m Model) View() string {
 		Reflogs:          m.reflogs,
 		ReflogSelected:   m.reflogSelected,
 		ReflogScroll:     m.reflogScroll,
+		TransientError:   m.transientError,
 	})
 }
 
@@ -256,6 +267,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case WorktreePrunedMsg:
 		return m.handleWorktreePruned(msg)
+	case WorktreeUnlockedMsg:
+		return m.handleWorktreeUnlocked(msg)
+	case WorktreeUnlockFailedMsg:
+		return m.handleWorktreeUnlockFailed(msg), nil
 	case CommitResultMsg:
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:
@@ -286,6 +301,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleOverlayKey(key)
 	}
+
+	m.transientError = ""
 
 	if key == "D" {
 		m.destructive = !m.destructive
@@ -449,6 +466,8 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleDelete()
 	case "p":
 		return m.handlePrune()
+	case "u":
+		return m.handleUnlock()
 	case "t":
 		return m.handleOpenTerminal()
 	case "c":
@@ -612,6 +631,27 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
+	if m.mode != ModeWorktrees {
+		return m, nil
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok || !wt.Locked {
+		return m, nil
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	worktreePath := wt.Path
+	return m, func() tea.Msg {
+		if err := actions.UnlockWorktree(repoPath, worktreePath); err != nil {
+			return WorktreeUnlockFailedMsg{RepoPath: repoPath, Err: err.Error()}
+		}
+		return WorktreeUnlockedMsg{RepoPath: repoPath}
+	}
+}
+
 func (m Model) openAtPath(action func(string) error) (tea.Model, tea.Cmd) {
 	if m.mode == ModeWorktrees {
 		if wt, ok := m.selectedWorktree(); ok && !wt.Stale {
@@ -701,6 +741,9 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 	if wt.IsMain {
 		return m, nil
 	}
+	if wt.Locked {
+		return m, nil
+	}
 	if wt.Stale {
 		return m, nil
 	}
@@ -748,7 +791,7 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if !wt.Stale {
+	if !wt.Stale || wt.Locked {
 		return m, nil
 	}
 
@@ -855,6 +898,21 @@ func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) 
 		return m, m.fetchWorktrees()
 	}
 	return m, nil
+}
+
+func (m Model) handleWorktreeUnlocked(msg WorktreeUnlockedMsg) (tea.Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.transientError = ""
+		return m, m.fetchWorktrees()
+	}
+	return m, nil
+}
+
+func (m Model) handleWorktreeUnlockFailed(msg WorktreeUnlockFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.transientError = msg.Err
+	}
+	return m
 }
 
 func (m Model) handleBranchResult(msg BranchResultMsg) Model {
