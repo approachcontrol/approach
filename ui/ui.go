@@ -104,6 +104,9 @@ type RenderParams struct {
 	ReflogSelected   int
 	ReflogScroll     int
 	TransientError   string
+	SearchActive     bool
+	RepoSearch       string
+	ItemSearch       string
 }
 
 // Render produces the full terminal view string.
@@ -127,7 +130,7 @@ func Render(p RenderParams) string {
 		dirtySelected = wt.Dirty
 		lockedSelected = wt.Locked
 	}
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch)
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -241,12 +244,25 @@ func renderModeHeader(mode, width int) string {
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
-	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "")
+	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "", false, "", "")
 }
 
-func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string) string {
+func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string, searchActive bool, repoSearch, itemSearch string) string {
 	if transientError != "" {
 		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
+	}
+
+	label := "items"
+	query := itemSearch
+	if activePane == 0 {
+		label = "repos"
+		query = repoSearch
+	}
+	if searchActive || query != "" {
+		if searchActive {
+			return statusStyle.Width(width).Render(fmt.Sprintf("  / %s: %s  enter: keep  esc: clear  backspace: edit", label, query))
+		}
+		return statusStyle.Width(width).Render(fmt.Sprintf("  filtered %s: %s  /: edit  esc: clear", label, query))
 	}
 
 	var hints string
@@ -535,7 +551,7 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 }
 
 func renderOverlay(p RenderParams) string {
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch)
 	contentHeight := p.Height - 1
 
 	// Confirmation dialog overlay

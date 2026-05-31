@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -427,6 +428,184 @@ func TestModel_LeftPaneActionKeysAreNoOps(t *testing.T) {
 		if cmd != nil {
 			t.Errorf("key %v produced cmd in left pane: %T", key, cmd)
 		}
+	}
+}
+
+// --- Fuzzy filtering ---
+
+func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
+	m := model.New(testRepos())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+	if m.RepoSearch() != "c" {
+		t.Fatalf("expected repo search query c, got %q", m.RepoSearch())
+	}
+	if cmd == nil {
+		t.Fatal("expected fetch command when repo filter changes selection")
+	}
+	msg := cmd()
+	result, ok := msg.(model.WorktreeResultMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeResultMsg, got %T", msg)
+	}
+	if result.RepoPath != "/dev/charlie" {
+		t.Fatalf("expected filtered selection to fetch charlie, got %q", result.RepoPath)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "charlie") {
+		t.Error("filtered repo view should contain charlie")
+	}
+	for _, name := range []string{"alpha", "bravo"} {
+		if strings.Contains(view, name) {
+			t.Errorf("filtered repo view should not contain %s", name)
+		}
+	}
+}
+
+func TestModel_EscapeClearsRepoFilterWithoutQuitting(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if cmd != nil {
+		t.Fatalf("expected esc to clear search without quitting or refetching, got cmd %T", cmd)
+	}
+	if m.RepoSearch() != "" || m.SearchActive() {
+		t.Fatalf("expected repo filter cleared and inactive, got query=%q active=%v", m.RepoSearch(), m.SearchActive())
+	}
+	if m.Selected() != 2 {
+		t.Fatalf("expected clearing filter to preserve charlie selection at index 2, got %d", m.Selected())
+	}
+}
+
+func TestModel_EscapeClearsKeptRepoFilterWithoutChangingRepo(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if cmd != nil {
+		t.Fatalf("expected esc to clear kept search without refetching, got cmd %T", cmd)
+	}
+	if m.RepoSearch() != "" || m.SearchActive() {
+		t.Fatalf("expected repo filter cleared and inactive, got query=%q active=%v", m.RepoSearch(), m.SearchActive())
+	}
+	if m.Selected() != 2 {
+		t.Fatalf("expected clearing kept filter to preserve charlie selection at index 2, got %d", m.Selected())
+	}
+}
+
+func TestModel_BackspaceOnEmptyRepoFilterInputClearsFilter(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.RepoSearch() != "" || !m.SearchActive() {
+		t.Fatalf("expected empty active repo search before final backspace, got query=%q active=%v", m.RepoSearch(), m.SearchActive())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if cmd != nil {
+		t.Fatalf("expected clearing empty repo search to produce no command, got %T", cmd)
+	}
+	if m.RepoSearch() != "" || m.SearchActive() {
+		t.Fatalf("expected empty backspace to clear and deactivate repo search, got query=%q active=%v", m.RepoSearch(), m.SearchActive())
+	}
+	if m.Selected() != 2 {
+		t.Fatalf("expected clearing empty repo filter to preserve charlie selection at index 2, got %d", m.Selected())
+	}
+}
+
+func TestModel_ZeroRepoFilterHidesStaleRightPaneItems(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-feature", BranchName: "feature/alpha", Dirty: true},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if cmd != nil {
+		t.Fatalf("expected starting search to produce no command, got %T", cmd)
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if cmd != nil {
+		t.Fatalf("expected no fetch when repo filter has no matches, got %T", cmd)
+	}
+
+	view := m.View()
+	if strings.Contains(view, "feature/alpha") || strings.Contains(view, "/dev/alpha-feature") {
+		t.Fatal("zero-match repo filter should not render stale worktree rows")
+	}
+
+	m = inRightPane(m)
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("expected enter on stale hidden worktree to be a no-op, got %T", cmd)
+	}
+	if m.Overlay() != model.OverlayNone {
+		t.Fatalf("expected no overlay for stale hidden worktree, got %v", m.Overlay())
+	}
+}
+
+func TestModel_SlashFiltersRightPaneItems(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
+		{Name: "main"},
+		{Name: "feature/auth"},
+		{Name: "bugfix"},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+
+	if m.ItemSearch() != "fa" {
+		t.Fatalf("expected item search query fa, got %q", m.ItemSearch())
+	}
+	view := m.View()
+	if !strings.Contains(view, "feature/auth") {
+		t.Error("filtered branch view should contain feature/auth")
+	}
+	for _, name := range []string{"main", "bugfix"} {
+		if strings.Contains(view, name) {
+			t.Errorf("filtered branch view should not contain %s", name)
+		}
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.BranchSelected() != 0 {
+		t.Errorf("single filtered item should wrap to index 0, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BackspaceOnEmptyItemFilterInputClearsFilter(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
+		{Name: "main"},
+		{Name: "feature/auth"},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ItemSearch() != "" || !m.SearchActive() {
+		t.Fatalf("expected empty active item search before final backspace, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if cmd != nil {
+		t.Fatalf("expected clearing empty item search to produce no command, got %T", cmd)
+	}
+	if m.ItemSearch() != "" || m.SearchActive() {
+		t.Fatalf("expected empty backspace to clear and deactivate item search, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
 	}
 }
 

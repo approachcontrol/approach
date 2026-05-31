@@ -43,12 +43,15 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
 
+**Fuzzy filter:** Press `/` in the active pane to type-ahead filter repos or right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits it.
+
 **Left pane (repos)**
 
 | Key | Action |
 |-----|--------|
 | `↑`/`k` | Select previous repo |
 | `↓`/`j` | Select next repo |
+| `/` | Fuzzy filter repos |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to right pane |
 | `q`/`esc` | Quit |
@@ -59,6 +62,7 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 |-----|--------|
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
+| `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5` | Switch to worktrees / branches / stashes / history / reflog |
 | `←`/`h`/`→`/`l` | Cycle through modes |
 | `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
