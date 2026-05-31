@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"os"
 	"os/exec"
@@ -186,9 +187,15 @@ func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
 }
 
 // WorktreeSessionName returns a tmux/Zellij-safe session name derived from
-// the worktree directory name.
+// the worktree directory name plus a stable path fingerprint.
 func WorktreeSessionName(path string) string {
-	name := filepath.Base(filepath.Clean(path))
+	cleanPath := filepath.Clean(path)
+	hashPath := cleanPath
+	if absPath, err := filepath.Abs(cleanPath); err == nil {
+		hashPath = absPath
+	}
+
+	name := filepath.Base(cleanPath)
 	var b strings.Builder
 	lastDash := false
 	for _, r := range name {
@@ -205,9 +212,11 @@ func WorktreeSessionName(path string) string {
 	}
 	name = strings.Trim(b.String(), ".-")
 	if name == "" {
-		return "worktree"
+		name = "worktree"
 	}
-	return name
+
+	sum := sha1.Sum([]byte(hashPath))
+	return fmt.Sprintf("%s-%x", name, sum[:4])
 }
 
 func refExists(repoPath, ref string) bool {
