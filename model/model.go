@@ -124,7 +124,9 @@ type ReflogDiffResultMsg struct {
 	Diff     string
 }
 
-type ClipboardResultMsg struct{}
+type ClipboardResultMsg struct {
+	Err string
+}
 
 type DeleteFailedMsg struct {
 	RepoPath    string
@@ -310,6 +312,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ReflogDiffResultMsg:
 		return m.handleReflogDiffResult(msg), nil
 	case ClipboardResultMsg:
+		if msg.Err != "" {
+			m.transientError = msg.Err
+		}
 		return m, nil
 	case DeleteFailedMsg:
 		return m.handleDeleteFailed(msg), nil
@@ -1185,7 +1190,9 @@ func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, func() tea.Msg {
-		_ = actions.CopyToClipboard(hash)
+		if err := actions.CopyToClipboard(hash); err != nil {
+			return ClipboardResultMsg{Err: err.Error()}
+		}
 		return ClipboardResultMsg{}
 	}
 }

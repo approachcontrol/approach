@@ -431,6 +431,17 @@ func TestModel_YKeyNoOpWithNoCommits(t *testing.T) {
 	}
 }
 
+func TestModel_ClipboardResultShowsError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = update(m, model.ClipboardResultMsg{Err: "no supported clipboard command installed; install wl-copy, xclip, or xsel"})
+
+	view := m.View()
+	if !strings.Contains(view, "no supported clipboard command installed") {
+		t.Fatalf("expected clipboard error in view, got:\n%s", view)
+	}
+}
+
 func TestModel_DKeyNoOpInHistoryMode(t *testing.T) {
 	m := modelInHistoryWithCommits()
 	m = enableDestructive(m)
