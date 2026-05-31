@@ -567,6 +567,30 @@ func TestOpenTerminal_Error(t *testing.T) {
 	}
 }
 
+func TestOpenTerminal_InteractiveLaunchRequiresCallerTTY(t *testing.T) {
+	dir := t.TempDir()
+	tmuxPath := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("TMUX", "")
+	t.Setenv("ZELLIJ", "")
+
+	worktreePath := filepath.Join(t.TempDir(), "feature")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := actions.OpenTerminal(worktreePath)
+	if err == nil {
+		t.Fatal("expected interactive terminal launch to return an error")
+	}
+	if !strings.Contains(err.Error(), "requires an interactive TTY") {
+		t.Fatalf("expected interactive TTY error, got %v", err)
+	}
+}
+
 func TestCopyToClipboard(t *testing.T) {
 	if _, err := exec.LookPath("pbcopy"); err != nil {
 		t.Skip("pbcopy not available")

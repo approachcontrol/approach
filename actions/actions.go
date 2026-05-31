@@ -107,7 +107,9 @@ func CopyToClipboard(text string) error {
 	return cmd.Run()
 }
 
-// OpenTerminal opens a multiplexer-backed terminal for the given path.
+// OpenTerminal opens a non-interactive multiplexer-backed terminal command for
+// the given path. Interactive launch specs need a caller-provided TTY; use
+// TerminalLaunch directly with Bubble Tea's ExecProcess for those.
 func OpenTerminal(path string) error {
 	if info, err := os.Stat(path); err != nil {
 		return err
@@ -117,6 +119,9 @@ func OpenTerminal(path string) error {
 	launch, err := TerminalLaunch(path)
 	if err != nil {
 		return err
+	}
+	if launch.Interactive {
+		return fmt.Errorf("terminal launch for %s requires an interactive TTY; use TerminalLaunch with ExecProcess", path)
 	}
 	return launch.Cmd.Run()
 }
