@@ -69,7 +69,7 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 | `n` | Create a new worktree from a branch, tag, or new branch name |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
-| `t` | Open terminal at worktree path |
+| `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
 | `y` | Copy hash to clipboard (history/reflog view) |
 | `D` | Toggle destructive mode |
@@ -101,7 +101,7 @@ Status indicators stack on each branch:
 - `●` red: dirty worktree — shows `N files +X/-Y` (lines added/deleted)
 - `●` purple: no upstream or upstream gone
 
-Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t`/`c` open a terminal or VSCode at the worktree path (root branch only). `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
+Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij session and `c` opens VSCode at the worktree path (root branch only). `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
 
 ### Stashes view (mode 3)
 
@@ -109,7 +109,7 @@ Browse stashes for the selected repo. Long stash messages wrap to two lines (dat
 
 ### History view (mode 4)
 
-Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to view the full commit diff, `y` to copy the commit hash to clipboard, and `t`/`c` to open terminal or VSCode at the repo root.
+Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to view the full commit diff, `y` to copy the commit hash to clipboard, `t` to open or attach to a tmux/Zellij session, and `c` to open VSCode at the repo root.
 
 ### Reflog view (mode 5)
 

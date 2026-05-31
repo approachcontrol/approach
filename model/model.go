@@ -833,34 +833,54 @@ func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) openAtPath(action func(string) error) (tea.Model, tea.Cmd) {
+	path, ok := m.pathForOpenAction()
+	if !ok {
+		return m, nil
+	}
+	return m, func() tea.Msg { _ = action(path); return nil }
+}
+
+func (m Model) pathForOpenAction() (string, bool) {
 	if m.mode == ModeWorktrees {
 		if _, ok := m.currentRepoPath(); !ok {
-			return m, nil
+			return "", false
 		}
 		if wt, ok := m.selectedWorktree(); ok && !wt.Stale {
-			path := wt.Path
-			return m, func() tea.Msg { _ = action(path); return nil }
+			return wt.Path, true
 		}
-		return m, nil
+		return "", false
 	}
 	if m.mode == ModeHistory {
 		path, ok := m.currentRepoPath()
 		if !ok {
-			return m, nil
+			return "", false
 		}
-		return m, func() tea.Msg { _ = action(path); return nil }
+		return path, true
 	}
 	if m.mode == ModeBranches {
 		if row, ok := m.selectedRow(); ok && row.WorktreePath != "" {
-			path := row.WorktreePath
-			return m, func() tea.Msg { _ = action(path); return nil }
+			return row.WorktreePath, true
 		}
 	}
-	return m, nil
+	return "", false
 }
 
 func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
-	return m.openAtPath(actions.OpenTerminal)
+	path, ok := m.pathForOpenAction()
+	if !ok {
+		return m, nil
+	}
+	launch, err := actions.TerminalLaunch(path)
+	if err != nil {
+		return m, nil
+	}
+	if launch.Interactive {
+		return m, tea.ExecProcess(launch.Cmd, nil)
+	}
+	return m, func() tea.Msg {
+		_ = launch.Cmd.Run()
+		return nil
+	}
 }
 
 func (m Model) handleOpenCode() (tea.Model, tea.Cmd) {

@@ -20,6 +20,19 @@ func mustRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func prependFakePath(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	// Set up a bare repo with a commit so worktrees work
 	dir := t.TempDir()
@@ -237,6 +250,67 @@ func TestDefaultWorktreePath(t *testing.T) {
 	expected := filepath.Join("/tmp", "repo-worktrees", "feature-new-thing")
 	if path != expected {
 		t.Fatalf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestWorktreeSessionName(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/tmp/repo-worktrees/feature-api", "feature-api"},
+		{"/tmp/repo-worktrees/feature/api:oauth", "api-oauth"},
+		{"/tmp/repo-worktrees/../repo", "repo"},
+		{"/", "worktree"},
+	}
+
+	for _, tt := range tests {
+		if got := actions.WorktreeSessionName(tt.path); got != tt.want {
+			t.Errorf("WorktreeSessionName(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestTerminalLaunch_InsideTmuxCreatesOrSwitchesSession(t *testing.T) {
+	prependFakePath(t, "tmux")
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+	t.Setenv("ZELLIJ", "")
+	worktreePath := filepath.Join(t.TempDir(), "feature:oauth")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	launch, err := actions.TerminalLaunch(worktreePath)
+	if err != nil {
+		t.Fatalf("TerminalLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("inside-tmux launch should be non-interactive")
+	}
+	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "wtui" || got[4] != "feature-oauth" || got[5] != worktreePath {
+		t.Fatalf("unexpected tmux launch args: %#v", got)
+	}
+}
+
+func TestTerminalLaunch_InsideZellijSwitchesSessionWithCwd(t *testing.T) {
+	prependFakePath(t, "zellij", "tmux")
+	t.Setenv("ZELLIJ", "0")
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+	worktreePath := filepath.Join(t.TempDir(), "feat")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	launch, err := actions.TerminalLaunch(worktreePath)
+	if err != nil {
+		t.Fatalf("TerminalLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("inside-zellij launch should be non-interactive")
+	}
+	want := []string{"zellij", "action", "switch-session", "feat", "--cwd", worktreePath}
+	if strings.Join(launch.Cmd.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("unexpected zellij launch args: got %#v want %#v", launch.Cmd.Args, want)
 	}
 }
 
