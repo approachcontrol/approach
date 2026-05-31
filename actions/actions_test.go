@@ -303,6 +303,17 @@ func TestCreateWorktree_EmptyInputFails(t *testing.T) {
 	}
 }
 
+func TestCreateWorktree_RefStartingWithDashFails(t *testing.T) {
+	repoPath := setupRepo(t)
+	_, err := actions.CreateWorktree(repoPath, "--detach")
+	if err == nil {
+		t.Fatal("expected error for ref starting with dash")
+	}
+	if !strings.Contains(err.Error(), "cannot start with -") {
+		t.Fatalf("expected invalid ref error, got %v", err)
+	}
+}
+
 // TestRemoveWorktreeThenDeleteBranch verifies the combined flow the model
 // uses: remove worktree, then force-delete the branch.
 func TestRemoveWorktreeThenDeleteBranch(t *testing.T) {

@@ -500,7 +500,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.handleEnter()
 	case "n":
-		return m.handleNewWorktree()
+		if m.mode == ModeWorktrees {
+			return m.handleNewWorktree()
+		}
 	case "d":
 		return m.handleDelete()
 	case "p":

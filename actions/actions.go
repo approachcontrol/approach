@@ -41,6 +41,9 @@ func CreateWorktree(repoPath, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("worktree ref cannot be empty")
 	}
+	if strings.HasPrefix(ref, "-") {
+		return "", fmt.Errorf("worktree ref cannot start with -: %q", ref)
+	}
 
 	worktreePath := DefaultWorktreePath(repoPath, ref)
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
@@ -107,6 +110,9 @@ func OpenVSCode(path string) error {
 }
 
 func refExists(repoPath, ref string) bool {
+	if strings.HasPrefix(ref, "-") {
+		return false
+	}
 	return exec.Command("git", "-C", repoPath, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Run() == nil
 }
 
