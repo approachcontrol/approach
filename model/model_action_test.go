@@ -1419,6 +1419,18 @@ func TestModel_DKeyNoOpOnStaleWorktree(t *testing.T) {
 	}
 }
 
+func TestModel_DKeyNoOpOnLockedWorktree(t *testing.T) {
+	m := modelWithWorktrees([]gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("d on locked worktree should be no-op, got overlay %d", m.Overlay())
+	}
+}
+
 func TestModel_DKeyOnWorktreeRequiresDestructiveMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
@@ -1484,6 +1496,105 @@ func TestModel_DKeyOnWorktreeShowsConfirm(t *testing.T) {
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "/dev/alpha-feat") {
 		t.Errorf("confirm prompt should contain worktree path, got %q", m.ConfirmPrompt())
+	}
+}
+
+func TestModel_UKeyOnLockedWorktreeFiresUnlockCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("u should not open an overlay, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected unlock cmd for locked worktree")
+	}
+}
+
+func TestModel_UKeyUnlockFailureReturnsFailureMsg(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-locked", BranchName: "locked", Locked: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if cmd == nil {
+		t.Fatal("expected unlock cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeUnlockFailedMsg); !ok {
+		t.Fatalf("expected WorktreeUnlockFailedMsg for failed unlock, got %T", msg)
+	}
+}
+
+func TestModel_UKeyOnUnlockedWorktreeIsNoOp(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("u on unlocked worktree should not open overlay, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatal("expected nil cmd for unlocked worktree")
+	}
+}
+
+func TestModel_UKeyOutsideWorktreesModeIsNoOp(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("u outside worktrees mode should not open overlay, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatal("expected nil cmd outside worktrees mode")
+	}
+}
+
+func TestModel_UKeyOnLockedMainWorktreeFiresUnlockCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if cmd == nil {
+		t.Fatal("expected unlock cmd for locked main worktree")
+	}
+}
+
+func TestModel_WorktreeUnlockedMsgRefetchesWorktrees(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+
+	_, cmd := update(m, model.WorktreeUnlockedMsg{RepoPath: "/dev/alpha"})
+	if cmd == nil {
+		t.Fatal("expected fetchWorktrees cmd after unlock")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeResultMsg); !ok {
+		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
+	}
+}
+
+func TestModel_StaleWorktreeUnlockedMsgIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+
+	_, cmd := update(m, model.WorktreeUnlockedMsg{RepoPath: "/dev/alpha"})
+	if cmd != nil {
+		t.Fatal("expected stale unlock result to be ignored")
 	}
 }
 

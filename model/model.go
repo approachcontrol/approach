@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -178,6 +179,9 @@ type Model struct {
 	activePane       int // 0=left (repos), 1=right (content)
 	destructive      bool
 	transientError   string
+	searchActive     bool
+	repoSearch       string
+	itemSearch       string
 }
 
 // New creates a Model from discovered repos.
@@ -215,20 +219,36 @@ func (m Model) StashScroll() int                { return m.stashScroll }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
 func (m Model) TransientError() string          { return m.transientError }
+func (m Model) SearchActive() bool              { return m.searchActive }
+func (m Model) RepoSearch() string              { return m.repoSearch }
+func (m Model) ItemSearch() string              { return m.itemSearch }
 
 func (m Model) Init() tea.Cmd {
 	return m.fetchForMode()
 }
 
 func (m Model) View() string {
+	repos := m.filteredRepos()
+	worktrees := m.filteredWorktrees()
+	rows := m.filteredRows()
+	stashes := m.filteredStashes()
+	commits := m.filteredCommits()
+	reflogs := m.filteredReflogs()
+	if len(repos) == 0 {
+		worktrees = nil
+		rows = nil
+		stashes = nil
+		commits = nil
+		reflogs = nil
+	}
 	return ui.Render(ui.RenderParams{
-		Repos:            m.repos,
+		Repos:            repos,
 		Selected:         m.selected,
 		Width:            m.width,
 		Height:           m.height,
 		Mode:             int(m.mode),
-		Branches:         m.rows,
-		Stashes:          m.stashes,
+		Branches:         rows,
+		Stashes:          stashes,
 		BranchSelected:   m.branchSelected,
 		StashSelected:    m.stashSelected,
 		Overlay:          m.overlay,
@@ -243,16 +263,19 @@ func (m Model) View() string {
 		StashScroll:      m.stashScroll,
 		ActivePane:       m.activePane,
 		Destructive:      m.destructive,
-		Worktrees:        m.worktrees,
+		Worktrees:        worktrees,
 		WorktreeSelected: m.worktreeSelected,
 		WorktreeScroll:   m.worktreeScroll,
-		Commits:          m.commits,
+		Commits:          commits,
 		CommitSelected:   m.commitSelected,
 		CommitScroll:     m.commitScroll,
-		Reflogs:          m.reflogs,
+		Reflogs:          reflogs,
 		ReflogSelected:   m.reflogSelected,
 		ReflogScroll:     m.reflogScroll,
 		TransientError:   m.transientError,
+		SearchActive:     m.searchActive,
+		RepoSearch:       m.repoSearch,
+		ItemSearch:       m.itemSearch,
 	})
 }
 
@@ -266,7 +289,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m = m.ensureRepoVisible()
+		m = m.ensureBranchVisible()
 		m = m.ensureStashVisible()
+		m = m.ensureWorktreeVisible()
+		m = m.ensureCommitVisible()
+		m = m.ensureReflogVisible()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -331,6 +358,35 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	m.transientError = ""
 
+	if m.searchActive {
+		return m.handleSearchKey(msg)
+	}
+
+	if key == "/" {
+		m.searchActive = true
+		return m, nil
+	}
+
+	if key == "esc" && m.activeSearchQuery() != "" {
+		oldRepoPath, _ := m.currentRepoPath()
+		m = m.setActiveSearchQuery("")
+		m.searchActive = false
+		if m.activePane == 0 && oldRepoPath != "" {
+			m = m.selectFilteredRepo(oldRepoPath)
+		}
+		m = m.clampSelectionsAfterFilter()
+		if m.activePane == 0 {
+			newRepoPath, ok := m.currentRepoPath()
+			if oldRepoPath != newRepoPath {
+				m = m.resetRightPaneCursors()
+				if ok {
+					return m, m.fetchForMode()
+				}
+			}
+		}
+		return m, nil
+	}
+
 	if key == "D" {
 		m.destructive = !m.destructive
 		return m, nil
@@ -340,6 +396,49 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
+}
+
+func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	oldRepoPath, _ := m.currentRepoPath()
+
+	switch key {
+	case "esc":
+		m = m.setActiveSearchQuery("")
+		m.searchActive = false
+	case "enter":
+		m.searchActive = false
+	case "backspace", "ctrl+h":
+		q := m.activeSearchQuery()
+		if q != "" {
+			runes := []rune(q)
+			m = m.setActiveSearchQuery(string(runes[:len(runes)-1]))
+		} else {
+			m = m.setActiveSearchQuery("")
+			m.searchActive = false
+		}
+	case "ctrl+u":
+		m = m.setActiveSearchQuery("")
+	default:
+		if msg.Type == tea.KeyRunes {
+			m = m.setActiveSearchQuery(m.activeSearchQuery() + string(msg.Runes))
+		}
+	}
+
+	if m.activePane == 0 && oldRepoPath != "" {
+		m = m.selectFilteredRepo(oldRepoPath)
+	}
+	m = m.clampSelectionsAfterFilter()
+	if m.activePane == 0 {
+		newRepoPath, ok := m.currentRepoPath()
+		if oldRepoPath != newRepoPath {
+			m = m.resetRightPaneCursors()
+			if ok {
+				return m, m.fetchForMode()
+			}
+		}
+	}
+	return m, nil
 }
 
 // --- Key handlers by context ---
@@ -389,19 +488,21 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "tab":
 		m.activePane = 1
 	case "up", "k":
-		if len(m.repos) > 0 {
+		repos := m.filteredRepos()
+		if len(repos) > 0 {
 			if m.selected > 0 {
 				m.selected--
 			} else {
-				m.selected = len(m.repos) - 1
+				m.selected = len(repos) - 1
 			}
 			m = m.ensureRepoVisible()
 			m = m.resetRightPaneCursors()
 			return m, m.fetchForMode()
 		}
 	case "down", "j":
-		if len(m.repos) > 0 {
-			if m.selected < len(m.repos)-1 {
+		repos := m.filteredRepos()
+		if len(repos) > 0 {
+			if m.selected < len(repos)-1 {
 				m.selected++
 			} else {
 				m.selected = 0
@@ -542,47 +643,52 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 func (m Model) handleCursorUp() (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case ModeWorktrees:
-		if len(m.worktrees) > 0 {
+		items := m.filteredWorktrees()
+		if len(items) > 0 {
 			if m.worktreeSelected > 0 {
 				m.worktreeSelected--
 			} else {
-				m.worktreeSelected = len(m.worktrees) - 1
+				m.worktreeSelected = len(items) - 1
 			}
 			m = m.ensureWorktreeVisible()
 		}
 	case ModeBranches:
-		if len(m.rows) > 0 {
+		items := m.filteredRows()
+		if len(items) > 0 {
 			if m.branchSelected > 0 {
 				m.branchSelected--
 			} else {
-				m.branchSelected = len(m.rows) - 1
+				m.branchSelected = len(items) - 1
 			}
 			m = m.ensureBranchVisible()
 		}
 	case ModeStashes:
-		if len(m.stashes) > 0 {
+		items := m.filteredStashes()
+		if len(items) > 0 {
 			if m.stashSelected > 0 {
 				m.stashSelected--
 			} else {
-				m.stashSelected = len(m.stashes) - 1
+				m.stashSelected = len(items) - 1
 			}
 			m = m.ensureStashVisible()
 		}
 	case ModeHistory:
-		if len(m.commits) > 0 {
+		items := m.filteredCommits()
+		if len(items) > 0 {
 			if m.commitSelected > 0 {
 				m.commitSelected--
 			} else {
-				m.commitSelected = len(m.commits) - 1
+				m.commitSelected = len(items) - 1
 			}
 			m = m.ensureCommitVisible()
 		}
 	case ModeReflog:
-		if len(m.reflogs) > 0 {
+		items := m.filteredReflogs()
+		if len(items) > 0 {
 			if m.reflogSelected > 0 {
 				m.reflogSelected--
 			} else {
-				m.reflogSelected = len(m.reflogs) - 1
+				m.reflogSelected = len(items) - 1
 			}
 			m = m.ensureReflogVisible()
 		}
@@ -593,8 +699,9 @@ func (m Model) handleCursorUp() (tea.Model, tea.Cmd) {
 func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case ModeWorktrees:
-		if len(m.worktrees) > 0 {
-			if m.worktreeSelected < len(m.worktrees)-1 {
+		items := m.filteredWorktrees()
+		if len(items) > 0 {
+			if m.worktreeSelected < len(items)-1 {
 				m.worktreeSelected++
 			} else {
 				m.worktreeSelected = 0
@@ -602,8 +709,9 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 			m = m.ensureWorktreeVisible()
 		}
 	case ModeBranches:
-		if len(m.rows) > 0 {
-			if m.branchSelected < len(m.rows)-1 {
+		items := m.filteredRows()
+		if len(items) > 0 {
+			if m.branchSelected < len(items)-1 {
 				m.branchSelected++
 			} else {
 				m.branchSelected = 0
@@ -611,8 +719,9 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 			m = m.ensureBranchVisible()
 		}
 	case ModeStashes:
-		if len(m.stashes) > 0 {
-			if m.stashSelected < len(m.stashes)-1 {
+		items := m.filteredStashes()
+		if len(items) > 0 {
+			if m.stashSelected < len(items)-1 {
 				m.stashSelected++
 			} else {
 				m.stashSelected = 0
@@ -620,8 +729,9 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 			m = m.ensureStashVisible()
 		}
 	case ModeHistory:
-		if len(m.commits) > 0 {
-			if m.commitSelected < len(m.commits)-1 {
+		items := m.filteredCommits()
+		if len(items) > 0 {
+			if m.commitSelected < len(items)-1 {
 				m.commitSelected++
 			} else {
 				m.commitSelected = 0
@@ -629,8 +739,9 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 			m = m.ensureCommitVisible()
 		}
 	case ModeReflog:
-		if len(m.reflogs) > 0 {
-			if m.reflogSelected < len(m.reflogs)-1 {
+		items := m.filteredReflogs()
+		if len(items) > 0 {
+			if m.reflogSelected < len(items)-1 {
 				m.reflogSelected++
 			} else {
 				m.reflogSelected = 0
@@ -656,15 +767,15 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.overlay = OverlayBranchDiff
 		return m, m.fetchBranchDiff()
 	}
-	if m.mode == ModeStashes && len(m.stashes) > 0 {
+	if m.mode == ModeStashes && len(m.filteredStashes()) > 0 {
 		m.overlay = OverlayStashDiff
 		return m, m.fetchStashDiff()
 	}
-	if m.mode == ModeHistory && len(m.commits) > 0 {
+	if m.mode == ModeHistory && len(m.filteredCommits()) > 0 {
 		m.overlay = OverlayCommitDiff
 		return m, m.fetchCommitDiff()
 	}
-	if m.mode == ModeReflog && len(m.reflogs) > 0 {
+	if m.mode == ModeReflog && len(m.filteredReflogs()) > 0 {
 		m.overlay = OverlayReflogDiff
 		return m, m.fetchReflogDiff()
 	}
@@ -678,13 +789,13 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if m.mode == ModeHistory || m.mode == ModeReflog {
 		return m, nil
 	}
-	if m.mode == ModeStashes && len(m.stashes) > 0 && len(m.repos) > 0 {
+	if m.mode == ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmStashDrop()
 	}
-	if m.mode == ModeBranches && len(m.repos) > 0 {
+	if m.mode == ModeBranches && len(m.filteredRepos()) > 0 {
 		return m.confirmBranchDelete()
 	}
-	if m.mode == ModeWorktrees && len(m.worktrees) > 0 && len(m.repos) > 0 {
+	if m.mode == ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmWorktreeDelete()
 	}
 	return m, nil
@@ -723,17 +834,23 @@ func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
 
 func (m Model) openAtPath(action func(string) error) (tea.Model, tea.Cmd) {
 	if m.mode == ModeWorktrees {
+		if _, ok := m.currentRepoPath(); !ok {
+			return m, nil
+		}
 		if wt, ok := m.selectedWorktree(); ok && !wt.Stale {
 			path := wt.Path
 			return m, func() tea.Msg { _ = action(path); return nil }
 		}
 		return m, nil
 	}
-	if m.mode == ModeHistory && len(m.repos) > 0 {
-		path := m.repos[m.selected].Path
+	if m.mode == ModeHistory {
+		path, ok := m.currentRepoPath()
+		if !ok {
+			return m, nil
+		}
 		return m, func() tea.Msg { _ = action(path); return nil }
 	}
-	if m.mode == ModeBranches && len(m.repos) > 0 {
+	if m.mode == ModeBranches {
 		if row, ok := m.selectedRow(); ok && row.WorktreePath != "" {
 			path := row.WorktreePath
 			return m, func() tea.Msg { _ = action(path); return nil }
@@ -757,7 +874,11 @@ func (m Model) confirmStashDrop() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	idx := m.stashes[m.stashSelected].Index
+	stash, ok := m.selectedStash()
+	if !ok {
+		return m, nil
+	}
+	idx := stash.Index
 	m.confirmPrompt = fmt.Sprintf("Drop stash@{%d}? (y/n)", idx)
 	m.confirmAction = func() tea.Cmd {
 		return func() tea.Msg {
@@ -849,7 +970,7 @@ func (m Model) handlePrune() (tea.Model, tea.Cmd) {
 	if !m.destructive {
 		return m, nil
 	}
-	if m.mode == ModeWorktrees && len(m.worktrees) > 0 && len(m.repos) > 0 {
+	if m.mode == ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmWorktreePrune()
 	}
 	return m, nil
@@ -916,10 +1037,11 @@ func (m Model) resetRightPaneCursors() Model {
 // --- Message handlers ---
 
 func (m Model) currentRepoPath() (string, bool) {
-	if len(m.repos) == 0 || m.selected >= len(m.repos) {
+	repos := m.filteredRepos()
+	if len(repos) == 0 || m.selected >= len(repos) {
 		return "", false
 	}
-	return m.repos[m.selected].Path, true
+	return repos[m.selected].Path, true
 }
 
 func (m Model) isCurrentRepo(repoPath string) bool {
@@ -930,9 +1052,7 @@ func (m Model) isCurrentRepo(repoPath string) bool {
 func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m.worktrees = msg.Worktrees
-		if len(m.worktrees) == 0 || m.worktreeSelected >= len(m.worktrees) {
-			m.worktreeSelected = 0
-		}
+		m = m.clampSelectionsAfterFilter()
 	}
 	return m
 }
@@ -1036,9 +1156,7 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 			}
 		}
 		m.rows = filtered
-		if len(m.rows) == 0 || m.branchSelected >= len(m.rows) {
-			m.branchSelected = 0
-		}
+		m = m.clampSelectionsAfterFilter()
 	}
 	return m
 }
@@ -1046,6 +1164,7 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 func (m Model) handleStashResult(msg StashResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m.stashes = msg.Stashes
+		m = m.clampSelectionsAfterFilter()
 	}
 	return m
 }
@@ -1114,9 +1233,7 @@ func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {
 func (m Model) handleCommitResult(msg CommitResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m.commits = msg.Commits
-		if len(m.commits) == 0 || m.commitSelected >= len(m.commits) {
-			m.commitSelected = 0
-		}
+		m = m.clampSelectionsAfterFilter()
 	}
 	return m
 }
@@ -1124,16 +1241,14 @@ func (m Model) handleCommitResult(msg CommitResultMsg) Model {
 func (m Model) handleReflogResult(msg ReflogResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m.reflogs = msg.Reflogs
-		if len(m.reflogs) == 0 || m.reflogSelected >= len(m.reflogs) {
-			m.reflogSelected = 0
-		}
+		m = m.clampSelectionsAfterFilter()
 	}
 	return m
 }
 
 func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if m.commitSelected < len(m.commits) && m.commits[m.commitSelected].Hash == msg.Hash {
+		if commit, ok := m.selectedCommit(); ok && commit.Hash == msg.Hash {
 			m.overlayDiff = msg.Diff
 		}
 	}
@@ -1142,7 +1257,7 @@ func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) Model {
 
 func (m Model) handleReflogDiffResult(msg ReflogDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if m.reflogSelected < len(m.reflogs) && m.reflogs[m.reflogSelected].Hash == msg.Hash {
+		if entry, ok := m.selectedReflog(); ok && entry.Hash == msg.Hash {
 			m.overlayDiff = msg.Diff
 		}
 	}
@@ -1152,10 +1267,18 @@ func (m Model) handleReflogDiffResult(msg ReflogDiffResultMsg) Model {
 func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
 	var hash string
 	switch {
-	case m.mode == ModeHistory && len(m.commits) > 0:
-		hash = m.commits[m.commitSelected].Hash
-	case m.mode == ModeReflog && len(m.reflogs) > 0:
-		hash = m.reflogs[m.reflogSelected].Hash
+	case m.mode == ModeHistory:
+		commit, ok := m.selectedCommit()
+		if !ok {
+			return m, nil
+		}
+		hash = commit.Hash
+	case m.mode == ModeReflog:
+		entry, ok := m.selectedReflog()
+		if !ok {
+			return m, nil
+		}
+		hash = entry.Hash
 	default:
 		return m, nil
 	}
@@ -1277,10 +1400,14 @@ func (m Model) fetchWorktreeDiff() tea.Cmd {
 
 func (m Model) fetchStashDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
-	if !ok || len(m.stashes) == 0 {
+	if !ok {
 		return nil
 	}
-	index := m.stashes[m.stashSelected].Index
+	stash, ok := m.selectedStash()
+	if !ok {
+		return nil
+	}
+	index := stash.Index
 	return func() tea.Msg {
 		diff, _ := gitquery.StashDiff(repoPath, index)
 		return StashDiffResultMsg{RepoPath: repoPath, Index: index, Diff: diff}
@@ -1311,10 +1438,14 @@ func (m Model) fetchReflog() tea.Cmd {
 
 func (m Model) fetchReflogDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
-	if !ok || len(m.reflogs) == 0 {
+	if !ok {
 		return nil
 	}
-	hash := m.reflogs[m.reflogSelected].Hash
+	entry, ok := m.selectedReflog()
+	if !ok {
+		return nil
+	}
+	hash := entry.Hash
 	return func() tea.Msg {
 		diff, _ := gitquery.ReflogDiff(repoPath, hash)
 		return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, Diff: diff}
@@ -1323,10 +1454,14 @@ func (m Model) fetchReflogDiff() tea.Cmd {
 
 func (m Model) fetchCommitDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
-	if !ok || len(m.commits) == 0 {
+	if !ok {
 		return nil
 	}
-	hash := m.commits[m.commitSelected].Hash
+	commit, ok := m.selectedCommit()
+	if !ok {
+		return nil
+	}
+	hash := commit.Hash
 	return func() tea.Msg {
 		diff, _ := gitquery.CommitDiff(repoPath, hash)
 		return CommitDiffResultMsg{RepoPath: repoPath, Hash: hash, Diff: diff}
@@ -1336,22 +1471,276 @@ func (m Model) fetchCommitDiff() tea.Cmd {
 // --- Helpers ---
 
 func (m Model) selectedRow() (gitquery.BranchRow, bool) {
-	if m.branchSelected < 0 || m.branchSelected >= len(m.rows) {
+	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.BranchRow{}, false
 	}
-	return m.rows[m.branchSelected], true
+	rows := m.filteredRows()
+	if m.branchSelected < 0 || m.branchSelected >= len(rows) {
+		return gitquery.BranchRow{}, false
+	}
+	return rows[m.branchSelected], true
 }
 
 func (m Model) selectedWorktree() (gitquery.Worktree, bool) {
-	if m.worktreeSelected < 0 || m.worktreeSelected >= len(m.worktrees) {
+	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.Worktree{}, false
 	}
-	return m.worktrees[m.worktreeSelected], true
+	worktrees := m.filteredWorktrees()
+	if m.worktreeSelected < 0 || m.worktreeSelected >= len(worktrees) {
+		return gitquery.Worktree{}, false
+	}
+	return worktrees[m.worktreeSelected], true
+}
+
+func (m Model) selectedStash() (gitquery.Stash, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return gitquery.Stash{}, false
+	}
+	stashes := m.filteredStashes()
+	if m.stashSelected < 0 || m.stashSelected >= len(stashes) {
+		return gitquery.Stash{}, false
+	}
+	return stashes[m.stashSelected], true
+}
+
+func (m Model) selectedCommit() (gitquery.Commit, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return gitquery.Commit{}, false
+	}
+	commits := m.filteredCommits()
+	if m.commitSelected < 0 || m.commitSelected >= len(commits) {
+		return gitquery.Commit{}, false
+	}
+	return commits[m.commitSelected], true
+}
+
+func (m Model) selectedReflog() (gitquery.ReflogEntry, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return gitquery.ReflogEntry{}, false
+	}
+	reflogs := m.filteredReflogs()
+	if m.reflogSelected < 0 || m.reflogSelected >= len(reflogs) {
+		return gitquery.ReflogEntry{}, false
+	}
+	return reflogs[m.reflogSelected], true
 }
 
 func (m Model) isSelectedBranchDirtyWorktree() bool {
 	row, ok := m.selectedRow()
 	return ok && row.Branch.Dirty && row.Branch.IsWorktree
+}
+
+func (m Model) activeSearchQuery() string {
+	if m.activePane == 0 {
+		return m.repoSearch
+	}
+	return m.itemSearch
+}
+
+func (m Model) setActiveSearchQuery(query string) Model {
+	if m.activePane == 0 {
+		m.repoSearch = query
+		m.selected = 0
+		m.repoScroll = 0
+		return m
+	}
+
+	m.itemSearch = query
+	switch m.mode {
+	case ModeWorktrees:
+		m.worktreeSelected = 0
+		m.worktreeScroll = 0
+	case ModeBranches:
+		m.branchSelected = 0
+		m.branchScroll = 0
+	case ModeStashes:
+		m.stashSelected = 0
+		m.stashScroll = 0
+	case ModeHistory:
+		m.commitSelected = 0
+		m.commitScroll = 0
+	case ModeReflog:
+		m.reflogSelected = 0
+		m.reflogScroll = 0
+	}
+	return m
+}
+
+func (m Model) clampSelectionsAfterFilter() Model {
+	repos := m.filteredRepos()
+	if len(repos) == 0 {
+		m.selected = 0
+		m.repoScroll = 0
+	} else if m.selected >= len(repos) {
+		m.selected = len(repos) - 1
+	}
+
+	m.worktreeSelected = clampIndex(m.worktreeSelected, len(m.filteredWorktrees()))
+	m.branchSelected = clampIndex(m.branchSelected, len(m.filteredRows()))
+	m.stashSelected = clampIndex(m.stashSelected, len(m.filteredStashes()))
+	m.commitSelected = clampIndex(m.commitSelected, len(m.filteredCommits()))
+	m.reflogSelected = clampIndex(m.reflogSelected, len(m.filteredReflogs()))
+
+	m = m.ensureRepoVisible()
+	m = m.ensureWorktreeVisible()
+	m = m.ensureBranchVisible()
+	m = m.ensureStashVisible()
+	m = m.ensureCommitVisible()
+	m = m.ensureReflogVisible()
+	return m
+}
+
+func (m Model) selectFilteredRepo(repoPath string) Model {
+	for i, repo := range m.filteredRepos() {
+		if repo.Path == repoPath {
+			m.selected = i
+			return m
+		}
+	}
+	return m
+}
+
+func clampIndex(index, length int) int {
+	if length <= 0 || index < 0 {
+		return 0
+	}
+	if index >= length {
+		return length - 1
+	}
+	return index
+}
+
+func (m Model) filteredRepos() []scanner.Repo {
+	if m.repoSearch == "" {
+		return m.repos
+	}
+	var filtered []scanner.Repo
+	for _, repo := range m.repos {
+		if fuzzyMatch(m.repoSearch, repo.DisplayName+" "+repo.Path) {
+			filtered = append(filtered, repo)
+		}
+	}
+	return filtered
+}
+
+func (m Model) filteredRows() []gitquery.BranchRow {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	if m.itemSearch == "" {
+		return m.rows
+	}
+	var filtered []gitquery.BranchRow
+	for _, row := range m.rows {
+		if fuzzyMatch(m.itemSearch, branchSearchText(row)) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func (m Model) filteredStashes() []gitquery.Stash {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	if m.itemSearch == "" {
+		return m.stashes
+	}
+	var filtered []gitquery.Stash
+	for _, stash := range m.stashes {
+		if fuzzyMatch(m.itemSearch, fmt.Sprintf("stash@{%d} %s %s", stash.Index, stash.Date, stash.Message)) {
+			filtered = append(filtered, stash)
+		}
+	}
+	return filtered
+}
+
+func (m Model) filteredWorktrees() []gitquery.Worktree {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	if m.itemSearch == "" {
+		return m.worktrees
+	}
+	var filtered []gitquery.Worktree
+	for _, wt := range m.worktrees {
+		if fuzzyMatch(m.itemSearch, strings.Join([]string{wt.BranchName, wt.Path, wt.LockReason}, " ")) {
+			filtered = append(filtered, wt)
+		}
+	}
+	return filtered
+}
+
+func (m Model) filteredCommits() []gitquery.Commit {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	if m.itemSearch == "" {
+		return m.commits
+	}
+	var filtered []gitquery.Commit
+	for _, commit := range m.commits {
+		if fuzzyMatch(m.itemSearch, strings.Join([]string{commit.Hash, commit.Author, commit.Date, commit.Subject}, " ")) {
+			filtered = append(filtered, commit)
+		}
+	}
+	return filtered
+}
+
+func (m Model) filteredReflogs() []gitquery.ReflogEntry {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	if m.itemSearch == "" {
+		return m.reflogs
+	}
+	var filtered []gitquery.ReflogEntry
+	for _, entry := range m.reflogs {
+		if fuzzyMatch(m.itemSearch, strings.Join([]string{entry.Hash, entry.Selector, entry.Date, entry.Subject}, " ")) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func branchSearchText(row gitquery.BranchRow) string {
+	parts := []string{row.Branch.Name, row.WorktreePath}
+	parts = append(parts, row.Branch.Unpushed...)
+	return strings.Join(parts, " ")
+}
+
+func fuzzyMatch(query, target string) bool {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return true
+	}
+
+	if fuzzyMatchRunes(query, target) {
+		return true
+	}
+
+	tokens := strings.FieldsFunc(query, func(r rune) bool { return unicode.IsSpace(r) })
+	if len(tokens) <= 1 {
+		return false
+	}
+	for _, token := range tokens {
+		if !fuzzyMatchRunes(token, target) {
+			return false
+		}
+	}
+	return true
+}
+
+func fuzzyMatchRunes(query, target string) bool {
+	q := []rune(strings.ToLower(query))
+	t := []rune(strings.ToLower(target))
+	next := 0
+	for _, r := range t {
+		if next < len(q) && q[next] == r {
+			next++
+		}
+	}
+	return next == len(q)
 }
 
 func (m Model) ensureStashVisible() Model {
@@ -1361,7 +1750,7 @@ func (m Model) ensureStashVisible() Model {
 	}
 	rightContentWidth := m.width - ui.LeftPaneWidth - 2
 	line := 0
-	for i, s := range m.stashes {
+	for i, s := range m.filteredStashes() {
 		if i == m.stashSelected {
 			break
 		}
@@ -1381,6 +1770,10 @@ func (m Model) ensureRepoVisible() Model {
 	if contentHeight <= 0 {
 		contentHeight = 1
 	}
+	if len(m.filteredRepos()) == 0 {
+		m.repoScroll = 0
+		return m
+	}
 	if m.repoScroll > m.selected {
 		m.repoScroll = m.selected
 	}
@@ -1394,6 +1787,10 @@ func (m Model) ensureWorktreeVisible() Model {
 	contentHeight := m.height - ui.WorktreeContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
+	}
+	if len(m.filteredWorktrees()) == 0 {
+		m.worktreeScroll = 0
+		return m
 	}
 	if m.worktreeScroll > m.worktreeSelected {
 		m.worktreeScroll = m.worktreeSelected
@@ -1409,6 +1806,10 @@ func (m Model) ensureReflogVisible() Model {
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
+	if len(m.filteredReflogs()) == 0 {
+		m.reflogScroll = 0
+		return m
+	}
 	if m.reflogScroll > m.reflogSelected {
 		m.reflogScroll = m.reflogSelected
 	}
@@ -1422,6 +1823,10 @@ func (m Model) ensureCommitVisible() Model {
 	contentHeight := m.height - ui.BranchContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
+	}
+	if len(m.filteredCommits()) == 0 {
+		m.commitScroll = 0
+		return m
 	}
 	if m.commitScroll > m.commitSelected {
 		m.commitScroll = m.commitSelected
@@ -1438,7 +1843,7 @@ func (m Model) ensureBranchVisible() Model {
 		contentHeight = 16
 	}
 	line := 0
-	for i, row := range m.rows {
+	for i, row := range m.filteredRows() {
 		if i == m.branchSelected {
 			break
 		}
