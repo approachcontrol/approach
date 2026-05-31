@@ -98,6 +98,22 @@ func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
 	}
 }
 
+func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
+	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
+	if !strings.Contains(bar, "n: new worktree") {
+		t.Fatalf("expected new worktree hint in worktrees mode, got %q", bar)
+	}
+}
+
+func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
+	bar := RenderStatusBar(120, 1, OverlayWorktreeInput, 1, false, false, false)
+	for _, hint := range []string{"enter: create", "esc: cancel", "backspace: delete"} {
+		if !strings.Contains(bar, hint) {
+			t.Errorf("expected hint %q in input overlay bar %q", hint, bar)
+		}
+	}
+}
+
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	for _, pair := range [][2]string{
@@ -621,6 +637,37 @@ func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 	})
 	if !strings.Contains(view, "Force delete /dev/alpha/feat") {
 		t.Error("force confirm dialog should show prompt text")
+	}
+}
+
+func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             1,
+		Overlay:          OverlayWorktreeInput,
+		WorktreeInput:    "feature/new",
+		WorktreeInputErr: "already exists",
+	})
+	if !strings.Contains(view, "Create worktree from: feature/new") {
+		t.Error("worktree input dialog should show typed input")
+	}
+	if !strings.Contains(view, "already exists") {
+		t.Error("worktree input dialog should show error")
+	}
+}
+
+func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:   []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:   80,
+		Height:  24,
+		Mode:    1,
+		Overlay: OverlayWorktreeInput,
+	})
+	if !strings.Contains(view, "branch, tag, or new branch name") {
+		t.Error("worktree input dialog should show placeholder when input is empty")
 	}
 }
 

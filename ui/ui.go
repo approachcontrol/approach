@@ -21,6 +21,7 @@ const (
 	OverlayCommitDiff
 	OverlayWorktreeDiff
 	OverlayReflogDiff
+	OverlayWorktreeInput
 )
 
 const LeftPaneWidth = 30
@@ -88,6 +89,8 @@ type RenderParams struct {
 	OverlayScroll    int
 	ConfirmPrompt    string
 	ConfirmForce     bool
+	WorktreeInput    string
+	WorktreeInputErr string
 	BranchScroll     int
 	RepoScroll       int
 	StashScroll      int
@@ -242,6 +245,8 @@ func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, dest
 	switch {
 	case overlay == OverlayConfirm:
 		hints = "  y: confirm  n/esc: cancel"
+	case overlay == OverlayWorktreeInput:
+		hints = "  enter: create  esc: cancel  backspace: delete"
 	case overlay != OverlayNone:
 		hints = "  ↑/↓ scroll  esc: close"
 	case mode == 5:
@@ -270,6 +275,7 @@ func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, dest
 	case mode == 1:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
 		if activePane == 1 && !staleSelected {
+			hints += "  n: new worktree"
 			if dirtySelected {
 				hints += "  enter: diff"
 			}
@@ -520,6 +526,10 @@ func renderOverlay(p RenderParams) string {
 		lines := renderConfirmDialog(p.ConfirmPrompt, p.ConfirmForce, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
+	if p.Overlay == OverlayWorktreeInput {
+		lines := renderWorktreeInputDialog(p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
+		return strings.Join(lines, "\n") + "\n" + statusBar
+	}
 
 	var diffLines []string
 	if p.OverlayDiff != "" {
@@ -580,6 +590,35 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 		lines[mid] = strings.Repeat(" ", pad) + style.Render(prompt)
 	}
 	return lines
+}
+
+func renderWorktreeInputDialog(input, errText string, width, height int) []string {
+	lines := make([]string, height)
+	mid := height / 2
+	if mid >= len(lines) {
+		return lines
+	}
+
+	label := "Create worktree from: "
+	value := input
+	if value == "" {
+		value = placeholderStyle.Render("branch, tag, or new branch name")
+	}
+	prompt := label + value + activeModeStyle.Render("█")
+	lines[mid] = centeredLine(prompt, width)
+
+	if errText != "" && mid+1 < len(lines) {
+		lines[mid+1] = centeredLine(dirtyRedStyle.Render(errText), width)
+	}
+	return lines
+}
+
+func centeredLine(s string, width int) string {
+	pad := (width - lipgloss.Width(s)) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + truncateToWidth(s, width)
 }
 
 // truncateToWidth trims a styled string to fit within maxWidth visible columns.
