@@ -34,6 +34,11 @@ func PruneWorktree(repoPath string) error {
 	return exec.Command("git", "-C", repoPath, "worktree", "prune").Run()
 }
 
+// UnlockWorktree runs `git worktree unlock` for the given worktree path.
+func UnlockWorktree(repoPath, worktreePath string) error {
+	return exec.Command("git", "-C", repoPath, "worktree", "unlock", worktreePath).Run()
+}
+
 // CreateWorktree creates a new worktree from an existing branch/tag/ref, or
 // creates a new branch with that name from HEAD when the input does not resolve.
 func CreateWorktree(repoPath, ref string) (string, error) {
