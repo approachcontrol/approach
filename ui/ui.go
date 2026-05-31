@@ -64,7 +64,7 @@ var (
 	stashSelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true)
 	branchSelStyle    = lipgloss.NewStyle().Bold(true).Reverse(true)
 	rootStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -663,14 +663,13 @@ func truncateReason(s string, max int) string {
 	if max <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= max {
+	if lipgloss.Width(s) <= max {
 		return s
 	}
 	if max == 1 {
 		return "…"
 	}
-	return string(runes[:max-1]) + "…"
+	return truncateToWidth(s, max-lipgloss.Width("…")) + "…"
 }
 
 func renderPlaceholderPane(width, height int) []string {

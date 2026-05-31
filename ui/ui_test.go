@@ -938,6 +938,17 @@ func TestWorktreePane_LongLockReasonTruncated(t *testing.T) {
 	}
 }
 
+func TestTruncateReason_UsesVisibleWidth(t *testing.T) {
+	reason := strings.Repeat("界", MaxLockReasonWidth)
+	truncated := truncateReason(reason, MaxLockReasonWidth)
+	if lipgloss.Width(truncated) > MaxLockReasonWidth {
+		t.Errorf("truncated reason width %d exceeds max %d", lipgloss.Width(truncated), MaxLockReasonWidth)
+	}
+	if !strings.Contains(truncated, "…") {
+		t.Error("expected ellipsis marker for wide truncated lock reason")
+	}
+}
+
 func TestWorktreePane_LockedStalePrefersLockedIndicator(t *testing.T) {
 	wts := []gitquery.Worktree{
 		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},
