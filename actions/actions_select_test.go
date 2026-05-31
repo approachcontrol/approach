@@ -79,67 +79,96 @@ func TestSelectClipboardCommand_LinuxReportsMissingTools(t *testing.T) {
 	}
 }
 
-func TestSelectTerminalCommand_UsesMultiplexerBeforeTerminal(t *testing.T) {
+func TestTerminalLaunch_UsesMultiplexerBeforeTerminal(t *testing.T) {
 	env := fakeGetenv(map[string]string{
 		"TMUX":     "/tmp/tmux.sock",
 		"TERMINAL": "alacritty",
 	})
-	spec, err := selectTerminalCommand("linux", "/repo", env, fakeLookPath("tmux", "alacritty"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("tmux", "alacritty"))
 	if err != nil {
-		t.Fatalf("selectTerminalCommand returned error: %v", err)
+		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	assertSpec(t, spec, "tmux", []string{"new-window", "-c", "/repo"}, "")
+	if launch.Interactive {
+		t.Fatal("inside-tmux launch should be non-interactive")
+	}
+	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "wtui" || got[5] != "/repo" {
+		t.Fatalf("unexpected tmux launch args: %#v", got)
+	}
 }
 
-func TestSelectTerminalCommand_UsesZellijWhenActive(t *testing.T) {
+func TestTerminalLaunch_UsesZellijWhenActive(t *testing.T) {
 	env := fakeGetenv(map[string]string{"ZELLIJ": "0"})
-	spec, err := selectTerminalCommand("linux", "/repo", env, fakeLookPath("zellij"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("zellij"))
 	if err != nil {
-		t.Fatalf("selectTerminalCommand returned error: %v", err)
+		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	assertSpec(t, spec, "zellij", []string{"action", "new-pane", "--cwd", "/repo"}, "")
+	want := []string{"zellij", "action", "switch-session", WorktreeSessionName("/repo"), "--cwd", "/repo"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("unexpected zellij launch args: got %#v want %#v", launch.Cmd.Args, want)
+	}
 }
 
-func TestSelectTerminalCommand_HonorsTerminal(t *testing.T) {
+func TestTerminalLaunch_HonorsTerminal(t *testing.T) {
 	env := fakeGetenv(map[string]string{"TERMINAL": "wezterm start"})
-	spec, err := selectTerminalCommand("linux", "/repo", env, fakeLookPath("wezterm"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("wezterm"))
 	if err != nil {
-		t.Fatalf("selectTerminalCommand returned error: %v", err)
+		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	assertSpec(t, spec, "wezterm", []string{"start"}, "/repo")
+	if launch.Interactive {
+		t.Fatal("TERMINAL launch should not require the caller TTY")
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"wezterm", "start"}) {
+		t.Fatalf("unexpected TERMINAL args: %#v", launch.Cmd.Args)
+	}
+	if launch.Cmd.Dir != "/repo" {
+		t.Fatalf("expected TERMINAL launch dir /repo, got %q", launch.Cmd.Dir)
+	}
 }
 
-func TestSelectTerminalCommand_DarwinFallsBackToTerminalApp(t *testing.T) {
-	spec, err := selectTerminalCommand("darwin", "/repo", fakeGetenv(nil), fakeLookPath())
+func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
+	launch, err := terminalLaunch("/repo", "darwin", fakeGetenv(nil), fakeLookPath("open"))
 	if err != nil {
-		t.Fatalf("selectTerminalCommand returned error: %v", err)
+		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	assertSpec(t, spec, "open", []string{"-a", "Terminal", "/repo"}, "")
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"open", "-a", "Terminal", "/repo"}) {
+		t.Fatalf("unexpected macOS fallback args: %#v", launch.Cmd.Args)
+	}
 }
 
-func TestSelectTerminalCommand_LinuxUsesXDGOpenFallback(t *testing.T) {
-	spec, err := selectTerminalCommand("linux", "/repo", fakeGetenv(nil), fakeLookPath("xdg-open"))
+func TestTerminalLaunch_LinuxUsesXDGOpenFallback(t *testing.T) {
+	launch, err := terminalLaunch("/repo", "linux", fakeGetenv(nil), fakeLookPath("xdg-open"))
 	if err != nil {
-		t.Fatalf("selectTerminalCommand returned error: %v", err)
+		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	assertSpec(t, spec, "xdg-open", []string{"/repo"}, "")
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"xdg-open", "/repo"}) {
+		t.Fatalf("unexpected xdg-open fallback args: %#v", launch.Cmd.Args)
+	}
 }
 
-func TestSelectTerminalCommand_LinuxUsesShellFallback(t *testing.T) {
+func TestTerminalLaunch_LinuxUsesShellFallback(t *testing.T) {
 	env := fakeGetenv(map[string]string{"SHELL": "/bin/zsh"})
-	spec, err := selectTerminalCommand("linux", "/repo", env, fakeLookPath())
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath())
 	if err != nil {
-		t.Fatalf("selectTerminalCommand returned error: %v", err)
+		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	assertSpec(t, spec, "/bin/zsh", nil, "/repo")
+	if !launch.Interactive {
+		t.Fatal("shell fallback should require the caller TTY")
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"/bin/zsh"}) {
+		t.Fatalf("unexpected shell fallback args: %#v", launch.Cmd.Args)
+	}
+	if launch.Cmd.Dir != "/repo" {
+		t.Fatalf("expected shell launch dir /repo, got %q", launch.Cmd.Dir)
+	}
 }
 
-func TestSelectTerminalCommand_LinuxReportsMissingLauncher(t *testing.T) {
-	_, err := selectTerminalCommand("linux", "/repo", fakeGetenv(nil), fakeLookPath())
+func TestTerminalLaunch_ReportsMissingTerminalCommand(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "ghostterm"})
+	_, err := terminalLaunch("/repo", "linux", env, fakeLookPath())
 	if err == nil {
-		t.Fatal("expected missing terminal launcher error")
+		t.Fatal("expected missing TERMINAL command error")
 	}
-	for _, want := range []string{"TERMINAL", "xdg-open"} {
+	for _, want := range []string{"TERMINAL", "ghostterm"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
 		}
