@@ -28,13 +28,14 @@ const (
 type OverlayState = ui.OverlayState
 
 const (
-	OverlayNone         = ui.OverlayNone
-	OverlayStashDiff    = ui.OverlayStashDiff
-	OverlayBranchDiff   = ui.OverlayBranchDiff
-	OverlayConfirm      = ui.OverlayConfirm
-	OverlayCommitDiff   = ui.OverlayCommitDiff
-	OverlayWorktreeDiff = ui.OverlayWorktreeDiff
-	OverlayReflogDiff   = ui.OverlayReflogDiff
+	OverlayNone          = ui.OverlayNone
+	OverlayStashDiff     = ui.OverlayStashDiff
+	OverlayBranchDiff    = ui.OverlayBranchDiff
+	OverlayConfirm       = ui.OverlayConfirm
+	OverlayCommitDiff    = ui.OverlayCommitDiff
+	OverlayWorktreeDiff  = ui.OverlayWorktreeDiff
+	OverlayReflogDiff    = ui.OverlayReflogDiff
+	OverlayWorktreeInput = ui.OverlayWorktreeInput
 )
 
 // --- Messages ---
@@ -113,6 +114,17 @@ type WorktreeUnlockFailedMsg struct {
 	Err      string
 }
 
+type WorktreeCreatedMsg struct {
+	RepoPath     string
+	WorktreePath string
+}
+
+type WorktreeCreateFailedMsg struct {
+	RepoPath string
+	Input    string
+	Err      string
+}
+
 type ReflogResultMsg struct {
 	RepoPath string
 	Reflogs  []gitquery.ReflogEntry
@@ -159,6 +171,8 @@ type Model struct {
 	confirmPrompt    string
 	confirmAction    func() tea.Cmd
 	confirmForce     bool
+	worktreeInput    string
+	worktreeInputErr string
 	branchScroll     int
 	repoScroll       int
 	stashScroll      int
@@ -197,11 +211,14 @@ func (m Model) OverlayDiff() string             { return m.overlayDiff }
 func (m Model) OverlayScroll() int              { return m.overlayScroll }
 func (m Model) ConfirmPrompt() string           { return m.confirmPrompt }
 func (m Model) ConfirmForce() bool              { return m.confirmForce }
+func (m Model) WorktreeInput() string           { return m.worktreeInput }
+func (m Model) WorktreeInputErr() string        { return m.worktreeInputErr }
 func (m Model) BranchScroll() int               { return m.branchScroll }
 func (m Model) RepoScroll() int                 { return m.repoScroll }
 func (m Model) StashScroll() int                { return m.stashScroll }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
+func (m Model) TransientError() string          { return m.transientError }
 func (m Model) SearchActive() bool              { return m.searchActive }
 func (m Model) RepoSearch() string              { return m.repoSearch }
 func (m Model) ItemSearch() string              { return m.itemSearch }
@@ -239,6 +256,8 @@ func (m Model) View() string {
 		OverlayScroll:    m.overlayScroll,
 		ConfirmPrompt:    m.confirmPrompt,
 		ConfirmForce:     m.confirmForce,
+		WorktreeInput:    m.worktreeInput,
+		WorktreeInputErr: m.worktreeInputErr,
 		BranchScroll:     m.branchScroll,
 		RepoScroll:       m.repoScroll,
 		StashScroll:      m.stashScroll,
@@ -299,6 +318,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWorktreeUnlocked(msg)
 	case WorktreeUnlockFailedMsg:
 		return m.handleWorktreeUnlockFailed(msg), nil
+	case WorktreeCreatedMsg:
+		return m.handleWorktreeCreated(msg)
+	case WorktreeCreateFailedMsg:
+		return m.handleWorktreeCreateFailed(msg), nil
 	case CommitResultMsg:
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:
@@ -322,6 +345,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.overlay == OverlayConfirm {
 		return m.handleConfirmKey(key)
+	}
+	if m.overlay == OverlayWorktreeInput {
+		return m.handleWorktreeInputKey(msg)
 	}
 	if m.overlay != OverlayNone {
 		if m.activePane == 0 {
@@ -425,6 +451,34 @@ func (m Model) handleConfirmKey(key string) (tea.Model, tea.Cmd) {
 		return m, action()
 	case "n", "q", "esc":
 		m = m.clearConfirm()
+	}
+	return m, nil
+}
+
+func (m Model) handleWorktreeInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "enter":
+		input := strings.TrimSpace(m.worktreeInput)
+		if input == "" {
+			m.worktreeInputErr = "Enter a branch, tag, or new branch name"
+			return m, nil
+		}
+		m = m.clearWorktreeInput()
+		return m, m.createWorktree(input)
+	case "esc", "ctrl+c":
+		m = m.clearWorktreeInput()
+	case "backspace", "ctrl+h":
+		runes := []rune(m.worktreeInput)
+		if len(runes) > 0 {
+			m.worktreeInput = string(runes[:len(runes)-1])
+			m.worktreeInputErr = ""
+		}
+	default:
+		if len(msg.Runes) > 0 {
+			m.worktreeInput += string(msg.Runes)
+			m.worktreeInputErr = ""
+		}
 	}
 	return m, nil
 }
@@ -564,6 +618,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		m.activePane = 0
 	case "enter":
 		return m.handleEnter()
+	case "n":
+		if m.mode == ModeWorktrees {
+			return m.handleNewWorktree()
+		}
 	case "d":
 		return m.handleDelete()
 	case "p":
@@ -740,6 +798,16 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if m.mode == ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmWorktreeDelete()
 	}
+	return m, nil
+}
+
+func (m Model) handleNewWorktree() (tea.Model, tea.Cmd) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
+	m.overlay = OverlayWorktreeInput
+	m.worktreeInput = ""
+	m.worktreeInputErr = ""
 	return m, nil
 }
 
@@ -940,6 +1008,13 @@ func (m Model) clearConfirm() Model {
 	return m
 }
 
+func (m Model) clearWorktreeInput() Model {
+	m.overlay = OverlayNone
+	m.worktreeInput = ""
+	m.worktreeInputErr = ""
+	return m
+}
+
 func (m Model) resetRightPaneCursors() Model {
 	m.branchSelected = 0
 	m.stashSelected = 0
@@ -1032,6 +1107,29 @@ func (m Model) handleWorktreeUnlocked(msg WorktreeUnlockedMsg) (tea.Model, tea.C
 func (m Model) handleWorktreeUnlockFailed(msg WorktreeUnlockFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m.transientError = msg.Err
+	}
+	return m
+}
+
+func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	m.mode = ModeWorktrees
+	m.worktreeSelected = 0
+	m.worktreeScroll = 0
+	return m, m.fetchWorktrees()
+}
+
+func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.overlay = OverlayWorktreeInput
+		m.worktreeInput = msg.Input
+		if msg.Err == "" {
+			m.worktreeInputErr = "Unable to create worktree"
+		} else {
+			m.worktreeInputErr = msg.Err
+		}
 	}
 	return m
 }
@@ -1206,6 +1304,20 @@ func (m Model) fetchForMode() tea.Cmd {
 		return m.fetchReflog()
 	}
 	return nil
+}
+
+func (m Model) createWorktree(input string) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		worktreePath, err := actions.CreateWorktree(repoPath, input)
+		if err != nil {
+			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error()}
+		}
+		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath}
+	}
 }
 
 func (m Model) fetchWorktrees() tea.Cmd {

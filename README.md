@@ -66,6 +66,7 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 | `1`/`2`/`3`/`4`/`5` | Switch to worktrees / branches / stashes / history / reflog |
 | `←`/`h`/`→`/`l` | Cycle through modes |
 | `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
+| `n` | Create a new worktree from a branch, tag, or new branch name |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `t` | Open terminal at worktree path |
@@ -86,6 +87,8 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `✔` green: clean working tree
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
+
+Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list.
 
 ### Branches view (mode 2)
 

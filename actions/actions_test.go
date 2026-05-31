@@ -232,6 +232,88 @@ func TestPruneWorktree(t *testing.T) {
 	}
 }
 
+func TestDefaultWorktreePath(t *testing.T) {
+	path := actions.DefaultWorktreePath("/tmp/repo", "feature/new thing")
+	expected := filepath.Join("/tmp", "repo-worktrees", "feature-new-thing")
+	if path != expected {
+		t.Fatalf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestCreateWorktree_FromExistingBranch(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/existing")
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "feature/existing")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feature-existing")
+	if worktreePath != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, worktreePath)
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree directory to exist: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "feature/existing" {
+		t.Fatalf("expected checked out branch feature/existing, got %q", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestCreateWorktree_FromNewBranchName(t *testing.T) {
+	repoPath := setupRepo(t)
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "feature/new")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "feature/new" {
+		t.Fatalf("expected checked out branch feature/new, got %q", strings.TrimSpace(string(out)))
+	}
+	out, _ = exec.Command("git", "-C", repoPath, "branch", "--list", "feature/new").Output()
+	if !strings.Contains(string(out), "feature/new") {
+		t.Fatal("expected new branch to exist in repo")
+	}
+}
+
+func TestCreateWorktree_FromTag(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "tag", "v1.0.0")
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "v1.0.0")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected detached HEAD for tag worktree, got branch %q", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestCreateWorktree_EmptyInputFails(t *testing.T) {
+	repoPath := setupRepo(t)
+	if _, err := actions.CreateWorktree(repoPath, "  "); err == nil {
+		t.Fatal("expected error for empty input")
+	}
+}
+
+func TestCreateWorktree_RefStartingWithDashFails(t *testing.T) {
+	repoPath := setupRepo(t)
+	_, err := actions.CreateWorktree(repoPath, "--detach")
+	if err == nil {
+		t.Fatal("expected error for ref starting with dash")
+	}
+	if !strings.Contains(err.Error(), "cannot start with -") {
+		t.Fatalf("expected invalid ref error, got %v", err)
+	}
+}
+
 func TestUnlockWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	worktreePath := filepath.Join(filepath.Dir(repoPath), "wt-unlock")

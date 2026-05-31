@@ -858,6 +858,176 @@ func TestModel_WorktreeDeleteCompletedMsgIsNoOp(t *testing.T) {
 	}
 }
 
+// --- Worktree creation ---
+
+func TestModel_NKeyOpensWorktreeInput(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != model.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "" {
+		t.Errorf("expected empty worktree input, got %q", m.WorktreeInput())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd opening input, got %T", cmd)
+	}
+}
+
+func TestModel_NKeyNoOpOutsideWorktreesMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  rune
+		mode model.Mode
+	}{
+		{name: "branches", key: '2', mode: model.ModeBranches},
+		{name: "stashes", key: '3', mode: model.ModeStashes},
+		{name: "history", key: '4', mode: model.ModeHistory},
+		{name: "reflog", key: '5', mode: model.ModeReflog},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m = inWorktreesMode(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			if m.Mode() != tc.mode {
+				t.Fatalf("expected mode %d, got %d", tc.mode, m.Mode())
+			}
+
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+			if m.Overlay() != model.OverlayNone {
+				t.Errorf("expected OverlayNone, got %d", m.Overlay())
+			}
+			if cmd != nil {
+				t.Errorf("expected nil cmd, got %T", cmd)
+			}
+		})
+	}
+}
+
+func TestModel_WorktreeInputCapturesRunesAndBackspace(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.WorktreeInput() != "fea" {
+		t.Errorf("expected input %q, got %q", "fea", m.WorktreeInput())
+	}
+}
+
+func TestModel_WorktreeInputEscCancels(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("expected overlay closed, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "" {
+		t.Errorf("expected input cleared, got %q", m.WorktreeInput())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd on cancel, got %T", cmd)
+	}
+}
+
+func TestModel_WorktreeInputCtrlCCancels(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("expected overlay closed, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "" {
+		t.Errorf("expected input cleared, got %q", m.WorktreeInput())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd on cancel, got %T", cmd)
+	}
+}
+
+func TestModel_WorktreeInputEnterRequiresText(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != model.OverlayWorktreeInput {
+		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
+	}
+	if m.WorktreeInputErr() == "" {
+		t.Fatal("expected validation error")
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd for empty input, got %T", cmd)
+	}
+}
+
+func TestModel_WorktreeInputEnterCreatesWorktree(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected create worktree cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeCreateFailedMsg); !ok {
+		t.Fatalf("expected WorktreeCreateFailedMsg from fake repo, got %T", msg)
+	}
+}
+
+func TestModel_WorktreeCreatedRefetchesWorktrees(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"})
+	if m.Mode() != model.ModeWorktrees {
+		t.Errorf("expected mode worktrees after create, got %d", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchWorktrees cmd after create")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeResultMsg); !ok {
+		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
+	}
+}
+
+func TestModel_WorktreeCreateFailedReopensInput(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.WorktreeCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feat", Err: "boom"})
+	if m.Overlay() != model.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "feat" {
+		t.Errorf("expected input restored, got %q", m.WorktreeInput())
+	}
+	if m.WorktreeInputErr() != "boom" {
+		t.Errorf("expected error restored, got %q", m.WorktreeInputErr())
+	}
+}
+
+func TestModel_WorktreeCreateFailedUsesFallbackError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.WorktreeCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feat"})
+	if m.Overlay() != model.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "feat" {
+		t.Errorf("expected input restored, got %q", m.WorktreeInput())
+	}
+	if m.WorktreeInputErr() != "Unable to create worktree" {
+		t.Errorf("expected fallback error, got %q", m.WorktreeInputErr())
+	}
+}
+
 // --- Confirmation dialog + delete ---
 
 // enableDestructive presses Shift+D to enter destructive mode.
