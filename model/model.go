@@ -1077,6 +1077,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 					RepoPath:    repoPath,
 					Target:      branchName,
 					ForceAction: func() error { return actions.ForceDeleteBranch(repoPath, branchName) },
+					SuccessMsg:  WorktreeDeleteCompletedMsg{RepoPath: repoPath},
 				}
 			}
 			return WorktreeDeleteCompletedMsg{RepoPath: repoPath}

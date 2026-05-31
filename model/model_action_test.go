@@ -731,6 +731,94 @@ func TestModel_WorktreeRemovedShowsBranchConfirm(t *testing.T) {
 	}
 }
 
+func TestModel_CombinedCleanupConfirmYReturnsCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-feat", BranchName: "feat"},
+	}})
+	// Trigger branch confirm
+	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
+	if m.Overlay() != model.OverlayConfirm {
+		t.Fatalf("expected OverlayConfirm, got %d", m.Overlay())
+	}
+	// Confirm branch deletion
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("expected overlay closed after confirm, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected branch delete cmd after confirm, got nil")
+	}
+	// Fake path causes DeleteBranch to fail → DeleteFailedMsg
+	msg := cmd()
+	if _, ok := msg.(model.DeleteFailedMsg); !ok {
+		t.Errorf("expected DeleteFailedMsg from branch delete on fake path, got %T", msg)
+	}
+}
+
+func TestModel_CombinedCleanupConfirmNClosesDialog(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-feat", BranchName: "feat"},
+	}})
+	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
+	// Decline branch deletion
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("expected overlay closed after cancel, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd after cancel, got %T", cmd)
+	}
+}
+
+func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *testing.T) {
+	// Full end-to-end: worktree removed → "Also delete branch?" confirmed →
+	// DeleteBranch fails (fake path) → "Force delete?" shown → force confirmed →
+	// should return WorktreeDeleteCompletedMsg, not BranchDeletedMsg.
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-feat", BranchName: "feat"},
+	}})
+	// Worktree removed → branch confirm dialog
+	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
+	if m.Overlay() != model.OverlayConfirm {
+		t.Fatalf("expected branch confirm overlay, got %d", m.Overlay())
+	}
+	// Confirm branch deletion → DeleteBranch fails on fake path → DeleteFailedMsg
+	_, branchDeleteCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if branchDeleteCmd == nil {
+		t.Fatal("expected branch delete cmd, got nil")
+	}
+	deleteFailedMsg := branchDeleteCmd()
+	if _, ok := deleteFailedMsg.(model.DeleteFailedMsg); !ok {
+		t.Fatalf("expected DeleteFailedMsg from fake-path branch delete, got %T", deleteFailedMsg)
+	}
+	// Process DeleteFailedMsg → force confirm shown
+	m, _ = update(m, deleteFailedMsg)
+	if m.Overlay() != model.OverlayConfirm {
+		t.Fatalf("expected force confirm overlay, got %d", m.Overlay())
+	}
+	if !m.ConfirmForce() {
+		t.Fatal("expected ConfirmForce=true for force confirm")
+	}
+	// Confirm force-delete
+	_, forceCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if forceCmd == nil {
+		t.Fatal("expected force cmd, got nil")
+	}
+	result := forceCmd()
+	if _, ok := result.(model.WorktreeDeleteCompletedMsg); !ok {
+		t.Errorf("force-delete in combined cleanup should return WorktreeDeleteCompletedMsg, got %T", result)
+	}
+}
+
 // --- Worktree prune ---
 
 func TestModel_PKeyRequiresDestructiveMode(t *testing.T) {
