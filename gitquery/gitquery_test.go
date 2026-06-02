@@ -707,6 +707,48 @@ func TestListBranches_MergedWorktreeBranchStatusPreserved(t *testing.T) {
 	}
 }
 
+func TestListBranches_RootBranchExcludedFromMergedDetection(t *testing.T) {
+	repo := realPath(t, t.TempDir())
+	initRepoWithInitialBranch(t, repo, "main")
+
+	run(t, repo, "git", "checkout", "-b", "develop")
+	writeFile(t, repo, "develop.txt", "develop\n")
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "develop commit")
+
+	run(t, repo, "git", "checkout", "main")
+	run(t, repo, "git", "merge", "--no-ff", "develop", "-m", "merge develop")
+	run(t, repo, "git", "branch", "old-topic")
+	run(t, repo, "git", "checkout", "develop")
+
+	branches, err := gitquery.ListBranches(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	develop := findBranch(branches, "develop")
+	if develop == nil {
+		t.Fatal("develop not found")
+	}
+	if develop.Merged {
+		t.Error("root branch develop should not be marked merged")
+	}
+	if develop.MergedInto != "" {
+		t.Errorf("expected empty MergedInto for root branch, got %q", develop.MergedInto)
+	}
+
+	oldTopic := findBranch(branches, "old-topic")
+	if oldTopic == nil {
+		t.Fatal("old-topic not found")
+	}
+	if !oldTopic.Merged {
+		t.Error("expected non-root old-topic branch to be marked merged")
+	}
+	if oldTopic.MergedInto != "main" {
+		t.Errorf("expected old-topic MergedInto %q, got %q", "main", oldTopic.MergedInto)
+	}
+}
+
 func TestBranchDiff_ReturnsDiffForDirtyWorktree(t *testing.T) {
 	repo := realPath(t, initBranchRepo(t))
 

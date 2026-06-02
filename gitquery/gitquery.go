@@ -257,6 +257,8 @@ func ListBranches(repoPath string) ([]Branch, error) {
 			b.WorktreeStale = checkStale(wtPaths)
 			populateDirtyStatus(&b, wtPaths)
 		}
+		// Do not mark the user's active root worktree branch as a cleanup
+		// candidate, even when it is technically an ancestor of cleanupBranch.
 		if cleanupBranch != "" && b.Name != cleanupBranch && b.Name != rootBranch && branchMergedInto(repoPath, b.Name, cleanupBranch) {
 			b.Merged = true
 			b.MergedInto = cleanupBranch
@@ -348,6 +350,8 @@ func defaultCleanupBranch(repoPath string, branchLines []string, fallback string
 			return name
 		}
 	}
+	// Repos without main/master fall back to the root worktree branch, treating
+	// branches already merged into that active branch as cleanup candidates.
 	if fallback != "" && branches[fallback] {
 		return fallback
 	}

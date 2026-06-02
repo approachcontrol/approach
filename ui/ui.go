@@ -68,7 +68,7 @@ var (
 	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	mergedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	mergedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	diffAddStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	diffDelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
