@@ -156,7 +156,7 @@ type TerminalLaunchSpec struct {
 // session for path. It adapts to the current environment:
 //   - inside Zellij: switch to a Zellij session with the worktree name
 //   - inside tmux: create the tmux session if needed, then switch-client
-//   - outside a multiplexer: prefer tmux, Zellij, $TERMINAL, then a platform fallback
+//   - outside a multiplexer: prefer tmux, Zellij, $TERMINAL, then a platform/shell fallback
 func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
 	return terminalLaunch(path, runtime.GOOS, os.Getenv, exec.LookPath)
 }
@@ -201,12 +201,6 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc)
 	if goos == "darwin" && commandExists("open", lookPath) {
 		return TerminalLaunchSpec{
 			Cmd: exec.Command("open", "-a", "Terminal", path),
-		}, nil
-	}
-
-	if goos == "linux" && commandExists("xdg-open", lookPath) {
-		return TerminalLaunchSpec{
-			Cmd: exec.Command("xdg-open", path),
 		}, nil
 	}
 

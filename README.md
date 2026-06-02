@@ -138,4 +138,4 @@ make clean   # Remove bin/
 - Git 2.15+ (worktree support)
 - macOS clipboard: `pbcopy` (included with macOS)
 - Linux clipboard: install one of `wl-copy`, `xclip`, or `xsel`
-- Linux terminal launch: set `TERMINAL` to your terminal emulator, or install `xdg-open`; when neither is available, wtui falls back to launching `$SHELL` in the worktree directory
+- Linux terminal launch: set `TERMINAL` to your terminal emulator; when no tmux/Zellij/`TERMINAL` launch is available, wtui falls back to launching `$SHELL` in the worktree directory

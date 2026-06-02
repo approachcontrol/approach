@@ -442,6 +442,17 @@ func TestModel_ClipboardResultShowsError(t *testing.T) {
 	}
 }
 
+func TestModel_TerminalResultShowsError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = update(m, model.TerminalResultMsg{Err: "TERMINAL is set to \"ghostterm\", but that command was not found"})
+
+	view := m.View()
+	if !strings.Contains(view, "ghostterm") {
+		t.Fatalf("expected terminal error in view, got:\n%s", view)
+	}
+}
+
 func TestModel_DKeyNoOpInHistoryMode(t *testing.T) {
 	m := modelInHistoryWithCommits()
 	m = enableDestructive(m)

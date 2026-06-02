@@ -135,13 +135,20 @@ func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
 	}
 }
 
-func TestTerminalLaunch_LinuxUsesXDGOpenFallback(t *testing.T) {
-	launch, err := terminalLaunch("/repo", "linux", fakeGetenv(nil), fakeLookPath("xdg-open"))
+func TestTerminalLaunch_LinuxUsesShellFallbackEvenWhenXDGOpenExists(t *testing.T) {
+	env := fakeGetenv(map[string]string{"SHELL": "/bin/zsh"})
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("xdg-open"))
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
-	if !reflect.DeepEqual(launch.Cmd.Args, []string{"xdg-open", "/repo"}) {
-		t.Fatalf("unexpected xdg-open fallback args: %#v", launch.Cmd.Args)
+	if !launch.Interactive {
+		t.Fatal("shell fallback should require the caller TTY")
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"/bin/zsh"}) {
+		t.Fatalf("unexpected shell fallback args: %#v", launch.Cmd.Args)
+	}
+	if launch.Cmd.Dir != "/repo" {
+		t.Fatalf("expected shell launch dir /repo, got %q", launch.Cmd.Dir)
 	}
 }
 

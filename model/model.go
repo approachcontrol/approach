@@ -140,6 +140,10 @@ type ClipboardResultMsg struct {
 	Err string
 }
 
+type TerminalResultMsg struct {
+	Err string
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)
@@ -335,6 +339,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ReflogDiffResultMsg:
 		return m.handleReflogDiffResult(msg), nil
 	case ClipboardResultMsg:
+		if msg.Err != "" {
+			m.transientError = msg.Err
+		}
+		return m, nil
+	case TerminalResultMsg:
 		if msg.Err != "" {
 			m.transientError = msg.Err
 		}
@@ -877,14 +886,22 @@ func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
 	}
 	launch, err := actions.TerminalLaunch(path)
 	if err != nil {
+		m.transientError = err.Error()
 		return m, nil
 	}
 	if launch.Interactive {
-		return m, tea.ExecProcess(launch.Cmd, nil)
+		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
+			if err != nil {
+				return TerminalResultMsg{Err: err.Error()}
+			}
+			return TerminalResultMsg{}
+		})
 	}
 	return m, func() tea.Msg {
-		_ = launch.Cmd.Run()
-		return nil
+		if err := launch.Cmd.Run(); err != nil {
+			return TerminalResultMsg{Err: err.Error()}
+		}
+		return TerminalResultMsg{}
 	}
 }
 
