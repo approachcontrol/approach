@@ -111,6 +111,8 @@ type RenderParams struct {
 	SearchActive     bool
 	RepoSearch       string
 	ItemSearch       string
+	FetchAvailable   bool
+	PullAvailable    bool
 }
 
 // Render produces the full terminal view string.
@@ -134,7 +136,7 @@ func Render(p RenderParams) string {
 		dirtySelected = wt.Dirty
 		lockedSelected = wt.Locked
 	}
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch, p.FetchAvailable, p.PullAvailable)
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -248,10 +250,16 @@ func renderModeHeader(mode, width int) string {
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
-	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "", false, "", "")
+	fetchAvailable := activePane == 1 && (mode == 1 || mode == 2)
+	pullAvailable := activePane == 1 && mode == 1
+	if mode == 1 && staleSelected {
+		fetchAvailable = false
+		pullAvailable = false
+	}
+	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "", false, "", "", fetchAvailable, pullAvailable)
 }
 
-func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string, searchActive bool, repoSearch, itemSearch string) string {
+func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string, searchActive bool, repoSearch, itemSearch string, fetchAvailable, pullAvailable bool) string {
 	if transientError != "" {
 		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
 	}
@@ -279,14 +287,32 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		hints = "  ↑/↓ scroll  esc: close"
 	case mode == 5:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff  y: copy hash"
+		if fetchAvailable {
+			hints += "  f: fetch"
+		}
+		if pullAvailable {
+			hints += "  F: pull"
+		}
 	case mode == 4:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff  y: copy hash  t: terminal  c: code"
+		if fetchAvailable {
+			hints += "  f: fetch"
+		}
+		if pullAvailable {
+			hints += "  F: pull"
+		}
 	case mode == 3:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff"
 		if destructive {
 			hints += "  " + dirtyRedStyle.Render("d: drop")
 		} else {
 			hints += "  D: destructive mode"
+		}
+		if fetchAvailable {
+			hints += "  f: fetch"
+		}
+		if pullAvailable {
+			hints += "  F: pull"
 		}
 	case mode == 2:
 		keys := "  |  tab: pane  q/esc: quit"
@@ -298,6 +324,12 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 			if destructive {
 				keys += "  " + dirtyRedStyle.Render("d: delete")
 			}
+			if fetchAvailable {
+				keys += "  f: fetch"
+			}
+			if pullAvailable {
+				keys += "  F: pull"
+			}
 		}
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == 1:
@@ -307,10 +339,16 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 			if dirtySelected {
 				hints += "  enter: diff"
 			}
-			hints += "  t: terminal  c: code"
 			if destructive && !lockedSelected {
 				hints += "  " + dirtyRedStyle.Render("d: delete")
 			}
+			if fetchAvailable {
+				hints += "  f: fetch"
+			}
+			if pullAvailable {
+				hints += "  F: pull"
+			}
+			hints += "  t: terminal  c: code"
 		}
 		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
@@ -561,7 +599,7 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 }
 
 func renderOverlay(p RenderParams) string {
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch)
+	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch, p.FetchAvailable, p.PullAvailable)
 	contentHeight := p.Height - 1
 
 	// Confirmation dialog overlay

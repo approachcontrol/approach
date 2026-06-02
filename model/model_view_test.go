@@ -590,6 +590,35 @@ func TestModel_ViewWorktreeUnlockFailureClearsOnSuccess(t *testing.T) {
 	}
 }
 
+func TestModel_ViewGitFetchFailureShowsStatusError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.GitFetchFailedMsg{RepoPath: "/dev/alpha", Err: "fetch failed"})
+
+	view := m.View()
+	if !strings.Contains(view, "fetch failed") {
+		t.Error("view should show fetch failure in status bar")
+	}
+	if m.Overlay() != model.OverlayNone {
+		t.Errorf("fetch failure should not open overlay, got %d", m.Overlay())
+	}
+}
+
+func TestModel_ViewGitPullFailureClearsOnSuccess(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.GitPullFailedMsg{RepoPath: "/dev/alpha", Err: "pull failed"})
+
+	m, _ = update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
+
+	view := m.View()
+	if strings.Contains(view, "pull failed") {
+		t.Error("pull failure should clear after successful pull")
+	}
+}
+
 func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
