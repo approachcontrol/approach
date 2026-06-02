@@ -76,7 +76,7 @@ func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
 
 func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 0, true, false, false) // activePane=0 (left), destructive=true
-	for _, hint := range []string{"t: terminal", "c: code", "d: delete"} {
+	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code", "d: delete"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be hidden when left pane is active", hint)
 		}
@@ -90,8 +90,8 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 }
 
 func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false) // activePane=1 (right)
-	for _, hint := range []string{"t: terminal", "c: code", "d: delete"} {
+	bar := RenderStatusBar(160, 2, 0, 1, true, false, false) // activePane=1 (right)
+	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code", "d: delete"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be shown when right pane is active", hint)
 		}
@@ -99,11 +99,12 @@ func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
 }
 
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
 	for _, pair := range [][2]string{
 		{"tab: pane", "q/esc: quit"},
+		{"d: delete", "f: fetch"},
+		{"f: fetch", "F: pull"},
 		{"t: terminal", "c: code"},
-		{"c: code", "d: delete"},
 	} {
 		a := strings.Index(bar, pair[0])
 		b := strings.Index(bar, pair[1])
@@ -1001,7 +1002,7 @@ func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
 
 func TestStatusBar_WorktreesModeShowsDiffHintWhenDirty(t *testing.T) {
 	bar := RenderStatusBar(120, 1, 0, 1, false, false, true)
-	for _, hint := range []string{"enter: diff", "t: terminal", "c: code"} {
+	for _, hint := range []string{"enter: diff", "f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode should show %q when dirty", hint)
 		}
@@ -1013,7 +1014,7 @@ func TestStatusBar_WorktreesModeHidesDiffHintWhenClean(t *testing.T) {
 	if strings.Contains(bar, "enter: diff") {
 		t.Error("worktrees mode should NOT show 'enter: diff' when clean")
 	}
-	for _, hint := range []string{"t: terminal", "c: code"} {
+	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode should show %q when clean and not stale", hint)
 		}
@@ -1022,7 +1023,7 @@ func TestStatusBar_WorktreesModeHidesDiffHintWhenClean(t *testing.T) {
 
 func TestStatusBar_WorktreesModeStaleHidesAllActionHints(t *testing.T) {
 	bar := RenderStatusBar(120, 1, 0, 1, false, true, true)
-	for _, hint := range []string{"enter: diff", "t: terminal", "c: code"} {
+	for _, hint := range []string{"enter: diff", "f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode should NOT show %q when stale", hint)
 		}
@@ -1064,7 +1065,7 @@ func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
 
 func TestStatusBar_WorktreesModeRightPaneShowsActionHints(t *testing.T) {
 	bar := RenderStatusBar(120, 1, 0, 1, true, false, false) // right pane active
-	for _, hint := range []string{"t: terminal", "c: code"} {
+	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode right pane should show %q", hint)
 		}
@@ -1073,7 +1074,7 @@ func TestStatusBar_WorktreesModeRightPaneShowsActionHints(t *testing.T) {
 
 func TestStatusBar_WorktreesModeLeftPaneHidesActionHints(t *testing.T) {
 	bar := RenderStatusBar(120, 1, 0, 0, true, false, true) // left pane active, destructive
-	for _, hint := range []string{"enter: diff", "t: terminal", "c: code", "d: delete", "p: prune"} {
+	for _, hint := range []string{"enter: diff", "f: fetch", "F: pull", "t: terminal", "c: code", "d: delete", "p: prune"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode left pane should hide %q", hint)
 		}

@@ -259,6 +259,117 @@ func TestModel_CKey_EmptyWorktrees_NoCmd(t *testing.T) {
 	}
 }
 
+// --- Fetch/pull actions ---
+
+func TestModel_FKey_Worktree_FiresFetchCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for f key on worktree")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.GitFetchFailedMsg); !ok {
+		t.Fatalf("expected GitFetchFailedMsg for nonexistent test path, got %T", msg)
+	}
+}
+
+func TestModel_ShiftFKey_Worktree_FiresPullCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for F key on worktree")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.GitPullFailedMsg); !ok {
+		t.Fatalf("expected GitPullFailedMsg for nonexistent test path, got %T", msg)
+	}
+}
+
+func TestModel_FAndShiftFKeys_StaleWorktree_NoCmd(t *testing.T) {
+	for _, key := range []rune{'f', 'F'} {
+		m := model.New(testRepos())
+		m = inRightPane(m)
+		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+			{Path: "/dev/alpha-gone", BranchName: "gone", Stale: true},
+		}})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if cmd != nil {
+			t.Errorf("expected nil cmd for %q key on stale worktree", key)
+		}
+	}
+}
+
+func TestModel_ShiftFKey_NonWorktreeBranch_NoCmd(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
+		{Name: "feature"},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for pull on non-worktree branch, got %T", cmd)
+	}
+}
+
+func TestModel_GitFetchedRefetchesCurrentMode(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+
+	_, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	if cmd == nil {
+		t.Fatal("expected refetch cmd after fetch success")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.BranchResultMsg); !ok {
+		t.Fatalf("expected BranchResultMsg from refetch, got %T", msg)
+	}
+}
+
+func TestModel_GitPulledRefetchesCurrentMode(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+
+	_, cmd := update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
+	if cmd == nil {
+		t.Fatal("expected refetch cmd after pull success")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.WorktreeResultMsg); !ok {
+		t.Fatalf("expected WorktreeResultMsg from refetch, got %T", msg)
+	}
+}
+
+func TestModel_StaleGitFetchedMsgIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+
+	_, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	if cmd != nil {
+		t.Fatal("expected stale fetch result to be ignored")
+	}
+}
+
+func TestModel_StaleGitPullFailedMsgIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+	m, _ = update(m, model.GitPullFailedMsg{RepoPath: "/dev/alpha", Err: "pull failed"})
+
+	if strings.Contains(m.View(), "pull failed") {
+		t.Fatal("expected stale pull failure to be ignored")
+	}
+}
+
 // --- Branch diff (enter key) ---
 
 func TestModel_EnterStillRequiresDirtyWorktree(t *testing.T) {

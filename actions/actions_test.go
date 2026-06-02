@@ -72,6 +72,88 @@ func setupRepo(t *testing.T) (repoPath string) {
 	return repoPath
 }
 
+func runOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func setupRemoteRepo(t *testing.T) (localPath, upstreamPath, branch string) {
+	t.Helper()
+	dir := t.TempDir()
+	upstreamPath = filepath.Join(dir, "upstream")
+	originPath := filepath.Join(dir, "origin.git")
+	localPath = filepath.Join(dir, "local")
+
+	mustRun(t, dir, "git", "init", upstreamPath)
+	mustRun(t, upstreamPath, "git", "config", "user.email", "test@test.com")
+	mustRun(t, upstreamPath, "git", "config", "user.name", "Test")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "init")
+	mustRun(t, dir, "git", "init", "--bare", originPath)
+	mustRun(t, upstreamPath, "git", "remote", "add", "origin", originPath)
+	mustRun(t, upstreamPath, "git", "push", "-u", "origin", "HEAD")
+
+	mustRun(t, dir, "git", "clone", originPath, localPath)
+	mustRun(t, localPath, "git", "config", "user.email", "test@test.com")
+	mustRun(t, localPath, "git", "config", "user.name", "Test")
+	branch = runOutput(t, localPath, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	return localPath, upstreamPath, branch
+}
+
+func TestFetch(t *testing.T) {
+	localPath, upstreamPath, branch := setupRemoteRepo(t)
+	oldRemote := runOutput(t, localPath, "git", "rev-parse", "origin/"+branch)
+
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "remote change")
+	wantRemote := runOutput(t, upstreamPath, "git", "rev-parse", "HEAD")
+	mustRun(t, upstreamPath, "git", "push")
+
+	if err := actions.Fetch(localPath); err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+
+	gotRemote := runOutput(t, localPath, "git", "rev-parse", "origin/"+branch)
+	if gotRemote == oldRemote {
+		t.Fatal("expected fetch to advance the remote-tracking branch")
+	}
+	if gotRemote != wantRemote {
+		t.Fatalf("expected origin/%s at %s, got %s", branch, wantRemote, gotRemote)
+	}
+}
+
+func TestFetch_Error(t *testing.T) {
+	if err := actions.Fetch("/nonexistent"); err == nil {
+		t.Fatal("expected Fetch to fail for nonexistent path")
+	}
+}
+
+func TestPull(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "remote change")
+	wantHead := runOutput(t, upstreamPath, "git", "rev-parse", "HEAD")
+	mustRun(t, upstreamPath, "git", "push")
+
+	if err := actions.Pull(localPath); err != nil {
+		t.Fatalf("Pull returned error: %v", err)
+	}
+
+	gotHead := runOutput(t, localPath, "git", "rev-parse", "HEAD")
+	if gotHead != wantHead {
+		t.Fatalf("expected local HEAD at %s, got %s", wantHead, gotHead)
+	}
+}
+
+func TestPull_Error(t *testing.T) {
+	if err := actions.Pull("/nonexistent"); err == nil {
+		t.Fatal("expected Pull to fail for nonexistent path")
+	}
+}
+
 func TestForceRemoveWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	worktreePath := filepath.Join(filepath.Dir(repoPath), "wt-dirty")

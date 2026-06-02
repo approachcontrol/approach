@@ -37,6 +37,29 @@ func UnlockWorktree(repoPath, worktreePath string) error {
 	return exec.Command("git", "-C", repoPath, "worktree", "unlock", worktreePath).Run()
 }
 
+// Fetch runs `git fetch --prune` for the given repo or worktree path.
+func Fetch(path string) error {
+	return runGit(path, "fetch", "--prune")
+}
+
+// Pull runs `git pull --ff-only` for the given repo or worktree path.
+func Pull(path string) error {
+	return runGit(path, "pull", "--ff-only")
+}
+
+func runGit(path string, args ...string) error {
+	cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return nil
+}
+
 // DeleteBranch runs `git branch -d`.
 func DeleteBranch(repoPath, name string) error {
 	return exec.Command("git", "-C", repoPath, "branch", "-d", name).Run()

@@ -113,6 +113,24 @@ type WorktreeUnlockFailedMsg struct {
 	Err      string
 }
 
+type GitFetchedMsg struct {
+	RepoPath string
+}
+
+type GitFetchFailedMsg struct {
+	RepoPath string
+	Err      string
+}
+
+type GitPulledMsg struct {
+	RepoPath string
+}
+
+type GitPullFailedMsg struct {
+	RepoPath string
+	Err      string
+}
+
 type ReflogResultMsg struct {
 	RepoPath string
 	Reflogs  []gitquery.ReflogEntry
@@ -257,6 +275,8 @@ func (m Model) View() string {
 		SearchActive:     m.searchActive,
 		RepoSearch:       m.repoSearch,
 		ItemSearch:       m.itemSearch,
+		FetchAvailable:   m.canFetch(),
+		PullAvailable:    m.canPull(),
 	})
 }
 
@@ -299,6 +319,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWorktreeUnlocked(msg)
 	case WorktreeUnlockFailedMsg:
 		return m.handleWorktreeUnlockFailed(msg), nil
+	case GitFetchedMsg:
+		return m.handleGitFetched(msg)
+	case GitFetchFailedMsg:
+		return m.handleGitFetchFailed(msg), nil
+	case GitPulledMsg:
+		return m.handleGitPulled(msg)
+	case GitPullFailedMsg:
+		return m.handleGitPullFailed(msg), nil
 	case CommitResultMsg:
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:
@@ -570,6 +598,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handlePrune()
 	case "u":
 		return m.handleUnlock()
+	case "f":
+		return m.handleFetch()
+	case "F":
+		return m.handlePull()
 	case "t":
 		return m.handleOpenTerminal()
 	case "c":
@@ -761,6 +793,32 @@ func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
 			return WorktreeUnlockFailedMsg{RepoPath: repoPath, Err: err.Error()}
 		}
 		return WorktreeUnlockedMsg{RepoPath: repoPath}
+	}
+}
+
+func (m Model) handleFetch() (tea.Model, tea.Cmd) {
+	repoPath, path, ok := m.fetchTargetPath()
+	if !ok {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := actions.Fetch(path); err != nil {
+			return GitFetchFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("fetch failed: %v", err)}
+		}
+		return GitFetchedMsg{RepoPath: repoPath}
+	}
+}
+
+func (m Model) handlePull() (tea.Model, tea.Cmd) {
+	repoPath, path, ok := m.pullTargetPath()
+	if !ok {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := actions.Pull(path); err != nil {
+			return GitPullFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("pull failed: %v", err)}
+		}
+		return GitPulledMsg{RepoPath: repoPath}
 	}
 }
 
@@ -1036,6 +1094,36 @@ func (m Model) handleWorktreeUnlockFailed(msg WorktreeUnlockFailedMsg) Model {
 	return m
 }
 
+func (m Model) handleGitFetched(msg GitFetchedMsg) (tea.Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.transientError = ""
+		return m, m.fetchForMode()
+	}
+	return m, nil
+}
+
+func (m Model) handleGitFetchFailed(msg GitFetchFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.transientError = msg.Err
+	}
+	return m
+}
+
+func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.transientError = ""
+		return m, m.fetchForMode()
+	}
+	return m, nil
+}
+
+func (m Model) handleGitPullFailed(msg GitPullFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.transientError = msg.Err
+	}
+	return m
+}
+
 func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		allRows := gitquery.FlattenBranches(msg.Branches)
@@ -1206,6 +1294,83 @@ func (m Model) fetchForMode() tea.Cmd {
 		return m.fetchReflog()
 	}
 	return nil
+}
+
+func (m Model) canFetch() bool {
+	if m.activePane != 1 {
+		return false
+	}
+	_, _, ok := m.fetchTargetPath()
+	return ok
+}
+
+func (m Model) canPull() bool {
+	if m.activePane != 1 {
+		return false
+	}
+	_, _, ok := m.pullTargetPath()
+	return ok
+}
+
+func (m Model) fetchTargetPath() (string, string, bool) {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return "", "", false
+	}
+	switch m.mode {
+	case ModeWorktrees:
+		wt, ok := m.selectedWorktree()
+		if !ok {
+			return repoPath, repoPath, true
+		}
+		if wt.Stale {
+			return "", "", false
+		}
+		return repoPath, wt.Path, true
+	case ModeBranches:
+		row, ok := m.selectedRow()
+		if !ok {
+			return repoPath, repoPath, true
+		}
+		if row.Stale {
+			return "", "", false
+		}
+		if row.WorktreePath != "" {
+			return repoPath, row.WorktreePath, true
+		}
+		return repoPath, repoPath, true
+	default:
+		return repoPath, repoPath, true
+	}
+}
+
+func (m Model) pullTargetPath() (string, string, bool) {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return "", "", false
+	}
+	switch m.mode {
+	case ModeWorktrees:
+		wt, ok := m.selectedWorktree()
+		if !ok {
+			return repoPath, repoPath, true
+		}
+		if wt.Stale {
+			return "", "", false
+		}
+		return repoPath, wt.Path, true
+	case ModeBranches:
+		row, ok := m.selectedRow()
+		if !ok {
+			return repoPath, repoPath, true
+		}
+		if row.Stale || row.WorktreePath == "" {
+			return "", "", false
+		}
+		return repoPath, row.WorktreePath, true
+	default:
+		return repoPath, repoPath, true
+	}
 }
 
 func (m Model) fetchWorktrees() tea.Cmd {
