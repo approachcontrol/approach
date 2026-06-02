@@ -136,23 +136,37 @@ func ListWorktrees(repoPath string) ([]Worktree, error) {
 	return worktrees, nil
 }
 
-func populateWorktreeDirtyStatus(wt *Worktree) {
-	statusOut, err := gitCmd(wt.Path, "status", "--porcelain")
+// readDirtyStatus inspects a worktree path and reports how many files are
+// changed along with the number of lines added and deleted relative to HEAD.
+// A path with no changes yields zero counts and a nil error.
+func readDirtyStatus(path string) (files, added, deleted int, err error) {
+	statusOut, err := gitCmd(path, "status", "--porcelain")
 	if err != nil {
-		return
+		return 0, 0, 0, err
 	}
 	statusLines := splitLines(statusOut)
 	if len(statusLines) == 0 {
+		return 0, 0, 0, nil
+	}
+	files = len(statusLines)
+
+	diffOut, err := gitCmd(path, "diff", "HEAD", "--numstat")
+	if err != nil {
+		return files, 0, 0, err
+	}
+	added, deleted = ParseNumstat(diffOut)
+	return files, added, deleted, nil
+}
+
+func populateWorktreeDirtyStatus(wt *Worktree) {
+	files, added, deleted, _ := readDirtyStatus(wt.Path)
+	if files == 0 {
 		return
 	}
 	wt.Dirty = true
-	wt.FilesChanged = len(statusLines)
-
-	diffOut, err := gitCmd(wt.Path, "diff", "HEAD", "--numstat")
-	if err != nil {
-		return
-	}
-	wt.LinesAdded, wt.LinesDeleted = ParseNumstat(diffOut)
+	wt.FilesChanged = files
+	wt.LinesAdded = added
+	wt.LinesDeleted = deleted
 }
 
 // ListCommits returns the most recent 50 commits for the given repo path.
@@ -377,31 +391,24 @@ func unpushedCommits(repoPath, branchName, upstream string) []string {
 
 func populateDirtyStatus(b *Branch, paths []string) {
 	for _, path := range paths {
-		statusOut, err := gitCmd(path, "status", "--porcelain")
-		if err != nil {
-			continue
-		}
-		statusLines := splitLines(statusOut)
-		if len(statusLines) == 0 {
+		files, added, deleted, _ := readDirtyStatus(path)
+		if files == 0 {
 			continue
 		}
 		b.Dirty = true
-		b.FilesChanged += len(statusLines)
-
-		diffOut, err := gitCmd(path, "diff", "HEAD", "--numstat")
-		if err != nil {
-			continue
-		}
-		a, d := ParseNumstat(diffOut)
-		b.LinesAdded += a
-		b.LinesDeleted += d
+		b.FilesChanged += files
+		b.LinesAdded += added
+		b.LinesDeleted += deleted
 	}
 }
 
 func checkStale(paths []string) []bool {
 	stale := make([]bool, len(paths))
 	for i, p := range paths {
-		if _, err := os.Stat(p); os.IsNotExist(err) {
+		// Treat any stat failure (missing, permission denied, etc.) as stale.
+		// Being conservative avoids falsely reporting an inaccessible-but-existing
+		// worktree as healthy.
+		if _, err := os.Stat(p); err != nil {
 			stale[i] = true
 		}
 	}

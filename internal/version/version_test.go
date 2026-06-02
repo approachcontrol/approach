@@ -6,10 +6,10 @@ import (
 )
 
 func TestString(t *testing.T) {
-	originalVersion, originalCommit, originalDate := Version, Commit, Date
+	originalVersion, originalCommit, originalDate := version, commit, date
 	originalReadBuildInfo := readBuildInfo
 	t.Cleanup(func() {
-		Version, Commit, Date = originalVersion, originalCommit, originalDate
+		version, commit, date = originalVersion, originalCommit, originalDate
 		readBuildInfo = originalReadBuildInfo
 	})
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
@@ -48,7 +48,7 @@ func TestString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			Version, Commit, Date = tt.version, tt.commit, tt.date
+			version, commit, date = tt.version, tt.commit, tt.date
 
 			if got := String(); got != tt.want {
 				t.Fatalf("String() = %q, want %q", got, tt.want)
@@ -58,14 +58,14 @@ func TestString(t *testing.T) {
 }
 
 func TestStringFallsBackToBuildInfoWhenLdflagsDefault(t *testing.T) {
-	originalVersion, originalCommit, originalDate := Version, Commit, Date
+	originalVersion, originalCommit, originalDate := version, commit, date
 	originalReadBuildInfo := readBuildInfo
 	t.Cleanup(func() {
-		Version, Commit, Date = originalVersion, originalCommit, originalDate
+		version, commit, date = originalVersion, originalCommit, originalDate
 		readBuildInfo = originalReadBuildInfo
 	})
 
-	Version, Commit, Date = defaultVersion, defaultCommit, defaultDate
+	version, commit, date = defaultVersion, defaultCommit, defaultDate
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
 		return &debug.BuildInfo{
 			Main: debug.Module{
@@ -86,14 +86,14 @@ func TestStringFallsBackToBuildInfoWhenLdflagsDefault(t *testing.T) {
 }
 
 func TestStringPrefersLdflagsOverBuildInfo(t *testing.T) {
-	originalVersion, originalCommit, originalDate := Version, Commit, Date
+	originalVersion, originalCommit, originalDate := version, commit, date
 	originalReadBuildInfo := readBuildInfo
 	t.Cleanup(func() {
-		Version, Commit, Date = originalVersion, originalCommit, originalDate
+		version, commit, date = originalVersion, originalCommit, originalDate
 		readBuildInfo = originalReadBuildInfo
 	})
 
-	Version, Commit, Date = "v0.2.0", "ldflags-commit", "2026-05-10T12:00:00Z"
+	version, commit, date = "v0.2.0", "ldflags-commit", "2026-05-10T12:00:00Z"
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
 		return &debug.BuildInfo{
 			Main: debug.Module{

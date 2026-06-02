@@ -8,6 +8,7 @@ import (
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/ui"
 )
 
 func TestModel_ViewShowsBranchData(t *testing.T) {
@@ -541,7 +542,7 @@ func TestModel_ViewWorktreeUnlockFailureShowsStatusError(t *testing.T) {
 	if !strings.Contains(view, "unlock failed") {
 		t.Error("view should show unlock failure in status bar")
 	}
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("unlock failure should not open overlay, got %d", m.Overlay())
 	}
 }
@@ -600,7 +601,7 @@ func TestModel_ViewGitFetchFailureShowsStatusError(t *testing.T) {
 	if !strings.Contains(view, "fetch failed") {
 		t.Error("view should show fetch failure in status bar")
 	}
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("fetch failure should not open overlay, got %d", m.Overlay())
 	}
 }

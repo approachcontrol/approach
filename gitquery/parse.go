@@ -122,7 +122,7 @@ func ParseWorktreeList(output string) []WorktreeInfo {
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			if len(current) > 0 {
-				result = append(result, parseOneWorktreeBlock(strings.Join(current, "\n")))
+				result = append(result, parseOneWorktreeBlock(current))
 				current = nil
 			}
 			continue
@@ -130,14 +130,14 @@ func ParseWorktreeList(output string) []WorktreeInfo {
 		current = append(current, line)
 	}
 	if len(current) > 0 {
-		result = append(result, parseOneWorktreeBlock(strings.Join(current, "\n")))
+		result = append(result, parseOneWorktreeBlock(current))
 	}
 	return result
 }
 
-func parseOneWorktreeBlock(block string) WorktreeInfo {
+func parseOneWorktreeBlock(block []string) WorktreeInfo {
 	var wt WorktreeInfo
-	for _, line := range strings.Split(block, "\n") {
+	for _, line := range block {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
 			wt.Path = strings.TrimPrefix(line, "worktree ")

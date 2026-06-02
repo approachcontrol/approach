@@ -650,14 +650,7 @@ func TestDropStash_Error(t *testing.T) {
 	}
 }
 
-func TestOpenTerminal_Error(t *testing.T) {
-	err := actions.OpenTerminal("/nonexistent/path/that/does/not/exist")
-	if err == nil {
-		t.Error("expected error for nonexistent path, got nil")
-	}
-}
-
-func TestOpenTerminal_InteractiveLaunchRequiresCallerTTY(t *testing.T) {
+func TestTerminalLaunch_TmuxRequiresInteractiveTTY(t *testing.T) {
 	dir := t.TempDir()
 	tmuxPath := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
@@ -672,12 +665,12 @@ func TestOpenTerminal_InteractiveLaunchRequiresCallerTTY(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := actions.OpenTerminal(worktreePath)
-	if err == nil {
-		t.Fatal("expected interactive terminal launch to return an error")
+	launch, err := actions.TerminalLaunch(worktreePath)
+	if err != nil {
+		t.Fatalf("TerminalLaunch returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "requires an interactive TTY") {
-		t.Fatalf("expected interactive TTY error, got %v", err)
+	if !launch.Interactive {
+		t.Fatal("expected tmux launch outside a multiplexer to be interactive")
 	}
 }
 

@@ -18,9 +18,9 @@ builds:
     ldflags:
       - >-
         -s -w
-        -X github.com/brian-bell/wtui/internal/version.Version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
-        -X github.com/brian-bell/wtui/internal/version.Commit={{ .ShortCommit }}
-        -X github.com/brian-bell/wtui/internal/version.Date={{ .Date }}
+        -X github.com/brian-bell/wtui/internal/version.version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
+        -X github.com/brian-bell/wtui/internal/version.commit={{ .ShortCommit }}
+        -X github.com/brian-bell/wtui/internal/version.date={{ .Date }}
 
 archives:
   - id: wtui

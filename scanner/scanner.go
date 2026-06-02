@@ -15,7 +15,11 @@ type Repo struct {
 
 // ScanOptions configures the scanner.
 type ScanOptions struct {
-	Root     string
+	Root string
+	// MaxDepth controls how many directory levels below Root are scanned.
+	// Only values 0-2 are meaningful: 0 defaults to 2, 1 scans only the
+	// immediate children of Root, and 2 also scans one level deeper. Values
+	// greater than 2 behave the same as 2 (the scan never recurses further).
 	MaxDepth int
 }
 
@@ -92,6 +96,12 @@ func Scan(opts ScanOptions) ([]Repo, error) {
 }
 
 func isRepo(path string) bool {
+	// A repo has a ".git" entry that is either a directory (normal repo) or a
+	// regular file (a git worktree/submodule pointer). Bare repos (which have no
+	// ".git" entry at all) are intentionally not detected here.
 	info, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil && info.IsDir()
+	if err != nil {
+		return false
+	}
+	return info.IsDir() || info.Mode().IsRegular()
 }
