@@ -13,7 +13,7 @@ import (
 
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
-	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream"} {
+	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {
 		if !strings.Contains(bar, legend) {
 			t.Errorf("branches mode status bar should contain legend %q", legend)
 		}
@@ -547,6 +547,23 @@ func TestBranchPane_UnpushedCommitsShown(t *testing.T) {
 	}
 	if !strings.Contains(joined, "Add feature") {
 		t.Error("should show second unpushed commit message")
+	}
+}
+
+func TestBranchPane_MergedBranchShowsCleanupCandidate(t *testing.T) {
+	rows := []gitquery.BranchRow{
+		{Branch: gitquery.Branch{Name: "merged-feat", HasUpstream: true, Merged: true, MergedInto: "main"}},
+	}
+	lines := renderBranchPane(rows, 80, 10)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "merged-feat") {
+		t.Error("should show merged branch name")
+	}
+	if !strings.Contains(joined, "merged") {
+		t.Errorf("should show merged cleanup indicator, got %q", joined)
+	}
+	if strings.Contains(joined, "✔") {
+		t.Errorf("merged branch should not also render clean-only indicator, got %q", joined)
 	}
 }
 

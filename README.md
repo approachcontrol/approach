@@ -100,6 +100,7 @@ Status indicators stack on each branch:
 - `●` yellow: ahead/behind upstream — shows `+N/-N` counts
 - `●` red: dirty worktree — shows `N files +X/-Y` (lines added/deleted)
 - `●` purple: no upstream or upstream gone
+- `merged` cyan: branch is fully merged into the cleanup branch (`main` or `master`)
 
 Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij session and `c` opens VSCode at the worktree path (root branch only). `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
 

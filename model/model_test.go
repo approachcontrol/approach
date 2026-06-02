@@ -1357,7 +1357,7 @@ func TestModel_WorktreeBranchesFilteredFromBranchView(t *testing.T) {
 	branches := []gitquery.Branch{
 		{Name: "feat-a"},
 		{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/alpha"}},
-		{Name: "wt-branch", IsWorktree: true, WorktreePaths: []string{"/dev/alpha-wt"}},
+		{Name: "wt-branch", Merged: true, MergedInto: "main", IsWorktree: true, WorktreePaths: []string{"/dev/alpha-wt"}},
 		{Name: "feat-b"},
 	}
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})

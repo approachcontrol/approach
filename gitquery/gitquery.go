@@ -54,6 +54,8 @@ type Branch struct {
 	Ahead         int
 	Behind        int
 	Unpushed      []string
+	Merged        bool
+	MergedInto    string
 	IsWorktree    bool
 	WorktreePaths []string
 	WorktreeStale []bool // parallel to WorktreePaths; true when directory is missing
@@ -228,6 +230,9 @@ func ListBranches(repoPath string) ([]Branch, error) {
 	}
 
 	lines := splitLines(out)
+	rootBranch := rootWorktreeBranch(repoPath, wtMap)
+	cleanupBranch := defaultCleanupBranch(repoPath, lines, rootBranch)
+
 	branches := make([]Branch, 0, len(lines))
 	for _, line := range lines {
 		if line == "" {
@@ -251,6 +256,10 @@ func ListBranches(repoPath string) ([]Branch, error) {
 			b.WorktreePaths = wtPaths
 			b.WorktreeStale = checkStale(wtPaths)
 			populateDirtyStatus(&b, wtPaths)
+		}
+		if cleanupBranch != "" && b.Name != cleanupBranch && b.Name != rootBranch && branchMergedInto(repoPath, b.Name, cleanupBranch) {
+			b.Merged = true
+			b.MergedInto = cleanupBranch
 		}
 
 		branches = append(branches, b)
@@ -315,6 +324,45 @@ func branchAheadBehind(repoPath, branchName, upstream string) (int, int, error) 
 	return ahead, behind, nil
 }
 
+func rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
+	for branch, paths := range wtMap {
+		for _, path := range paths {
+			if path == repoPath {
+				return branch
+			}
+		}
+	}
+	return strings.TrimSpace(maybeGitCmd(repoPath, "branch", "--show-current"))
+}
+
+func defaultCleanupBranch(repoPath string, branchLines []string, fallback string) string {
+	branches := make(map[string]bool, len(branchLines))
+	for _, line := range branchLines {
+		b, _ := ParseBranchLine(line)
+		if b.Name != "" {
+			branches[b.Name] = true
+		}
+	}
+	for _, name := range []string{"main", "master"} {
+		if branches[name] {
+			return name
+		}
+	}
+	if fallback != "" && branches[fallback] {
+		return fallback
+	}
+	ref := strings.TrimSpace(maybeGitCmd(repoPath, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"))
+	ref = strings.TrimPrefix(ref, "origin/")
+	if branches[ref] {
+		return ref
+	}
+	return ""
+}
+
+func branchMergedInto(repoPath, branchName, cleanupBranch string) bool {
+	return gitCmdRun(repoPath, "merge-base", "--is-ancestor", branchName, cleanupBranch) == nil
+}
+
 func unpushedCommits(repoPath, branchName, upstream string) []string {
 	out, err := gitCmd(repoPath, "log", "--oneline", upstream+".."+branchName)
 	if err != nil {
@@ -363,6 +411,14 @@ func firstWorktreePath(paths []string) string {
 	return paths[0]
 }
 
+func maybeGitCmd(dir string, args ...string) string {
+	out, err := gitCmd(dir, args...)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 func gitCmd(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -371,6 +427,12 @@ func gitCmd(dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func gitCmdRun(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Run()
 }
 
 func splitLines(s string) []string {

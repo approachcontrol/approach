@@ -34,6 +34,17 @@ func initRepo(t *testing.T, dir string) {
 	run(t, dir, "git", "commit", "-m", "init")
 }
 
+// initRepoWithInitialBranch creates a git repo in dir with one commit on initialBranch.
+func initRepoWithInitialBranch(t *testing.T, dir, initialBranch string) {
+	t.Helper()
+	run(t, dir, "git", "init", "-b", initialBranch)
+	run(t, dir, "git", "config", "user.email", "test@test.com")
+	run(t, dir, "git", "config", "user.name", "Test")
+	writeFile(t, dir, "README.md", "init")
+	run(t, dir, "git", "add", ".")
+	run(t, dir, "git", "commit", "-m", "initial")
+}
+
 // initBranchRepo creates a git repo in a new temp dir with one commit. Returns the dir.
 func initBranchRepo(t *testing.T) string {
 	t.Helper()
@@ -581,6 +592,118 @@ func TestListBranches_UntrackedOnlyDirtyWorktree(t *testing.T) {
 	}
 	if b.FilesChanged != 1 {
 		t.Errorf("expected FilesChanged = 1, got %d", b.FilesChanged)
+	}
+}
+
+func TestListBranches_MergedDetectionMain(t *testing.T) {
+	repo := realPath(t, t.TempDir())
+	initRepoWithInitialBranch(t, repo, "main")
+
+	run(t, repo, "git", "checkout", "-b", "merged-branch")
+	writeFile(t, repo, "merged.txt", "merged\n")
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "merged branch commit")
+	run(t, repo, "git", "checkout", "main")
+	run(t, repo, "git", "merge", "--no-ff", "merged-branch", "-m", "merge merged branch")
+
+	run(t, repo, "git", "checkout", "-b", "unmerged-branch")
+	writeFile(t, repo, "unmerged.txt", "unmerged\n")
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "unmerged branch commit")
+	run(t, repo, "git", "checkout", "main")
+
+	branches, err := gitquery.ListBranches(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	merged := findBranch(branches, "merged-branch")
+	if merged == nil {
+		t.Fatal("merged-branch not found")
+	}
+	if !merged.Merged {
+		t.Fatal("expected merged-branch to be marked merged")
+	}
+	if merged.MergedInto != "main" {
+		t.Errorf("expected MergedInto %q, got %q", "main", merged.MergedInto)
+	}
+
+	unmerged := findBranch(branches, "unmerged-branch")
+	if unmerged == nil {
+		t.Fatal("unmerged-branch not found")
+	}
+	if unmerged.Merged {
+		t.Error("unmerged-branch should not be marked merged")
+	}
+
+	main := findBranch(branches, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if main.Merged {
+		t.Error("cleanup branch main should not be marked merged")
+	}
+}
+
+func TestListBranches_MergedDetectionMaster(t *testing.T) {
+	repo := realPath(t, t.TempDir())
+	initRepoWithInitialBranch(t, repo, "master")
+
+	run(t, repo, "git", "checkout", "-b", "merged-branch")
+	writeFile(t, repo, "merged.txt", "merged\n")
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "merged branch commit")
+	run(t, repo, "git", "checkout", "master")
+	run(t, repo, "git", "merge", "--no-ff", "merged-branch", "-m", "merge merged branch")
+
+	branches, err := gitquery.ListBranches(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	merged := findBranch(branches, "merged-branch")
+	if merged == nil {
+		t.Fatal("merged-branch not found")
+	}
+	if !merged.Merged {
+		t.Fatal("expected merged-branch to be marked merged")
+	}
+	if merged.MergedInto != "master" {
+		t.Errorf("expected MergedInto %q, got %q", "master", merged.MergedInto)
+	}
+
+	master := findBranch(branches, "master")
+	if master == nil {
+		t.Fatal("master not found")
+	}
+	if master.Merged {
+		t.Error("cleanup branch master should not be marked merged")
+	}
+}
+
+func TestListBranches_MergedWorktreeBranchStatusPreserved(t *testing.T) {
+	repo := realPath(t, t.TempDir())
+	initRepoWithInitialBranch(t, repo, "main")
+
+	run(t, repo, "git", "branch", "worktree-branch")
+	wtDir := realPath(t, t.TempDir())
+	wtPath := filepath.Join(wtDir, "wt-branch")
+	run(t, repo, "git", "worktree", "add", wtPath, "worktree-branch")
+
+	branches, err := gitquery.ListBranches(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := findBranch(branches, "worktree-branch")
+	if b == nil {
+		t.Fatal("worktree-branch not found")
+	}
+	if !b.IsWorktree {
+		t.Error("expected worktree-branch to preserve worktree status")
+	}
+	if !b.Merged {
+		t.Error("expected worktree-branch at main to be marked merged")
 	}
 }
 
