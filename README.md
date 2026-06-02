@@ -6,6 +6,12 @@ A terminal UI for managing git worktrees across repositories.
 
 ## Install
 
+### Homebrew
+
+```bash
+brew install --cask brian-bell/tap/wtui
+```
+
 ### GitHub Releases
 
 Download a pre-built macOS or Linux binary from the
@@ -66,9 +72,10 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 | `1`/`2`/`3`/`4`/`5` | Switch to worktrees / branches / stashes / history / reflog |
 | `←`/`h`/`→`/`l` | Cycle through modes |
 | `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
+| `n` | Create a new worktree from a branch, tag, or new branch name |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
-| `t` | Open terminal at worktree path |
+| `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
 | `y` | Copy hash to clipboard (history/reflog view) |
 | `D` | Toggle destructive mode |
@@ -87,6 +94,8 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
+Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list.
+
 ### Branches view (mode 2)
 
 Shows non-worktree branches and the root branch. Worktree branches are managed in the worktrees view (mode 1) and are hidden here to avoid duplication. The root branch (checked out at the repo root) is pinned to position 0 with a blue `[root]` annotation and cannot be deleted.
@@ -97,8 +106,9 @@ Status indicators stack on each branch:
 - `●` yellow: ahead/behind upstream — shows `+N/-N` counts
 - `●` red: dirty worktree — shows `N files +X/-Y` (lines added/deleted)
 - `●` purple: no upstream or upstream gone
+- `merged` cyan: branch is fully merged into the cleanup branch (`main` or `master`)
 
-Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t`/`c` open a terminal or VSCode at the worktree path (root branch only). `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
+Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij session and `c` opens VSCode at the worktree path (root branch only). `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
 
 ### Stashes view (mode 3)
 
@@ -106,7 +116,7 @@ Browse stashes for the selected repo. Long stash messages wrap to two lines (dat
 
 ### History view (mode 4)
 
-Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to view the full commit diff, `y` to copy the commit hash to clipboard, and `t`/`c` to open terminal or VSCode at the repo root.
+Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to view the full commit diff, `y` to copy the commit hash to clipboard, `t` to open or attach to a tmux/Zellij session, and `c` to open VSCode at the repo root.
 
 ### Reflog view (mode 5)
 
@@ -117,6 +127,7 @@ Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the 
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `WORKTREE_ROOT` | `~/dev` | Root directory to scan for git repos (up to 2 levels deep) |
+| `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 
 ## Development
 
@@ -132,3 +143,6 @@ make clean   # Remove bin/
 
 - Go 1.26+
 - Git 2.15+ (worktree support)
+- macOS clipboard: `pbcopy` (included with macOS)
+- Linux clipboard: install one of `wl-copy`, `xclip`, or `xsel`
+- Linux terminal launch: set `TERMINAL` to your terminal emulator; when no tmux/Zellij/`TERMINAL` launch is available, wtui falls back to launching `$SHELL` in the worktree directory

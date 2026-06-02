@@ -33,3 +33,17 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
+
+homebrew_casks:
+  - name: wtui
+    ids:
+      - wtui
+    binaries:
+      - wtui
+    directory: Casks
+    homepage: "https://github.com/brian-bell/wtui"
+    description: "Terminal UI for managing git worktrees across repositories"
+    repository:
+      owner: brian-bell
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"

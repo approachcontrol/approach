@@ -320,6 +320,7 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 			keys += "  D: destructive mode"
 		}
 		if activePane == 1 {
+			keys += "  t: terminal  c: code"
 			if destructive {
 				keys += "  " + dirtyRedStyle.Render("d: delete")
 			}
@@ -329,7 +330,6 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 			if pullAvailable {
 				keys += "  F: pull"
 			}
-			keys += "  t: terminal  c: code"
 		}
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == 1:
