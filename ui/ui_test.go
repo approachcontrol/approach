@@ -13,7 +13,7 @@ import (
 
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
-	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream"} {
+	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {
 		if !strings.Contains(bar, legend) {
 			t.Errorf("branches mode status bar should contain legend %q", legend)
 		}
@@ -94,6 +94,22 @@ func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
 	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code", "d: delete"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be shown when right pane is active", hint)
+		}
+	}
+}
+
+func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
+	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
+	if !strings.Contains(bar, "n: new worktree") {
+		t.Fatalf("expected new worktree hint in worktrees mode, got %q", bar)
+	}
+}
+
+func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
+	bar := RenderStatusBar(120, 1, OverlayWorktreeInput, 1, false, false, false)
+	for _, hint := range []string{"enter: create", "esc: cancel", "backspace: delete"} {
+		if !strings.Contains(bar, hint) {
+			t.Errorf("expected hint %q in input overlay bar %q", hint, bar)
 		}
 	}
 }
@@ -535,6 +551,23 @@ func TestBranchPane_UnpushedCommitsShown(t *testing.T) {
 	}
 }
 
+func TestBranchPane_MergedBranchShowsCleanupCandidate(t *testing.T) {
+	rows := []gitquery.BranchRow{
+		{Branch: gitquery.Branch{Name: "merged-feat", HasUpstream: true, Merged: true, MergedInto: "main"}},
+	}
+	lines := renderBranchPane(rows, 80, 10)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "merged-feat") {
+		t.Error("should show merged branch name")
+	}
+	if !strings.Contains(joined, "merged") {
+		t.Errorf("should show merged cleanup indicator, got %q", joined)
+	}
+	if strings.Contains(joined, "✔") {
+		t.Errorf("merged branch should not also render clean-only indicator, got %q", joined)
+	}
+}
+
 func TestBranchPane_UnpushedCapsAt5WithOverflow(t *testing.T) {
 	msgs := make([]string, 8)
 	for i := range msgs {
@@ -622,6 +655,37 @@ func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 	})
 	if !strings.Contains(view, "Force delete /dev/alpha/feat") {
 		t.Error("force confirm dialog should show prompt text")
+	}
+}
+
+func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             1,
+		Overlay:          OverlayWorktreeInput,
+		WorktreeInput:    "feature/new",
+		WorktreeInputErr: "already exists",
+	})
+	if !strings.Contains(view, "Create worktree from: feature/new") {
+		t.Error("worktree input dialog should show typed input")
+	}
+	if !strings.Contains(view, "already exists") {
+		t.Error("worktree input dialog should show error")
+	}
+}
+
+func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:   []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:   80,
+		Height:  24,
+		Mode:    1,
+		Overlay: OverlayWorktreeInput,
+	})
+	if !strings.Contains(view, "branch, tag, or new branch name") {
+		t.Error("worktree input dialog should show placeholder when input is empty")
 	}
 }
 

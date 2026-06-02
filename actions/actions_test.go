@@ -20,6 +20,19 @@ func mustRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func prependFakePath(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	// Set up a bare repo with a commit so worktrees work
 	dir := t.TempDir()
@@ -314,6 +327,167 @@ func TestPruneWorktree(t *testing.T) {
 	}
 }
 
+func TestDefaultWorktreePath(t *testing.T) {
+	path := actions.DefaultWorktreePath("/tmp/repo", "feature/new thing")
+	expected := filepath.Join("/tmp", "repo-worktrees", "feature-new-thing")
+	if path != expected {
+		t.Fatalf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestWorktreeSessionName(t *testing.T) {
+	tests := []struct {
+		path       string
+		wantPrefix string
+	}{
+		{"/tmp/repo-worktrees/feature-api", "feature-api-"},
+		{"/tmp/repo-worktrees/feature/api:oauth", "api-oauth-"},
+		{"/tmp/repo-worktrees/../repo", "repo-"},
+		{"/", "worktree-"},
+	}
+
+	for _, tt := range tests {
+		got := actions.WorktreeSessionName(tt.path)
+		if !strings.HasPrefix(got, tt.wantPrefix) {
+			t.Errorf("WorktreeSessionName(%q) = %q, want prefix %q", tt.path, got, tt.wantPrefix)
+		}
+		suffix := strings.TrimPrefix(got, tt.wantPrefix)
+		if len(suffix) != 8 {
+			t.Errorf("WorktreeSessionName(%q) hash suffix length = %d, want 8", tt.path, len(suffix))
+		}
+	}
+}
+
+func TestWorktreeSessionName_DisambiguatesSameLeafName(t *testing.T) {
+	first := actions.WorktreeSessionName("/tmp/api-worktrees/feature-auth")
+	second := actions.WorktreeSessionName("/tmp/web-worktrees/feature-auth")
+
+	if first == second {
+		t.Fatalf("expected distinct session names for different paths with the same leaf, got %q", first)
+	}
+	if !strings.HasPrefix(first, "feature-auth-") || !strings.HasPrefix(second, "feature-auth-") {
+		t.Fatalf("expected readable leaf prefixes, got %q and %q", first, second)
+	}
+}
+
+func TestTerminalLaunch_InsideTmuxCreatesOrSwitchesSession(t *testing.T) {
+	prependFakePath(t, "tmux")
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+	t.Setenv("ZELLIJ", "")
+	worktreePath := filepath.Join(t.TempDir(), "feature:oauth")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	launch, err := actions.TerminalLaunch(worktreePath)
+	if err != nil {
+		t.Fatalf("TerminalLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("inside-tmux launch should be non-interactive")
+	}
+	sessionName := actions.WorktreeSessionName(worktreePath)
+	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "wtui" || got[4] != sessionName || got[5] != worktreePath {
+		t.Fatalf("unexpected tmux launch args: %#v", got)
+	}
+}
+
+func TestTerminalLaunch_InsideZellijSwitchesSessionWithCwd(t *testing.T) {
+	prependFakePath(t, "zellij", "tmux")
+	t.Setenv("ZELLIJ", "0")
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+	worktreePath := filepath.Join(t.TempDir(), "feat")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	launch, err := actions.TerminalLaunch(worktreePath)
+	if err != nil {
+		t.Fatalf("TerminalLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("inside-zellij launch should be non-interactive")
+	}
+	want := []string{"zellij", "action", "switch-session", actions.WorktreeSessionName(worktreePath), "--cwd", worktreePath}
+	if strings.Join(launch.Cmd.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("unexpected zellij launch args: got %#v want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestCreateWorktree_FromExistingBranch(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "feature/existing")
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "feature/existing")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feature-existing")
+	if worktreePath != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, worktreePath)
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree directory to exist: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "feature/existing" {
+		t.Fatalf("expected checked out branch feature/existing, got %q", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestCreateWorktree_FromNewBranchName(t *testing.T) {
+	repoPath := setupRepo(t)
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "feature/new")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "feature/new" {
+		t.Fatalf("expected checked out branch feature/new, got %q", strings.TrimSpace(string(out)))
+	}
+	out, _ = exec.Command("git", "-C", repoPath, "branch", "--list", "feature/new").Output()
+	if !strings.Contains(string(out), "feature/new") {
+		t.Fatal("expected new branch to exist in repo")
+	}
+}
+
+func TestCreateWorktree_FromTag(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "tag", "v1.0.0")
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "v1.0.0")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected detached HEAD for tag worktree, got branch %q", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestCreateWorktree_EmptyInputFails(t *testing.T) {
+	repoPath := setupRepo(t)
+	if _, err := actions.CreateWorktree(repoPath, "  "); err == nil {
+		t.Fatal("expected error for empty input")
+	}
+}
+
+func TestCreateWorktree_RefStartingWithDashFails(t *testing.T) {
+	repoPath := setupRepo(t)
+	_, err := actions.CreateWorktree(repoPath, "--detach")
+	if err == nil {
+		t.Fatal("expected error for ref starting with dash")
+	}
+	if !strings.Contains(err.Error(), "cannot start with -") {
+		t.Fatalf("expected invalid ref error, got %v", err)
+	}
+}
+
 func TestUnlockWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	worktreePath := filepath.Join(filepath.Dir(repoPath), "wt-unlock")
@@ -472,6 +646,30 @@ func TestOpenTerminal_Error(t *testing.T) {
 	err := actions.OpenTerminal("/nonexistent/path/that/does/not/exist")
 	if err == nil {
 		t.Error("expected error for nonexistent path, got nil")
+	}
+}
+
+func TestOpenTerminal_InteractiveLaunchRequiresCallerTTY(t *testing.T) {
+	dir := t.TempDir()
+	tmuxPath := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("TMUX", "")
+	t.Setenv("ZELLIJ", "")
+
+	worktreePath := filepath.Join(t.TempDir(), "feature")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := actions.OpenTerminal(worktreePath)
+	if err == nil {
+		t.Fatal("expected interactive terminal launch to return an error")
+	}
+	if !strings.Contains(err.Error(), "requires an interactive TTY") {
+		t.Fatalf("expected interactive TTY error, got %v", err)
 	}
 }
 
