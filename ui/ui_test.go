@@ -91,9 +91,33 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 
 func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false) // activePane=1 (right)
-	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code", "d: delete"} {
+	for _, hint := range []string{"f: fetch", "t: terminal", "c: code", "d: delete"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be shown when right pane is active", hint)
+		}
+	}
+	if strings.Contains(bar, "F: pull") {
+		t.Error("public status bar helper should not show pull for branches mode without a selected worktree branch")
+	}
+}
+
+func TestRender_BranchesModeShowsPullWhenAvailable(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    120,
+		Height:   10,
+		Mode:     2,
+		Branches: []gitquery.BranchRow{
+			{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/a"},
+		},
+		ActivePane:     1,
+		FetchAvailable: true,
+		PullAvailable:  true,
+	})
+	for _, hint := range []string{"f: fetch", "F: pull"} {
+		if !strings.Contains(view, hint) {
+			t.Errorf("branches render should contain %q when available", hint)
 		}
 	}
 }
@@ -119,7 +143,6 @@ func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"tab: pane", "q/esc: quit"},
 		{"d: delete", "f: fetch"},
-		{"f: fetch", "F: pull"},
 		{"t: terminal", "c: code"},
 	} {
 		a := strings.Index(bar, pair[0])
@@ -691,6 +714,11 @@ func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 
 func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
 	bar := RenderStatusBar(120, 3, 0, 1, true, false, false)
+	for _, hint := range []string{"f: fetch", "F: pull"} {
+		if strings.Contains(bar, hint) {
+			t.Errorf("stashes mode status bar should not contain %q", hint)
+		}
+	}
 	for _, pair := range [][2]string{
 		{"tab: pane", "q/esc: quit"},
 		{"↑/↓ select", "enter: diff"},

@@ -1483,7 +1483,7 @@ func (m Model) fetchTargetPath() (string, string, bool) {
 		}
 		return repoPath, repoPath, true
 	default:
-		return repoPath, repoPath, true
+		return "", "", false
 	}
 }
 
@@ -1512,7 +1512,7 @@ func (m Model) pullTargetPath() (string, string, bool) {
 		}
 		return repoPath, row.WorktreePath, true
 	default:
-		return repoPath, repoPath, true
+		return "", "", false
 	}
 }
 

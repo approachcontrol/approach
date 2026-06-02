@@ -250,8 +250,8 @@ func renderModeHeader(mode, width int) string {
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
-	fetchAvailable := activePane == 1
-	pullAvailable := activePane == 1
+	fetchAvailable := activePane == 1 && (mode == 1 || mode == 2)
+	pullAvailable := activePane == 1 && mode == 1
 	if mode == 1 && staleSelected {
 		fetchAvailable = false
 		pullAvailable = false

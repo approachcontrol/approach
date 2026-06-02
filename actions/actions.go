@@ -69,7 +69,7 @@ func runGit(path string, args ...string) error {
 		if msg == "" {
 			return err
 		}
-		return fmt.Errorf("%w: %s", err, msg)
+		return errors.New(msg)
 	}
 	return nil
 }

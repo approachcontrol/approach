@@ -140,8 +140,12 @@ func TestFetch(t *testing.T) {
 }
 
 func TestFetch_Error(t *testing.T) {
-	if err := actions.Fetch("/nonexistent"); err == nil {
+	err := actions.Fetch("/nonexistent")
+	if err == nil {
 		t.Fatal("expected Fetch to fail for nonexistent path")
+	}
+	if strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("expected clean git error without exit status, got %q", err.Error())
 	}
 }
 
@@ -162,8 +166,12 @@ func TestPull(t *testing.T) {
 }
 
 func TestPull_Error(t *testing.T) {
-	if err := actions.Pull("/nonexistent"); err == nil {
+	err := actions.Pull("/nonexistent")
+	if err == nil {
 		t.Fatal("expected Pull to fail for nonexistent path")
+	}
+	if strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("expected clean git error without exit status, got %q", err.Error())
 	}
 }
 

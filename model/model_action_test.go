@@ -322,6 +322,32 @@ func TestModel_ShiftFKey_NonWorktreeBranch_NoCmd(t *testing.T) {
 	}
 }
 
+func TestModel_FAndShiftFKeys_NonWorktreeAndBranchModes_NoCmd(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  rune
+		mode model.Mode
+	}{
+		{name: "fetch stashes", key: 'f', mode: model.ModeStashes},
+		{name: "pull stashes", key: 'F', mode: model.ModeStashes},
+		{name: "fetch history", key: 'f', mode: model.ModeHistory},
+		{name: "pull history", key: 'F', mode: model.ModeHistory},
+		{name: "fetch reflog", key: 'f', mode: model.ModeReflog},
+		{name: "pull reflog", key: 'F', mode: model.ModeReflog},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m = inRightPane(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0' + rune(tc.mode)}})
+
+			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			if cmd != nil {
+				t.Fatalf("expected nil cmd for %q in mode %d, got %T", tc.key, tc.mode, cmd)
+			}
+		})
+	}
+}
+
 func TestModel_GitFetchedRefetchesCurrentMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
