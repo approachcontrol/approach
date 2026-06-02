@@ -180,7 +180,7 @@ func TestModel_WorktreeScrollFollowsCursor(t *testing.T) {
 	}
 }
 
-func TestModel_ModeSwitchResetsWorktreeCursors(t *testing.T) {
+func TestModel_ModeSwitchPreservesWorktreeCursors(t *testing.T) {
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main"},
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
@@ -197,8 +197,8 @@ func TestModel_ModeSwitchResetsWorktreeCursors(t *testing.T) {
 	// Switch away and back
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if m.WorktreeSelected() != 0 {
-		t.Errorf("expected WorktreeSelected reset to 0, got %d", m.WorktreeSelected())
+	if m.WorktreeSelected() != 2 {
+		t.Errorf("expected WorktreeSelected preserved at 2, got %d", m.WorktreeSelected())
 	}
 }
 

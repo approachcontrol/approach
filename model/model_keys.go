@@ -644,11 +644,11 @@ func (m Model) clearWorktreeInput() Model {
 	return m
 }
 
-// resetModeCursors zeroes the cursor and scroll positions for every right-pane
-// view without discarding the loaded list data. It is used when switching modes.
+// resetModeCursors zeroes the cursor and scroll positions for non-worktree
+// right-pane views without discarding loaded list data. The worktree selection
+// is intentionally preserved across mode switches so users can inspect another
+// pane and return to the same selected worktree.
 func (m Model) resetModeCursors() Model {
-	m.worktreeSelected = 0
-	m.worktreeScroll = 0
 	m.branchSelected = 0
 	m.branchScroll = 0
 	m.stashSelected = 0
