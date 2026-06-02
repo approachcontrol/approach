@@ -26,16 +26,13 @@ func fakeGetenv(values map[string]string) getenvFunc {
 	}
 }
 
-func assertSpec(t *testing.T, got commandSpec, name string, args []string, dir string) {
+func assertSpec(t *testing.T, got commandSpec, name string, args []string) {
 	t.Helper()
 	if got.name != name {
 		t.Fatalf("expected command %q, got %q", name, got.name)
 	}
 	if !reflect.DeepEqual(got.args, args) {
 		t.Fatalf("expected args %#v, got %#v", args, got.args)
-	}
-	if got.dir != dir {
-		t.Fatalf("expected dir %q, got %q", dir, got.dir)
 	}
 }
 
@@ -44,27 +41,44 @@ func TestSelectClipboardCommand_DarwinUsesPbcopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectClipboardCommand returned error: %v", err)
 	}
-	assertSpec(t, spec, "pbcopy", nil, "")
+	assertSpec(t, spec, "pbcopy", nil)
 }
 
 func TestSelectClipboardCommand_LinuxPrefersWaylandThenX11(t *testing.T) {
-	spec, err := selectClipboardCommand("linux", fakeLookPath("wl-copy", "xclip", "xsel"))
-	if err != nil {
-		t.Fatalf("selectClipboardCommand returned error: %v", err)
+	tests := []struct {
+		name      string
+		available []string
+		wantName  string
+		wantArgs  []string
+	}{
+		{
+			name:      "prefers wl-copy",
+			available: []string{"wl-copy", "xclip", "xsel"},
+			wantName:  "wl-copy",
+		},
+		{
+			name:      "prefers xclip over xsel",
+			available: []string{"xclip", "xsel"},
+			wantName:  "xclip",
+			wantArgs:  []string{"-selection", "clipboard"},
+		},
+		{
+			name:      "falls back to xsel",
+			available: []string{"xsel"},
+			wantName:  "xsel",
+			wantArgs:  []string{"--clipboard", "--input"},
+		},
 	}
-	assertSpec(t, spec, "wl-copy", nil, "")
 
-	spec, err = selectClipboardCommand("linux", fakeLookPath("xclip", "xsel"))
-	if err != nil {
-		t.Fatalf("selectClipboardCommand returned error: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := selectClipboardCommand("linux", fakeLookPath(tt.available...))
+			if err != nil {
+				t.Fatalf("selectClipboardCommand returned error: %v", err)
+			}
+			assertSpec(t, spec, tt.wantName, tt.wantArgs)
+		})
 	}
-	assertSpec(t, spec, "xclip", []string{"-selection", "clipboard"}, "")
-
-	spec, err = selectClipboardCommand("linux", fakeLookPath("xsel"))
-	if err != nil {
-		t.Fatalf("selectClipboardCommand returned error: %v", err)
-	}
-	assertSpec(t, spec, "xsel", []string{"--clipboard", "--input"}, "")
 }
 
 func TestSelectClipboardCommand_LinuxReportsMissingTools(t *testing.T) {
@@ -132,6 +146,17 @@ func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
 	}
 	if !reflect.DeepEqual(launch.Cmd.Args, []string{"open", "-a", "Terminal", "/repo"}) {
 		t.Fatalf("unexpected macOS fallback args: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunch_DarwinFallsBackToOpenAppWhenTerminalMissing(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "wezterm start"})
+	launch, err := terminalLaunch("/repo", "darwin", env, fakeLookPath("open"))
+	if err != nil {
+		t.Fatalf("terminalLaunch returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"open", "-a", "wezterm", "/repo"}) {
+		t.Fatalf("unexpected macOS TERMINAL fallback args: %#v", launch.Cmd.Args)
 	}
 }
 

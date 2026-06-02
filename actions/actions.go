@@ -2,6 +2,7 @@ package actions
 
 import (
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,7 +15,6 @@ import (
 type commandSpec struct {
 	name string
 	args []string
-	dir  string
 }
 
 type lookPathFunc func(string) (string, error)
@@ -229,7 +229,7 @@ func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc) (
 
 	if goos == "darwin" {
 		return TerminalLaunchSpec{
-			Cmd: exec.Command("open", "-a", terminal, path),
+			Cmd: exec.Command("open", "-a", name, path),
 		}, nil
 	}
 
@@ -238,7 +238,10 @@ func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc) (
 
 func selectClipboardCommand(goos string, lookPath lookPathFunc) (commandSpec, error) {
 	if goos == "darwin" {
-		return selectRequiredCommand("pbcopy", nil, lookPath, "clipboard command pbcopy not found")
+		if !commandExists("pbcopy", lookPath) {
+			return commandSpec{}, errors.New("clipboard command pbcopy not found")
+		}
+		return commandSpec{name: "pbcopy"}, nil
 	}
 
 	if goos == "linux" {
@@ -328,10 +331,6 @@ func commandExists(name string, lookPath lookPathFunc) bool {
 	return err == nil
 }
 
-func hasExecutable(name string) bool {
-	return commandExists(name, exec.LookPath)
-}
-
 func externalTerminalCommand(shellCommand string) *exec.Cmd {
 	return exec.Command(
 		"osascript",
@@ -353,11 +352,4 @@ func shellQuote(s string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func selectRequiredCommand(name string, args []string, lookPath lookPathFunc, missing string) (commandSpec, error) {
-	if !commandExists(name, lookPath) {
-		return commandSpec{}, fmt.Errorf("%s", missing)
-	}
-	return commandSpec{name: name, args: args}, nil
 }
