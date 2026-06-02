@@ -6,6 +6,12 @@ A terminal UI for managing git worktrees across repositories.
 
 ## Install
 
+### Homebrew
+
+```bash
+brew install --cask brian-bell/tap/wtui
+```
+
 ### GitHub Releases
 
 Download a pre-built macOS or Linux binary from the

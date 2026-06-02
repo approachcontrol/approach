@@ -1,7 +1,29 @@
 # Release Process
 
 This project releases with GoReleaser. A pushed semver tag creates GitHub
-Release artifacts with checksums and generated release notes.
+Release artifacts with checksums, generated release notes, and a Homebrew cask.
+
+## Homebrew Tap Setup
+
+Homebrew casks are published to `brian-bell/homebrew-tap`. Homebrew exposes
+that repository as the short tap name `brian-bell/tap`, so users install wtui
+with:
+
+```bash
+brew install --cask brian-bell/tap/wtui
+```
+
+GoReleaser commits the generated cask to `Casks/wtui.rb` in the tap repository.
+The release workflow needs a repository secret named
+`HOMEBREW_TAP_GITHUB_TOKEN` because the default `GITHUB_TOKEN` cannot write to
+another repository.
+
+Create a GitHub personal access token with contents write access to
+`brian-bell/homebrew-tap`, then add it to this repository as:
+
+```text
+HOMEBREW_TAP_GITHUB_TOKEN
+```
 
 ## First Release
 
@@ -30,7 +52,14 @@ The first release tag is `v0.1.0`.
    - `wtui_0.1.0_linux_arm64.tar.gz`
    - `wtui_0.1.0_checksums.txt`
 7. Verify the release notes were generated from commits since the previous tag.
-8. Verify the Go install fallback:
+8. Verify the Homebrew cask:
+
+   ```bash
+   brew install --cask brian-bell/tap/wtui
+   wtui --version
+   ```
+
+9. Verify the Go install fallback:
 
     ```bash
     go install github.com/brian-bell/wtui/cmd/wtui@v0.1.0
@@ -48,4 +77,5 @@ The first release tag is `v0.1.0`.
    git push origin vX.Y.Z
    ```
 
-4. Verify GitHub Release artifacts, generated release notes, and `wtui --version`.
+4. Verify GitHub Release artifacts, generated release notes, the cask commit in
+   `brian-bell/homebrew-tap`, and `wtui --version`.
