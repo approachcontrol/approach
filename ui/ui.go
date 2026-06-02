@@ -68,6 +68,7 @@ var (
 	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	mergedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	diffAddStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	diffDelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -289,16 +290,16 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		}
 	case mode == 2:
 		keys := "  |  tab: pane  q/esc: quit"
+		if !destructive {
+			keys += "  D: destructive mode"
+		}
 		if activePane == 1 {
 			keys += "  t: terminal  c: code"
 			if destructive {
 				keys += "  " + dirtyRedStyle.Render("d: delete")
 			}
 		}
-		if !destructive {
-			keys += "  D: destructive mode"
-		}
-		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream" + keys
+		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == 1:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
 		if activePane == 1 && !staleSelected {
@@ -370,6 +371,9 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 		}
 		if !b.HasUpstream || b.UpstreamGone {
 			indicators += noUpstreamStyle.Render(" ●")
+		}
+		if b.Merged {
+			indicators += mergedStyle.Render(" merged")
 		}
 		if indicators == "" {
 			indicators = cleanStyle.Render(" ✔")
