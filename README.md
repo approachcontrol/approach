@@ -120,6 +120,7 @@ Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the 
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `WORKTREE_ROOT` | `~/dev` | Root directory to scan for git repos (up to 2 levels deep) |
+| `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 
 ## Development
 
@@ -135,3 +136,6 @@ make clean   # Remove bin/
 
 - Go 1.26+
 - Git 2.15+ (worktree support)
+- macOS clipboard: `pbcopy` (included with macOS)
+- Linux clipboard: install one of `wl-copy`, `xclip`, or `xsel`
+- Linux terminal launch: set `TERMINAL` to your terminal emulator; when no tmux/Zellij/`TERMINAL` launch is available, wtui falls back to launching `$SHELL` in the worktree directory

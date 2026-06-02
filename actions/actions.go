@@ -2,6 +2,7 @@ package actions
 
 import (
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,14 @@ import (
 	"strings"
 	"unicode"
 )
+
+type commandSpec struct {
+	name string
+	args []string
+}
+
+type lookPathFunc func(string) (string, error)
+type getenvFunc func(string) string
 
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
 // then prunes stale references to ensure the worktree no longer appears
@@ -100,9 +109,13 @@ func DropStash(repoPath string, index int) error {
 	return exec.Command("git", "-C", repoPath, "stash", "drop", ref).Run()
 }
 
-// CopyToClipboard copies text to the system clipboard using pbcopy.
+// CopyToClipboard copies text to the system clipboard.
 func CopyToClipboard(text string) error {
-	cmd := exec.Command("pbcopy")
+	spec, err := selectClipboardCommand(runtime.GOOS, exec.LookPath)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(spec.name, spec.args...)
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
 }
@@ -143,21 +156,25 @@ type TerminalLaunchSpec struct {
 // session for path. It adapts to the current environment:
 //   - inside Zellij: switch to a Zellij session with the worktree name
 //   - inside tmux: create the tmux session if needed, then switch-client
-//   - outside a multiplexer: prefer tmux, then Zellij, then a plain shell
+//   - outside a multiplexer: prefer tmux, Zellij, $TERMINAL, then a platform/shell fallback
 func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
+	return terminalLaunch(path, runtime.GOOS, os.Getenv, exec.LookPath)
+}
+
+func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
 	sessionName := WorktreeSessionName(path)
 
 	switch {
-	case inZellij() && hasExecutable("zellij"):
+	case getenv("ZELLIJ") != "" && commandExists("zellij", lookPath):
 		return TerminalLaunchSpec{
 			Cmd: exec.Command("zellij", "action", "switch-session", sessionName, "--cwd", path),
 		}, nil
-	case inTmux() && hasExecutable("tmux"):
+	case getenv("TMUX") != "" && commandExists("tmux", lookPath):
 		return TerminalLaunchSpec{
 			Cmd: exec.Command("sh", "-c", tmuxSwitchScript, "wtui", sessionName, path),
 		}, nil
-	case hasExecutable("tmux"):
-		if runtime.GOOS == "darwin" && hasExecutable("osascript") {
+	case commandExists("tmux", lookPath):
+		if goos == "darwin" && commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{
 				Cmd: externalTerminalCommand(tmuxAttachCommand(sessionName, path)),
 			}, nil
@@ -166,8 +183,8 @@ func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
 			Cmd:         exec.Command("tmux", "new-session", "-A", "-s", sessionName, "-c", path),
 			Interactive: true,
 		}, nil
-	case hasExecutable("zellij"):
-		if runtime.GOOS == "darwin" && hasExecutable("osascript") {
+	case commandExists("zellij", lookPath):
+		if goos == "darwin" && commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{
 				Cmd: externalTerminalCommand(zellijAttachCommand(sessionName, path)),
 			}, nil
@@ -175,20 +192,73 @@ func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
 		cmd := exec.Command("zellij", "attach", "--create", sessionName)
 		cmd.Dir = path
 		return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
-	default:
-		if runtime.GOOS == "darwin" && hasExecutable("open") {
-			return TerminalLaunchSpec{
-				Cmd: exec.Command("open", "-a", "Terminal", path),
-			}, nil
-		}
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "sh"
-		}
-		cmd := exec.Command(shell)
-		cmd.Dir = path
-		return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 	}
+
+	if terminal := strings.TrimSpace(getenv("TERMINAL")); terminal != "" {
+		return terminalLaunchFromEnv(goos, terminal, path, lookPath)
+	}
+
+	if goos == "darwin" && commandExists("open", lookPath) {
+		return TerminalLaunchSpec{
+			Cmd: exec.Command("open", "-a", "Terminal", path),
+		}, nil
+	}
+
+	shell := strings.TrimSpace(getenv("SHELL"))
+	if shell == "" {
+		shell = "sh"
+	}
+	cmd := exec.Command(shell)
+	cmd.Dir = path
+	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
+	fields := strings.Fields(terminal)
+	if len(fields) == 0 {
+		return TerminalLaunchSpec{}, fmt.Errorf("TERMINAL is empty")
+	}
+
+	name := fields[0]
+	args := fields[1:]
+	if commandExists(name, lookPath) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = path
+		return TerminalLaunchSpec{Cmd: cmd}, nil
+	}
+
+	if goos == "darwin" {
+		return TerminalLaunchSpec{
+			Cmd: exec.Command("open", "-a", name, path),
+		}, nil
+	}
+
+	return TerminalLaunchSpec{}, fmt.Errorf("TERMINAL is set to %q, but that command was not found", terminal)
+}
+
+func selectClipboardCommand(goos string, lookPath lookPathFunc) (commandSpec, error) {
+	if goos == "darwin" {
+		if !commandExists("pbcopy", lookPath) {
+			return commandSpec{}, errors.New("clipboard command pbcopy not found")
+		}
+		return commandSpec{name: "pbcopy"}, nil
+	}
+
+	if goos == "linux" {
+		candidates := []commandSpec{
+			{name: "wl-copy"},
+			{name: "xclip", args: []string{"-selection", "clipboard"}},
+			{name: "xsel", args: []string{"--clipboard", "--input"}},
+		}
+		for _, candidate := range candidates {
+			if commandExists(candidate.name, lookPath) {
+				return candidate, nil
+			}
+		}
+		return commandSpec{}, fmt.Errorf("no supported clipboard command installed; install wl-copy, xclip, or xsel")
+	}
+
+	return commandSpec{}, fmt.Errorf("clipboard copy is not supported on %s", goos)
 }
 
 // WorktreeSessionName returns a tmux/Zellij-safe session name derived from
@@ -256,16 +326,8 @@ tmux has-session -t "$session" 2>/dev/null || tmux new-session -d -s "$session" 
 tmux switch-client -t "$session"
 `
 
-func inTmux() bool {
-	return os.Getenv("TMUX") != ""
-}
-
-func inZellij() bool {
-	return os.Getenv("ZELLIJ") != ""
-}
-
-func hasExecutable(name string) bool {
-	_, err := exec.LookPath(name)
+func commandExists(name string, lookPath lookPathFunc) bool {
+	_, err := lookPath(name)
 	return err == nil
 }
 
