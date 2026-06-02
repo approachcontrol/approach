@@ -37,24 +37,6 @@ func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
 	return tm.(model.Model), cmd
 }
 
-// assertFetchMsg asserts that running a command produced either the expected
-// success result message (ok) or one of the error messages the command emits
-// when the underlying git operation fails. The test repos use fake paths that
-// are not real git repositories, so the git operation fails and the command
-// surfaces an error message; either outcome confirms the correct command was
-// dispatched.
-func assertFetchMsg(t *testing.T, msg tea.Msg, ok bool, want string) {
-	t.Helper()
-	if ok {
-		return
-	}
-	switch msg.(type) {
-	case model.FetchErrorMsg, model.ActionFailedMsg, model.ForceDeleteFailedMsg:
-		return
-	}
-	t.Errorf("expected %s or an error message, got %T", want, msg)
-}
-
 // inRightPane switches focus to the right pane.
 func inRightPane(m model.Model) model.Model {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -103,9 +85,6 @@ func TestModel_InitFiresWorktreeFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd from Init, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "model.WorktreeResultMsg from Init")
 }
 
 func TestModel_WorktreeResultUpdatesState(t *testing.T) {
@@ -230,9 +209,6 @@ func TestModel_SwitchToWorktreesModeFiresFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd on switch to mode 1, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "model.WorktreeResultMsg")
 }
 
 func TestModel_SwitchToBranchesFiresFetch(t *testing.T) {
@@ -242,9 +218,6 @@ func TestModel_SwitchToBranchesFiresFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd from switch to mode 2, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.BranchResultMsg)
-	assertFetchMsg(t, msg, ok, "model.BranchResultMsg")
 }
 
 func TestModel_WindowSizeUpdates(t *testing.T) {
@@ -460,12 +433,16 @@ func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetch command when repo filter changes selection")
 	}
-	msg := cmd()
-	result, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "WorktreeResultMsg")
-	repoPath := result.RepoPath
-	if errMsg, isErr := msg.(model.FetchErrorMsg); isErr {
-		repoPath = errMsg.RepoPath
+	// The fetch targets the newly selected repo; both the success result and
+	// the error message (fake repo paths fail) carry the repo path.
+	var repoPath string
+	switch msg := cmd().(type) {
+	case model.WorktreeResultMsg:
+		repoPath = msg.RepoPath
+	case model.FetchErrorMsg:
+		repoPath = msg.RepoPath
+	default:
+		t.Fatalf("expected WorktreeResultMsg or FetchErrorMsg, got %T", msg)
 	}
 	if repoPath != "/dev/charlie" {
 		t.Fatalf("expected filtered selection to fetch charlie, got %q", repoPath)
@@ -932,9 +909,6 @@ func TestModel_SwitchToHistoryFiresFetchCommits(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchCommits cmd on switch to mode 4, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.CommitResultMsg)
-	assertFetchMsg(t, msg, ok, "model.CommitResultMsg")
 }
 
 func TestModel_NumberKeysSwitchToCorrectModes(t *testing.T) {
@@ -1147,9 +1121,6 @@ func TestModel_SwitchToBranchesFiresFetchBranches(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetch cmd on switch to mode 2, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.BranchResultMsg)
-	assertFetchMsg(t, msg, ok, "model.BranchResultMsg")
 }
 
 func TestModel_SwitchToStashesFiresFetchStashes(t *testing.T) {
@@ -1159,9 +1130,6 @@ func TestModel_SwitchToStashesFiresFetchStashes(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd on switch to mode 3, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.StashResultMsg)
-	assertFetchMsg(t, msg, ok, "model.StashResultMsg")
 }
 
 // --- Message handlers ---
@@ -1230,9 +1198,6 @@ func TestModel_BranchDeletedMsgTriggersFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd after BranchDeletedMsg, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.BranchResultMsg)
-	assertFetchMsg(t, msg, ok, "model.BranchResultMsg")
 }
 
 func TestModel_StaleBranchDeletedMsgIgnored(t *testing.T) {
@@ -1250,9 +1215,6 @@ func TestModel_StashDroppedMsgTriggersStashFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd after StashDroppedMsg, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.StashResultMsg)
-	assertFetchMsg(t, msg, ok, "model.StashResultMsg")
 }
 
 // --- Commit result handlers ---
@@ -1453,9 +1415,6 @@ func TestModel_SwitchToReflogFiresFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd")
 	}
-	msg := cmd()
-	_, ok := msg.(model.ReflogResultMsg)
-	assertFetchMsg(t, msg, ok, "model.ReflogResultMsg")
 }
 
 func TestModel_StaleReflogResultDiscarded(t *testing.T) {

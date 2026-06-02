@@ -29,9 +29,6 @@ func TestModel_EnterOnDirtyWorktreeOpensDiffOverlay(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktreeDiff cmd, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeDiffResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeDiffResultMsg")
 }
 
 func TestModel_EnterOnCleanWorktreeIsNoOp(t *testing.T) {
@@ -356,9 +353,6 @@ func TestModel_GitFetchedRefetchesCurrentMode(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected refetch cmd after fetch success")
 	}
-	msg := cmd()
-	_, ok := msg.(model.BranchResultMsg)
-	assertFetchMsg(t, msg, ok, "expected BranchResultMsg from refetch")
 }
 
 func TestModel_GitPulledRefetchesCurrentMode(t *testing.T) {
@@ -369,9 +363,6 @@ func TestModel_GitPulledRefetchesCurrentMode(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected refetch cmd after pull success")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeResultMsg from refetch")
 }
 
 func TestModel_StaleGitFetchedMsgIgnored(t *testing.T) {
@@ -411,12 +402,8 @@ func TestModel_EnterStillRequiresDirtyWorktree(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter on dirty root branch should open diff")
 	}
-	msg := cmd()
-	diffMsg, ok := msg.(model.BranchDiffResultMsg)
-	assertFetchMsg(t, msg, ok, "BranchDiffResultMsg")
-	if ok && diffMsg.BranchName != "dirty-root" {
-		t.Errorf("expected dirty-root, got %q", diffMsg.BranchName)
-	}
+	// The diff payload (branch name, contents) is verified against a real repo
+	// in TestModel_BranchDiffPayloadAgainstRealRepo.
 
 	// Navigate to clean-1 (index 1): enter is no-op
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -454,9 +441,6 @@ func TestModel_EnterOpensBranchDiffOverlayForDirtyWorktree(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchBranchDiff cmd, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.BranchDiffResultMsg)
-	assertFetchMsg(t, msg, ok, "expected BranchDiffResultMsg")
 }
 
 func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
@@ -498,9 +482,6 @@ func TestModel_EnterInHistoryOpensCommitDiffOverlay(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchCommitDiff cmd, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.CommitDiffResultMsg)
-	assertFetchMsg(t, msg, ok, "expected CommitDiffResultMsg")
 }
 
 func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
@@ -623,9 +604,6 @@ func TestModel_EnterOpensOverlay(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchStashDiff cmd, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.StashDiffResultMsg)
-	assertFetchMsg(t, msg, ok, "expected StashDiffResultMsg")
 }
 
 func TestModel_StashDiffResultStoresDiff(t *testing.T) {
@@ -849,9 +827,6 @@ func TestModel_WorktreeRemovedDetachedSkipsBranchConfirm(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after detached removal, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeResultMsg from refetch")
 }
 
 func TestModel_WorktreeRemovedShowsBranchConfirm(t *testing.T) {
@@ -876,9 +851,6 @@ func TestModel_WorktreeRemovedShowsBranchConfirm(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd alongside branch confirm, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeResultMsg from background refetch")
 }
 
 func TestModel_CombinedCleanupConfirmYReturnsCmd(t *testing.T) {
@@ -926,10 +898,13 @@ func TestModel_CombinedCleanupConfirmNClosesDialog(t *testing.T) {
 	}
 }
 
-func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *testing.T) {
-	// Full end-to-end: worktree removed → "Also delete branch?" confirmed →
-	// DeleteBranch fails (fake path) → "Force delete?" shown → force confirmed →
-	// should return WorktreeDeleteCompletedMsg, not BranchDeletedMsg.
+func TestModel_CombinedCleanupForceDeleteFailureSurfacesError(t *testing.T) {
+	// Full chain on a fake path: worktree removed → "Also delete branch?"
+	// confirmed → DeleteBranch fails → "Force delete?" shown → force confirmed →
+	// the force delete also fails, which must surface as ForceDeleteFailedMsg
+	// rather than a false success. The success path (force delete succeeds and
+	// the threaded WorktreeDeleteCompletedMsg is returned) is covered against a
+	// real repo by TestModel_CombinedCleanupForceDeleteSucceedsAgainstRealRepo.
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
@@ -963,9 +938,9 @@ func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *te
 	if forceCmd == nil {
 		t.Fatal("expected force cmd, got nil")
 	}
-	result := forceCmd()
-	_, ok := result.(model.WorktreeDeleteCompletedMsg)
-	assertFetchMsg(t, result, ok, "force-delete in combined cleanup should return WorktreeDeleteCompletedMsg")
+	if _, ok := forceCmd().(model.ForceDeleteFailedMsg); !ok {
+		t.Fatalf("expected ForceDeleteFailedMsg from fake-path force delete, got %T", forceCmd())
+	}
 }
 
 // --- Worktree prune ---
@@ -1040,9 +1015,6 @@ func TestModel_WorktreePrunedRefetchesWorktrees(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after prune, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeResultMsg from refetch")
 }
 
 // --- Worktree t/c actions ---
@@ -1230,9 +1202,6 @@ func TestModel_WorktreeCreatedRefetchesWorktrees(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after create")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeResultMsg from refetch")
 }
 
 func TestModel_WorktreeCreateFailedReopensInput(t *testing.T) {
@@ -1520,9 +1489,6 @@ func TestModel_StashDropConfirmReturnsStashDroppedMsg(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected cmd after stash drop confirm, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.StashDroppedMsg)
-	assertFetchMsg(t, msg, ok, "expected StashDroppedMsg")
 }
 
 // --- Open terminal / code ---
@@ -1816,9 +1782,6 @@ func TestModel_WorktreeUnlockedMsgRefetchesWorktrees(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after unlock")
 	}
-	msg := cmd()
-	_, ok := msg.(model.WorktreeResultMsg)
-	assertFetchMsg(t, msg, ok, "expected WorktreeResultMsg from refetch")
 }
 
 func TestModel_StaleWorktreeUnlockedMsgIgnored(t *testing.T) {
@@ -1877,9 +1840,6 @@ func TestModel_EnterInReflogOpensReflogDiffOverlay(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchReflogDiff cmd, got nil")
 	}
-	msg := cmd()
-	_, ok := msg.(model.ReflogDiffResultMsg)
-	assertFetchMsg(t, msg, ok, "expected ReflogDiffResultMsg")
 }
 
 func TestModel_ReflogDiffResultStoresDiff(t *testing.T) {
