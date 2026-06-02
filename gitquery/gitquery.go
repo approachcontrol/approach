@@ -1,6 +1,7 @@
 package gitquery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -433,8 +434,17 @@ func maybeGitCmd(dir string, args ...string) string {
 func gitCmd(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Output() captures stderr into (*exec.ExitError).Stderr when cmd.Stderr is
+	// nil, but its error string is only "exit status N". Fold the git stderr
+	// diagnostic into the returned error while keeping stdout clean for parsing.
 	out, err := cmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if msg := strings.TrimSpace(string(exitErr.Stderr)); msg != "" {
+				return "", fmt.Errorf("%s: %w", msg, err)
+			}
+		}
 		return "", err
 	}
 	return string(out), nil
