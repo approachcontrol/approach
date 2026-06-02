@@ -12,9 +12,9 @@ const (
 )
 
 var (
-	Version = defaultVersion
-	Commit  = defaultCommit
-	Date    = defaultDate
+	version = defaultVersion
+	commit  = defaultCommit
+	date    = defaultDate
 
 	readBuildInfo = debug.ReadBuildInfo
 )
@@ -31,33 +31,33 @@ func String() string {
 }
 
 func resolvedValues() (string, string, string) {
-	version := valueOrDefault(Version, defaultVersion)
-	commit := valueOrDefault(Commit, defaultCommit)
-	date := valueOrDefault(Date, defaultDate)
+	resolvedVersion := valueOrDefault(version, defaultVersion)
+	resolvedCommit := valueOrDefault(commit, defaultCommit)
+	resolvedDate := valueOrDefault(date, defaultDate)
 
-	if version != defaultVersion || commit != defaultCommit || date != defaultDate {
-		return version, commit, date
+	if resolvedVersion != defaultVersion || resolvedCommit != defaultCommit || resolvedDate != defaultDate {
+		return resolvedVersion, resolvedCommit, resolvedDate
 	}
 
 	info, ok := readBuildInfo()
 	if !ok || info == nil {
-		return version, commit, date
+		return resolvedVersion, resolvedCommit, resolvedDate
 	}
 
 	if isUsefulModuleVersion(info.Main.Version) {
-		version = info.Main.Version
+		resolvedVersion = info.Main.Version
 	}
 
 	for _, setting := range info.Settings {
 		switch setting.Key {
 		case "vcs.revision":
-			commit = valueOrDefault(setting.Value, commit)
+			resolvedCommit = valueOrDefault(setting.Value, resolvedCommit)
 		case "vcs.time":
-			date = valueOrDefault(setting.Value, date)
+			resolvedDate = valueOrDefault(setting.Value, resolvedDate)
 		}
 	}
 
-	return version, commit, date
+	return resolvedVersion, resolvedCommit, resolvedDate
 }
 
 func isUsefulModuleVersion(version string) bool {

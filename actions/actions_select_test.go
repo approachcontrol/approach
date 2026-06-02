@@ -2,6 +2,8 @@ package actions
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -34,6 +36,15 @@ func assertSpec(t *testing.T, got commandSpec, name string, args []string) {
 	if !reflect.DeepEqual(got.args, args) {
 		t.Fatalf("expected args %#v, got %#v", args, got.args)
 	}
+}
+
+func tempExecutableShell(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test-shell")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestSelectClipboardCommand_DarwinUsesPbcopy(t *testing.T) {
@@ -161,7 +172,8 @@ func TestTerminalLaunch_DarwinFallsBackToOpenAppWhenTerminalMissing(t *testing.T
 }
 
 func TestTerminalLaunch_LinuxUsesShellFallbackEvenWhenXDGOpenExists(t *testing.T) {
-	env := fakeGetenv(map[string]string{"SHELL": "/bin/zsh"})
+	shell := tempExecutableShell(t)
+	env := fakeGetenv(map[string]string{"SHELL": shell})
 	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("xdg-open"))
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
@@ -169,7 +181,7 @@ func TestTerminalLaunch_LinuxUsesShellFallbackEvenWhenXDGOpenExists(t *testing.T
 	if !launch.Interactive {
 		t.Fatal("shell fallback should require the caller TTY")
 	}
-	if !reflect.DeepEqual(launch.Cmd.Args, []string{"/bin/zsh"}) {
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{shell}) {
 		t.Fatalf("unexpected shell fallback args: %#v", launch.Cmd.Args)
 	}
 	if launch.Cmd.Dir != "/repo" {
@@ -178,7 +190,8 @@ func TestTerminalLaunch_LinuxUsesShellFallbackEvenWhenXDGOpenExists(t *testing.T
 }
 
 func TestTerminalLaunch_LinuxUsesShellFallback(t *testing.T) {
-	env := fakeGetenv(map[string]string{"SHELL": "/bin/zsh"})
+	shell := tempExecutableShell(t)
+	env := fakeGetenv(map[string]string{"SHELL": shell})
 	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath())
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
@@ -186,7 +199,7 @@ func TestTerminalLaunch_LinuxUsesShellFallback(t *testing.T) {
 	if !launch.Interactive {
 		t.Fatal("shell fallback should require the caller TTY")
 	}
-	if !reflect.DeepEqual(launch.Cmd.Args, []string{"/bin/zsh"}) {
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{shell}) {
 		t.Fatalf("unexpected shell fallback args: %#v", launch.Cmd.Args)
 	}
 	if launch.Cmd.Dir != "/repo" {

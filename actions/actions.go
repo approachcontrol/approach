@@ -1,9 +1,9 @@
 package actions
 
 import (
-	"crypto/sha1"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,7 +103,9 @@ func CreateWorktree(repoPath, ref string) (string, error) {
 		if msg == "" {
 			return "", err
 		}
-		return "", fmt.Errorf("%s", msg)
+		// Keep the human-readable git stderr at the front while preserving
+		// the original *exec.ExitError so callers can still inspect it.
+		return "", fmt.Errorf("%s: %w", msg, err)
 	}
 	return worktreePath, nil
 }
@@ -118,18 +120,18 @@ func DefaultWorktreePath(repoPath, ref string) string {
 
 // DeleteBranch runs `git branch -d`.
 func DeleteBranch(repoPath, name string) error {
-	return exec.Command("git", "-C", repoPath, "branch", "-d", name).Run()
+	return runGit(repoPath, "branch", "-d", name)
 }
 
 // ForceDeleteBranch runs `git branch -D`.
 func ForceDeleteBranch(repoPath, name string) error {
-	return exec.Command("git", "-C", repoPath, "branch", "-D", name).Run()
+	return runGit(repoPath, "branch", "-D", name)
 }
 
 // DropStash runs `git stash drop stash@{N}`.
 func DropStash(repoPath string, index int) error {
 	ref := fmt.Sprintf("stash@{%d}", index)
-	return exec.Command("git", "-C", repoPath, "stash", "drop", ref).Run()
+	return runGit(repoPath, "stash", "drop", ref)
 }
 
 // CopyToClipboard copies text to the system clipboard.
@@ -141,25 +143,6 @@ func CopyToClipboard(text string) error {
 	cmd := exec.Command(spec.name, spec.args...)
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
-}
-
-// OpenTerminal opens a non-interactive multiplexer-backed terminal command for
-// the given path. Interactive launch specs need a caller-provided TTY; use
-// TerminalLaunch directly with Bubble Tea's ExecProcess for those.
-func OpenTerminal(path string) error {
-	if info, err := os.Stat(path); err != nil {
-		return err
-	} else if !info.IsDir() {
-		return fmt.Errorf("terminal path is not a directory: %s", path)
-	}
-	launch, err := TerminalLaunch(path)
-	if err != nil {
-		return err
-	}
-	if launch.Interactive {
-		return fmt.Errorf("terminal launch for %s requires an interactive TTY; use TerminalLaunch with ExecProcess", path)
-	}
-	return launch.Cmd.Run()
 }
 
 // OpenVSCode opens VSCode at the given path.
@@ -227,13 +210,30 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc)
 		}, nil
 	}
 
-	shell := strings.TrimSpace(getenv("SHELL"))
-	if shell == "" {
-		shell = "sh"
-	}
+	// $SHELL comes from the user's own environment, so we trust its intent;
+	// we still validate it points at a runnable executable before exec'ing it
+	// and fall back to /bin/sh when it is empty or invalid.
+	shell := resolveShell(strings.TrimSpace(getenv("SHELL")), lookPath)
 	cmd := exec.Command(shell)
 	cmd.Dir = path
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+// resolveShell returns a runnable shell path. It accepts shell only if it is a
+// regular file with an executable bit, or resolves via lookPath; otherwise it
+// falls back to /bin/sh.
+func resolveShell(shell string, lookPath lookPathFunc) string {
+	const fallback = "/bin/sh"
+	if shell == "" {
+		return fallback
+	}
+	if info, err := os.Stat(shell); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+		return shell
+	}
+	if _, err := lookPath(shell); err == nil {
+		return shell
+	}
+	return fallback
 }
 
 func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
@@ -313,8 +313,9 @@ func WorktreeSessionName(path string) string {
 		name = "worktree"
 	}
 
-	sum := sha1.Sum([]byte(hashPath))
-	return fmt.Sprintf("%s-%x", name, sum[:4])
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(hashPath))
+	return fmt.Sprintf("%s-%08x", name, h.Sum32())
 }
 
 func refExists(repoPath, ref string) bool {

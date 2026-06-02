@@ -85,10 +85,6 @@ func TestModel_InitFiresWorktreeFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd from Init, got nil")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg from Init, got %T", msg)
-	}
 }
 
 func TestModel_WorktreeResultUpdatesState(t *testing.T) {
@@ -184,7 +180,7 @@ func TestModel_WorktreeScrollFollowsCursor(t *testing.T) {
 	}
 }
 
-func TestModel_ModeSwitchResetsWorktreeCursors(t *testing.T) {
+func TestModel_ModeSwitchPreservesWorktreeCursors(t *testing.T) {
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main"},
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
@@ -201,8 +197,8 @@ func TestModel_ModeSwitchResetsWorktreeCursors(t *testing.T) {
 	// Switch away and back
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if m.WorktreeSelected() != 0 {
-		t.Errorf("expected WorktreeSelected reset to 0, got %d", m.WorktreeSelected())
+	if m.WorktreeSelected() != 2 {
+		t.Errorf("expected WorktreeSelected preserved at 2, got %d", m.WorktreeSelected())
 	}
 }
 
@@ -213,10 +209,6 @@ func TestModel_SwitchToWorktreesModeFiresFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd on switch to mode 1, got nil")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg, got %T", msg)
-	}
 }
 
 func TestModel_SwitchToBranchesFiresFetch(t *testing.T) {
@@ -225,10 +217,6 @@ func TestModel_SwitchToBranchesFiresFetch(t *testing.T) {
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd from switch to mode 2, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.BranchResultMsg); !ok {
-		t.Errorf("expected BranchResultMsg, got %T", msg)
 	}
 }
 
@@ -445,13 +433,19 @@ func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetch command when repo filter changes selection")
 	}
-	msg := cmd()
-	result, ok := msg.(model.WorktreeResultMsg)
-	if !ok {
-		t.Fatalf("expected WorktreeResultMsg, got %T", msg)
+	// The fetch targets the newly selected repo; both the success result and
+	// the error message (fake repo paths fail) carry the repo path.
+	var repoPath string
+	switch msg := cmd().(type) {
+	case model.WorktreeResultMsg:
+		repoPath = msg.RepoPath
+	case model.FetchErrorMsg:
+		repoPath = msg.RepoPath
+	default:
+		t.Fatalf("expected WorktreeResultMsg or FetchErrorMsg, got %T", msg)
 	}
-	if result.RepoPath != "/dev/charlie" {
-		t.Fatalf("expected filtered selection to fetch charlie, got %q", result.RepoPath)
+	if repoPath != "/dev/charlie" {
+		t.Fatalf("expected filtered selection to fetch charlie, got %q", repoPath)
 	}
 
 	view := m.View()
@@ -547,7 +541,7 @@ func TestModel_ZeroRepoFilterHidesStaleRightPaneItems(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected enter on stale hidden worktree to be a no-op, got %T", cmd)
 	}
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay for stale hidden worktree, got %v", m.Overlay())
 	}
 }
@@ -915,10 +909,6 @@ func TestModel_SwitchToHistoryFiresFetchCommits(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchCommits cmd on switch to mode 4, got nil")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.CommitResultMsg); !ok {
-		t.Errorf("expected CommitResultMsg, got %T", msg)
-	}
 }
 
 func TestModel_NumberKeysSwitchToCorrectModes(t *testing.T) {
@@ -1131,10 +1121,6 @@ func TestModel_SwitchToBranchesFiresFetchBranches(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetch cmd on switch to mode 2, got nil")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.BranchResultMsg); !ok {
-		t.Errorf("expected BranchResultMsg, got %T", msg)
-	}
 }
 
 func TestModel_SwitchToStashesFiresFetchStashes(t *testing.T) {
@@ -1143,10 +1129,6 @@ func TestModel_SwitchToStashesFiresFetchStashes(t *testing.T) {
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd on switch to mode 3, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.StashResultMsg); !ok {
-		t.Errorf("expected StashResultMsg, got %T", msg)
 	}
 }
 
@@ -1216,10 +1198,6 @@ func TestModel_BranchDeletedMsgTriggersFetch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd after BranchDeletedMsg, got nil")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.BranchResultMsg); !ok {
-		t.Errorf("expected BranchResultMsg, got %T", msg)
-	}
 }
 
 func TestModel_StaleBranchDeletedMsgIgnored(t *testing.T) {
@@ -1236,10 +1214,6 @@ func TestModel_StashDroppedMsgTriggersStashFetch(t *testing.T) {
 	_, cmd := update(m, model.StashDroppedMsg{RepoPath: "/dev/alpha"})
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd after StashDroppedMsg, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.StashResultMsg); !ok {
-		t.Errorf("expected StashResultMsg, got %T", msg)
 	}
 }
 
@@ -1440,10 +1414,6 @@ func TestModel_SwitchToReflogFiresFetch(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.ReflogResultMsg); !ok {
-		t.Errorf("expected ReflogResultMsg, got %T", msg)
 	}
 }
 

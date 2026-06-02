@@ -24,6 +24,19 @@ const (
 	OverlayWorktreeInput
 )
 
+// Mode represents the active right-pane view. The model owns the application
+// state, but the renderer needs the same typed value (and the model imports ui,
+// not the other way around), so the type lives here to avoid an import cycle.
+type Mode int
+
+const (
+	ModeWorktrees Mode = iota + 1
+	ModeBranches
+	ModeStashes
+	ModeHistory
+	ModeReflog
+)
+
 const LeftPaneWidth = 30
 
 // RepoContentOverhead is the number of rows consumed by chrome around the
@@ -50,29 +63,35 @@ const StashContentOverhead = BranchContentOverhead
 // indent/cursor (3) + date (10) + separator (2).
 const StashPrefixWidth = 15
 
+// ANSI palette codes used below (8-/16-color + 256-color grays):
+//
+//	5   = magenta        6   = cyan          9   = bright red
+//	10  = bright green   11  = bright yellow  12  = bright blue
+//	14  = bright cyan    15  = bright white   238 = dark gray
+//	241 = medium gray
 var (
-	repoStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	selectedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Reverse(true)
-	placeholderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
-	statusStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	branchStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	cleanStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	commitStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	activeModeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	inactiveModeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	stashDateStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	stashMsgStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	stashSelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true)
+	repoStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
+	selectedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Reverse(true) // 10 = bright green
+	placeholderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)            // 241 = medium gray
+	statusStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	branchStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	cleanStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
+	commitStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	activeModeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	inactiveModeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	stashDateStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	stashMsgStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
+	stashSelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true) // 15 = bright white
 	branchSelStyle    = lipgloss.NewStyle().Bold(true).Reverse(true)
-	rootStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	mergedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	diffAddStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	diffDelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	diffHdrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	rootStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 12 = bright blue
+	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
+	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // 5 = magenta
+	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 11 = bright yellow
+	mergedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // 6 = cyan
+	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
+	diffAddStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 10 = bright green
+	diffDelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
+	diffHdrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
 )
 
 // RenderParams holds everything the renderer needs.
@@ -81,7 +100,7 @@ type RenderParams struct {
 	Selected         int
 	Width            int
 	Height           int
-	Mode             int
+	Mode             Mode
 	Branches         []gitquery.BranchRow
 	Stashes          []gitquery.Stash
 	BranchSelected   int
@@ -130,13 +149,28 @@ func Render(p RenderParams) string {
 	}
 
 	var staleSelected, dirtySelected, lockedSelected bool
-	if p.Mode == 1 && p.WorktreeSelected >= 0 && p.WorktreeSelected < len(p.Worktrees) {
+	if p.Mode == ModeWorktrees && p.WorktreeSelected >= 0 && p.WorktreeSelected < len(p.Worktrees) {
 		wt := p.Worktrees[p.WorktreeSelected]
 		staleSelected = wt.Stale
 		dirtySelected = wt.Dirty
 		lockedSelected = wt.Locked
 	}
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, staleSelected, dirtySelected, lockedSelected, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch, p.FetchAvailable, p.PullAvailable)
+	statusBar := renderStatusBarWithState(statusBarParams{
+		Width:          p.Width,
+		Mode:           p.Mode,
+		Overlay:        p.Overlay,
+		ActivePane:     p.ActivePane,
+		Destructive:    p.Destructive,
+		StaleSelected:  staleSelected,
+		DirtySelected:  dirtySelected,
+		LockedSelected: lockedSelected,
+		TransientError: p.TransientError,
+		SearchActive:   p.SearchActive,
+		RepoSearch:     p.RepoSearch,
+		ItemSearch:     p.ItemSearch,
+		FetchAvailable: p.FetchAvailable,
+		PullAvailable:  p.PullAvailable,
+	})
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -195,15 +229,15 @@ func Render(p RenderParams) string {
 
 	var rightLines []string
 	switch {
-	case p.Mode == 1 && len(p.Worktrees) > 0:
+	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
 		rightLines = renderWorktreePane(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight)
-	case p.Mode == 2 && len(p.Branches) > 0:
+	case p.Mode == ModeBranches && len(p.Branches) > 0:
 		rightLines = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, rightContentWidth, rightContentHeight, repoPath)
-	case p.Mode == 3 && len(p.Stashes) > 0:
+	case p.Mode == ModeStashes && len(p.Stashes) > 0:
 		rightLines = renderStashPane(p.Stashes, stashSel, p.StashScroll, rightContentWidth, rightContentHeight)
-	case p.Mode == 4 && len(p.Commits) > 0:
+	case p.Mode == ModeHistory && len(p.Commits) > 0:
 		rightLines = renderCommitPane(p.Commits, commitSel, p.CommitScroll, rightContentWidth, rightContentHeight)
-	case p.Mode == 5 && len(p.Reflogs) > 0:
+	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight)
@@ -223,16 +257,16 @@ func Render(p RenderParams) string {
 }
 
 // renderModeHeader produces the mode selector line shown at the top of the right pane.
-func renderModeHeader(mode, width int) string {
+func renderModeHeader(mode Mode, width int) string {
 	modes := []struct {
-		key  int
+		key  Mode
 		name string
 	}{
-		{1, "worktrees"},
-		{2, "branches"},
-		{3, "stashes"},
-		{4, "history"},
-		{5, "reflog"},
+		{ModeWorktrees, "worktrees"},
+		{ModeBranches, "branches"},
+		{ModeStashes, "stashes"},
+		{ModeHistory, "history"},
+		{ModeReflog, "reflog"},
 	}
 
 	var parts []string
@@ -249,17 +283,61 @@ func renderModeHeader(mode, width int) string {
 }
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
-func RenderStatusBar(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
-	fetchAvailable := activePane == 1 && (mode == 1 || mode == 2)
-	pullAvailable := activePane == 1 && mode == 1
-	if mode == 1 && staleSelected {
+func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
+	fetchAvailable := activePane == 1 && (mode == ModeWorktrees || mode == ModeBranches)
+	pullAvailable := activePane == 1 && mode == ModeWorktrees
+	if mode == ModeWorktrees && staleSelected {
 		fetchAvailable = false
 		pullAvailable = false
 	}
-	return renderStatusBarWithState(width, mode, overlay, activePane, destructive, staleSelected, dirtySelected, false, "", false, "", "", fetchAvailable, pullAvailable)
+	return renderStatusBarWithState(statusBarParams{
+		Width:          width,
+		Mode:           mode,
+		Overlay:        overlay,
+		ActivePane:     activePane,
+		Destructive:    destructive,
+		StaleSelected:  staleSelected,
+		DirtySelected:  dirtySelected,
+		FetchAvailable: fetchAvailable,
+		PullAvailable:  pullAvailable,
+	})
 }
 
-func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected, lockedSelected bool, transientError string, searchActive bool, repoSearch, itemSearch string, fetchAvailable, pullAvailable bool) string {
+// statusBarParams groups the many fields the status-bar renderer needs,
+// avoiding a long and error-prone positional parameter list.
+type statusBarParams struct {
+	Width          int
+	Mode           Mode
+	Overlay        OverlayState
+	ActivePane     int
+	Destructive    bool
+	StaleSelected  bool
+	DirtySelected  bool
+	LockedSelected bool
+	TransientError string
+	SearchActive   bool
+	RepoSearch     string
+	ItemSearch     string
+	FetchAvailable bool
+	PullAvailable  bool
+}
+
+func renderStatusBarWithState(sp statusBarParams) string {
+	width := sp.Width
+	mode := sp.Mode
+	overlay := sp.Overlay
+	activePane := sp.ActivePane
+	destructive := sp.Destructive
+	staleSelected := sp.StaleSelected
+	dirtySelected := sp.DirtySelected
+	lockedSelected := sp.LockedSelected
+	transientError := sp.TransientError
+	searchActive := sp.SearchActive
+	repoSearch := sp.RepoSearch
+	itemSearch := sp.ItemSearch
+	fetchAvailable := sp.FetchAvailable
+	pullAvailable := sp.PullAvailable
+
 	if transientError != "" {
 		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
 	}
@@ -285,7 +363,7 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		hints = "  enter: create  esc: cancel  backspace: delete"
 	case overlay != OverlayNone:
 		hints = "  ↑/↓ scroll  esc: close"
-	case mode == 5:
+	case mode == ModeReflog:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff  y: copy hash"
 		if fetchAvailable {
 			hints += "  f: fetch"
@@ -293,7 +371,7 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		if pullAvailable {
 			hints += "  F: pull"
 		}
-	case mode == 4:
+	case mode == ModeHistory:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff  y: copy hash  t: terminal  c: code"
 		if fetchAvailable {
 			hints += "  f: fetch"
@@ -301,7 +379,7 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		if pullAvailable {
 			hints += "  F: pull"
 		}
-	case mode == 3:
+	case mode == ModeStashes:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff"
 		if destructive {
 			hints += "  " + dirtyRedStyle.Render("d: drop")
@@ -314,7 +392,7 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 		if pullAvailable {
 			hints += "  F: pull"
 		}
-	case mode == 2:
+	case mode == ModeBranches:
 		keys := "  |  tab: pane  q/esc: quit"
 		if !destructive {
 			keys += "  D: destructive mode"
@@ -332,7 +410,7 @@ func renderStatusBarWithState(width, mode int, overlay OverlayState, activePane 
 			}
 		}
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
-	case mode == 1:
+	case mode == ModeWorktrees:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
 		if activePane == 1 && !staleSelected {
 			hints += "  n: new worktree"
@@ -386,10 +464,6 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int) [
 	}
 
 	return lines
-}
-
-func renderBranchPane(rows []gitquery.BranchRow, width, height int) []string {
-	return renderBranchPaneSelected(rows, 0, 0, width, height, "")
 }
 
 func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width, height int, repoPath string) []string {
@@ -599,7 +673,19 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 }
 
 func renderOverlay(p RenderParams) string {
-	statusBar := renderStatusBarWithState(p.Width, p.Mode, p.Overlay, p.ActivePane, p.Destructive, false, false, false, p.TransientError, p.SearchActive, p.RepoSearch, p.ItemSearch, p.FetchAvailable, p.PullAvailable)
+	statusBar := renderStatusBarWithState(statusBarParams{
+		Width:          p.Width,
+		Mode:           p.Mode,
+		Overlay:        p.Overlay,
+		ActivePane:     p.ActivePane,
+		Destructive:    p.Destructive,
+		TransientError: p.TransientError,
+		SearchActive:   p.SearchActive,
+		RepoSearch:     p.RepoSearch,
+		ItemSearch:     p.ItemSearch,
+		FetchAvailable: p.FetchAvailable,
+		PullAvailable:  p.PullAvailable,
+	})
 	contentHeight := p.Height - 1
 
 	// Confirmation dialog overlay

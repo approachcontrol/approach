@@ -939,6 +939,20 @@ func TestListCommits_InvalidPath(t *testing.T) {
 	}
 }
 
+// TestGitCmdError_SurfacesStderr verifies that a failed git query surfaces git's
+// stderr diagnostic in the returned error rather than a bare "exit status N".
+func TestGitCmdError_SurfacesStderr(t *testing.T) {
+	dir := realPath(t, t.TempDir()) // a real directory that is not a git repo
+
+	_, err := gitquery.ListCommits(dir)
+	if err == nil {
+		t.Fatal("expected error running git in a non-repo directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("expected error to surface git stderr diagnostic, got %q", err.Error())
+	}
+}
+
 func TestCommitDiff_ReturnsDiff(t *testing.T) {
 	dir := realPath(t, t.TempDir())
 	initRepo(t, dir)

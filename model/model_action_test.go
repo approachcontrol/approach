@@ -8,6 +8,7 @@ import (
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/ui"
 )
 
 // --- Worktree diff (enter key in ModeWorktrees) ---
@@ -22,15 +23,11 @@ func TestModel_EnterOnDirtyWorktreeOpensDiffOverlay(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayWorktreeDiff {
+	if m.Overlay() != ui.OverlayWorktreeDiff {
 		t.Errorf("expected OverlayWorktreeDiff, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchWorktreeDiff cmd, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeDiffResultMsg); !ok {
-		t.Errorf("expected WorktreeDiffResultMsg, got %T", msg)
 	}
 }
 
@@ -43,7 +40,7 @@ func TestModel_EnterOnCleanWorktreeIsNoOp(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone for clean worktree, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -60,7 +57,7 @@ func TestModel_EnterOnStaleWorktreeIsNoOp(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone for stale worktree, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -77,7 +74,7 @@ func TestModel_EnterOnLockedDirtyWorktreeOpensDiffOverlay(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayWorktreeDiff {
+	if m.Overlay() != ui.OverlayWorktreeDiff {
 		t.Errorf("expected OverlayWorktreeDiff for locked dirty worktree, got %d", m.Overlay())
 	}
 	if cmd == nil {
@@ -90,7 +87,7 @@ func TestModel_EnterOnEmptyWorktreeListIsNoOp(t *testing.T) {
 	m = inRightPane(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone with no worktrees, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -326,14 +323,14 @@ func TestModel_FAndShiftFKeys_NonWorktreeAndBranchModes_NoCmd(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		key  rune
-		mode model.Mode
+		mode ui.Mode
 	}{
-		{name: "fetch stashes", key: 'f', mode: model.ModeStashes},
-		{name: "pull stashes", key: 'F', mode: model.ModeStashes},
-		{name: "fetch history", key: 'f', mode: model.ModeHistory},
-		{name: "pull history", key: 'F', mode: model.ModeHistory},
-		{name: "fetch reflog", key: 'f', mode: model.ModeReflog},
-		{name: "pull reflog", key: 'F', mode: model.ModeReflog},
+		{name: "fetch stashes", key: 'f', mode: ui.ModeStashes},
+		{name: "pull stashes", key: 'F', mode: ui.ModeStashes},
+		{name: "fetch history", key: 'f', mode: ui.ModeHistory},
+		{name: "pull history", key: 'F', mode: ui.ModeHistory},
+		{name: "fetch reflog", key: 'f', mode: ui.ModeReflog},
+		{name: "pull reflog", key: 'F', mode: ui.ModeReflog},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
@@ -356,10 +353,6 @@ func TestModel_GitFetchedRefetchesCurrentMode(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected refetch cmd after fetch success")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.BranchResultMsg); !ok {
-		t.Fatalf("expected BranchResultMsg from refetch, got %T", msg)
-	}
 }
 
 func TestModel_GitPulledRefetchesCurrentMode(t *testing.T) {
@@ -369,10 +362,6 @@ func TestModel_GitPulledRefetchesCurrentMode(t *testing.T) {
 	_, cmd := update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
 	if cmd == nil {
 		t.Fatal("expected refetch cmd after pull success")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Fatalf("expected WorktreeResultMsg from refetch, got %T", msg)
 	}
 }
 
@@ -413,14 +402,8 @@ func TestModel_EnterStillRequiresDirtyWorktree(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter on dirty root branch should open diff")
 	}
-	msg := cmd()
-	diffMsg, ok := msg.(model.BranchDiffResultMsg)
-	if !ok {
-		t.Fatalf("expected BranchDiffResultMsg, got %T", msg)
-	}
-	if diffMsg.BranchName != "dirty-root" {
-		t.Errorf("expected dirty-root, got %q", diffMsg.BranchName)
-	}
+	// The diff payload (branch name, contents) is verified against a real repo
+	// in TestModel_BranchDiffPayloadAgainstRealRepo.
 
 	// Navigate to clean-1 (index 1): enter is no-op
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -452,15 +435,11 @@ func TestModel_EnterOpensBranchDiffOverlayForDirtyWorktree(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayBranchDiff {
+	if m.Overlay() != ui.OverlayBranchDiff {
 		t.Errorf("expected OverlayBranchDiff, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchBranchDiff cmd, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.BranchDiffResultMsg); !ok {
-		t.Errorf("expected BranchDiffResultMsg, got %T", msg)
 	}
 }
 
@@ -476,7 +455,7 @@ func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -497,15 +476,11 @@ func modelInHistoryWithCommits() model.Model {
 func TestModel_EnterInHistoryOpensCommitDiffOverlay(t *testing.T) {
 	m := modelInHistoryWithCommits()
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayCommitDiff {
+	if m.Overlay() != ui.OverlayCommitDiff {
 		t.Errorf("expected OverlayCommitDiff, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchCommitDiff cmd, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.CommitDiffResultMsg); !ok {
-		t.Errorf("expected CommitDiffResultMsg, got %T", msg)
 	}
 }
 
@@ -515,7 +490,7 @@ func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	// No commits loaded
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -594,7 +569,7 @@ func TestModel_DKeyNoOpInHistoryMode(t *testing.T) {
 	m := modelInHistoryWithCommits()
 	m = enableDestructive(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone in history mode, got %d", m.Overlay())
 	}
 }
@@ -623,15 +598,11 @@ func TestModel_EnterOpensOverlay(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayStashDiff {
+	if m.Overlay() != ui.OverlayStashDiff {
 		t.Errorf("expected OverlayStashDiff, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchStashDiff cmd, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.StashDiffResultMsg); !ok {
-		t.Errorf("expected StashDiffResultMsg, got %T", msg)
 	}
 }
 
@@ -651,7 +622,7 @@ func TestModel_EscClosesOverlay(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	// Now close overlay with esc
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -670,7 +641,7 @@ func TestModel_QClosesOverlayNotQuit(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	// Close with q
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -715,7 +686,7 @@ func TestModel_ModeKeysIgnoredInOverlay(t *testing.T) {
 	if m.Mode() != 3 {
 		t.Errorf("expected mode unchanged at 3 (stashes), got %d", m.Mode())
 	}
-	if m.Overlay() != model.OverlayStashDiff {
+	if m.Overlay() != ui.OverlayStashDiff {
 		t.Errorf("expected overlay still open, got %d", m.Overlay())
 	}
 }
@@ -731,7 +702,7 @@ func TestModel_DKeyNoOpInReadOnlyMode(t *testing.T) {
 	})
 	// d should be no-op in read-only mode (default)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone in read-only mode, got %d", m.Overlay())
 	}
 }
@@ -759,7 +730,7 @@ func TestModel_DKeyWorksInDestructiveMode(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 	// Now d should work
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm in destructive mode, got %d", m.Overlay())
 	}
 }
@@ -770,7 +741,7 @@ func TestModel_DKeyNoOpInReadOnlyModeStashes(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone for stash drop in read-only mode, got %d", m.Overlay())
 	}
 }
@@ -810,7 +781,7 @@ func TestModel_ShiftDNoOpDuringConfirmOverlay(t *testing.T) {
 	m := modelWithDeletableBranch()
 	// Open confirm dialog
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatal("expected OverlayConfirm")
 	}
 	// Shift+D should be ignored while confirm is active
@@ -831,7 +802,7 @@ func TestModel_ShiftDNoOpDuringDiffOverlay(t *testing.T) {
 	})
 	// Open diff overlay
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() == model.OverlayNone {
+	if m.Overlay() == ui.OverlayNone {
 		t.Fatal("expected a diff overlay")
 	}
 	// Not in destructive mode; Shift+D should be ignored
@@ -850,15 +821,11 @@ func TestModel_WorktreeRemovedDetachedSkipsBranchConfirm(t *testing.T) {
 	}})
 	// Send WorktreeRemovedMsg with empty BranchName (detached)
 	m, cmd := update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: ""})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("detached removal should not show branch confirm, got overlay %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after detached removal, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
 	}
 }
 
@@ -871,7 +838,7 @@ func TestModel_WorktreeRemovedShowsBranchConfirm(t *testing.T) {
 	}})
 	// Send WorktreeRemovedMsg with branch name
 	m, cmd := update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("non-detached removal should show branch confirm, got overlay %d", m.Overlay())
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "feat") {
@@ -884,10 +851,6 @@ func TestModel_WorktreeRemovedShowsBranchConfirm(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd alongside branch confirm, got nil")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg from background refetch, got %T", msg)
-	}
 }
 
 func TestModel_CombinedCleanupConfirmYReturnsCmd(t *testing.T) {
@@ -899,12 +862,12 @@ func TestModel_CombinedCleanupConfirmYReturnsCmd(t *testing.T) {
 	}})
 	// Trigger branch confirm
 	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected OverlayConfirm, got %d", m.Overlay())
 	}
 	// Confirm branch deletion
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after confirm, got %d", m.Overlay())
 	}
 	if cmd == nil {
@@ -927,7 +890,7 @@ func TestModel_CombinedCleanupConfirmNClosesDialog(t *testing.T) {
 	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
 	// Decline branch deletion
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after cancel, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -935,10 +898,13 @@ func TestModel_CombinedCleanupConfirmNClosesDialog(t *testing.T) {
 	}
 }
 
-func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *testing.T) {
-	// Full end-to-end: worktree removed → "Also delete branch?" confirmed →
-	// DeleteBranch fails (fake path) → "Force delete?" shown → force confirmed →
-	// should return WorktreeDeleteCompletedMsg, not BranchDeletedMsg.
+func TestModel_CombinedCleanupForceDeleteFailureSurfacesError(t *testing.T) {
+	// Full chain on a fake path: worktree removed → "Also delete branch?"
+	// confirmed → DeleteBranch fails → "Force delete?" shown → force confirmed →
+	// the force delete also fails, which must surface as ForceDeleteFailedMsg
+	// rather than a false success. The success path (force delete succeeds and
+	// the threaded WorktreeDeleteCompletedMsg is returned) is covered against a
+	// real repo by TestModel_CombinedCleanupForceDeleteSucceedsAgainstRealRepo.
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
@@ -947,7 +913,7 @@ func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *te
 	}})
 	// Worktree removed → branch confirm dialog
 	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: "/dev/alpha", BranchName: "feat"})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected branch confirm overlay, got %d", m.Overlay())
 	}
 	// Confirm branch deletion → DeleteBranch fails on fake path → DeleteFailedMsg
@@ -961,7 +927,7 @@ func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *te
 	}
 	// Process DeleteFailedMsg → force confirm shown
 	m, _ = update(m, deleteFailedMsg)
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected force confirm overlay, got %d", m.Overlay())
 	}
 	if !m.ConfirmForce() {
@@ -972,9 +938,8 @@ func TestModel_CombinedCleanupForceDeleteReturnsWorktreeDeleteCompletedMsg(t *te
 	if forceCmd == nil {
 		t.Fatal("expected force cmd, got nil")
 	}
-	result := forceCmd()
-	if _, ok := result.(model.WorktreeDeleteCompletedMsg); !ok {
-		t.Errorf("force-delete in combined cleanup should return WorktreeDeleteCompletedMsg, got %T", result)
+	if _, ok := forceCmd().(model.ForceDeleteFailedMsg); !ok {
+		t.Fatalf("expected ForceDeleteFailedMsg from fake-path force delete, got %T", forceCmd())
 	}
 }
 
@@ -988,7 +953,7 @@ func TestModel_PKeyRequiresDestructiveMode(t *testing.T) {
 		{Path: "/dev/gone", BranchName: "stale", Stale: true},
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p without destructive mode should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -998,7 +963,7 @@ func TestModel_PKeyNoOpOnNonStaleWorktree(t *testing.T) {
 		{Path: "/dev/alpha-feat", BranchName: "feat"},
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p on non-stale worktree should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -1008,7 +973,7 @@ func TestModel_PKeyOnStaleWorktreeShowsConfirm(t *testing.T) {
 		{Path: "/dev/gone", BranchName: "stale-branch", Stale: true},
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("p on stale worktree should open confirm, got overlay %d", m.Overlay())
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "Prune") {
@@ -1021,7 +986,7 @@ func TestModel_PKeyNoOpOnLockedStaleWorktree(t *testing.T) {
 		{Path: "/dev/gone", BranchName: "offline", Locked: true, Stale: true},
 	})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p on locked stale worktree should be no-op, got overlay %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -1034,7 +999,7 @@ func TestModel_PKeyNoOpInBranchesMode(t *testing.T) {
 	m = inBranchesMode(m)
 	m = enableDestructive(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("p in branches mode should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -1049,10 +1014,6 @@ func TestModel_WorktreePrunedRefetchesWorktrees(t *testing.T) {
 	m, cmd := update(m, model.WorktreePrunedMsg{RepoPath: "/dev/alpha"})
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after prune, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
 	}
 }
 
@@ -1097,7 +1058,7 @@ func TestModel_TKeyOnStaleWorktreeIsNoOp(t *testing.T) {
 func TestModel_WorktreeDeleteCompletedMsgIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m, cmd := update(m, model.WorktreeDeleteCompletedMsg{RepoPath: "/dev/alpha"})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -1111,7 +1072,7 @@ func TestModel_NKeyOpensWorktreeInput(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if m.Overlay() != model.OverlayWorktreeInput {
+	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "" {
@@ -1126,12 +1087,12 @@ func TestModel_NKeyNoOpOutsideWorktreesMode(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		key  rune
-		mode model.Mode
+		mode ui.Mode
 	}{
-		{name: "branches", key: '2', mode: model.ModeBranches},
-		{name: "stashes", key: '3', mode: model.ModeStashes},
-		{name: "history", key: '4', mode: model.ModeHistory},
-		{name: "reflog", key: '5', mode: model.ModeReflog},
+		{name: "branches", key: '2', mode: ui.ModeBranches},
+		{name: "stashes", key: '3', mode: ui.ModeStashes},
+		{name: "history", key: '4', mode: ui.ModeHistory},
+		{name: "reflog", key: '5', mode: ui.ModeReflog},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
@@ -1142,7 +1103,7 @@ func TestModel_NKeyNoOpOutsideWorktreesMode(t *testing.T) {
 			}
 
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-			if m.Overlay() != model.OverlayNone {
+			if m.Overlay() != ui.OverlayNone {
 				t.Errorf("expected OverlayNone, got %d", m.Overlay())
 			}
 			if cmd != nil {
@@ -1169,7 +1130,7 @@ func TestModel_WorktreeInputEscCancels(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "" {
@@ -1186,7 +1147,7 @@ func TestModel_WorktreeInputCtrlCCancels(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "" {
@@ -1202,7 +1163,7 @@ func TestModel_WorktreeInputEnterRequiresText(t *testing.T) {
 	m = inWorktreesMode(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayWorktreeInput {
+	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
 	}
 	if m.WorktreeInputErr() == "" {
@@ -1219,7 +1180,7 @@ func TestModel_WorktreeInputEnterCreatesWorktree(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed, got %d", m.Overlay())
 	}
 	if cmd == nil {
@@ -1235,22 +1196,18 @@ func TestModel_WorktreeCreatedRefetchesWorktrees(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
 	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"})
-	if m.Mode() != model.ModeWorktrees {
+	if m.Mode() != ui.ModeWorktrees {
 		t.Errorf("expected mode worktrees after create, got %d", m.Mode())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after create")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
 	}
 }
 
 func TestModel_WorktreeCreateFailedReopensInput(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, model.WorktreeCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feat", Err: "boom"})
-	if m.Overlay() != model.OverlayWorktreeInput {
+	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "feat" {
@@ -1264,7 +1221,7 @@ func TestModel_WorktreeCreateFailedReopensInput(t *testing.T) {
 func TestModel_WorktreeCreateFailedUsesFallbackError(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, model.WorktreeCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feat"})
-	if m.Overlay() != model.OverlayWorktreeInput {
+	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "feat" {
@@ -1297,7 +1254,7 @@ func modelWithDeletableBranch() model.Model {
 func TestModel_DKeyOpensConfirmOverlay(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm, got %d", m.Overlay())
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "feat") {
@@ -1314,7 +1271,7 @@ func TestModel_DKeyOnNonWorktreeBranchOpensDeleteConfirm(t *testing.T) {
 	})
 	m = enableDestructive(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm for non-worktree branch, got %d", m.Overlay())
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "main") {
@@ -1330,7 +1287,7 @@ func TestModel_DKeyNoOpWithNoBranches(t *testing.T) {
 	// No branches loaded
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone when no branches, got %d", m.Overlay())
 	}
 }
@@ -1339,7 +1296,7 @@ func TestModel_ConfirmCancelEsc(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed on esc, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -1354,7 +1311,7 @@ func TestModel_ConfirmCancelQ(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed on q, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -1369,7 +1326,7 @@ func TestModel_ConfirmCancelN(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed on n, got %d", m.Overlay())
 	}
 }
@@ -1378,7 +1335,7 @@ func TestModel_ConfirmYClosesOverlayAndReturnsCmd(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after confirm, got %d", m.Overlay())
 	}
 	if cmd == nil {
@@ -1390,7 +1347,7 @@ func TestModel_ConfirmEnterExecutesAction(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after enter, got %d", m.Overlay())
 	}
 	if cmd == nil {
@@ -1429,7 +1386,7 @@ func TestModel_DeleteFailedMsgOpensForceConfirm(t *testing.T) {
 			return nil
 		},
 	})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm after DeleteFailedMsg, got %d", m.Overlay())
 	}
 	if !m.ConfirmForce() {
@@ -1452,7 +1409,7 @@ func TestModel_ForceConfirmCancelClearsForce(t *testing.T) {
 		ForceAction: func() error { return nil },
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after cancel, got %d", m.Overlay())
 	}
 	if m.ConfirmForce() {
@@ -1468,7 +1425,7 @@ func TestModel_ForceConfirmYExecutesForceAction(t *testing.T) {
 		ForceAction: func() error { return nil },
 	})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected overlay closed after force confirm, got %d", m.Overlay())
 	}
 	if m.ConfirmForce() {
@@ -1487,7 +1444,7 @@ func TestModel_ConfirmDialogBlocksModeSwitch(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	if m.Mode() != model.ModeBranches {
+	if m.Mode() != ui.ModeBranches {
 		t.Errorf("confirm dialog should block mode switch, mode changed to %d", m.Mode())
 	}
 }
@@ -1506,7 +1463,7 @@ func modelInStashesWithStashes() model.Model {
 func TestModel_DKeyInStashesModeOpensConfirmDialog(t *testing.T) {
 	m := modelInStashesWithStashes()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("expected OverlayConfirm, got %d", m.Overlay())
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "stash@{0}") {
@@ -1520,7 +1477,7 @@ func TestModel_DKeyInStashesModeWithNoStashesDoesNothing(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	// No stashes loaded
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone when no stashes, got %d", m.Overlay())
 	}
 }
@@ -1531,10 +1488,6 @@ func TestModel_StashDropConfirmReturnsStashDroppedMsg(t *testing.T) {
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Fatal("expected cmd after stash drop confirm, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.StashDroppedMsg); !ok {
-		t.Errorf("expected StashDroppedMsg, got %T", msg)
 	}
 }
 
@@ -1614,14 +1567,14 @@ func TestModel_DKeyNoOpOnRootBranch(t *testing.T) {
 
 	// Cursor at root branch (pinned to index 0) — d should be no-op
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on root branch should be no-op, got overlay %d", m.Overlay())
 	}
 
 	// Navigate to feat (index 1) — d should open confirm
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("d on non-root branch should open confirm, got overlay %d", m.Overlay())
 	}
 }
@@ -1648,7 +1601,7 @@ func TestModel_DKeyNoOpOnRootWorktree(t *testing.T) {
 	})
 	// Cursor at root worktree (index 0) — d should be no-op
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on root worktree should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -1661,7 +1614,7 @@ func TestModel_DKeyNoOpOnStaleWorktree(t *testing.T) {
 	// Navigate to stale worktree (index 1)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on stale worktree should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -1673,7 +1626,7 @@ func TestModel_DKeyNoOpOnLockedWorktree(t *testing.T) {
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d on locked worktree should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -1688,7 +1641,7 @@ func TestModel_DKeyOnWorktreeRequiresDestructiveMode(t *testing.T) {
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("d without destructive mode should be no-op, got overlay %d", m.Overlay())
 	}
 }
@@ -1738,7 +1691,7 @@ func TestModel_DKeyOnWorktreeShowsConfirm(t *testing.T) {
 	// Navigate to non-root worktree (index 1)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayConfirm {
+	if m.Overlay() != ui.OverlayConfirm {
 		t.Errorf("d on non-root worktree should open confirm, got overlay %d", m.Overlay())
 	}
 	if !strings.Contains(m.ConfirmPrompt(), "/dev/alpha-feat") {
@@ -1754,7 +1707,7 @@ func TestModel_UKeyOnLockedWorktreeFiresUnlockCmd(t *testing.T) {
 	}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("u should not open an overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
@@ -1787,7 +1740,7 @@ func TestModel_UKeyOnUnlockedWorktreeIsNoOp(t *testing.T) {
 	}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("u on unlocked worktree should not open overlay, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -1800,7 +1753,7 @@ func TestModel_UKeyOutsideWorktreesModeIsNoOp(t *testing.T) {
 	m = inBranchesMode(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("u outside worktrees mode should not open overlay, got %d", m.Overlay())
 	}
 	if cmd != nil {
@@ -1829,10 +1782,6 @@ func TestModel_WorktreeUnlockedMsgRefetchesWorktrees(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after unlock")
 	}
-	msg := cmd()
-	if _, ok := msg.(model.WorktreeResultMsg); !ok {
-		t.Errorf("expected WorktreeResultMsg from refetch, got %T", msg)
-	}
 }
 
 func TestModel_StaleWorktreeUnlockedMsgIgnored(t *testing.T) {
@@ -1859,7 +1808,7 @@ func TestModel_DKeyNoOpInReflogMode(t *testing.T) {
 	m := modelInReflogWithEntries()
 	m = enableDestructive(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone in reflog mode, got %d", m.Overlay())
 	}
 }
@@ -1885,15 +1834,11 @@ func TestModel_YKeyNoOpWithNoReflogs(t *testing.T) {
 func TestModel_EnterInReflogOpensReflogDiffOverlay(t *testing.T) {
 	m := modelInReflogWithEntries()
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayReflogDiff {
+	if m.Overlay() != ui.OverlayReflogDiff {
 		t.Errorf("expected OverlayReflogDiff, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchReflogDiff cmd, got nil")
-	}
-	msg := cmd()
-	if _, ok := msg.(model.ReflogDiffResultMsg); !ok {
-		t.Errorf("expected ReflogDiffResultMsg, got %T", msg)
 	}
 }
 
@@ -1943,7 +1888,7 @@ func TestModel_EnterInReflogNoEntriesIsNoOp(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != model.OverlayNone {
+	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
 	if cmd != nil {

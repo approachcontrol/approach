@@ -3,7 +3,7 @@ BINARY   = $(BIN_DIR)/wtui
 VERSION_PACKAGE = github.com/brian-bell/wtui/internal/version
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -X $(VERSION_PACKAGE).Version=dev -X $(VERSION_PACKAGE).Commit=$(COMMIT) -X $(VERSION_PACKAGE).Date=$(DATE)
+LDFLAGS := -X $(VERSION_PACKAGE).version=dev -X $(VERSION_PACKAGE).commit=$(COMMIT) -X $(VERSION_PACKAGE).date=$(DATE)
 
 .PHONY: build test run clean tidy
 

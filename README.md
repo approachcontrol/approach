@@ -75,6 +75,9 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 | `n` | Create a new worktree from a branch, tag, or new branch name |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
+| `u` | Unlock a locked worktree (worktrees view) |
+| `f` | Fetch with `--prune` (worktrees and branches views) |
+| `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
 | `y` | Copy hash to clipboard (history/reflog view) |
@@ -94,7 +97,7 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list.
+Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list. Press `f` to `git fetch --prune` and `F` to `git pull --ff-only` for the selected worktree. Locked worktrees cannot be deleted or pruned; press `u` to unlock one.
 
 ### Branches view (mode 2)
 
@@ -108,7 +111,7 @@ Status indicators stack on each branch:
 - `●` purple: no upstream or upstream gone
 - `merged` cyan: branch is fully merged into the cleanup branch (`main` or `master`)
 
-Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij session and `c` opens VSCode at the worktree path (root branch only). `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
+Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij session and `c` opens VSCode at the worktree path (root branch only). `f` runs `git fetch --prune`, and `F` runs `git pull --ff-only` for branches that have a checked-out worktree. `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
 
 ### Stashes view (mode 3)
 
