@@ -1257,6 +1257,19 @@ func TestRender_EmptyStateMessagesFitPaneWidth(t *testing.T) {
 	}
 }
 
+func TestRepoList_EmptyMessageIsVerticallyCentered(t *testing.T) {
+	lines := renderRepoList(nil, 0, 0, 20, 5, "No repos")
+	for i, line := range lines {
+		hasMessage := strings.Contains(line, "No repos")
+		if i == 2 && !hasMessage {
+			t.Fatalf("expected empty message centered on line 2, got %#v", lines)
+		}
+		if i != 2 && hasMessage {
+			t.Fatalf("empty message should only appear on centered line, got line %d in %#v", i, lines)
+		}
+	}
+}
+
 // --- Reflog pane ---
 
 func TestReflogPane_ShowsEntryDetails(t *testing.T) {

@@ -452,10 +452,10 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	}
 	lines := make([]string, height)
 	if len(repos) == 0 && emptyMessage != "" {
-		lines[0] = renderPlaceholderLine(emptyMessage, width)
-		for i := 1; i < height; i++ {
+		for i := range lines {
 			lines[i] = strings.Repeat(" ", width)
 		}
+		lines[height/2] = renderPlaceholderLine(emptyMessage, width)
 		return lines
 	}
 
@@ -873,6 +873,8 @@ func renderPlaceholderPane(width, height int, message string) []string {
 	}
 	lines := make([]string, height)
 	if message == "" {
+		// Keep a generic fallback for direct renderer callers; the model
+		// supplies mode-specific messages during normal application rendering.
 		message = "nothing here yet"
 	}
 	mid := height / 2

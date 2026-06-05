@@ -53,6 +53,16 @@ func TestModel_ViewContainsExpectedContent(t *testing.T) {
 	}
 }
 
+func TestModel_ViewNoReposShowsEmptyMessage(t *testing.T) {
+	m := model.New(nil)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	view := m.View()
+	if !strings.Contains(view, "No repositories found") {
+		t.Fatalf("view with no repos should explain that no repositories were found, got:\n%s", view)
+	}
+}
+
 func TestModel_ViewWorktreesModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -91,6 +101,12 @@ func TestModel_ViewDistinguishesFilteredEmptyRepos(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "No repo results for zzz") {
 		t.Fatalf("filtered repo pane should explain that the repo filter has no matches, got:\n%s", view)
+	}
+	if !strings.Contains(view, "No matching repo") {
+		t.Fatalf("right pane should explain that the repo filter leaves no selected repo, got:\n%s", view)
+	}
+	if strings.Contains(view, "No selected repo") {
+		t.Fatal("filtered-empty repo view should not use generic no-selected-repo copy")
 	}
 }
 

@@ -172,17 +172,21 @@ func (m Model) repoEmptyMessage(filteredRepos int) string {
 	if filteredRepos > 0 {
 		return ""
 	}
-	if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
+	itemCount := m.repos.ItemCount()
+	if m.repos.Query() != "" && itemCount > 0 {
 		return "No repo results for " + m.repos.Query()
 	}
-	if m.repos.ItemCount() == 0 {
+	if itemCount == 0 {
 		return "No repositories found"
 	}
-	return ""
+	return "No repo results"
 }
 
 func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs int) string {
 	if filteredRepos == 0 {
+		if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
+			return "No matching repo"
+		}
 		return "No selected repo"
 	}
 	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs)
