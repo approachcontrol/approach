@@ -24,6 +24,8 @@ const (
 	OverlayWorktreeInput
 )
 
+const PRWorktreePrompt = "PR worktree"
+
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
 // not the other way around), so the type lives here to avoid an import cycle.
@@ -96,44 +98,45 @@ var (
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos             []scanner.Repo
-	Selected          int
-	Width             int
-	Height            int
-	Mode              Mode
-	Branches          []gitquery.BranchRow
-	Stashes           []gitquery.Stash
-	BranchSelected    int
-	StashSelected     int
-	Overlay           OverlayState
-	OverlayDiff       string
-	OverlayScroll     int
-	ConfirmPrompt     string
-	ConfirmForce      bool
-	WorktreeInput     string
-	WorktreeInputErr  string
-	BranchScroll      int
-	RepoScroll        int
-	StashScroll       int
-	ActivePane        int
-	Destructive       bool
-	Worktrees         []gitquery.Worktree
-	WorktreeSelected  int
-	WorktreeScroll    int
-	Commits           []gitquery.Commit
-	CommitSelected    int
-	CommitScroll      int
-	Reflogs           []gitquery.ReflogEntry
-	ReflogSelected    int
-	ReflogScroll      int
-	TransientError    string
-	SearchActive      bool
-	RepoSearch        string
-	ItemSearch        string
-	RepoEmptyMessage  string
-	RightEmptyMessage string
-	FetchAvailable    bool
-	PullAvailable     bool
+	Repos               []scanner.Repo
+	Selected            int
+	Width               int
+	Height              int
+	Mode                Mode
+	Branches            []gitquery.BranchRow
+	Stashes             []gitquery.Stash
+	BranchSelected      int
+	StashSelected       int
+	Overlay             OverlayState
+	OverlayDiff         string
+	OverlayScroll       int
+	ConfirmPrompt       string
+	ConfirmForce        bool
+	WorktreeInputPrompt string
+	WorktreeInput       string
+	WorktreeInputErr    string
+	BranchScroll        int
+	RepoScroll          int
+	StashScroll         int
+	ActivePane          int
+	Destructive         bool
+	Worktrees           []gitquery.Worktree
+	WorktreeSelected    int
+	WorktreeScroll      int
+	Commits             []gitquery.Commit
+	CommitSelected      int
+	CommitScroll        int
+	Reflogs             []gitquery.ReflogEntry
+	ReflogSelected      int
+	ReflogScroll        int
+	TransientError      string
+	SearchActive        bool
+	RepoSearch          string
+	ItemSearch          string
+	RepoEmptyMessage    string
+	RightEmptyMessage   string
+	FetchAvailable      bool
+	PullAvailable       bool
 }
 
 // Render produces the full terminal view string.
@@ -414,13 +417,19 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == ModeWorktrees:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
+		if !destructive {
+			hints += "  D: destructive mode"
+		}
 		if activePane == 1 && !staleSelected {
 			hints += "  n: new worktree"
-			if dirtySelected {
-				hints += "  enter: diff"
+			if lockedSelected {
+				hints += "  u: unlock"
 			}
 			if destructive && !lockedSelected {
 				hints += "  " + dirtyRedStyle.Render("d: delete")
+			}
+			if dirtySelected {
+				hints += "  enter: diff"
 			}
 			if fetchAvailable {
 				hints += "  f: fetch"
@@ -428,16 +437,11 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			if pullAvailable {
 				hints += "  F: pull"
 			}
-			hints += "  t: terminal  c: code"
+			hints += "  t: terminal c: code"
+			hints += " P: PR"
 		}
 		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
-		}
-		if activePane == 1 && lockedSelected {
-			hints += "  u: unlock"
-		}
-		if !destructive {
-			hints += "  D: destructive mode"
 		}
 	default:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
@@ -706,7 +710,7 @@ func renderOverlay(p RenderParams) string {
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayWorktreeInput {
-		lines := renderWorktreeInputDialog(p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
+		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 
@@ -771,7 +775,7 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 	return lines
 }
 
-func renderWorktreeInputDialog(input, errText string, width, height int) []string {
+func renderWorktreeInputDialog(promptText, input, errText string, width, height int) []string {
 	lines := make([]string, height)
 	mid := height / 2
 	if mid >= len(lines) {
@@ -779,9 +783,14 @@ func renderWorktreeInputDialog(input, errText string, width, height int) []strin
 	}
 
 	label := "Create worktree from: "
+	placeholder := "branch, tag, or new branch name"
+	if promptText == PRWorktreePrompt {
+		label = "Create PR worktree from: "
+		placeholder = "PR number or URL"
+	}
 	value := input
 	if value == "" {
-		value = placeholderStyle.Render("branch, tag, or new branch name")
+		value = placeholderStyle.Render(placeholder)
 	}
 	prompt := label + value + activeModeStyle.Render("█")
 	lines[mid] = centeredLine(prompt, width)
