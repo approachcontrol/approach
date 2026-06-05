@@ -158,6 +158,7 @@ func TestModel_WorktreeDiffResultAfterClosedOverlayIgnored(t *testing.T) {
 	m, _ = update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
 		Diff:         "stale worktree diff",
 	})
 

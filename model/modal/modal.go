@@ -92,26 +92,6 @@ func (m Modal) WithRequest(request uint64) Modal {
 	return m
 }
 
-func (m Modal) SetDiff(body string) Modal {
-	if m.kind == Diff {
-		m.diff = body
-		if m.scroll > maxDiffScroll(body) {
-			m.scroll = maxDiffScroll(body)
-		}
-	}
-	return m
-}
-
-func (m Modal) SetDiffFor(kind DiffKind, body string) Modal {
-	if m.kind == Diff && m.diffKind == kind {
-		m.diff = body
-		if m.scroll > maxDiffScroll(body) {
-			m.scroll = maxDiffScroll(body)
-		}
-	}
-	return m
-}
-
 func (m Modal) SetDiffForRequest(kind DiffKind, request uint64, body string) Modal {
 	if request != 0 && m.kind == Diff && m.diffKind == kind && m.request == request {
 		m.diff = body

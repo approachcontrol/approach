@@ -2,6 +2,7 @@ package modal_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -152,8 +153,7 @@ func TestInputInvalidSubmitStaysOpenWithError(t *testing.T) {
 }
 
 func TestDiffScrollsClampsAndCloses(t *testing.T) {
-	m := modal.OpenDiff(modal.DiffWorktree, "")
-	m = m.SetDiff("line 1\nline 2")
+	m := modal.OpenDiff(modal.DiffWorktree, "line 1\nline 2")
 
 	m, out, _ := m.Update(keyRunes("j"))
 	if out != modal.Consumed {
@@ -186,15 +186,15 @@ func TestDiffScrollsClampsAndCloses(t *testing.T) {
 	}
 }
 
-func TestDiffSetForIgnoresWrongKind(t *testing.T) {
-	m := modal.OpenDiff(modal.DiffCommit, "")
-	m = m.SetDiffFor(modal.DiffStash, "stale stash diff")
+func TestDiffSetForRequestIgnoresWrongKind(t *testing.T) {
+	m := modal.OpenDiff(modal.DiffCommit, "").WithRequest(7)
+	m = m.SetDiffForRequest(modal.DiffStash, 7, "stale stash diff")
 
 	if got := m.View().Diff; got != "" {
 		t.Fatalf("expected wrong-kind diff ignored, got %q", got)
 	}
 
-	m = m.SetDiffFor(modal.DiffCommit, "commit diff")
+	m = m.SetDiffForRequest(modal.DiffCommit, 7, "commit diff")
 	if got := m.View().Diff; got != "commit diff" {
 		t.Fatalf("expected matching diff stored, got %q", got)
 	}
@@ -216,6 +216,15 @@ func TestDiffSetForRequestIgnoresWrongRequest(t *testing.T) {
 	m = m.SetDiffForRequest(modal.DiffWorktree, 7, "current diff")
 	if got := m.View().Diff; got != "current diff" {
 		t.Fatalf("expected matching request diff stored, got %q", got)
+	}
+}
+
+func TestWeakDiffSettersAreNotPublicAPI(t *testing.T) {
+	modalType := reflect.TypeOf(modal.Modal{})
+	for _, name := range []string{"SetDiff", "SetDiffFor"} {
+		if _, ok := modalType.MethodByName(name); ok {
+			t.Fatalf("%s should not be exported; use SetDiffForRequest for async diff results", name)
+		}
 	}
 }
 
