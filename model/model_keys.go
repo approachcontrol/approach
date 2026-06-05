@@ -19,7 +19,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	m.transientError = ""
+	m = m.clearAnyStatus()
 
 	if m.searchActive {
 		return m.handleSearchKey(msg)
@@ -43,7 +43,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if oldRepoPath != newRepoPath {
 				m = m.resetRightPaneCursors()
 				if ok {
-					return m, m.fetchForMode()
+					return m.startFetchForMode()
 				}
 			}
 		}
@@ -97,7 +97,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if oldRepoPath != newRepoPath {
 			m = m.resetRightPaneCursors()
 			if ok {
-				return m, m.fetchForMode()
+				return m.startFetchForMode()
 			}
 		}
 	}
@@ -114,13 +114,13 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
 			m = m.resetRightPaneCursors()
-			return m, m.fetchForMode()
+			return m.startFetchForMode()
 		}
 	case "down", "j":
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(1, m.repoContentHeight(), ui.LeftPaneWidth-2)
 			m = m.resetRightPaneCursors()
-			return m, m.fetchForMode()
+			return m.startFetchForMode()
 		}
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
@@ -138,43 +138,43 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode > ui.ModeWorktrees {
 			m.mode--
 			m = m.resetModeCursors()
-			return m, m.fetchForMode()
+			return m.startFetchForMode()
 		}
 	case "right", "l":
 		if m.mode < ui.ModeReflog {
 			m.mode++
 			m = m.resetModeCursors()
-			return m, m.fetchForMode()
+			return m.startFetchForMode()
 		}
 	case "1":
 		if m.mode != ui.ModeWorktrees {
 			m.mode = ui.ModeWorktrees
 			m = m.resetModeCursors()
-			return m, m.fetchWorktrees()
+			return m.startFetchWorktrees()
 		}
 	case "2":
 		if m.mode != ui.ModeBranches {
 			m.mode = ui.ModeBranches
 			m = m.resetModeCursors()
-			return m, m.fetchBranches()
+			return m.startFetchBranches()
 		}
 	case "3":
 		if m.mode != ui.ModeStashes {
 			m.mode = ui.ModeStashes
 			m = m.resetModeCursors()
-			return m, m.fetchStashes()
+			return m.startFetchStashes()
 		}
 	case "4":
 		if m.mode != ui.ModeHistory {
 			m.mode = ui.ModeHistory
 			m = m.resetModeCursors()
-			return m, m.fetchCommits()
+			return m.startFetchCommits()
 		}
 	case "5":
 		if m.mode != ui.ModeReflog {
 			m.mode = ui.ModeReflog
 			m = m.resetModeCursors()
-			return m, m.fetchReflog()
+			return m.startFetchReflog()
 		}
 	case "y":
 		return m.handleCopyHash()
@@ -391,7 +391,7 @@ func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
 	}
 	launch, err := actions.TerminalLaunch(path)
 	if err != nil {
-		m.transientError = err.Error()
+		m = m.setStatus(statusOther, err.Error())
 		return m, nil
 	}
 	if launch.Interactive {

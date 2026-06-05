@@ -114,6 +114,90 @@ func TestModel_WorktreeDiffResultStoresDiff(t *testing.T) {
 	}
 }
 
+func TestModel_WorktreeDiffFetchFailureCarriesIdentity(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/does-not-exist", BranchName: "main", Dirty: true},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayWorktreeDiff {
+		t.Fatalf("expected OverlayWorktreeDiff, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected diff fetch command")
+	}
+	msg, ok := cmd().(model.FetchErrorMsg)
+	if !ok {
+		t.Fatalf("expected FetchErrorMsg, got %T", msg)
+	}
+	if msg.Kind != model.FetchWorktreeDiff {
+		t.Fatalf("expected FetchWorktreeDiff kind, got %d", msg.Kind)
+	}
+	if msg.DiffRequest != 1 {
+		t.Fatalf("expected diff request 1, got %d", msg.DiffRequest)
+	}
+	if msg.WorktreePath != "/dev/does-not-exist" {
+		t.Fatalf("expected worktree identity, got %q", msg.WorktreePath)
+	}
+}
+
+func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutOverwritingOverlay(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "failed to load diff: boom",
+		Kind:         model.FetchWorktreeDiff,
+		Mode:         ui.ModeWorktrees,
+		DiffRequest:  1,
+		WorktreePath: "/dev/alpha",
+	})
+
+	if m.Overlay() != ui.OverlayWorktreeDiff {
+		t.Fatalf("expected overlay to remain open, got %d", m.Overlay())
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected fetch failure not to overwrite overlay diff, got %q", m.OverlayDiff())
+	}
+	if !strings.Contains(m.View(), "failed to load diff: boom") {
+		t.Fatal("expected matching diff fetch failure in status bar")
+	}
+}
+
+func TestModel_StaleWorktreeDiffFetchFailureIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 1
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape}) // close overlay
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 2
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "old diff failure",
+		Kind:         model.FetchWorktreeDiff,
+		Mode:         ui.ModeWorktrees,
+		DiffRequest:  1,
+		WorktreePath: "/dev/alpha",
+	})
+
+	if strings.Contains(m.View(), "old diff failure") {
+		t.Fatal("expected stale same-target diff failure to be ignored")
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected stale failure not to overwrite overlay diff, got %q", m.OverlayDiff())
+	}
+}
+
 func TestModel_StaleWorktreeDiffResultDiscarded(t *testing.T) {
 	m := model.New(testRepos())
 	m = selectBravo(m)
@@ -547,6 +631,62 @@ func TestModel_BranchDiffResultForWrongWorktreePathIgnored(t *testing.T) {
 	}
 }
 
+func TestModel_BranchDiffFetchFailureMatchesBranchAndWorktreePath(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{{
+			Name:          "feat",
+			IsWorktree:    true,
+			Dirty:         true,
+			WorktreePaths: []string{"/dev/alpha"},
+		}},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "branch diff failed",
+		Kind:        model.FetchBranchDiff,
+		Mode:        ui.ModeBranches,
+		DiffRequest: 1,
+		BranchName:  "feat",
+	})
+	if strings.Contains(m.View(), "branch diff failed") {
+		t.Fatal("missing worktree path branch diff failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "branch diff failed",
+		Kind:         model.FetchBranchDiff,
+		Mode:         ui.ModeBranches,
+		DiffRequest:  1,
+		BranchName:   "feat",
+		WorktreePath: "/dev/elsewhere",
+	})
+	if strings.Contains(m.View(), "branch diff failed") {
+		t.Fatal("wrong worktree path branch diff failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "branch diff failed",
+		Kind:         model.FetchBranchDiff,
+		Mode:         ui.ModeBranches,
+		DiffRequest:  1,
+		BranchName:   "feat",
+		WorktreePath: "/dev/alpha",
+	})
+	if !strings.Contains(m.View(), "branch diff failed") {
+		t.Fatal("matching branch diff failure should show in status bar")
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("branch diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
+	}
+}
+
 func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
 	m := model.New(testRepos())
 	branches := []gitquery.Branch{
@@ -620,6 +760,50 @@ func TestModel_StaleCommitDiffResultDiscarded(t *testing.T) {
 	m, _ = update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: "stale"})
 	if m.OverlayDiff() != "" {
 		t.Errorf("expected stale commit diff discarded, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
+	m := modelInHistoryWithCommits()
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "commit diff failed",
+		Kind:        model.FetchCommitDiff,
+		Mode:        ui.ModeHistory,
+		DiffRequest: 1,
+		Hash:        "wrong",
+	})
+	if strings.Contains(m.View(), "commit diff failed") {
+		t.Fatal("wrong-hash commit diff failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "commit diff failed",
+		Kind:        model.FetchCommitDiff,
+		Mode:        ui.ModeHistory,
+		DiffRequest: 99,
+		Hash:        "abc1234",
+	})
+	if strings.Contains(m.View(), "commit diff failed") {
+		t.Fatal("wrong-request commit diff failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "commit diff failed",
+		Kind:        model.FetchCommitDiff,
+		Mode:        ui.ModeHistory,
+		DiffRequest: 1,
+		Hash:        "abc1234",
+	})
+	if !strings.Contains(m.View(), "commit diff failed") {
+		t.Fatal("matching commit diff failure should show in status bar")
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("commit diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
 	}
 }
 
@@ -825,6 +1009,61 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 	})
 	if m.OverlayDiff() != "new stash diff" {
 		t.Fatalf("expected matching stash identity diff stored, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
+	oldStash := gitquery.Stash{Index: 0, Date: "2026-03-18 10:00:00 -0700", Message: "old stash"}
+	newStash := gitquery.Stash{Index: 0, Date: "2026-03-19 10:00:00 -0700", Message: "new stash"}
+
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "missing stash identity failed",
+		Kind:        model.FetchStashDiff,
+		Mode:        ui.ModeStashes,
+		DiffRequest: 1,
+		StashIndex:  newStash.Index,
+	})
+	if strings.Contains(m.View(), "missing stash identity failed") {
+		t.Fatal("missing stash date/message failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "old stash diff failed",
+		Kind:         model.FetchStashDiff,
+		Mode:         ui.ModeStashes,
+		DiffRequest:  1,
+		StashIndex:   oldStash.Index,
+		StashDate:    oldStash.Date,
+		StashMessage: oldStash.Message,
+	})
+	if strings.Contains(m.View(), "old stash diff failed") {
+		t.Fatal("stale stash identity failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "new stash diff failed",
+		Kind:         model.FetchStashDiff,
+		Mode:         ui.ModeStashes,
+		DiffRequest:  1,
+		StashIndex:   newStash.Index,
+		StashDate:    newStash.Date,
+		StashMessage: newStash.Message,
+	})
+	if !strings.Contains(m.View(), "new stash diff failed") {
+		t.Fatal("matching stash identity failure should show in status bar")
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("stash diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
 	}
 }
 
@@ -2103,6 +2342,50 @@ func TestModel_ReflogDiffResultWrongHashDiscarded(t *testing.T) {
 	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "wrong", Diff: "wrong diff"})
 	if m.OverlayDiff() != "" {
 		t.Errorf("expected wrong-hash reflog diff discarded, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
+	m := modelInReflogWithEntries()
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "reflog diff failed",
+		Kind:        model.FetchReflogDiff,
+		Mode:        ui.ModeReflog,
+		DiffRequest: 1,
+		Hash:        "wrong",
+	})
+	if strings.Contains(m.View(), "reflog diff failed") {
+		t.Fatal("wrong-hash reflog diff failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "reflog diff failed",
+		Kind:        model.FetchReflogDiff,
+		Mode:        ui.ModeReflog,
+		DiffRequest: 99,
+		Hash:        "abc1234",
+	})
+	if strings.Contains(m.View(), "reflog diff failed") {
+		t.Fatal("wrong-request reflog diff failure should be ignored")
+	}
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "reflog diff failed",
+		Kind:        model.FetchReflogDiff,
+		Mode:        ui.ModeReflog,
+		DiffRequest: 1,
+		Hash:        "abc1234",
+	})
+	if !strings.Contains(m.View(), "reflog diff failed") {
+		t.Fatal("matching reflog diff failure should show in status bar")
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("reflog diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
 	}
 }
 

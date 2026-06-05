@@ -10,6 +10,8 @@ import (
 	"github.com/brian-bell/wtui/ui"
 )
 
+const listRequestSlots = int(ui.ModeReflog) + 1
+
 // Model is the bubbletea application model.
 type Model struct {
 	repos          pane.Pane[scanner.Repo]
@@ -23,10 +25,28 @@ type Model struct {
 	reflogs        pane.Pane[gitquery.ReflogEntry]
 	modal          modal.Modal
 	diffRequestSeq uint64
+	listRequestSeq uint64
+	listRequests   [listRequestSlots]uint64
 	activePane     int // 0=left (repos), 1=right (content)
 	destructive    bool
-	transientError string
+	status         statusError
 	searchActive   bool
+}
+
+type statusSource int
+
+const (
+	statusNone statusSource = iota
+	statusFetch
+	statusGitMutation
+	statusOther
+)
+
+type statusError struct {
+	Text      string
+	Source    statusSource
+	FetchKind FetchKind
+	Mode      ui.Mode
 }
 
 // New creates a Model from discovered repos.
@@ -39,6 +59,10 @@ func New(repos []scanner.Repo) Model {
 		commits:   newCommitPane(),
 		reflogs:   newReflogPane(),
 		mode:      ui.ModeWorktrees,
+	}
+	for mode := ui.ModeWorktrees; mode <= ui.ModeReflog; mode++ {
+		m.listRequestSeq++
+		m.listRequests[int(mode)] = m.listRequestSeq
 	}
 	return m
 }
@@ -75,10 +99,11 @@ func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
 func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
-func (m Model) TransientError() string          { return m.transientError }
+func (m Model) TransientError() string          { return m.status.Text }
 func (m Model) SearchActive() bool              { return m.searchActive }
 func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
+func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
 
 func (m Model) Init() tea.Cmd {
 	return m.fetchForMode()
@@ -130,7 +155,7 @@ func (m Model) View() string {
 		Reflogs:          reflogs,
 		ReflogSelected:   reflogSelected,
 		ReflogScroll:     reflogScroll,
-		TransientError:   m.transientError,
+		TransientError:   m.status.Text,
 		SearchActive:     m.searchActive,
 		RepoSearch:       m.repos.Query(),
 		ItemSearch:       m.activeItemPaneQuery(),
@@ -227,12 +252,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleReflogDiffResult(msg), nil
 	case ClipboardResultMsg:
 		if msg.Err != "" {
-			m.transientError = msg.Err
+			m = m.setStatus(statusOther, msg.Err)
 		}
 		return m, nil
 	case TerminalResultMsg:
 		if msg.Err != "" {
-			m.transientError = msg.Err
+			m = m.setStatus(statusOther, msg.Err)
 		}
 		return m, nil
 	case DeleteFailedMsg:

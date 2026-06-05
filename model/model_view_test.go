@@ -629,6 +629,263 @@ func TestModel_ViewGitPullFailureClearsOnSuccess(t *testing.T) {
 	}
 }
 
+func TestModel_ListFetchErrorShowsStatusWithoutClearingPane(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "worktrees",
+		Err:      "failed to load worktrees: boom",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "failed to load worktrees: boom") {
+		t.Error("view should show list fetch failure in status bar")
+	}
+	if !strings.Contains(view, "main") {
+		t.Error("list fetch failure should not clear existing pane data")
+	}
+}
+
+func TestModel_InitFetchUsesNonZeroListRequest(t *testing.T) {
+	m := model.New(testRepos())
+	msg := m.Init()()
+	fetchErr, ok := msg.(model.FetchErrorMsg)
+	if !ok {
+		t.Fatalf("expected fake repo init to return FetchErrorMsg, got %T", msg)
+	}
+	if fetchErr.ListRequest == 0 {
+		t.Fatal("initial fetch should carry a non-zero list request")
+	}
+}
+
+func TestModel_ZeroListRequestFetchErrorFailsClosed(t *testing.T) {
+	m := model.New(testRepos())
+	tm, _ := m.Update(model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Err:         "zero request failure",
+		Kind:        model.FetchList,
+		Mode:        ui.ModeWorktrees,
+		ListRequest: 0,
+	})
+	m = tm.(model.Model)
+
+	if strings.Contains(m.View(), "zero request failure") {
+		t.Fatal("zero-request list failure should be ignored")
+	}
+}
+
+func TestModel_ZeroListRequestResultFailsClosed(t *testing.T) {
+	m := model.New(testRepos())
+	tm, _ := m.Update(model.BranchResultMsg{
+		RepoPath:    "/dev/alpha",
+		Branches:    []gitquery.Branch{{Name: "zero-request-branch"}},
+		ListRequest: 0,
+	})
+	m = tm.(model.Model)
+
+	if strings.Contains(m.View(), "zero-request-branch") {
+		t.Fatal("zero-request list result should be ignored")
+	}
+}
+
+func TestModel_StaleListFetchErrorIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = selectBravo(m)
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "worktrees",
+		Err:      "failed to load worktrees: stale",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+
+	view := m.View()
+	if strings.Contains(view, "failed to load worktrees: stale") {
+		t.Error("stale list fetch failure should not show in status bar")
+	}
+}
+
+func TestModel_WrongModeListFetchErrorIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "branches",
+		Err:      "failed to load branches: stale",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeBranches,
+	})
+
+	if strings.Contains(m.View(), "failed to load branches: stale") {
+		t.Error("same-repo list failure from another mode should not show in status bar")
+	}
+}
+
+func TestModel_FetchErrorWithUnknownKindIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "worktrees",
+		Err:      "missing kind",
+	})
+
+	if strings.Contains(m.View(), "missing kind") {
+		t.Error("fetch error without kind should fail closed")
+	}
+}
+
+func TestModel_ListSuccessClearsOnlyFetchStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Err:      "failed to load worktrees: boom",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	if strings.Contains(m.View(), "failed to load worktrees: boom") {
+		t.Error("current list success should clear fetch status")
+	}
+
+	m, _ = update(m, model.WorktreeUnlockFailedMsg{RepoPath: "/dev/alpha", Err: "unlock failed"})
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	if !strings.Contains(m.View(), "unlock failed") {
+		t.Error("list success should not clear non-fetch status")
+	}
+}
+
+func TestModel_ListSuccessDoesNotClearDiffFetchStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "diff failed",
+		Kind:         model.FetchWorktreeDiff,
+		Mode:         ui.ModeWorktrees,
+		DiffRequest:  1,
+		WorktreePath: "/dev/alpha",
+	})
+
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true},
+	}})
+
+	if !strings.Contains(m.View(), "diff failed") {
+		t.Error("list success should not clear an active diff fetch failure")
+	}
+}
+
+func TestModel_OldListFetchErrorIgnoredAfterNewerListRequest(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+
+	m, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	if cmd == nil {
+		t.Fatal("expected first refresh command")
+	}
+	oldErr, ok := cmd().(model.FetchErrorMsg)
+	if !ok {
+		t.Fatalf("expected first refresh to fail against fake repo, got %T", cmd())
+	}
+
+	m, cmd = update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	if cmd == nil {
+		t.Fatal("expected second refresh command")
+	}
+	newErr, ok := cmd().(model.FetchErrorMsg)
+	if !ok {
+		t.Fatalf("expected second refresh to fail against fake repo, got %T", cmd())
+	}
+	if oldErr.ListRequest == newErr.ListRequest {
+		t.Fatal("expected refreshes to carry distinct list requests")
+	}
+
+	m, _ = update(m, model.WorktreeResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: newErr.ListRequest,
+		Worktrees:   []gitquery.Worktree{{Path: "/dev/alpha", BranchName: "main", IsMain: true}},
+	})
+	m, _ = update(m, oldErr)
+
+	if strings.Contains(m.View(), oldErr.Err) {
+		t.Error("older same-mode list failure should be ignored after newer request succeeds")
+	}
+}
+
+func TestModel_WrongModeListSuccessDoesNotClearFetchStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Err:      "worktree fetch failed",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{{Name: "main"}}})
+
+	if !strings.Contains(m.View(), "worktree fetch failed") {
+		t.Error("success for another list mode should not clear current fetch status")
+	}
+}
+
+func TestModel_NonModalKeyClearsStatusButModalKeyDoesNot(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m, _ = update(m, model.FetchErrorMsg{RepoPath: "/dev/alpha", Err: "fetch failed", Kind: model.FetchList, Mode: ui.ModeWorktrees})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if strings.Contains(m.View(), "fetch failed") {
+		t.Error("non-modal keypress should clear transient status")
+	}
+
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:     "/dev/alpha",
+		Err:          "diff failed",
+		Kind:         model.FetchWorktreeDiff,
+		Mode:         ui.ModeWorktrees,
+		DiffRequest:  1,
+		WorktreePath: "/dev/alpha",
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if !strings.Contains(m.View(), "diff failed") {
+		t.Error("modal keypress should not clear status by itself")
+	}
+}
+
 func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
