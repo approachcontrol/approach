@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
@@ -11,27 +12,21 @@ import (
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos            pane.Pane[scanner.Repo]
-	width            int
-	height           int
-	mode             ui.Mode
-	rows             pane.Pane[gitquery.BranchRow]
-	stashes          pane.Pane[gitquery.Stash]
-	worktrees        pane.Pane[gitquery.Worktree]
-	commits          pane.Pane[gitquery.Commit]
-	reflogs          pane.Pane[gitquery.ReflogEntry]
-	overlay          ui.OverlayState
-	overlayDiff      string
-	overlayScroll    int
-	confirmPrompt    string
-	confirmAction    func() tea.Cmd
-	confirmForce     bool
-	worktreeInput    string
-	worktreeInputErr string
-	activePane       int // 0=left (repos), 1=right (content)
-	destructive      bool
-	transientError   string
-	searchActive     bool
+	repos          pane.Pane[scanner.Repo]
+	width          int
+	height         int
+	mode           ui.Mode
+	rows           pane.Pane[gitquery.BranchRow]
+	stashes        pane.Pane[gitquery.Stash]
+	worktrees      pane.Pane[gitquery.Worktree]
+	commits        pane.Pane[gitquery.Commit]
+	reflogs        pane.Pane[gitquery.ReflogEntry]
+	modal          modal.Modal
+	diffRequestSeq uint64
+	activePane     int // 0=left (repos), 1=right (content)
+	destructive    bool
+	transientError string
+	searchActive   bool
 }
 
 // New creates a Model from discovered repos.
@@ -68,13 +63,13 @@ func (m Model) CommitScroll() int               { return m.commits.Scroll() }
 func (m Model) Reflogs() []gitquery.ReflogEntry { reflogs, _, _ := m.reflogs.View(); return reflogs }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
-func (m Model) Overlay() ui.OverlayState        { return m.overlay }
-func (m Model) OverlayDiff() string             { return m.overlayDiff }
-func (m Model) OverlayScroll() int              { return m.overlayScroll }
-func (m Model) ConfirmPrompt() string           { return m.confirmPrompt }
-func (m Model) ConfirmForce() bool              { return m.confirmForce }
-func (m Model) WorktreeInput() string           { return m.worktreeInput }
-func (m Model) WorktreeInputErr() string        { return m.worktreeInputErr }
+func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
+func (m Model) OverlayDiff() string             { return m.modal.View().Diff }
+func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
+func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
+func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
+func (m Model) WorktreeInput() string           { return m.modal.View().Input }
+func (m Model) WorktreeInputErr() string        { return m.modal.View().InputErr }
 func (m Model) BranchScroll() int               { return m.rows.Scroll() }
 func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
 func (m Model) StashScroll() int                { return m.stashes.Scroll() }
@@ -103,6 +98,7 @@ func (m Model) View() string {
 		commits = nil
 		reflogs = nil
 	}
+	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
 		Repos:            repos,
 		Selected:         selected,
@@ -113,13 +109,13 @@ func (m Model) View() string {
 		Stashes:          stashes,
 		BranchSelected:   branchSelected,
 		StashSelected:    stashSelected,
-		Overlay:          m.overlay,
-		OverlayDiff:      m.overlayDiff,
-		OverlayScroll:    m.overlayScroll,
-		ConfirmPrompt:    m.confirmPrompt,
-		ConfirmForce:     m.confirmForce,
-		WorktreeInput:    m.worktreeInput,
-		WorktreeInputErr: m.worktreeInputErr,
+		Overlay:          m.overlayState(),
+		OverlayDiff:      modalView.Diff,
+		OverlayScroll:    modalView.Scroll,
+		ConfirmPrompt:    modalView.Prompt,
+		ConfirmForce:     modalView.Force,
+		WorktreeInput:    modalView.Input,
+		WorktreeInputErr: modalView.InputErr,
 		BranchScroll:     branchScroll,
 		RepoScroll:       repoScroll,
 		StashScroll:      stashScroll,
@@ -141,6 +137,36 @@ func (m Model) View() string {
 		FetchAvailable:   m.canFetch(),
 		PullAvailable:    m.canPull(),
 	})
+}
+
+func (m Model) overlayState() ui.OverlayState {
+	view := m.modal.View()
+	switch view.Kind {
+	case modal.Confirm:
+		return ui.OverlayConfirm
+	case modal.Input:
+		return ui.OverlayWorktreeInput
+	case modal.Diff:
+		switch view.DiffKind {
+		case modal.DiffStash:
+			return ui.OverlayStashDiff
+		case modal.DiffBranch:
+			return ui.OverlayBranchDiff
+		case modal.DiffCommit:
+			return ui.OverlayCommitDiff
+		case modal.DiffWorktree:
+			return ui.OverlayWorktreeDiff
+		case modal.DiffReflog:
+			return ui.OverlayReflogDiff
+		}
+	}
+	return ui.OverlayNone
+}
+
+func (m Model) openDiff(kind modal.DiffKind) Model {
+	m.diffRequestSeq++
+	m.modal = modal.OpenDiff(kind, "").WithRequest(m.diffRequestSeq)
+	return m
 }
 
 // --- Update ---

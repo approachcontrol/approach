@@ -7,6 +7,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -23,15 +24,20 @@ type StashResultMsg struct {
 }
 
 type StashDiffResultMsg struct {
-	RepoPath string
-	Index    int
-	Diff     string
+	RepoPath    string
+	Index       int
+	Date        string
+	Message     string
+	DiffRequest uint64
+	Diff        string
 }
 
 type BranchDiffResultMsg struct {
-	RepoPath   string
-	BranchName string
-	Diff       string
+	RepoPath     string
+	BranchName   string
+	WorktreePath string
+	DiffRequest  uint64
+	Diff         string
 }
 
 type BranchDeletedMsg struct {
@@ -53,14 +59,16 @@ type CommitResultMsg struct {
 }
 
 type CommitDiffResultMsg struct {
-	RepoPath string
-	Hash     string
-	Diff     string
+	RepoPath    string
+	Hash        string
+	DiffRequest uint64
+	Diff        string
 }
 
 type WorktreeDiffResultMsg struct {
 	RepoPath     string
 	WorktreePath string
+	DiffRequest  uint64
 	Diff         string
 }
 
@@ -121,9 +129,10 @@ type ReflogResultMsg struct {
 }
 
 type ReflogDiffResultMsg struct {
-	RepoPath string
-	Hash     string
-	Diff     string
+	RepoPath    string
+	Hash        string
+	DiffRequest uint64
+	Diff        string
 }
 
 type ClipboardResultMsg struct {
@@ -198,8 +207,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 	}
 	repoPath := msg.RepoPath
 	branchName := msg.BranchName
-	m.confirmPrompt = fmt.Sprintf("Also delete branch %s? (y/n)", branchName)
-	m.confirmAction = func() tea.Cmd {
+	m.modal = modal.OpenConfirm(fmt.Sprintf("Also delete branch %s? (y/n)", branchName), func() tea.Cmd {
 		return func() tea.Msg {
 			if err := actions.DeleteBranch(repoPath, branchName); err != nil {
 				return DeleteFailedMsg{
@@ -211,8 +219,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 			}
 			return WorktreeDeleteCompletedMsg{RepoPath: repoPath}
 		}
-	}
-	m.overlay = ui.OverlayConfirm
+	})
 	return m, m.fetchWorktrees()
 }
 
@@ -282,13 +289,16 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 
 func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.overlay = ui.OverlayWorktreeInput
-		m.worktreeInput = msg.Input
+		errText := msg.Err
 		if msg.Err == "" {
-			m.worktreeInputErr = "Unable to create worktree"
-		} else {
-			m.worktreeInputErr = msg.Err
+			errText = "Unable to create worktree"
 		}
+		m.modal = modal.OpenInput(
+			"New worktree",
+			msg.Input,
+			validateWorktreeInput,
+			func(input string) tea.Cmd { return m.createWorktree(input) },
+		).SetInputError(errText)
 	}
 	return m
 }
@@ -330,7 +340,9 @@ func (m Model) handleStashResult(msg StashResultMsg) Model {
 
 func (m Model) handleStashDiffResult(msg StashDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.overlayDiff = msg.Diff
+		if stash, ok := m.selectedStash(); ok && stashMatchesDiffResult(stash, msg) {
+			m.modal = m.modal.SetDiffForRequest(modal.DiffStash, msg.DiffRequest, msg.Diff)
+		}
 	}
 	return m
 }
@@ -338,7 +350,7 @@ func (m Model) handleStashDiffResult(msg StashDiffResultMsg) Model {
 func (m Model) handleWorktreeDiffResult(msg WorktreeDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		if wt, ok := m.selectedWorktree(); ok && wt.Path == msg.WorktreePath {
-			m.overlayDiff = msg.Diff
+			m.modal = m.modal.SetDiffForRequest(modal.DiffWorktree, msg.DiffRequest, msg.Diff)
 		}
 	}
 	return m
@@ -346,8 +358,8 @@ func (m Model) handleWorktreeDiffResult(msg WorktreeDiffResultMsg) Model {
 
 func (m Model) handleBranchDiffResult(msg BranchDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if row, ok := m.selectedRow(); ok && row.Branch.Name == msg.BranchName {
-			m.overlayDiff = msg.Diff
+		if row, ok := m.selectedRow(); ok && branchMatchesDiffResult(row, msg) {
+			m.modal = m.modal.SetDiffForRequest(modal.DiffBranch, msg.DiffRequest, msg.Diff)
 		}
 	}
 	return m
@@ -372,14 +384,11 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.confirmPrompt = fmt.Sprintf("Force delete %s? (y/n)", msg.Target)
-		m.confirmForce = true
-		m.overlay = ui.OverlayConfirm
 		successMsg := msg.SuccessMsg
 		repoPath := msg.RepoPath
 		target := msg.Target
 		forceAction := msg.ForceAction
-		m.confirmAction = func() tea.Cmd {
+		m.modal = modal.OpenForce(fmt.Sprintf("Force delete %s? (y/n)", msg.Target), func() tea.Cmd {
 			return func() tea.Msg {
 				if err := forceAction(); err != nil {
 					return ForceDeleteFailedMsg{
@@ -393,7 +402,7 @@ func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {
 				}
 				return BranchDeletedMsg{RepoPath: repoPath}
 			}
-		}
+		})
 	}
 	return m
 }
@@ -442,7 +451,7 @@ func (m Model) handleReflogResult(msg ReflogResultMsg) Model {
 func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		if commit, ok := m.selectedCommit(); ok && commit.Hash == msg.Hash {
-			m.overlayDiff = msg.Diff
+			m.modal = m.modal.SetDiffForRequest(modal.DiffCommit, msg.DiffRequest, msg.Diff)
 		}
 	}
 	return m
@@ -451,10 +460,30 @@ func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) Model {
 func (m Model) handleReflogDiffResult(msg ReflogDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		if entry, ok := m.selectedReflog(); ok && entry.Hash == msg.Hash {
-			m.overlayDiff = msg.Diff
+			m.modal = m.modal.SetDiffForRequest(modal.DiffReflog, msg.DiffRequest, msg.Diff)
 		}
 	}
 	return m
+}
+
+func stashMatchesDiffResult(stash gitquery.Stash, msg StashDiffResultMsg) bool {
+	if stash.Index != msg.Index {
+		return false
+	}
+	if stash.Date != msg.Date {
+		return false
+	}
+	if stash.Message != msg.Message {
+		return false
+	}
+	return true
+}
+
+func branchMatchesDiffResult(row gitquery.BranchRow, msg BranchDiffResultMsg) bool {
+	if row.Branch.Name != msg.BranchName {
+		return false
+	}
+	return row.WorktreePath == msg.WorktreePath
 }
 
 func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
