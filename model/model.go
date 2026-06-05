@@ -48,26 +48,26 @@ func New(repos []scanner.Repo) Model {
 	return m
 }
 
-func (m Model) Selected() int              { _, selected, _ := m.repos.View(); return selected }
+func (m Model) Selected() int              { return m.repos.SelectedIndex() }
 func (m Model) Width() int                 { return m.width }
 func (m Model) Height() int                { return m.height }
 func (m Model) Mode() ui.Mode              { return m.mode }
 func (m Model) Rows() []gitquery.BranchRow { rows, _, _ := m.rows.View(); return rows }
 func (m Model) Stashes() []gitquery.Stash  { stashes, _, _ := m.stashes.View(); return stashes }
-func (m Model) BranchSelected() int        { _, selected, _ := m.rows.View(); return selected }
-func (m Model) StashSelected() int         { _, selected, _ := m.stashes.View(); return selected }
+func (m Model) BranchSelected() int        { return m.rows.SelectedIndex() }
+func (m Model) StashSelected() int         { return m.stashes.SelectedIndex() }
 func (m Model) Worktrees() []gitquery.Worktree {
 	worktrees, _, _ := m.worktrees.View()
 	return worktrees
 }
-func (m Model) WorktreeSelected() int           { _, selected, _ := m.worktrees.View(); return selected }
-func (m Model) WorktreeScroll() int             { _, _, scroll := m.worktrees.View(); return scroll }
+func (m Model) WorktreeSelected() int           { return m.worktrees.SelectedIndex() }
+func (m Model) WorktreeScroll() int             { return m.worktrees.Scroll() }
 func (m Model) Commits() []gitquery.Commit      { commits, _, _ := m.commits.View(); return commits }
-func (m Model) CommitSelected() int             { _, selected, _ := m.commits.View(); return selected }
-func (m Model) CommitScroll() int               { _, _, scroll := m.commits.View(); return scroll }
+func (m Model) CommitSelected() int             { return m.commits.SelectedIndex() }
+func (m Model) CommitScroll() int               { return m.commits.Scroll() }
 func (m Model) Reflogs() []gitquery.ReflogEntry { reflogs, _, _ := m.reflogs.View(); return reflogs }
-func (m Model) ReflogSelected() int             { _, selected, _ := m.reflogs.View(); return selected }
-func (m Model) ReflogScroll() int               { _, _, scroll := m.reflogs.View(); return scroll }
+func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
+func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlay }
 func (m Model) OverlayDiff() string             { return m.overlayDiff }
 func (m Model) OverlayScroll() int              { return m.overlayScroll }
@@ -75,9 +75,9 @@ func (m Model) ConfirmPrompt() string           { return m.confirmPrompt }
 func (m Model) ConfirmForce() bool              { return m.confirmForce }
 func (m Model) WorktreeInput() string           { return m.worktreeInput }
 func (m Model) WorktreeInputErr() string        { return m.worktreeInputErr }
-func (m Model) BranchScroll() int               { _, _, scroll := m.rows.View(); return scroll }
-func (m Model) RepoScroll() int                 { _, _, scroll := m.repos.View(); return scroll }
-func (m Model) StashScroll() int                { _, _, scroll := m.stashes.View(); return scroll }
+func (m Model) BranchScroll() int               { return m.rows.Scroll() }
+func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
+func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
 func (m Model) TransientError() string          { return m.transientError }

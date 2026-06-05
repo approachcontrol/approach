@@ -96,6 +96,16 @@ func (p Pane[T]) Len() int {
 	return len(p.filtered)
 }
 
+// SelectedIndex returns the cursor position within the filtered view.
+func (p Pane[T]) SelectedIndex() int {
+	return p.selected
+}
+
+// Scroll returns the current visual-line scroll offset.
+func (p Pane[T]) Scroll() int {
+	return p.scroll
+}
+
 // Query returns the active fuzzy filter query.
 func (p Pane[T]) Query() string {
 	return p.query
