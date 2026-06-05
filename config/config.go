@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -106,18 +107,20 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 	}
 
 	var cfg Config
-	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, true, fmt.Errorf("parse config %s: %w", path, err)
+	decoder := toml.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return Config{}, false, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
 	if cfg.Scan.MaxDepth < 0 {
-		return Config{}, true, fmt.Errorf("parse config %s: scan.max_depth must be >= 0", path)
+		return Config{}, false, fmt.Errorf("parse config %s: scan.max_depth must be >= 0", path)
 	}
 
 	if cfg.Scan.Root != "" {
 		root, err := expandHome(cfg.Scan.Root, opts.homeDir)
 		if err != nil {
-			return Config{}, true, fmt.Errorf("expand scan root in config %s: %w", path, err)
+			return Config{}, false, fmt.Errorf("expand scan root in config %s: %w", path, err)
 		}
 		cfg.Scan.Root = root
 	}
