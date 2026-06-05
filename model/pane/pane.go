@@ -175,16 +175,8 @@ func (p Pane[T]) clampScroll(viewHeight, width int) Pane[T] {
 	if viewHeight <= 0 {
 		viewHeight = 1
 	}
-	maxScroll := p.totalHeight(width) - viewHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if p.scroll < 0 {
-		p.scroll = 0
-	}
-	if p.scroll > maxScroll {
-		p.scroll = maxScroll
-	}
+	maxScroll := max(p.totalHeight(width)-viewHeight, 0)
+	p.scroll = min(max(p.scroll, 0), maxScroll)
 	return p
 }
 

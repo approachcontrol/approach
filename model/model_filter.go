@@ -137,14 +137,6 @@ func (m Model) filteredRepos() []scanner.Repo {
 	return repos
 }
 
-func (m Model) filteredRows() []gitquery.BranchRow {
-	if len(m.filteredRepos()) == 0 {
-		return nil
-	}
-	rows, _, _ := m.rows.View()
-	return rows
-}
-
 func (m Model) filteredStashes() []gitquery.Stash {
 	if len(m.filteredRepos()) == 0 {
 		return nil
