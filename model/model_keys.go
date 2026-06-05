@@ -158,26 +158,14 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "tab":
 		m.activePane = 1
 	case "up", "k":
-		repos := m.filteredRepos()
-		if len(repos) > 0 {
-			if m.selected > 0 {
-				m.selected--
-			} else {
-				m.selected = len(repos) - 1
-			}
-			m = m.ensureRepoVisible()
+		if len(m.filteredRepos()) > 0 {
+			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
 			m = m.resetRightPaneCursors()
 			return m, m.fetchForMode()
 		}
 	case "down", "j":
-		repos := m.filteredRepos()
-		if len(repos) > 0 {
-			if m.selected < len(repos)-1 {
-				m.selected++
-			} else {
-				m.selected = 0
-			}
-			m = m.ensureRepoVisible()
+		if len(m.filteredRepos()) > 0 {
+			m.repos = m.repos.Move(1, m.repoContentHeight(), ui.LeftPaneWidth-2)
 			m = m.resetRightPaneCursors()
 			return m, m.fetchForMode()
 		}
@@ -291,34 +279,21 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 	return m.moveCursor(1), nil
 }
 
-// moveItemCursor advances a cursor by delta within [0,count), wrapping around
-// at both ends. When there are no items it leaves the cursor unchanged.
-func moveItemCursor(selected, count, delta int) int {
-	if count <= 0 {
-		return selected
-	}
-	return ((selected+delta)%count + count) % count
-}
-
 // moveCursor moves the selected item in the active right-pane view by delta
 // (-1 for up, +1 for down) and keeps the new selection visible.
 func (m Model) moveCursor(delta int) Model {
+	h, w := m.contentHeightForMode(), m.contentWidth()
 	switch m.mode {
 	case ui.ModeWorktrees:
-		m.worktreeSelected = moveItemCursor(m.worktreeSelected, len(m.filteredWorktrees()), delta)
-		m = m.ensureWorktreeVisible()
+		m.worktrees = m.worktrees.Move(delta, h, w)
 	case ui.ModeBranches:
-		m.branchSelected = moveItemCursor(m.branchSelected, len(m.filteredRows()), delta)
-		m = m.ensureBranchVisible()
+		m.rows = m.rows.Move(delta, h, w)
 	case ui.ModeStashes:
-		m.stashSelected = moveItemCursor(m.stashSelected, len(m.filteredStashes()), delta)
-		m = m.ensureStashVisible()
+		m.stashes = m.stashes.Move(delta, h, w)
 	case ui.ModeHistory:
-		m.commitSelected = moveItemCursor(m.commitSelected, len(m.filteredCommits()), delta)
-		m = m.ensureCommitVisible()
+		m.commits = m.commits.Move(delta, h, w)
 	case ui.ModeReflog:
-		m.reflogSelected = moveItemCursor(m.reflogSelected, len(m.filteredReflogs()), delta)
-		m = m.ensureReflogVisible()
+		m.reflogs = m.reflogs.Move(delta, h, w)
 	}
 	return m
 }
@@ -649,32 +624,61 @@ func (m Model) clearWorktreeInput() Model {
 // is intentionally preserved across mode switches so users can inspect another
 // pane and return to the same selected worktree.
 func (m Model) resetModeCursors() Model {
-	m.branchSelected = 0
-	m.branchScroll = 0
-	m.stashSelected = 0
-	m.stashScroll = 0
-	m.commitSelected = 0
-	m.commitScroll = 0
-	m.reflogSelected = 0
-	m.reflogScroll = 0
+	m.rows = m.rows.ResetSelection()
+	m.stashes = m.stashes.ResetSelection()
+	m.commits = m.commits.ResetSelection()
+	m.reflogs = m.reflogs.ResetSelection()
 	return m
 }
 
 func (m Model) resetRightPaneCursors() Model {
-	m.branchSelected = 0
-	m.stashSelected = 0
-	m.branchScroll = 0
-	m.stashScroll = 0
-	m.worktreeSelected = 0
-	m.worktreeScroll = 0
-	m.commitSelected = 0
-	m.commitScroll = 0
-	m.reflogSelected = 0
-	m.reflogScroll = 0
-	m.rows = nil
-	m.stashes = nil
-	m.worktrees = nil
-	m.commits = nil
-	m.reflogs = nil
+	m.rows = m.rows.SetItems(nil).ResetSelection()
+	m.stashes = m.stashes.SetItems(nil).ResetSelection()
+	m.worktrees = m.worktrees.SetItems(nil).ResetSelection()
+	m.commits = m.commits.SetItems(nil).ResetSelection()
+	m.reflogs = m.reflogs.SetItems(nil).ResetSelection()
 	return m
+}
+
+func (m Model) repoContentHeight() int {
+	height := m.height - ui.RepoContentOverhead
+	if height <= 0 {
+		return 1
+	}
+	return height
+}
+
+func (m Model) rightContentHeight() int {
+	height := m.height - ui.BranchContentOverhead
+	if height <= 0 {
+		return 16
+	}
+	return height
+}
+
+func (m Model) contentHeightForMode() int {
+	switch m.mode {
+	case ui.ModeWorktrees:
+		return m.worktreeContentHeight()
+	case ui.ModeStashes:
+		return m.stashContentHeight()
+	default:
+		return m.rightContentHeight()
+	}
+}
+
+func (m Model) worktreeContentHeight() int {
+	height := m.height - ui.WorktreeContentOverhead
+	if height <= 0 {
+		return 16
+	}
+	return height
+}
+
+func (m Model) stashContentHeight() int {
+	height := m.height - ui.StashContentOverhead
+	if height <= 0 {
+		return 1
+	}
+	return height
 }

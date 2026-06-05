@@ -166,11 +166,11 @@ type ActionFailedMsg struct {
 // --- Message handlers ---
 
 func (m Model) currentRepoPath() (string, bool) {
-	repos := m.filteredRepos()
-	if len(repos) == 0 || m.selected >= len(repos) {
+	repo, ok := m.repos.Selected()
+	if !ok {
 		return "", false
 	}
-	return repos[m.selected].Path, true
+	return repo.Path, true
 }
 
 func (m Model) isCurrentRepo(repoPath string) bool {
@@ -180,7 +180,7 @@ func (m Model) isCurrentRepo(repoPath string) bool {
 
 func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.worktrees = msg.Worktrees
+		m.worktrees = m.worktrees.SetItems(msg.Worktrees)
 		m = m.clampSelectionsAfterFilter()
 	}
 	return m
@@ -190,8 +190,8 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 	if !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
-	if m.worktreeSelected >= len(m.worktrees)-1 && m.worktreeSelected > 0 {
-		m.worktreeSelected--
+	if m.WorktreeSelected() >= len(m.Worktrees())-1 && m.WorktreeSelected() > 0 {
+		m.worktrees = m.worktrees.Move(-1, m.worktreeContentHeight(), m.contentWidth())
 	}
 	if msg.BranchName == "" {
 		return m, m.fetchWorktrees()
@@ -218,8 +218,8 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 
 func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if m.worktreeSelected >= len(m.worktrees)-1 && m.worktreeSelected > 0 {
-			m.worktreeSelected--
+		if m.WorktreeSelected() >= len(m.Worktrees())-1 && m.WorktreeSelected() > 0 {
+			m.worktrees = m.worktrees.Move(-1, m.worktreeContentHeight(), m.contentWidth())
 		}
 		return m, m.fetchWorktrees()
 	}
@@ -276,8 +276,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	m.mode = ui.ModeWorktrees
-	m.worktreeSelected = 0
-	m.worktreeScroll = 0
+	m.worktrees = m.worktrees.ResetSelection()
 	return m, m.fetchWorktrees()
 }
 
@@ -315,7 +314,7 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 				break
 			}
 		}
-		m.rows = filtered
+		m.rows = m.rows.SetItems(filtered)
 		m = m.clampSelectionsAfterFilter()
 	}
 	return m
@@ -323,7 +322,7 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 
 func (m Model) handleStashResult(msg StashResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.stashes = msg.Stashes
+		m.stashes = m.stashes.SetItems(msg.Stashes)
 		m = m.clampSelectionsAfterFilter()
 	}
 	return m
@@ -356,8 +355,8 @@ func (m Model) handleBranchDiffResult(msg BranchDiffResultMsg) Model {
 
 func (m Model) handleStashDropped(msg StashDroppedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if m.stashSelected >= len(m.stashes)-1 && m.stashSelected > 0 {
-			m.stashSelected--
+		if m.StashSelected() >= len(m.Stashes())-1 && m.StashSelected() > 0 {
+			m.stashes = m.stashes.Move(-1, m.stashContentHeight(), m.contentWidth())
 		}
 		return m, m.fetchStashes()
 	}
@@ -426,7 +425,7 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
 
 func (m Model) handleCommitResult(msg CommitResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.commits = msg.Commits
+		m.commits = m.commits.SetItems(msg.Commits)
 		m = m.clampSelectionsAfterFilter()
 	}
 	return m
@@ -434,7 +433,7 @@ func (m Model) handleCommitResult(msg CommitResultMsg) Model {
 
 func (m Model) handleReflogResult(msg ReflogResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.reflogs = msg.Reflogs
+		m.reflogs = m.reflogs.SetItems(msg.Reflogs)
 		m = m.clampSelectionsAfterFilter()
 	}
 	return m
