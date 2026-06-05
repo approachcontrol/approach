@@ -128,6 +128,22 @@ func TestPaneSetQueryPreserveIndexKeepsCursorWhenPossible(t *testing.T) {
 	}
 }
 
+func TestPaneItemCountReportsSourceItemsWhenFilterHasNoMatches(t *testing.T) {
+	items := []testItem{
+		{name: "alpha"},
+		{name: "bravo"},
+	}
+	p := fixedTestPane(items).SetQuery("zzz")
+	filtered, _, _ := p.View()
+
+	if len(filtered) != 0 {
+		t.Fatalf("expected no filtered matches, got %#v", filtered)
+	}
+	if p.ItemCount() != 2 {
+		t.Fatalf("expected source item count 2, got %d", p.ItemCount())
+	}
+}
+
 func TestPaneMoveOnEmptyAndSingleItemLists(t *testing.T) {
 	var empty Pane[testItem]
 	empty = empty.Move(1, 2, 80)

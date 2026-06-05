@@ -116,6 +116,8 @@ func (m Model) View() string {
 	stashes, stashSelected, stashScroll := m.stashes.View()
 	commits, commitSelected, commitScroll := m.commits.View()
 	reflogs, reflogSelected, reflogScroll := m.reflogs.View()
+	repoEmptyMessage := m.repoEmptyMessage(len(repos))
+	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs))
 	if len(repos) == 0 {
 		worktrees = nil
 		rows = nil
@@ -125,43 +127,144 @@ func (m Model) View() string {
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
-		Repos:            repos,
-		Selected:         selected,
-		Width:            m.width,
-		Height:           m.height,
-		Mode:             m.mode,
-		Branches:         rows,
-		Stashes:          stashes,
-		BranchSelected:   branchSelected,
-		StashSelected:    stashSelected,
-		Overlay:          m.overlayState(),
-		OverlayDiff:      modalView.Diff,
-		OverlayScroll:    modalView.Scroll,
-		ConfirmPrompt:    modalView.Prompt,
-		ConfirmForce:     modalView.Force,
-		WorktreeInput:    modalView.Input,
-		WorktreeInputErr: modalView.InputErr,
-		BranchScroll:     branchScroll,
-		RepoScroll:       repoScroll,
-		StashScroll:      stashScroll,
-		ActivePane:       m.activePane,
-		Destructive:      m.destructive,
-		Worktrees:        worktrees,
-		WorktreeSelected: worktreeSelected,
-		WorktreeScroll:   worktreeScroll,
-		Commits:          commits,
-		CommitSelected:   commitSelected,
-		CommitScroll:     commitScroll,
-		Reflogs:          reflogs,
-		ReflogSelected:   reflogSelected,
-		ReflogScroll:     reflogScroll,
-		TransientError:   m.status.Text,
-		SearchActive:     m.searchActive,
-		RepoSearch:       m.repos.Query(),
-		ItemSearch:       m.activeItemPaneQuery(),
-		FetchAvailable:   m.canFetch(),
-		PullAvailable:    m.canPull(),
+		Repos:             repos,
+		Selected:          selected,
+		Width:             m.width,
+		Height:            m.height,
+		Mode:              m.mode,
+		Branches:          rows,
+		Stashes:           stashes,
+		BranchSelected:    branchSelected,
+		StashSelected:     stashSelected,
+		Overlay:           m.overlayState(),
+		OverlayDiff:       modalView.Diff,
+		OverlayScroll:     modalView.Scroll,
+		ConfirmPrompt:     modalView.Prompt,
+		ConfirmForce:      modalView.Force,
+		WorktreeInput:     modalView.Input,
+		WorktreeInputErr:  modalView.InputErr,
+		BranchScroll:      branchScroll,
+		RepoScroll:        repoScroll,
+		StashScroll:       stashScroll,
+		ActivePane:        m.activePane,
+		Destructive:       m.destructive,
+		Worktrees:         worktrees,
+		WorktreeSelected:  worktreeSelected,
+		WorktreeScroll:    worktreeScroll,
+		Commits:           commits,
+		CommitSelected:    commitSelected,
+		CommitScroll:      commitScroll,
+		Reflogs:           reflogs,
+		ReflogSelected:    reflogSelected,
+		ReflogScroll:      reflogScroll,
+		TransientError:    m.status.Text,
+		SearchActive:      m.searchActive,
+		RepoSearch:        m.repos.Query(),
+		ItemSearch:        m.activeItemPaneQuery(),
+		RepoEmptyMessage:  repoEmptyMessage,
+		RightEmptyMessage: rightEmptyMessage,
+		FetchAvailable:    m.canFetch(),
+		PullAvailable:     m.canPull(),
 	})
+}
+
+func (m Model) repoEmptyMessage(filteredRepos int) string {
+	if filteredRepos > 0 {
+		return ""
+	}
+	itemCount := m.repos.ItemCount()
+	if m.repos.Query() != "" && itemCount > 0 {
+		return "No repo results for " + m.repos.Query()
+	}
+	if itemCount == 0 {
+		return "No repositories found"
+	}
+	return "No repo results"
+}
+
+func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs int) string {
+	if filteredRepos == 0 {
+		if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
+			return "No matching repo"
+		}
+		return "No selected repo"
+	}
+	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs)
+	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
+		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
+	}
+	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == m.mode {
+		return "Could not load " + modeDataName(m.mode) + "; see status bar"
+	}
+	return modeEmptyMessage(m.mode)
+}
+
+func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs int) (int, int) {
+	switch m.mode {
+	case ui.ModeWorktrees:
+		return m.worktrees.ItemCount(), filteredWorktrees
+	case ui.ModeBranches:
+		return m.rows.ItemCount(), filteredBranches
+	case ui.ModeStashes:
+		return m.stashes.ItemCount(), filteredStashes
+	case ui.ModeHistory:
+		return m.commits.ItemCount(), filteredCommits
+	case ui.ModeReflog:
+		return m.reflogs.ItemCount(), filteredReflogs
+	default:
+		return 0, 0
+	}
+}
+
+func modeDataName(mode ui.Mode) string {
+	switch mode {
+	case ui.ModeWorktrees:
+		return "worktrees"
+	case ui.ModeBranches:
+		return "branches"
+	case ui.ModeStashes:
+		return "stashes"
+	case ui.ModeHistory:
+		return "commits"
+	case ui.ModeReflog:
+		return "reflog"
+	default:
+		return "items"
+	}
+}
+
+func modeResultName(mode ui.Mode) string {
+	switch mode {
+	case ui.ModeWorktrees:
+		return "worktree"
+	case ui.ModeBranches:
+		return "branch"
+	case ui.ModeStashes:
+		return "stash"
+	case ui.ModeHistory:
+		return "commit"
+	case ui.ModeReflog:
+		return "reflog"
+	default:
+		return "item"
+	}
+}
+
+func modeEmptyMessage(mode ui.Mode) string {
+	switch mode {
+	case ui.ModeWorktrees:
+		return "No worktrees to show"
+	case ui.ModeBranches:
+		return "No branches to show"
+	case ui.ModeStashes:
+		return "No stashes"
+	case ui.ModeHistory:
+		return "No commits"
+	case ui.ModeReflog:
+		return "No reflog entries"
+	default:
+		return "nothing here yet"
+	}
 }
 
 func (m Model) overlayState() ui.OverlayState {

@@ -9,8 +9,8 @@ Goal: make failures visible and establish the configuration layer future
 features can build on.
 
 - [x] P0 - Git command error surfacing: surface async list/diff fetch failures in the status bar so empty panes are not confused with command failures.
-- [ ] P0 - Config file foundation: add `~/.config/wtui/config.toml` and load it early enough to support future scan, editor, terminal, provider, and launch settings.
-- [ ] P1 - Empty-state clarity: distinguish "nothing to show" from "command failed" and "repo has no matching filtered results."
+- [x] P0 - Config file foundation: add `~/.config/wtui/config.toml` and load it early enough to support future scan, editor, terminal, provider, and launch settings.
+- [x] P1 - Empty-state clarity: distinguish "nothing to show" from "command failed" and "repo has no matching filtered results."
 - [x] P1 - Stale async result clarity: keep ignoring outdated async results, but make current command failures obvious when they belong to the selected repo/mode.
 
 ## Phase 2: Worktree Lifecycle Depth

@@ -207,7 +207,7 @@ func TestRepoList_ScrollsWhenSelectionExceedsHeight(t *testing.T) {
 		{Path: "/e", DisplayName: "echo"},
 	}
 	// Height of 3 means only 3 visible at a time; scroll=2 shows repos 2-4
-	lines := renderRepoList(repos, 4, 2, LeftPaneWidth-2, 3)
+	lines := renderRepoList(repos, 4, 2, LeftPaneWidth-2, 3, "")
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "echo") {
 		t.Error("selected item 'echo' should be visible")
@@ -222,7 +222,7 @@ func TestRepoList_TruncatesLongNames(t *testing.T) {
 	repos := []scanner.Repo{
 		{Path: "/a", DisplayName: "this-is-a-very-long-repository-name-that-exceeds-width"},
 	}
-	lines := renderRepoList(repos, 0, 0, width, 3)
+	lines := renderRepoList(repos, 0, 0, width, 3, "")
 	for i, line := range lines {
 		if lipgloss.Width(line) > width {
 			t.Errorf("line %d width %d exceeds pane width %d", i, lipgloss.Width(line), width)
@@ -1195,6 +1195,78 @@ func TestRender_WorktreesModeShowsData(t *testing.T) {
 	}
 	if strings.Contains(view, "nothing here yet") {
 		t.Error("render should not show placeholder when worktree data exists")
+	}
+}
+
+func TestRender_UsesProvidedEmptyStateMessages(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:          0,
+		Width:             80,
+		Height:            10,
+		Mode:              ModeWorktrees,
+		RightEmptyMessage: "No worktrees to show",
+	})
+	if !strings.Contains(view, "No worktrees to show") {
+		t.Fatalf("render should show provided right-pane empty message, got:\n%s", view)
+	}
+	if strings.Contains(view, "nothing here yet") {
+		t.Fatal("render should not fall back to generic placeholder when an empty message is provided")
+	}
+
+	view = Render(RenderParams{
+		Width:            80,
+		Height:           10,
+		Mode:             ModeWorktrees,
+		RepoEmptyMessage: "No repo results for zzz",
+	})
+	if !strings.Contains(view, "No repo results for zzz") {
+		t.Fatalf("render should show provided repo empty message, got:\n%s", view)
+	}
+}
+
+func TestRender_EmptyStateMessagesDoNotPanicAtTinyHeights(t *testing.T) {
+	for _, height := range []int{1, 2, 3, 4} {
+		t.Run(fmt.Sprintf("height_%d", height), func(t *testing.T) {
+			_ = Render(RenderParams{
+				Width:             80,
+				Height:            height,
+				Mode:              ModeWorktrees,
+				RepoEmptyMessage:  "No repo results for zzz",
+				RightEmptyMessage: "No selected repo",
+			})
+		})
+	}
+}
+
+func TestRender_EmptyStateMessagesFitPaneWidth(t *testing.T) {
+	longMessage := "No repo results for " + strings.Repeat("z", 80)
+
+	repoLines := renderRepoList(nil, 0, 0, 12, 3, longMessage)
+	for i, line := range repoLines {
+		if lipgloss.Width(line) > 12 {
+			t.Fatalf("repo empty line %d width %d exceeds pane width 12: %q", i, lipgloss.Width(line), line)
+		}
+	}
+
+	rightLines := renderPlaceholderPane(16, 3, longMessage)
+	for i, line := range rightLines {
+		if lipgloss.Width(line) > 16 {
+			t.Fatalf("right empty line %d width %d exceeds pane width 16: %q", i, lipgloss.Width(line), line)
+		}
+	}
+}
+
+func TestRepoList_EmptyMessageIsVerticallyCentered(t *testing.T) {
+	lines := renderRepoList(nil, 0, 0, 20, 5, "No repos")
+	for i, line := range lines {
+		hasMessage := strings.Contains(line, "No repos")
+		if i == 2 && !hasMessage {
+			t.Fatalf("expected empty message centered on line 2, got %#v", lines)
+		}
+		if i != 2 && hasMessage {
+			t.Fatalf("empty message should only appear on centered line, got line %d in %#v", i, lines)
+		}
 	}
 }
 

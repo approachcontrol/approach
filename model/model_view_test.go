@@ -53,6 +53,16 @@ func TestModel_ViewContainsExpectedContent(t *testing.T) {
 	}
 }
 
+func TestModel_ViewNoReposShowsEmptyMessage(t *testing.T) {
+	m := model.New(nil)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	view := m.View()
+	if !strings.Contains(view, "No repositories found") {
+		t.Fatalf("view with no repos should explain that no repositories were found, got:\n%s", view)
+	}
+}
+
 func TestModel_ViewWorktreesModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -61,8 +71,8 @@ func TestModel_ViewWorktreesModeShowsPlaceholder(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
 	view := m.View()
-	if !strings.Contains(view, "nothing here yet") {
-		t.Error("ModeWorktrees should show placeholder even when branch data is loaded")
+	if !strings.Contains(view, "No worktrees to show") {
+		t.Error("ModeWorktrees should show worktree-specific empty state even when branch data is loaded")
 	}
 	if strings.Contains(view, "main") {
 		t.Error("ModeWorktrees should NOT show branch data")
@@ -76,8 +86,116 @@ func TestModel_ViewStashesModeShowsPlaceholder(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 
 	view := m.View()
-	if !strings.Contains(view, "nothing here yet") {
-		t.Error("ModeStashes with no data should show placeholder")
+	if !strings.Contains(view, "No stashes") {
+		t.Error("ModeStashes with no data should show stash-specific empty state")
+	}
+}
+
+func TestModel_ViewDistinguishesFilteredEmptyRepos(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz")})
+
+	view := m.View()
+	if !strings.Contains(view, "No repo results for zzz") {
+		t.Fatalf("filtered repo pane should explain that the repo filter has no matches, got:\n%s", view)
+	}
+	if !strings.Contains(view, "No matching repo") {
+		t.Fatalf("right pane should explain that the repo filter leaves no selected repo, got:\n%s", view)
+	}
+	if strings.Contains(view, "No selected repo") {
+		t.Fatal("filtered-empty repo view should not use generic no-selected-repo copy")
+	}
+}
+
+func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(model.Model) model.Model
+		want      string
+		notWanted string
+	}{
+		{
+			name: "worktrees",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+					{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+				}})
+				return m
+			},
+			want:      "No worktree results for zzz",
+			notWanted: "No worktrees to show",
+		},
+		{
+			name: "branches",
+			setup: func(m model.Model) model.Model {
+				m = inBranchesMode(m)
+				m, _ = update(m, model.BranchResultMsg{
+					RepoPath: "/dev/alpha",
+					Branches: []gitquery.Branch{
+						{Name: "main", HasUpstream: true},
+						{Name: "feature/auth", HasUpstream: true},
+					},
+				})
+				return m
+			},
+			want:      "No branch results for zzz",
+			notWanted: "No branches to show",
+		},
+		{
+			name: "stashes",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+				m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
+				return m
+			},
+			want:      "No stash results for zzz",
+			notWanted: "No stashes",
+		},
+		{
+			name: "history",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+				m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
+				return m
+			},
+			want:      "No commit results for zzz",
+			notWanted: "No commits",
+		},
+		{
+			name: "reflog",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+				m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()[:1]})
+				return m
+			},
+			want:      "No reflog results for zzz",
+			notWanted: "No reflog entries",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+			m = tt.setup(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz")})
+
+			view := m.View()
+			if !strings.Contains(view, tt.want) {
+				t.Fatalf("filtered %s pane should explain that the filter has no matches, got:\n%s", tt.name, view)
+			}
+			if strings.Contains(view, tt.notWanted) {
+				t.Fatalf("filtered-empty %s pane should not look like an unfiltered empty pane", tt.name)
+			}
+		})
 	}
 }
 
@@ -283,8 +401,8 @@ func TestModel_ViewHistoryModeShowsPlaceholder(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	view := m.View()
-	if !strings.Contains(view, "nothing here yet") {
-		t.Error("history mode with no commits should show placeholder")
+	if !strings.Contains(view, "No commits") {
+		t.Error("history mode with no commits should show history-specific empty state")
 	}
 }
 
@@ -652,6 +770,64 @@ func TestModel_ListFetchErrorShowsStatusWithoutClearingPane(t *testing.T) {
 	if !strings.Contains(view, "main") {
 		t.Error("list fetch failure should not clear existing pane data")
 	}
+	if strings.Contains(view, "Could not load worktrees; see status bar") {
+		t.Error("list fetch failure should not show a failure placeholder while existing pane data is visible")
+	}
+}
+
+func TestModel_ListFetchErrorOnEmptyPaneDoesNotLookLikeNoData(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "worktrees",
+		Err:      "failed to load worktrees: boom",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "failed to load worktrees: boom") {
+		t.Error("view should show list fetch failure in status bar")
+	}
+	if !strings.Contains(view, "Could not load worktrees; see status bar") {
+		t.Fatalf("empty failed pane should direct the user to the status error, got:\n%s", view)
+	}
+	if strings.Contains(view, "No worktrees to show") {
+		t.Fatal("failed load should not look like successful empty data")
+	}
+}
+
+func TestModel_FilteredEmptyItemsTakePrecedenceOverListFetchErrorPlaceholder(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz")})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "worktrees",
+		Err:      "failed to load worktrees: boom",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "failed to load worktrees: boom") {
+		t.Error("status bar should still show the fetch failure")
+	}
+	if !strings.Contains(view, "No worktree results for zzz") {
+		t.Fatalf("filtered-empty message should explain the visible pane emptiness, got:\n%s", view)
+	}
+	if strings.Contains(view, "Could not load worktrees; see status bar") {
+		t.Fatal("filtered-empty pane should not be replaced by fetch-failure placeholder")
+	}
 }
 
 func TestModel_InitFetchUsesNonZeroListRequest(t *testing.T) {
@@ -952,7 +1128,7 @@ func TestModel_ViewReflogModeShowsPlaceholder(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 
 	view := m.View()
-	if !strings.Contains(view, "nothing here yet") {
-		t.Error("reflog mode with no data should show placeholder")
+	if !strings.Contains(view, "No reflog entries") {
+		t.Error("reflog mode with no data should show reflog-specific empty state")
 	}
 }

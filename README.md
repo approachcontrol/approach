@@ -51,6 +51,9 @@ The UI has two panes: repos on the left, content on the right. `tab` switches fo
 
 **Fuzzy filter:** Press `/` in the active pane to type-ahead filter repos or right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits it.
 
+Empty panes explain why they are empty: no data for the selected repo, no fuzzy
+filter matches, or a load failure with details in the status bar.
+
 **Left pane (repos)**
 
 | Key | Action |
