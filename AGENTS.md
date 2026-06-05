@@ -16,15 +16,15 @@ gofmt -l .          # formatting check used by CI
 
 - `cmd/wtui/main.go` parses `--version`/`-v`, reads `WORKTREE_ROOT`, and wires `scanner.Scan()` into the Bubble Tea program.
 - `scanner/` discovers repos under `WORKTREE_ROOT` or `~/dev` (up to 2 levels deep), excluding `*-worktrees`.
-- `gitquery/` shells out to git for worktrees, branches, stashes, history, reflog, and diffs; `parse.go` holds the pure parsing split out from execution.
+- `gitquery/` shells out to git for worktrees, branches, stashes, history, reflog, and diffs; `parse.go` holds the pure parsing split out from execution, and `runner.go` defines the `Runner` seam (the git CLI adapter) wrapped by a `Querier`. Package-level functions delegate to a default `Querier`; `NewQuerier(runner)` injects a fake `Runner` for tests.
 - `actions/` performs git mutations (create/remove/prune/unlock worktree, delete branch, drop stash, fetch `--prune`, pull `--ff-only`) plus clipboard, VS Code, and tmux/Zellij terminal launching.
-- `model/` owns Bubble Tea state, key handling, fuzzy filtering, overlays, confirmations, and async result handling (split across `model.go`, `model_keys.go`, `model_fetch.go`, `model_messages.go`, `model_filter.go`).
+- `model/` owns Bubble Tea state, key handling, fuzzy filtering, overlays, confirmations, and async result handling (split across `model.go`, `model_keys.go`, `model_fetch.go`, `model_messages.go`, `model_filter.go`). Each list (repos, branches, stashes, worktrees, commits, reflog) is a generic value-type `pane.Pane[T]` from `model/pane/` that owns its own filtering, selection, and scroll, and overlay state (confirmations, input prompts, diffs) is consolidated into a typed `modal.Modal` from `model/modal/`.
 - `ui/` is stateless rendering with lipgloss, driven by a `RenderParams` snapshot.
 - `internal/version/` holds version/commit/date injected via `-ldflags` at build time.
 
 ## Working Notes
 
-- Tests use real temporary git repositories and command execution, not mocks.
+- Tests use real temporary git repositories and command execution, not mocks; `gitquery` also accepts a fake `Runner` via `NewQuerier` for unit-level coverage.
 - Destructive actions are gated by destructive mode in the model; preserve that safety boundary.
 - Locked worktrees should not be deleted or pruned; unlock is a separate action.
 - Branch lists hide non-root worktree branches; the root branch stays pinned at the top.
