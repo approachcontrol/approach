@@ -14,13 +14,15 @@ import (
 // --- Messages ---
 
 type BranchResultMsg struct {
-	RepoPath string
-	Branches []gitquery.Branch
+	RepoPath    string
+	Branches    []gitquery.Branch
+	ListRequest uint64
 }
 
 type StashResultMsg struct {
-	RepoPath string
-	Stashes  []gitquery.Stash
+	RepoPath    string
+	Stashes     []gitquery.Stash
+	ListRequest uint64
 }
 
 type StashDiffResultMsg struct {
@@ -49,13 +51,15 @@ type StashDroppedMsg struct {
 }
 
 type WorktreeResultMsg struct {
-	RepoPath  string
-	Worktrees []gitquery.Worktree
+	RepoPath    string
+	Worktrees   []gitquery.Worktree
+	ListRequest uint64
 }
 
 type CommitResultMsg struct {
-	RepoPath string
-	Commits  []gitquery.Commit
+	RepoPath    string
+	Commits     []gitquery.Commit
+	ListRequest uint64
 }
 
 type CommitDiffResultMsg struct {
@@ -124,8 +128,9 @@ type WorktreeCreateFailedMsg struct {
 }
 
 type ReflogResultMsg struct {
-	RepoPath string
-	Reflogs  []gitquery.ReflogEntry
+	RepoPath    string
+	Reflogs     []gitquery.ReflogEntry
+	ListRequest uint64
 }
 
 type ReflogDiffResultMsg struct {
@@ -157,12 +162,35 @@ type ForceDeleteFailedMsg struct {
 	Err      string
 }
 
+type FetchKind int
+
+const (
+	FetchUnknown FetchKind = iota
+	FetchList
+	FetchWorktreeDiff
+	FetchBranchDiff
+	FetchStashDiff
+	FetchCommitDiff
+	FetchReflogDiff
+)
+
 // FetchErrorMsg carries an error encountered while loading data for a pane,
-// so the failure can be surfaced instead of showing a blank pane.
+// so the failure can be surfaced instead of showing a blank pane. Pane is only
+// for display; Kind and target fields drive stale-result checks.
 type FetchErrorMsg struct {
-	RepoPath string
-	Pane     string
-	Err      string
+	RepoPath     string
+	Pane         string
+	Err          string
+	Kind         FetchKind
+	Mode         ui.Mode
+	ListRequest  uint64
+	DiffRequest  uint64
+	WorktreePath string
+	BranchName   string
+	StashIndex   int
+	StashDate    string
+	StashMessage string
+	Hash         string
 }
 
 // ActionFailedMsg carries an error from a destructive action (drop/prune)
@@ -187,11 +215,52 @@ func (m Model) isCurrentRepo(repoPath string) bool {
 	return ok && current == repoPath
 }
 
-func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
-		m.worktrees = m.worktrees.SetItems(msg.Worktrees)
-		m = m.clampSelectionsAfterFilter()
+func (m Model) setStatus(source statusSource, text string) Model {
+	m.status = statusError{Text: text, Source: source}
+	return m
+}
+
+func (m Model) setFetchStatus(msg FetchErrorMsg) Model {
+	m.status = statusError{Text: msg.Err, Source: statusFetch, FetchKind: msg.Kind, Mode: msg.Mode}
+	return m
+}
+
+func (m Model) clearStatus(source statusSource) Model {
+	if m.status.Source == source {
+		m.status = statusError{}
 	}
+	return m
+}
+
+func (m Model) clearFetchListStatus(mode ui.Mode) Model {
+	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == mode {
+		m.status = statusError{}
+	}
+	return m
+}
+
+func (m Model) isCurrentListRequest(mode ui.Mode, request uint64) bool {
+	if request == 0 {
+		return false
+	}
+	if int(mode) < 0 || int(mode) >= len(m.listRequests) {
+		return false
+	}
+	return m.listRequests[int(mode)] == request
+}
+
+func (m Model) clearAnyStatus() Model {
+	m.status = statusError{}
+	return m
+}
+
+func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeWorktrees, msg.ListRequest) {
+		return m
+	}
+	m = m.clearFetchListStatus(ui.ModeWorktrees)
+	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
+	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
@@ -203,7 +272,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 		m.worktrees = m.worktrees.Move(-1, m.worktreeContentHeight(), m.contentWidth())
 	}
 	if msg.BranchName == "" {
-		return m, m.fetchWorktrees()
+		return m.startFetchWorktrees()
 	}
 	repoPath := msg.RepoPath
 	branchName := msg.BranchName
@@ -220,7 +289,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 			return WorktreeDeleteCompletedMsg{RepoPath: repoPath}
 		}
 	})
-	return m, m.fetchWorktrees()
+	return m.startFetchWorktrees()
 }
 
 func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) {
@@ -228,52 +297,52 @@ func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) 
 		if m.WorktreeSelected() >= len(m.Worktrees())-1 && m.WorktreeSelected() > 0 {
 			m.worktrees = m.worktrees.Move(-1, m.worktreeContentHeight(), m.contentWidth())
 		}
-		return m, m.fetchWorktrees()
+		return m.startFetchWorktrees()
 	}
 	return m, nil
 }
 
 func (m Model) handleWorktreeUnlocked(msg WorktreeUnlockedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = ""
-		return m, m.fetchWorktrees()
+		m = m.clearStatus(statusOther)
+		return m.startFetchWorktrees()
 	}
 	return m, nil
 }
 
 func (m Model) handleWorktreeUnlockFailed(msg WorktreeUnlockFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = msg.Err
+		m = m.setStatus(statusOther, msg.Err)
 	}
 	return m
 }
 
 func (m Model) handleGitFetched(msg GitFetchedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = ""
-		return m, m.fetchForMode()
+		m = m.clearStatus(statusGitMutation)
+		return m.startFetchForMode()
 	}
 	return m, nil
 }
 
 func (m Model) handleGitFetchFailed(msg GitFetchFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = msg.Err
+		m = m.setStatus(statusGitMutation, msg.Err)
 	}
 	return m
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = ""
-		return m, m.fetchForMode()
+		m = m.clearStatus(statusGitMutation)
+		return m.startFetchForMode()
 	}
 	return m, nil
 }
 
 func (m Model) handleGitPullFailed(msg GitPullFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = msg.Err
+		m = m.setStatus(statusGitMutation, msg.Err)
 	}
 	return m
 }
@@ -284,7 +353,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	}
 	m.mode = ui.ModeWorktrees
 	m.worktrees = m.worktrees.ResetSelection()
-	return m, m.fetchWorktrees()
+	return m.startFetchWorktrees()
 }
 
 func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
@@ -304,37 +373,41 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 }
 
 func (m Model) handleBranchResult(msg BranchResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
-		allRows := gitquery.FlattenBranches(msg.Branches)
-		var filtered []gitquery.BranchRow
-		for _, row := range allRows {
-			if row.Branch.IsWorktree && row.WorktreePath != msg.RepoPath {
-				continue
-			}
-			filtered = append(filtered, row)
-		}
-		// Pin root worktree to position 0
-		for i, row := range filtered {
-			if row.WorktreePath == msg.RepoPath {
-				if i != 0 {
-					root := filtered[i]
-					copy(filtered[1:i+1], filtered[:i])
-					filtered[0] = root
-				}
-				break
-			}
-		}
-		m.rows = m.rows.SetItems(filtered)
-		m = m.clampSelectionsAfterFilter()
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeBranches, msg.ListRequest) {
+		return m
 	}
+	m = m.clearFetchListStatus(ui.ModeBranches)
+	allRows := gitquery.FlattenBranches(msg.Branches)
+	var filtered []gitquery.BranchRow
+	for _, row := range allRows {
+		if row.Branch.IsWorktree && row.WorktreePath != msg.RepoPath {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	// Pin root worktree to position 0
+	for i, row := range filtered {
+		if row.WorktreePath == msg.RepoPath {
+			if i != 0 {
+				root := filtered[i]
+				copy(filtered[1:i+1], filtered[:i])
+				filtered[0] = root
+			}
+			break
+		}
+	}
+	m.rows = m.rows.SetItems(filtered)
+	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
 func (m Model) handleStashResult(msg StashResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
-		m.stashes = m.stashes.SetItems(msg.Stashes)
-		m = m.clampSelectionsAfterFilter()
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeStashes, msg.ListRequest) {
+		return m
 	}
+	m = m.clearFetchListStatus(ui.ModeStashes)
+	m.stashes = m.stashes.SetItems(msg.Stashes)
+	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
@@ -370,14 +443,14 @@ func (m Model) handleStashDropped(msg StashDroppedMsg) (tea.Model, tea.Cmd) {
 		if m.StashSelected() >= len(m.Stashes())-1 && m.StashSelected() > 0 {
 			m.stashes = m.stashes.Move(-1, m.stashContentHeight(), m.contentWidth())
 		}
-		return m, m.fetchStashes()
+		return m.startFetchStashes()
 	}
 	return m, nil
 }
 
 func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		return m, m.fetchBranches()
+		return m.startFetchBranches()
 	}
 	return m, nil
 }
@@ -410,41 +483,49 @@ func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {
 func (m Model) handleForceDeleteFailed(msg ForceDeleteFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		if msg.Err != "" {
-			m.transientError = msg.Err
+			m = m.setStatus(statusOther, msg.Err)
 		} else {
-			m.transientError = fmt.Sprintf("force delete %s failed", msg.Target)
+			m = m.setStatus(statusOther, fmt.Sprintf("force delete %s failed", msg.Target))
 		}
 	}
 	return m
 }
 
 func (m Model) handleFetchError(msg FetchErrorMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = msg.Err
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
 	}
+	if !m.fetchErrorMatchesCurrentTarget(msg) {
+		return m
+	}
+	m = m.setFetchStatus(msg)
 	return m
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.transientError = msg.Err
+		m = m.setStatus(statusOther, msg.Err)
 	}
 	return m
 }
 
 func (m Model) handleCommitResult(msg CommitResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
-		m.commits = m.commits.SetItems(msg.Commits)
-		m = m.clampSelectionsAfterFilter()
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeHistory, msg.ListRequest) {
+		return m
 	}
+	m = m.clearFetchListStatus(ui.ModeHistory)
+	m.commits = m.commits.SetItems(msg.Commits)
+	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
 func (m Model) handleReflogResult(msg ReflogResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
-		m.reflogs = m.reflogs.SetItems(msg.Reflogs)
-		m = m.clampSelectionsAfterFilter()
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeReflog, msg.ListRequest) {
+		return m
 	}
+	m = m.clearFetchListStatus(ui.ModeReflog)
+	m.reflogs = m.reflogs.SetItems(msg.Reflogs)
+	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
@@ -484,6 +565,67 @@ func branchMatchesDiffResult(row gitquery.BranchRow, msg BranchDiffResultMsg) bo
 		return false
 	}
 	return row.WorktreePath == msg.WorktreePath
+}
+
+func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
+	switch msg.Kind {
+	case FetchUnknown:
+		return false
+	case FetchList:
+		return msg.Mode == m.mode && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
+	case FetchWorktreeDiff:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		wt, ok := m.selectedWorktree()
+		return ok && wt.Path == msg.WorktreePath
+	case FetchBranchDiff:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		row, ok := m.selectedRow()
+		return ok && branchMatchesDiffError(row, msg)
+	case FetchStashDiff:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		stash, ok := m.selectedStash()
+		return ok && stashMatchesDiffError(stash, msg)
+	case FetchCommitDiff:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		commit, ok := m.selectedCommit()
+		return ok && commit.Hash == msg.Hash
+	case FetchReflogDiff:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		entry, ok := m.selectedReflog()
+		return ok && entry.Hash == msg.Hash
+	default:
+		return false
+	}
+}
+
+func branchMatchesDiffError(row gitquery.BranchRow, msg FetchErrorMsg) bool {
+	if row.Branch.Name != msg.BranchName {
+		return false
+	}
+	return msg.WorktreePath != "" && row.WorktreePath == msg.WorktreePath
+}
+
+func stashMatchesDiffError(stash gitquery.Stash, msg FetchErrorMsg) bool {
+	if stash.Index != msg.StashIndex {
+		return false
+	}
+	if msg.StashDate == "" || stash.Date != msg.StashDate {
+		return false
+	}
+	if msg.StashMessage == "" || stash.Message != msg.StashMessage {
+		return false
+	}
+	return true
 }
 
 func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {

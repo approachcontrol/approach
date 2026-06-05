@@ -33,8 +33,46 @@ func testStashes() []gitquery.Stash {
 
 // update sends a message and returns the concrete Model.
 func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
+	msg = stampListRequest(m, msg)
 	tm, cmd := m.Update(msg)
 	return tm.(model.Model), cmd
+}
+
+func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
+	switch msg := msg.(type) {
+	case model.WorktreeResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeWorktrees)
+		}
+		return msg
+	case model.BranchResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeBranches)
+		}
+		return msg
+	case model.StashResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeStashes)
+		}
+		return msg
+	case model.CommitResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeHistory)
+		}
+		return msg
+	case model.ReflogResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeReflog)
+		}
+		return msg
+	case model.FetchErrorMsg:
+		if msg.Kind == model.FetchList && msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(msg.Mode)
+		}
+		return msg
+	default:
+		return msg
+	}
 }
 
 // inRightPane switches focus to the right pane.

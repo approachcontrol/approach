@@ -12,20 +12,78 @@ import (
 
 // --- Fetch commands ---
 
-func (m Model) fetchForMode() tea.Cmd {
+func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	switch m.mode {
 	case ui.ModeWorktrees:
-		return m.fetchWorktrees()
+		return m.startFetchWorktrees()
 	case ui.ModeBranches:
-		return m.fetchBranches()
+		return m.startFetchBranches()
 	case ui.ModeStashes:
-		return m.fetchStashes()
+		return m.startFetchStashes()
 	case ui.ModeHistory:
-		return m.fetchCommits()
+		return m.startFetchCommits()
 	case ui.ModeReflog:
-		return m.fetchReflog()
+		return m.startFetchReflog()
+	}
+	return m, nil
+}
+
+func (m Model) fetchForMode() tea.Cmd {
+	request := m.currentListRequest(m.mode)
+	switch m.mode {
+	case ui.ModeWorktrees:
+		return m.fetchWorktrees(request)
+	case ui.ModeBranches:
+		return m.fetchBranches(request)
+	case ui.ModeStashes:
+		return m.fetchStashes(request)
+	case ui.ModeHistory:
+		return m.fetchCommits(request)
+	case ui.ModeReflog:
+		return m.fetchReflog(request)
 	}
 	return nil
+}
+
+func (m Model) currentListRequest(mode ui.Mode) uint64 {
+	if int(mode) < 0 || int(mode) >= len(m.listRequests) {
+		return 0
+	}
+	return m.listRequests[int(mode)]
+}
+
+func (m Model) nextListFetchRequest(mode ui.Mode) (Model, uint64) {
+	m.listRequestSeq++
+	request := m.listRequestSeq
+	if int(mode) >= 0 && int(mode) < len(m.listRequests) {
+		m.listRequests[int(mode)] = request
+	}
+	return m, request
+}
+
+func (m Model) startFetchWorktrees() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeWorktrees)
+	return m, m.fetchWorktrees(request)
+}
+
+func (m Model) startFetchBranches() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeBranches)
+	return m, m.fetchBranches(request)
+}
+
+func (m Model) startFetchStashes() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeStashes)
+	return m, m.fetchStashes(request)
+}
+
+func (m Model) startFetchCommits() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeHistory)
+	return m, m.fetchCommits(request)
+}
+
+func (m Model) startFetchReflog() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeReflog)
+	return m, m.fetchReflog(request)
 }
 
 func (m Model) canFetch() bool {
@@ -105,7 +163,7 @@ func (m Model) createWorktree(input string) tea.Cmd {
 	}
 }
 
-func (m Model) fetchWorktrees() tea.Cmd {
+func (m Model) fetchWorktrees(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -113,13 +171,13 @@ func (m Model) fetchWorktrees() tea.Cmd {
 	return func() tea.Msg {
 		worktrees, err := gitquery.ListWorktrees(repoPath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "worktrees", Err: fmt.Sprintf("failed to load worktrees: %v", err)}
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "worktrees", Err: fmt.Sprintf("failed to load worktrees: %v", err), Kind: FetchList, Mode: ui.ModeWorktrees, ListRequest: request}
 		}
-		return WorktreeResultMsg{RepoPath: repoPath, Worktrees: worktrees}
+		return WorktreeResultMsg{RepoPath: repoPath, Worktrees: worktrees, ListRequest: request}
 	}
 }
 
-func (m Model) fetchBranches() tea.Cmd {
+func (m Model) fetchBranches(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -127,13 +185,13 @@ func (m Model) fetchBranches() tea.Cmd {
 	return func() tea.Msg {
 		branches, err := gitquery.ListBranches(repoPath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "branches", Err: fmt.Sprintf("failed to load branches: %v", err)}
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "branches", Err: fmt.Sprintf("failed to load branches: %v", err), Kind: FetchList, Mode: ui.ModeBranches, ListRequest: request}
 		}
-		return BranchResultMsg{RepoPath: repoPath, Branches: branches}
+		return BranchResultMsg{RepoPath: repoPath, Branches: branches, ListRequest: request}
 	}
 }
 
-func (m Model) fetchStashes() tea.Cmd {
+func (m Model) fetchStashes(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -141,9 +199,9 @@ func (m Model) fetchStashes() tea.Cmd {
 	return func() tea.Msg {
 		stashes, err := gitquery.ListStashes(repoPath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "stashes", Err: fmt.Sprintf("failed to load stashes: %v", err)}
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "stashes", Err: fmt.Sprintf("failed to load stashes: %v", err), Kind: FetchList, Mode: ui.ModeStashes, ListRequest: request}
 		}
-		return StashResultMsg{RepoPath: repoPath, Stashes: stashes}
+		return StashResultMsg{RepoPath: repoPath, Stashes: stashes, ListRequest: request}
 	}
 }
 
@@ -166,7 +224,16 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 	return func() tea.Msg {
 		diff, err := gitquery.BranchDiff(worktreePath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "branch diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
+			return FetchErrorMsg{
+				RepoPath:     repoPath,
+				Pane:         "branch diff",
+				Err:          fmt.Sprintf("failed to load diff: %v", err),
+				Kind:         FetchBranchDiff,
+				Mode:         ui.ModeBranches,
+				DiffRequest:  diffRequest,
+				BranchName:   branchName,
+				WorktreePath: worktreePath,
+			}
 		}
 		return BranchDiffResultMsg{
 			RepoPath:     repoPath,
@@ -192,7 +259,15 @@ func (m Model) fetchWorktreeDiff() tea.Cmd {
 	return func() tea.Msg {
 		diff, err := gitquery.BranchDiff(worktreePath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "worktree diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
+			return FetchErrorMsg{
+				RepoPath:     repoPath,
+				Pane:         "worktree diff",
+				Err:          fmt.Sprintf("failed to load diff: %v", err),
+				Kind:         FetchWorktreeDiff,
+				Mode:         ui.ModeWorktrees,
+				DiffRequest:  diffRequest,
+				WorktreePath: worktreePath,
+			}
 		}
 		return WorktreeDiffResultMsg{
 			RepoPath:     repoPath,
@@ -219,7 +294,17 @@ func (m Model) fetchStashDiff() tea.Cmd {
 	return func() tea.Msg {
 		diff, err := gitquery.StashDiff(repoPath, index)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "stash diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
+			return FetchErrorMsg{
+				RepoPath:     repoPath,
+				Pane:         "stash diff",
+				Err:          fmt.Sprintf("failed to load diff: %v", err),
+				Kind:         FetchStashDiff,
+				Mode:         ui.ModeStashes,
+				DiffRequest:  diffRequest,
+				StashIndex:   index,
+				StashDate:    stashDate,
+				StashMessage: stashMessage,
+			}
 		}
 		return StashDiffResultMsg{
 			RepoPath:    repoPath,
@@ -232,7 +317,7 @@ func (m Model) fetchStashDiff() tea.Cmd {
 	}
 }
 
-func (m Model) fetchCommits() tea.Cmd {
+func (m Model) fetchCommits(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -240,13 +325,13 @@ func (m Model) fetchCommits() tea.Cmd {
 	return func() tea.Msg {
 		commits, err := gitquery.ListCommits(repoPath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "history", Err: fmt.Sprintf("failed to load commits: %v", err)}
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "history", Err: fmt.Sprintf("failed to load commits: %v", err), Kind: FetchList, Mode: ui.ModeHistory, ListRequest: request}
 		}
-		return CommitResultMsg{RepoPath: repoPath, Commits: commits}
+		return CommitResultMsg{RepoPath: repoPath, Commits: commits, ListRequest: request}
 	}
 }
 
-func (m Model) fetchReflog() tea.Cmd {
+func (m Model) fetchReflog(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -254,9 +339,9 @@ func (m Model) fetchReflog() tea.Cmd {
 	return func() tea.Msg {
 		reflogs, err := gitquery.ListReflog(repoPath)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "reflog", Err: fmt.Sprintf("failed to load reflog: %v", err)}
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "reflog", Err: fmt.Sprintf("failed to load reflog: %v", err), Kind: FetchList, Mode: ui.ModeReflog, ListRequest: request}
 		}
-		return ReflogResultMsg{RepoPath: repoPath, Reflogs: reflogs}
+		return ReflogResultMsg{RepoPath: repoPath, Reflogs: reflogs, ListRequest: request}
 	}
 }
 
@@ -274,7 +359,15 @@ func (m Model) fetchReflogDiff() tea.Cmd {
 	return func() tea.Msg {
 		diff, err := gitquery.ReflogDiff(repoPath, hash)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "reflog diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        "reflog diff",
+				Err:         fmt.Sprintf("failed to load diff: %v", err),
+				Kind:        FetchReflogDiff,
+				Mode:        ui.ModeReflog,
+				DiffRequest: diffRequest,
+				Hash:        hash,
+			}
 		}
 		return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
 	}
@@ -294,7 +387,15 @@ func (m Model) fetchCommitDiff() tea.Cmd {
 	return func() tea.Msg {
 		diff, err := gitquery.CommitDiff(repoPath, hash)
 		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "commit diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        "commit diff",
+				Err:         fmt.Sprintf("failed to load diff: %v", err),
+				Kind:        FetchCommitDiff,
+				Mode:        ui.ModeHistory,
+				DiffRequest: diffRequest,
+				Hash:        hash,
+			}
 		}
 		return CommitDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
 	}
