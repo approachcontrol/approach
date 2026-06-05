@@ -97,13 +97,16 @@ func TestModel_EnterOnEmptyWorktreeListIsNoOp(t *testing.T) {
 
 func TestModel_WorktreeDiffResultStoresDiff(t *testing.T) {
 	m := model.New(testRepos())
+	m = inRightPane(m)
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
 		Diff:         "diff --git a/f.txt",
 	})
 	if m.OverlayDiff() != "diff --git a/f.txt" {
@@ -140,6 +143,58 @@ func TestModel_WorktreeDiffResultDiscardedIfWorktreePathChanged(t *testing.T) {
 	})
 	if m.OverlayDiff() != "" {
 		t.Errorf("expected diff discarded for wrong worktree path, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_WorktreeDiffResultAfterClosedOverlayIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+
+	m, _ = update(m, model.WorktreeDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
+		Diff:         "stale worktree diff",
+	})
+
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected overlay to remain closed, got %d", m.Overlay())
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected closed overlay to ignore stale diff, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_WorktreeDiffResultFromOlderRequestIgnoredAfterReopen(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 1
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape}) // close before result arrives
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 2 for same target
+
+	m, _ = update(m, model.WorktreeDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		DiffRequest:  2,
+		Diff:         "new diff",
+	})
+	m, _ = update(m, model.WorktreeDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
+		Diff:         "stale old diff",
+	})
+
+	if m.OverlayDiff() != "new diff" {
+		t.Fatalf("expected stale request ignored after reopen, got %q", m.OverlayDiff())
 	}
 }
 
@@ -443,6 +498,55 @@ func TestModel_EnterOpensBranchDiffOverlayForDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestModel_BranchDiffResultForWrongWorktreePathIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{
+				Name:          "feat",
+				IsWorktree:    true,
+				Dirty:         true,
+				WorktreePaths: []string{"/dev/alpha"},
+			},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.BranchDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		BranchName:  "feat",
+		DiffRequest: 1,
+		Diff:        "missing path diff",
+	})
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected missing worktree path diff ignored, got %q", m.OverlayDiff())
+	}
+
+	m, _ = update(m, model.BranchDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		BranchName:   "feat",
+		WorktreePath: "/dev/elsewhere",
+		DiffRequest:  1,
+		Diff:         "wrong path diff",
+	})
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected wrong worktree path diff ignored, got %q", m.OverlayDiff())
+	}
+
+	m, _ = update(m, model.BranchDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		BranchName:   "feat",
+		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
+		Diff:         "matching path diff",
+	})
+	if m.OverlayDiff() != "matching path diff" {
+		t.Fatalf("expected matching worktree path diff stored, got %q", m.OverlayDiff())
+	}
+}
+
 func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
 	m := model.New(testRepos())
 	branches := []gitquery.Branch{
@@ -500,8 +604,11 @@ func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
 
 func TestModel_CommitDiffResultStoresDiff(t *testing.T) {
 	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
-	m, _ = update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: "diff --git a/f.txt"})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
 	if m.OverlayDiff() != "diff --git a/f.txt" {
 		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
 	}
@@ -608,9 +715,116 @@ func TestModel_EnterOpensOverlay(t *testing.T) {
 
 func TestModel_StashDiffResultStoresDiff(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "diff --git a/f.txt"})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       0,
+		DiffRequest: 1,
+		Diff:        "missing identity diff",
+	})
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected missing stash identity diff ignored, got %q", m.OverlayDiff())
+	}
+	stash := testStashes()[0]
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       stash.Index,
+		Date:        stash.Date,
+		Message:     stash.Message,
+		DiffRequest: 1,
+		Diff:        "diff --git a/f.txt",
+	})
 	if m.OverlayDiff() != "diff --git a/f.txt" {
 		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_StaleStashDiffDoesNotPopulateCommitOverlay(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "stale stash diff"})
+
+	if m.Overlay() != ui.OverlayCommitDiff {
+		t.Fatalf("expected commit diff overlay to remain open, got %d", m.Overlay())
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected stale stash diff ignored by commit overlay, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "old index diff"})
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected old-index stash diff ignored, got %q", m.OverlayDiff())
+	}
+
+	currentStash := testStashes()[1]
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       currentStash.Index,
+		Date:        currentStash.Date,
+		Message:     currentStash.Message,
+		DiffRequest: 2,
+		Diff:        "current index diff",
+	})
+	if m.OverlayDiff() != "current index diff" {
+		t.Fatalf("expected current-index stash diff stored, got %q", m.OverlayDiff())
+	}
+}
+
+func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
+	oldStash := gitquery.Stash{Index: 0, Date: "2026-03-18 10:00:00 -0700", Message: "old stash"}
+	newStash := gitquery.Stash{Index: 0, Date: "2026-03-19 10:00:00 -0700", Message: "new stash"}
+
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
+
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       oldStash.Index,
+		Date:        oldStash.Date,
+		Message:     oldStash.Message,
+		DiffRequest: 1,
+		Diff:        "old stash diff",
+	})
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected changed stash identity to reject stale diff, got %q", m.OverlayDiff())
+	}
+
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       newStash.Index,
+		Date:        newStash.Date,
+		Message:     newStash.Message,
+		DiffRequest: 1,
+		Diff:        "new stash diff",
+	})
+	if m.OverlayDiff() != "new stash diff" {
+		t.Fatalf("expected matching stash identity diff stored, got %q", m.OverlayDiff())
 	}
 }
 
@@ -658,7 +872,15 @@ func TestModel_OverlayScrollUpDown(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "line1\nline2\nline3"})
+	scrollStash := testStashes()[0]
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       scrollStash.Index,
+		Date:        scrollStash.Date,
+		Message:     scrollStash.Message,
+		DiffRequest: 1,
+		Diff:        "line1\nline2\nline3",
+	})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if m.OverlayScroll() != 1 {
@@ -1844,7 +2066,8 @@ func TestModel_EnterInReflogOpensReflogDiffOverlay(t *testing.T) {
 
 func TestModel_ReflogDiffResultStoresDiff(t *testing.T) {
 	m := modelInReflogWithEntries()
-	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: "diff --git a/f.txt"})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
 	if m.OverlayDiff() != "diff --git a/f.txt" {
 		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
 	}

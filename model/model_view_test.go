@@ -181,7 +181,15 @@ func TestModel_ViewOverlayShowsDiff(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "diff --git a/f.txt\n--- a/f.txt\n+++ b/f.txt"})
+	stash := testStashes()[0]
+	m, _ = update(m, model.StashDiffResultMsg{
+		RepoPath:    "/dev/alpha",
+		Index:       stash.Index,
+		Date:        stash.Date,
+		Message:     stash.Message,
+		DiffRequest: 1,
+		Diff:        "diff --git a/f.txt\n--- a/f.txt\n+++ b/f.txt",
+	})
 
 	view := m.View()
 	if !strings.Contains(view, "diff --git") {
@@ -520,6 +528,7 @@ func TestModel_ViewWorktreeDiffOverlayShowsDiff(t *testing.T) {
 	m, _ = update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
 		Diff:         "diff --git a/f.txt\n--- a/f.txt\n+++ b/f.txt",
 	})
 
@@ -653,7 +662,7 @@ func TestModel_ViewReflogDiffOverlayShowsEmptyMessage(t *testing.T) {
 	})
 	// Open overlay and receive empty diff (e.g. checkout entry)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: ""})
+	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: ""})
 
 	view := m.View()
 	if !strings.Contains(view, "No changes at this reflog entry") {
@@ -671,7 +680,7 @@ func TestModel_ViewReflogDiffOverlayShowsDiff(t *testing.T) {
 		Reflogs:  testReflogs(),
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: "diff --git a/f.txt\n+added line"})
+	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt\n+added line"})
 
 	view := m.View()
 	if !strings.Contains(view, "diff --git") {

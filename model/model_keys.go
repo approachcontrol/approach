@@ -2,28 +2,21 @@ package model
 
 import (
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/ui"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	if m.overlay == ui.OverlayConfirm {
-		return m.handleConfirmKey(key)
-	}
-	if m.overlay == ui.OverlayWorktreeInput {
-		return m.handleWorktreeInputKey(msg)
-	}
-	if m.overlay != ui.OverlayNone {
-		if m.activePane == 0 {
-			return m.handleLeftPaneKey(key)
-		}
-		return m.handleOverlayKey(key)
+	if m.modal.IsOpen() {
+		var cmd tea.Cmd
+		m.modal, _, cmd = m.modal.Update(msg)
+		return m, cmd
 	}
 
 	m.transientError = ""
@@ -113,46 +106,6 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // --- Key handlers by context ---
 
-func (m Model) handleConfirmKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "y", "enter":
-		action := m.confirmAction
-		m = m.clearConfirm()
-		return m, action()
-	case "n", "q", "esc":
-		m = m.clearConfirm()
-	}
-	return m, nil
-}
-
-func (m Model) handleWorktreeInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	switch key {
-	case "enter":
-		input := strings.TrimSpace(m.worktreeInput)
-		if input == "" {
-			m.worktreeInputErr = "Enter a branch, tag, or new branch name"
-			return m, nil
-		}
-		m = m.clearWorktreeInput()
-		return m, m.createWorktree(input)
-	case "esc", "ctrl+c":
-		m = m.clearWorktreeInput()
-	case "backspace", "ctrl+h":
-		runes := []rune(m.worktreeInput)
-		if len(runes) > 0 {
-			m.worktreeInput = string(runes[:len(runes)-1])
-			m.worktreeInputErr = ""
-		}
-	default:
-		if len(msg.Runes) > 0 {
-			m.worktreeInput += string(msg.Runes)
-			m.worktreeInputErr = ""
-		}
-	}
-	return m, nil
-}
-
 func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "tab":
@@ -171,22 +124,6 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
-	}
-	return m, nil
-}
-
-func (m Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "q", "esc":
-		m.overlay = ui.OverlayNone
-		m.overlayDiff = ""
-		m.overlayScroll = 0
-	case "up", "k":
-		if m.overlayScroll > 0 {
-			m.overlayScroll--
-		}
-	case "down", "j":
-		m.overlayScroll++
 	}
 	return m, nil
 }
@@ -304,25 +241,25 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeWorktrees {
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
-			m.overlay = ui.OverlayWorktreeDiff
+			m = m.openDiff(modal.DiffWorktree)
 			return m, m.fetchWorktreeDiff()
 		}
 		return m, nil
 	}
 	if m.mode == ui.ModeBranches && m.isSelectedBranchDirtyWorktree() {
-		m.overlay = ui.OverlayBranchDiff
+		m = m.openDiff(modal.DiffBranch)
 		return m, m.fetchBranchDiff()
 	}
 	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 {
-		m.overlay = ui.OverlayStashDiff
+		m = m.openDiff(modal.DiffStash)
 		return m, m.fetchStashDiff()
 	}
 	if m.mode == ui.ModeHistory && len(m.filteredCommits()) > 0 {
-		m.overlay = ui.OverlayCommitDiff
+		m = m.openDiff(modal.DiffCommit)
 		return m, m.fetchCommitDiff()
 	}
 	if m.mode == ui.ModeReflog && len(m.filteredReflogs()) > 0 {
-		m.overlay = ui.OverlayReflogDiff
+		m = m.openDiff(modal.DiffReflog)
 		return m, m.fetchReflogDiff()
 	}
 	return m, nil
@@ -351,10 +288,20 @@ func (m Model) handleNewWorktree() (tea.Model, tea.Cmd) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return m, nil
 	}
-	m.overlay = ui.OverlayWorktreeInput
-	m.worktreeInput = ""
-	m.worktreeInputErr = ""
+	m.modal = modal.OpenInput(
+		"New worktree",
+		"",
+		validateWorktreeInput,
+		func(input string) tea.Cmd { return m.createWorktree(input) },
+	)
 	return m, nil
+}
+
+func validateWorktreeInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("Enter a branch, tag, or new branch name")
+	}
+	return nil
 }
 
 func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
@@ -479,16 +426,14 @@ func (m Model) confirmStashDrop() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	idx := stash.Index
-	m.confirmPrompt = fmt.Sprintf("Drop stash@{%d}? (y/n)", idx)
-	m.confirmAction = func() tea.Cmd {
+	m.modal = modal.OpenConfirm(fmt.Sprintf("Drop stash@{%d}? (y/n)", idx), func() tea.Cmd {
 		return func() tea.Msg {
 			if err := actions.DropStash(repoPath, idx); err != nil {
 				return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to drop stash: %v", err)}
 			}
 			return StashDroppedMsg{RepoPath: repoPath}
 		}
-	}
-	m.overlay = ui.OverlayConfirm
+	})
 	return m, nil
 }
 
@@ -508,8 +453,7 @@ func (m Model) confirmBranchDelete() (tea.Model, tea.Cmd) {
 	}
 
 	branchName := row.Branch.Name
-	m.confirmPrompt = fmt.Sprintf("Delete branch %s? (y/n)", branchName)
-	m.confirmAction = func() tea.Cmd {
+	m.modal = modal.OpenConfirm(fmt.Sprintf("Delete branch %s? (y/n)", branchName), func() tea.Cmd {
 		return func() tea.Msg {
 			if err := actions.DeleteBranch(repoPath, branchName); err != nil {
 				return DeleteFailedMsg{
@@ -520,8 +464,7 @@ func (m Model) confirmBranchDelete() (tea.Model, tea.Cmd) {
 			}
 			return BranchDeletedMsg{RepoPath: repoPath}
 		}
-	}
-	m.overlay = ui.OverlayConfirm
+	})
 	return m, nil
 }
 
@@ -550,8 +493,7 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 		branchName = ""
 	}
 
-	m.confirmPrompt = fmt.Sprintf("Remove worktree at %s? (y/n)", wtPath)
-	m.confirmAction = func() tea.Cmd {
+	m.modal = modal.OpenConfirm(fmt.Sprintf("Remove worktree at %s? (y/n)", wtPath), func() tea.Cmd {
 		return func() tea.Msg {
 			if err := actions.RemoveWorktree(repoPath, wtPath); err != nil {
 				return DeleteFailedMsg{
@@ -563,8 +505,7 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 			}
 			return WorktreeRemovedMsg{RepoPath: repoPath, BranchName: branchName}
 		}
-	}
-	m.overlay = ui.OverlayConfirm
+	})
 	return m, nil
 }
 
@@ -591,32 +532,15 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	if !ok2 {
 		return m, nil
 	}
-	m.confirmPrompt = "Prune stale worktrees? (y/n)"
-	m.confirmAction = func() tea.Cmd {
+	m.modal = modal.OpenConfirm("Prune stale worktrees? (y/n)", func() tea.Cmd {
 		return func() tea.Msg {
 			if err := actions.PruneWorktree(repoPath); err != nil {
 				return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to prune worktrees: %v", err)}
 			}
 			return WorktreePrunedMsg{RepoPath: repoPath}
 		}
-	}
-	m.overlay = ui.OverlayConfirm
+	})
 	return m, nil
-}
-
-func (m Model) clearConfirm() Model {
-	m.overlay = ui.OverlayNone
-	m.confirmPrompt = ""
-	m.confirmAction = nil
-	m.confirmForce = false
-	return m
-}
-
-func (m Model) clearWorktreeInput() Model {
-	m.overlay = ui.OverlayNone
-	m.worktreeInput = ""
-	m.worktreeInputErr = ""
-	return m
 }
 
 // resetModeCursors zeroes the cursor and scroll positions for non-worktree

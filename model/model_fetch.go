@@ -161,6 +161,7 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 		worktreePath = repoPath
 	}
 	branchName := row.Branch.Name
+	diffRequest := m.modal.View().Request
 
 	return func() tea.Msg {
 		diff, err := gitquery.BranchDiff(worktreePath)
@@ -168,9 +169,11 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 			return FetchErrorMsg{RepoPath: repoPath, Pane: "branch diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
 		}
 		return BranchDiffResultMsg{
-			RepoPath:   repoPath,
-			BranchName: branchName,
-			Diff:       diff,
+			RepoPath:     repoPath,
+			BranchName:   branchName,
+			WorktreePath: worktreePath,
+			DiffRequest:  diffRequest,
+			Diff:         diff,
 		}
 	}
 }
@@ -185,6 +188,7 @@ func (m Model) fetchWorktreeDiff() tea.Cmd {
 		return nil
 	}
 	worktreePath := wt.Path
+	diffRequest := m.modal.View().Request
 	return func() tea.Msg {
 		diff, err := gitquery.BranchDiff(worktreePath)
 		if err != nil {
@@ -193,6 +197,7 @@ func (m Model) fetchWorktreeDiff() tea.Cmd {
 		return WorktreeDiffResultMsg{
 			RepoPath:     repoPath,
 			WorktreePath: worktreePath,
+			DiffRequest:  diffRequest,
 			Diff:         diff,
 		}
 	}
@@ -208,12 +213,22 @@ func (m Model) fetchStashDiff() tea.Cmd {
 		return nil
 	}
 	index := stash.Index
+	stashDate := stash.Date
+	stashMessage := stash.Message
+	diffRequest := m.modal.View().Request
 	return func() tea.Msg {
 		diff, err := gitquery.StashDiff(repoPath, index)
 		if err != nil {
 			return FetchErrorMsg{RepoPath: repoPath, Pane: "stash diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
 		}
-		return StashDiffResultMsg{RepoPath: repoPath, Index: index, Diff: diff}
+		return StashDiffResultMsg{
+			RepoPath:    repoPath,
+			Index:       index,
+			Date:        stashDate,
+			Message:     stashMessage,
+			DiffRequest: diffRequest,
+			Diff:        diff,
+		}
 	}
 }
 
@@ -255,12 +270,13 @@ func (m Model) fetchReflogDiff() tea.Cmd {
 		return nil
 	}
 	hash := entry.Hash
+	diffRequest := m.modal.View().Request
 	return func() tea.Msg {
 		diff, err := gitquery.ReflogDiff(repoPath, hash)
 		if err != nil {
 			return FetchErrorMsg{RepoPath: repoPath, Pane: "reflog diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
 		}
-		return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, Diff: diff}
+		return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
 	}
 }
 
@@ -274,11 +290,12 @@ func (m Model) fetchCommitDiff() tea.Cmd {
 		return nil
 	}
 	hash := commit.Hash
+	diffRequest := m.modal.View().Request
 	return func() tea.Msg {
 		diff, err := gitquery.CommitDiff(repoPath, hash)
 		if err != nil {
 			return FetchErrorMsg{RepoPath: repoPath, Pane: "commit diff", Err: fmt.Sprintf("failed to load diff: %v", err)}
 		}
-		return CommitDiffResultMsg{RepoPath: repoPath, Hash: hash, Diff: diff}
+		return CommitDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
 	}
 }
