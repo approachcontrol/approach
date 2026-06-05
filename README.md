@@ -127,9 +127,28 @@ Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the 
 
 ## Configuration
 
+wtui reads an optional TOML config file before scanning repositories:
+
+```text
+$XDG_CONFIG_HOME/wtui/config.toml
+~/.config/wtui/config.toml
+```
+
+Example:
+
+```toml
+[scan]
+root = "~/projects"
+max_depth = 2
+```
+
+`WORKTREE_ROOT` overrides `[scan].root` when both are set. See
+[docs/config.md](docs/config.md) for the full config reference, including parsed
+foundation fields for editor, terminal, provider, and launch settings.
+
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `WORKTREE_ROOT` | `~/dev` | Root directory to scan for git repos (up to 2 levels deep) |
+| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos; depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 
 ## Development
