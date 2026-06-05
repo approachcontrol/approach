@@ -96,42 +96,44 @@ var (
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos            []scanner.Repo
-	Selected         int
-	Width            int
-	Height           int
-	Mode             Mode
-	Branches         []gitquery.BranchRow
-	Stashes          []gitquery.Stash
-	BranchSelected   int
-	StashSelected    int
-	Overlay          OverlayState
-	OverlayDiff      string
-	OverlayScroll    int
-	ConfirmPrompt    string
-	ConfirmForce     bool
-	WorktreeInput    string
-	WorktreeInputErr string
-	BranchScroll     int
-	RepoScroll       int
-	StashScroll      int
-	ActivePane       int
-	Destructive      bool
-	Worktrees        []gitquery.Worktree
-	WorktreeSelected int
-	WorktreeScroll   int
-	Commits          []gitquery.Commit
-	CommitSelected   int
-	CommitScroll     int
-	Reflogs          []gitquery.ReflogEntry
-	ReflogSelected   int
-	ReflogScroll     int
-	TransientError   string
-	SearchActive     bool
-	RepoSearch       string
-	ItemSearch       string
-	FetchAvailable   bool
-	PullAvailable    bool
+	Repos             []scanner.Repo
+	Selected          int
+	Width             int
+	Height            int
+	Mode              Mode
+	Branches          []gitquery.BranchRow
+	Stashes           []gitquery.Stash
+	BranchSelected    int
+	StashSelected     int
+	Overlay           OverlayState
+	OverlayDiff       string
+	OverlayScroll     int
+	ConfirmPrompt     string
+	ConfirmForce      bool
+	WorktreeInput     string
+	WorktreeInputErr  string
+	BranchScroll      int
+	RepoScroll        int
+	StashScroll       int
+	ActivePane        int
+	Destructive       bool
+	Worktrees         []gitquery.Worktree
+	WorktreeSelected  int
+	WorktreeScroll    int
+	Commits           []gitquery.Commit
+	CommitSelected    int
+	CommitScroll      int
+	Reflogs           []gitquery.ReflogEntry
+	ReflogSelected    int
+	ReflogScroll      int
+	TransientError    string
+	SearchActive      bool
+	RepoSearch        string
+	ItemSearch        string
+	RepoEmptyMessage  string
+	RightEmptyMessage string
+	FetchAvailable    bool
+	PullAvailable     bool
 }
 
 // Render produces the full terminal view string.
@@ -191,7 +193,7 @@ func Render(p RenderParams) string {
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
 	innerHeight := p.Height - 3           // status bar + top/bottom borders
 
-	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight)
+	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage)
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -240,7 +242,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
 	default:
-		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight)
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
 
 	rightContent := modeHeader + "\n" + strings.Join(rightLines, "\n")
@@ -444,8 +446,18 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	return statusStyle.Width(width).Render(hints)
 }
 
-func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int) []string {
+func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string) []string {
+	if height <= 0 {
+		return nil
+	}
 	lines := make([]string, height)
+	if len(repos) == 0 && emptyMessage != "" {
+		lines[0] = renderPlaceholderLine(emptyMessage, width)
+		for i := 1; i < height; i++ {
+			lines[i] = strings.Repeat(" ", width)
+		}
+		return lines
+	}
 
 	for i := 0; i < height; i++ {
 		idx := scroll + i
@@ -855,14 +867,28 @@ func truncateReason(s string, max int) string {
 	return truncateToWidth(s, max-lipgloss.Width("…")) + "…"
 }
 
-func renderPlaceholderPane(width, height int) []string {
+func renderPlaceholderPane(width, height int, message string) []string {
+	if height <= 0 {
+		return nil
+	}
 	lines := make([]string, height)
-	placeholder := placeholderStyle.Render("nothing here yet")
+	if message == "" {
+		message = "nothing here yet"
+	}
 	mid := height / 2
+	lines[mid] = renderPlaceholderLine(message, width)
+	return lines
+}
+
+func renderPlaceholderLine(message string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	message = truncateToWidth(message, width)
+	placeholder := placeholderStyle.Render(message)
 	pad := (width - lipgloss.Width(placeholder)) / 2
 	if pad < 0 {
 		pad = 0
 	}
-	lines[mid] = strings.Repeat(" ", pad) + placeholder
-	return lines
+	return strings.Repeat(" ", pad) + placeholder
 }
