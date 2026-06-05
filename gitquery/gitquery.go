@@ -1,10 +1,8 @@
 package gitquery
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 )
@@ -94,7 +92,12 @@ func FlattenBranches(branches []Branch) []BranchRow {
 
 // ListWorktrees returns all worktrees for the given repo, with the main worktree first.
 func ListWorktrees(repoPath string) ([]Worktree, error) {
-	out, err := gitCmd(repoPath, "worktree", "list", "--porcelain")
+	return defaultQuery().ListWorktrees(repoPath)
+}
+
+// ListWorktrees returns all worktrees for the given repo, with the main worktree first.
+func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
+	out, err := q.git.Run(repoPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +133,7 @@ func ListWorktrees(repoPath string) ([]Worktree, error) {
 	for i := range worktrees {
 		worktrees[i].Stale = staleFlags[i]
 		if !worktrees[i].Stale {
-			populateWorktreeDirtyStatus(&worktrees[i])
+			q.populateWorktreeDirtyStatus(&worktrees[i])
 		}
 	}
 
@@ -141,7 +144,14 @@ func ListWorktrees(repoPath string) ([]Worktree, error) {
 // changed along with the number of lines added and deleted relative to HEAD.
 // A path with no changes yields zero counts and a nil error.
 func readDirtyStatus(path string) (files, added, deleted int, err error) {
-	statusOut, err := gitCmd(path, "status", "--porcelain")
+	return defaultQuery().readDirtyStatus(path)
+}
+
+// readDirtyStatus inspects a worktree path and reports how many files are
+// changed along with the number of lines added and deleted relative to HEAD.
+// A path with no changes yields zero counts and a nil error.
+func (q *Querier) readDirtyStatus(path string) (files, added, deleted int, err error) {
+	statusOut, err := q.git.Run(path, "status", "--porcelain")
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -151,7 +161,7 @@ func readDirtyStatus(path string) (files, added, deleted int, err error) {
 	}
 	files = len(statusLines)
 
-	diffOut, err := gitCmd(path, "diff", "HEAD", "--numstat")
+	diffOut, err := q.git.Run(path, "diff", "HEAD", "--numstat")
 	if err != nil {
 		return files, 0, 0, err
 	}
@@ -160,7 +170,11 @@ func readDirtyStatus(path string) (files, added, deleted int, err error) {
 }
 
 func populateWorktreeDirtyStatus(wt *Worktree) {
-	files, added, deleted, _ := readDirtyStatus(wt.Path)
+	defaultQuery().populateWorktreeDirtyStatus(wt)
+}
+
+func (q *Querier) populateWorktreeDirtyStatus(wt *Worktree) {
+	files, added, deleted, _ := q.readDirtyStatus(wt.Path)
 	if files == 0 {
 		return
 	}
@@ -172,7 +186,12 @@ func populateWorktreeDirtyStatus(wt *Worktree) {
 
 // ListCommits returns the most recent 50 commits for the given repo path.
 func ListCommits(repoPath string) ([]Commit, error) {
-	text, err := gitCmd(repoPath, "log", "--format=%h%x00%an%x00%ar%x00%s", "-n", "50")
+	return defaultQuery().ListCommits(repoPath)
+}
+
+// ListCommits returns the most recent 50 commits for the given repo path.
+func (q *Querier) ListCommits(repoPath string) ([]Commit, error) {
+	text, err := q.git.Run(repoPath, "log", "--format=%h%x00%an%x00%ar%x00%s", "-n", "50")
 	if err != nil {
 		return nil, fmt.Errorf("listing commits: %w", err)
 	}
@@ -181,7 +200,12 @@ func ListCommits(repoPath string) ([]Commit, error) {
 
 // ListReflog returns the most recent 50 HEAD reflog entries for the given repo path.
 func ListReflog(repoPath string) ([]ReflogEntry, error) {
-	text, err := gitCmd(repoPath, "reflog", "--format=%h%x00%gd%x00%ar%x00%gs", "-n", "50")
+	return defaultQuery().ListReflog(repoPath)
+}
+
+// ListReflog returns the most recent 50 HEAD reflog entries for the given repo path.
+func (q *Querier) ListReflog(repoPath string) ([]ReflogEntry, error) {
+	text, err := q.git.Run(repoPath, "reflog", "--format=%h%x00%gd%x00%ar%x00%gs", "-n", "50")
 	if err != nil {
 		return nil, fmt.Errorf("listing reflog: %w", err)
 	}
@@ -191,10 +215,16 @@ func ListReflog(repoPath string) ([]ReflogEntry, error) {
 // ReflogDiff returns the diff for a reflog entry by running git diff <hash>^ <hash>.
 // Falls back to git show <hash> for root commits where <hash>^ doesn't exist.
 func ReflogDiff(repoPath string, hash string) (string, error) {
-	out, err := gitCmd(repoPath, "diff", hash+"^", hash)
+	return defaultQuery().ReflogDiff(repoPath, hash)
+}
+
+// ReflogDiff returns the diff for a reflog entry by running git diff <hash>^ <hash>.
+// Falls back to git show <hash> for root commits where <hash>^ doesn't exist.
+func (q *Querier) ReflogDiff(repoPath string, hash string) (string, error) {
+	out, err := q.git.Run(repoPath, "diff", hash+"^", hash)
 	if err != nil {
 		// Root commit has no parent — fall back to git show
-		out, err = gitCmd(repoPath, "show", hash)
+		out, err = q.git.Run(repoPath, "show", hash)
 		if err != nil {
 			return "", fmt.Errorf("reflog diff for %s: %w", hash, err)
 		}
@@ -204,7 +234,12 @@ func ReflogDiff(repoPath string, hash string) (string, error) {
 
 // CommitDiff returns the full git show output for a specific commit.
 func CommitDiff(repoPath string, hash string) (string, error) {
-	out, err := gitCmd(repoPath, "show", hash)
+	return defaultQuery().CommitDiff(repoPath, hash)
+}
+
+// CommitDiff returns the full git show output for a specific commit.
+func (q *Querier) CommitDiff(repoPath string, hash string) (string, error) {
+	out, err := q.git.Run(repoPath, "show", hash)
 	if err != nil {
 		return "", fmt.Errorf("commit diff for %s: %w", hash, err)
 	}
@@ -213,7 +248,12 @@ func CommitDiff(repoPath string, hash string) (string, error) {
 
 // ListStashes returns stash entries for the given repo path.
 func ListStashes(repoPath string) ([]Stash, error) {
-	text, err := gitCmd(repoPath, "stash", "list", "--format=%gd%x00%ai%x00%s")
+	return defaultQuery().ListStashes(repoPath)
+}
+
+// ListStashes returns stash entries for the given repo path.
+func (q *Querier) ListStashes(repoPath string) ([]Stash, error) {
+	text, err := q.git.Run(repoPath, "stash", "list", "--format=%gd%x00%ai%x00%s")
 	if err != nil {
 		return nil, fmt.Errorf("listing stashes: %w", err)
 	}
@@ -222,8 +262,13 @@ func ListStashes(repoPath string) ([]Stash, error) {
 
 // StashDiff returns the diff for a specific stash entry.
 func StashDiff(repoPath string, index int) (string, error) {
+	return defaultQuery().StashDiff(repoPath, index)
+}
+
+// StashDiff returns the diff for a specific stash entry.
+func (q *Querier) StashDiff(repoPath string, index int) (string, error) {
 	ref := fmt.Sprintf("stash@{%d}", index)
-	out, err := gitCmd(repoPath, "stash", "show", "-p", ref)
+	out, err := q.git.Run(repoPath, "stash", "show", "-p", ref)
 	if err != nil {
 		return "", fmt.Errorf("stash diff for %s: %w", ref, err)
 	}
@@ -234,19 +279,24 @@ const refFormat = "%(refname:short)\t%(upstream)\t%(upstream:track)"
 
 // ListBranches returns all local branches sorted alphabetically by name.
 func ListBranches(repoPath string) ([]Branch, error) {
-	out, err := gitCmd(repoPath, "for-each-ref", "--format="+refFormat, "refs/heads/")
+	return defaultQuery().ListBranches(repoPath)
+}
+
+// ListBranches returns all local branches sorted alphabetically by name.
+func (q *Querier) ListBranches(repoPath string) ([]Branch, error) {
+	out, err := q.git.Run(repoPath, "for-each-ref", "--format="+refFormat, "refs/heads/")
 	if err != nil {
 		return nil, err
 	}
 
-	wtMap, detachedPaths, err := branchWorktreeMap(repoPath)
+	wtMap, detachedPaths, err := q.branchWorktreeMap(repoPath)
 	if err != nil {
 		return nil, err
 	}
 
 	lines := splitLines(out)
-	rootBranch := rootWorktreeBranch(repoPath, wtMap)
-	cleanupBranch := defaultCleanupBranch(repoPath, lines, rootBranch)
+	rootBranch := q.rootWorktreeBranch(repoPath, wtMap)
+	cleanupBranch := q.defaultCleanupBranch(repoPath, lines, rootBranch)
 
 	branches := make([]Branch, 0, len(lines))
 	for _, line := range lines {
@@ -256,13 +306,13 @@ func ListBranches(repoPath string) ([]Branch, error) {
 		b, upstream := ParseBranchLine(line)
 
 		if b.HasUpstream && !b.UpstreamGone {
-			ahead, behind, err := branchAheadBehind(repoPath, b.Name, upstream)
+			ahead, behind, err := q.branchAheadBehind(repoPath, b.Name, upstream)
 			if err == nil {
 				b.Ahead = ahead
 				b.Behind = behind
 			}
 			if b.Ahead > 0 {
-				b.Unpushed = unpushedCommits(repoPath, b.Name, upstream)
+				b.Unpushed = q.unpushedCommits(repoPath, b.Name, upstream)
 			}
 		}
 
@@ -270,11 +320,11 @@ func ListBranches(repoPath string) ([]Branch, error) {
 			b.IsWorktree = true
 			b.WorktreePaths = wtPaths
 			b.WorktreeStale = checkStale(wtPaths)
-			populateDirtyStatus(&b, wtPaths)
+			q.populateDirtyStatus(&b, wtPaths)
 		}
 		// Do not mark the user's active root worktree branch as a cleanup
 		// candidate, even when it is technically an ancestor of cleanupBranch.
-		if cleanupBranch != "" && b.Name != cleanupBranch && b.Name != rootBranch && branchMergedInto(repoPath, b.Name, cleanupBranch) {
+		if cleanupBranch != "" && b.Name != cleanupBranch && b.Name != rootBranch && q.branchMergedInto(repoPath, b.Name, cleanupBranch) {
 			b.Merged = true
 			b.MergedInto = cleanupBranch
 		}
@@ -289,7 +339,7 @@ func ListBranches(repoPath string) ([]Branch, error) {
 			WorktreePaths: []string{path},
 			WorktreeStale: checkStale([]string{path}),
 		}
-		populateDirtyStatus(&b, b.WorktreePaths)
+		q.populateDirtyStatus(&b, b.WorktreePaths)
 		branches = append(branches, b)
 	}
 
@@ -305,12 +355,22 @@ func ListBranches(repoPath string) ([]Branch, error) {
 
 // BranchDiff returns the diff output for a worktree.
 func BranchDiff(worktreePath string) (string, error) {
-	return gitCmd(worktreePath, "diff", "HEAD")
+	return defaultQuery().BranchDiff(worktreePath)
+}
+
+// BranchDiff returns the diff output for a worktree.
+func (q *Querier) BranchDiff(worktreePath string) (string, error) {
+	return q.git.Run(worktreePath, "diff", "HEAD")
 }
 
 // branchWorktreeMap returns a map of branch name -> worktree paths and detached worktree paths.
 func branchWorktreeMap(repoPath string) (map[string][]string, []string, error) {
-	out, err := gitCmd(repoPath, "worktree", "list", "--porcelain")
+	return defaultQuery().branchWorktreeMap(repoPath)
+}
+
+// branchWorktreeMap returns a map of branch name -> worktree paths and detached worktree paths.
+func (q *Querier) branchWorktreeMap(repoPath string) (map[string][]string, []string, error) {
+	out, err := q.git.Run(repoPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -333,7 +393,11 @@ func branchWorktreeMap(repoPath string) (map[string][]string, []string, error) {
 }
 
 func branchAheadBehind(repoPath, branchName, upstream string) (int, int, error) {
-	out, err := gitCmd(repoPath, "rev-list", "--count", "--left-right", branchName+"..."+upstream)
+	return defaultQuery().branchAheadBehind(repoPath, branchName, upstream)
+}
+
+func (q *Querier) branchAheadBehind(repoPath, branchName, upstream string) (int, int, error) {
+	out, err := q.git.Run(repoPath, "rev-list", "--count", "--left-right", branchName+"..."+upstream)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -342,6 +406,10 @@ func branchAheadBehind(repoPath, branchName, upstream string) (int, int, error) 
 }
 
 func rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
+	return defaultQuery().rootWorktreeBranch(repoPath, wtMap)
+}
+
+func (q *Querier) rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
 	for branch, paths := range wtMap {
 		for _, path := range paths {
 			if path == repoPath {
@@ -349,10 +417,14 @@ func rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
 			}
 		}
 	}
-	return strings.TrimSpace(maybeGitCmd(repoPath, "branch", "--show-current"))
+	return strings.TrimSpace(q.maybeGitCmd(repoPath, "branch", "--show-current"))
 }
 
 func defaultCleanupBranch(repoPath string, branchLines []string, fallback string) string {
+	return defaultQuery().defaultCleanupBranch(repoPath, branchLines, fallback)
+}
+
+func (q *Querier) defaultCleanupBranch(repoPath string, branchLines []string, fallback string) string {
 	branches := make(map[string]bool, len(branchLines))
 	for _, line := range branchLines {
 		b, _ := ParseBranchLine(line)
@@ -370,7 +442,7 @@ func defaultCleanupBranch(repoPath string, branchLines []string, fallback string
 	if fallback != "" && branches[fallback] {
 		return fallback
 	}
-	ref := strings.TrimSpace(maybeGitCmd(repoPath, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"))
+	ref := strings.TrimSpace(q.maybeGitCmd(repoPath, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"))
 	ref = strings.TrimPrefix(ref, "origin/")
 	if branches[ref] {
 		return ref
@@ -379,11 +451,19 @@ func defaultCleanupBranch(repoPath string, branchLines []string, fallback string
 }
 
 func branchMergedInto(repoPath, branchName, cleanupBranch string) bool {
-	return gitCmdRun(repoPath, "merge-base", "--is-ancestor", branchName, cleanupBranch) == nil
+	return defaultQuery().branchMergedInto(repoPath, branchName, cleanupBranch)
+}
+
+func (q *Querier) branchMergedInto(repoPath, branchName, cleanupBranch string) bool {
+	return q.git.Ok(repoPath, "merge-base", "--is-ancestor", branchName, cleanupBranch) == nil
 }
 
 func unpushedCommits(repoPath, branchName, upstream string) []string {
-	out, err := gitCmd(repoPath, "log", "--oneline", upstream+".."+branchName)
+	return defaultQuery().unpushedCommits(repoPath, branchName, upstream)
+}
+
+func (q *Querier) unpushedCommits(repoPath, branchName, upstream string) []string {
+	out, err := q.git.Run(repoPath, "log", "--oneline", upstream+".."+branchName)
 	if err != nil {
 		return nil
 	}
@@ -391,8 +471,12 @@ func unpushedCommits(repoPath, branchName, upstream string) []string {
 }
 
 func populateDirtyStatus(b *Branch, paths []string) {
+	defaultQuery().populateDirtyStatus(b, paths)
+}
+
+func (q *Querier) populateDirtyStatus(b *Branch, paths []string) {
 	for _, path := range paths {
-		files, added, deleted, _ := readDirtyStatus(path)
+		files, added, deleted, _ := q.readDirtyStatus(path)
 		if files == 0 {
 			continue
 		}
@@ -424,36 +508,15 @@ func firstWorktreePath(paths []string) string {
 }
 
 func maybeGitCmd(dir string, args ...string) string {
-	out, err := gitCmd(dir, args...)
+	return defaultQuery().maybeGitCmd(dir, args...)
+}
+
+func (q *Querier) maybeGitCmd(dir string, args ...string) string {
+	out, err := q.git.Run(dir, args...)
 	if err != nil {
 		return ""
 	}
 	return out
-}
-
-func gitCmd(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	// Output() captures stderr into (*exec.ExitError).Stderr when cmd.Stderr is
-	// nil, but its error string is only "exit status N". Fold the git stderr
-	// diagnostic into the returned error while keeping stdout clean for parsing.
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			if msg := strings.TrimSpace(string(exitErr.Stderr)); msg != "" {
-				return "", fmt.Errorf("%s: %w", msg, err)
-			}
-		}
-		return "", err
-	}
-	return string(out), nil
-}
-
-func gitCmdRun(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	return cmd.Run()
 }
 
 func splitLines(s string) []string {
