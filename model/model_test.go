@@ -603,6 +603,86 @@ func TestModel_BackspaceOnEmptyItemFilterInputClearsFilter(t *testing.T) {
 	}
 }
 
+func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
+		{Name: "main"},
+		{Name: "feature/auth"},
+		{Name: "bugfix"},
+	}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{
+		{Index: 0, Date: "2026-03-18", Message: "feature auth work"},
+		{Index: 1, Date: "2026-03-18", Message: "bugfix stash"},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range []rune("work") {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	if m.ItemSearch() != "work" {
+		t.Fatalf("expected right-pane search to remain work after mode switch, got %q", m.ItemSearch())
+	}
+	stashes := m.Stashes()
+	if len(stashes) != 1 || stashes[0].Message != "feature auth work" {
+		t.Fatalf("expected shared filter to leave only feature auth work stash, got %#v", stashes)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if cmd != nil {
+		t.Fatalf("expected esc to clear right-pane search without quitting, got %T", cmd)
+	}
+	if m.ItemSearch() != "" || m.SearchActive() {
+		t.Fatalf("expected right-pane filter cleared and inactive, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	view := m.View()
+	for _, name := range []string{"main", "feature/auth", "bugfix"} {
+		if !strings.Contains(view, name) {
+			t.Fatalf("clearing shared filter should restore branch %s", name)
+		}
+	}
+}
+
+func TestModel_RightPaneFilterAppliesToAsyncReplacement(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
+		{Name: "feature/auth"},
+		{Name: "bugfix"},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range []rune("api") {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
+		{Name: "feature/api"},
+		{Name: "release"},
+		{Name: "bugfix"},
+	}})
+
+	if m.ItemSearch() != "api" {
+		t.Fatalf("expected async replacement to keep item search api, got %q", m.ItemSearch())
+	}
+	view := m.View()
+	if !strings.Contains(view, "feature/api") {
+		t.Fatal("active filter should apply to replacement branch result")
+	}
+	for _, name := range []string{"release", "bugfix"} {
+		if strings.Contains(view, name) {
+			t.Fatalf("active filter should hide replacement branch %s", name)
+		}
+	}
+	if m.BranchSelected() != 0 {
+		t.Fatalf("expected filtered replacement to clamp selection to top, got %d", m.BranchSelected())
+	}
+}
+
 // --- Right pane navigation ---
 
 func TestModel_RightPaneUpDownDoesNotMoveRepoSelection(t *testing.T) {
@@ -874,6 +954,27 @@ func TestModel_StashScrollAccountsForLongMessages(t *testing.T) {
 	// Scroll should have advanced since stash 2 starts at line 4, viewport is only 3 lines
 	if m.StashScroll() == 0 {
 		t.Error("expected scroll to advance for long-message stashes")
+	}
+}
+
+func TestModel_StashCursorUsesStashViewportAtTinyHeight(t *testing.T) {
+	stashes := []gitquery.Stash{
+		{Index: 0, Date: "2026-03-18", Message: "first"},
+		{Index: 1, Date: "2026-03-18", Message: "second"},
+		{Index: 2, Date: "2026-03-18", Message: "third"},
+	}
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.StashContentOverhead})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.StashSelected() != 1 {
+		t.Fatalf("expected stash cursor at 1, got %d", m.StashSelected())
+	}
+	if m.StashScroll() != 1 {
+		t.Fatalf("expected one-line stash viewport to scroll to 1, got %d", m.StashScroll())
 	}
 }
 

@@ -4,30 +4,22 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
 )
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos            []scanner.Repo
-	selected         int
+	repos            pane.Pane[scanner.Repo]
 	width            int
 	height           int
 	mode             ui.Mode
-	rows             []gitquery.BranchRow
-	stashes          []gitquery.Stash
-	branchSelected   int
-	stashSelected    int
-	worktrees        []gitquery.Worktree
-	worktreeSelected int
-	worktreeScroll   int
-	commits          []gitquery.Commit
-	commitSelected   int
-	commitScroll     int
-	reflogs          []gitquery.ReflogEntry
-	reflogSelected   int
-	reflogScroll     int
+	rows             pane.Pane[gitquery.BranchRow]
+	stashes          pane.Pane[gitquery.Stash]
+	worktrees        pane.Pane[gitquery.Worktree]
+	commits          pane.Pane[gitquery.Commit]
+	reflogs          pane.Pane[gitquery.ReflogEntry]
 	overlay          ui.OverlayState
 	overlayDiff      string
 	overlayScroll    int
@@ -36,39 +28,46 @@ type Model struct {
 	confirmForce     bool
 	worktreeInput    string
 	worktreeInputErr string
-	branchScroll     int
-	repoScroll       int
-	stashScroll      int
 	activePane       int // 0=left (repos), 1=right (content)
 	destructive      bool
 	transientError   string
 	searchActive     bool
-	repoSearch       string
-	itemSearch       string
 }
 
 // New creates a Model from discovered repos.
 func New(repos []scanner.Repo) Model {
-	return Model{repos: repos, mode: ui.ModeWorktrees}
+	m := Model{
+		repos:     newRepoPane().SetItems(repos),
+		rows:      newBranchPane(),
+		stashes:   newStashPane(),
+		worktrees: newWorktreePane(),
+		commits:   newCommitPane(),
+		reflogs:   newReflogPane(),
+		mode:      ui.ModeWorktrees,
+	}
+	return m
 }
 
-func (m Model) Selected() int                   { return m.selected }
-func (m Model) Width() int                      { return m.width }
-func (m Model) Height() int                     { return m.height }
-func (m Model) Mode() ui.Mode                   { return m.mode }
-func (m Model) Rows() []gitquery.BranchRow      { return m.rows }
-func (m Model) Stashes() []gitquery.Stash       { return m.stashes }
-func (m Model) BranchSelected() int             { return m.branchSelected }
-func (m Model) StashSelected() int              { return m.stashSelected }
-func (m Model) Worktrees() []gitquery.Worktree  { return m.worktrees }
-func (m Model) WorktreeSelected() int           { return m.worktreeSelected }
-func (m Model) WorktreeScroll() int             { return m.worktreeScroll }
-func (m Model) Commits() []gitquery.Commit      { return m.commits }
-func (m Model) CommitSelected() int             { return m.commitSelected }
-func (m Model) CommitScroll() int               { return m.commitScroll }
-func (m Model) Reflogs() []gitquery.ReflogEntry { return m.reflogs }
-func (m Model) ReflogSelected() int             { return m.reflogSelected }
-func (m Model) ReflogScroll() int               { return m.reflogScroll }
+func (m Model) Selected() int              { return m.repos.SelectedIndex() }
+func (m Model) Width() int                 { return m.width }
+func (m Model) Height() int                { return m.height }
+func (m Model) Mode() ui.Mode              { return m.mode }
+func (m Model) Rows() []gitquery.BranchRow { rows, _, _ := m.rows.View(); return rows }
+func (m Model) Stashes() []gitquery.Stash  { stashes, _, _ := m.stashes.View(); return stashes }
+func (m Model) BranchSelected() int        { return m.rows.SelectedIndex() }
+func (m Model) StashSelected() int         { return m.stashes.SelectedIndex() }
+func (m Model) Worktrees() []gitquery.Worktree {
+	worktrees, _, _ := m.worktrees.View()
+	return worktrees
+}
+func (m Model) WorktreeSelected() int           { return m.worktrees.SelectedIndex() }
+func (m Model) WorktreeScroll() int             { return m.worktrees.Scroll() }
+func (m Model) Commits() []gitquery.Commit      { commits, _, _ := m.commits.View(); return commits }
+func (m Model) CommitSelected() int             { return m.commits.SelectedIndex() }
+func (m Model) CommitScroll() int               { return m.commits.Scroll() }
+func (m Model) Reflogs() []gitquery.ReflogEntry { reflogs, _, _ := m.reflogs.View(); return reflogs }
+func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
+func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlay }
 func (m Model) OverlayDiff() string             { return m.overlayDiff }
 func (m Model) OverlayScroll() int              { return m.overlayScroll }
@@ -76,27 +75,27 @@ func (m Model) ConfirmPrompt() string           { return m.confirmPrompt }
 func (m Model) ConfirmForce() bool              { return m.confirmForce }
 func (m Model) WorktreeInput() string           { return m.worktreeInput }
 func (m Model) WorktreeInputErr() string        { return m.worktreeInputErr }
-func (m Model) BranchScroll() int               { return m.branchScroll }
-func (m Model) RepoScroll() int                 { return m.repoScroll }
-func (m Model) StashScroll() int                { return m.stashScroll }
+func (m Model) BranchScroll() int               { return m.rows.Scroll() }
+func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
+func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
 func (m Model) TransientError() string          { return m.transientError }
 func (m Model) SearchActive() bool              { return m.searchActive }
-func (m Model) RepoSearch() string              { return m.repoSearch }
-func (m Model) ItemSearch() string              { return m.itemSearch }
+func (m Model) RepoSearch() string              { return m.repos.Query() }
+func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
 
 func (m Model) Init() tea.Cmd {
 	return m.fetchForMode()
 }
 
 func (m Model) View() string {
-	repos := m.filteredRepos()
-	worktrees := m.filteredWorktrees()
-	rows := m.filteredRows()
-	stashes := m.filteredStashes()
-	commits := m.filteredCommits()
-	reflogs := m.filteredReflogs()
+	repos, selected, repoScroll := m.repos.View()
+	worktrees, worktreeSelected, worktreeScroll := m.worktrees.View()
+	rows, branchSelected, branchScroll := m.rows.View()
+	stashes, stashSelected, stashScroll := m.stashes.View()
+	commits, commitSelected, commitScroll := m.commits.View()
+	reflogs, reflogSelected, reflogScroll := m.reflogs.View()
 	if len(repos) == 0 {
 		worktrees = nil
 		rows = nil
@@ -106,14 +105,14 @@ func (m Model) View() string {
 	}
 	return ui.Render(ui.RenderParams{
 		Repos:            repos,
-		Selected:         m.selected,
+		Selected:         selected,
 		Width:            m.width,
 		Height:           m.height,
 		Mode:             m.mode,
 		Branches:         rows,
 		Stashes:          stashes,
-		BranchSelected:   m.branchSelected,
-		StashSelected:    m.stashSelected,
+		BranchSelected:   branchSelected,
+		StashSelected:    stashSelected,
 		Overlay:          m.overlay,
 		OverlayDiff:      m.overlayDiff,
 		OverlayScroll:    m.overlayScroll,
@@ -121,24 +120,24 @@ func (m Model) View() string {
 		ConfirmForce:     m.confirmForce,
 		WorktreeInput:    m.worktreeInput,
 		WorktreeInputErr: m.worktreeInputErr,
-		BranchScroll:     m.branchScroll,
-		RepoScroll:       m.repoScroll,
-		StashScroll:      m.stashScroll,
+		BranchScroll:     branchScroll,
+		RepoScroll:       repoScroll,
+		StashScroll:      stashScroll,
 		ActivePane:       m.activePane,
 		Destructive:      m.destructive,
 		Worktrees:        worktrees,
-		WorktreeSelected: m.worktreeSelected,
-		WorktreeScroll:   m.worktreeScroll,
+		WorktreeSelected: worktreeSelected,
+		WorktreeScroll:   worktreeScroll,
 		Commits:          commits,
-		CommitSelected:   m.commitSelected,
-		CommitScroll:     m.commitScroll,
+		CommitSelected:   commitSelected,
+		CommitScroll:     commitScroll,
 		Reflogs:          reflogs,
-		ReflogSelected:   m.reflogSelected,
-		ReflogScroll:     m.reflogScroll,
+		ReflogSelected:   reflogSelected,
+		ReflogScroll:     reflogScroll,
 		TransientError:   m.transientError,
 		SearchActive:     m.searchActive,
-		RepoSearch:       m.repoSearch,
-		ItemSearch:       m.itemSearch,
+		RepoSearch:       m.repos.Query(),
+		ItemSearch:       m.activeItemPaneQuery(),
 		FetchAvailable:   m.canFetch(),
 		PullAvailable:    m.canPull(),
 	})
@@ -153,12 +152,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m = m.ensureRepoVisible()
-		m = m.ensureBranchVisible()
-		m = m.ensureStashVisible()
-		m = m.ensureWorktreeVisible()
-		m = m.ensureCommitVisible()
-		m = m.ensureReflogVisible()
+		m = m.clampSelectionsAfterFilter()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -233,55 +227,35 @@ func (m Model) selectedRow() (gitquery.BranchRow, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.BranchRow{}, false
 	}
-	rows := m.filteredRows()
-	if m.branchSelected < 0 || m.branchSelected >= len(rows) {
-		return gitquery.BranchRow{}, false
-	}
-	return rows[m.branchSelected], true
+	return m.rows.Selected()
 }
 
 func (m Model) selectedWorktree() (gitquery.Worktree, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.Worktree{}, false
 	}
-	worktrees := m.filteredWorktrees()
-	if m.worktreeSelected < 0 || m.worktreeSelected >= len(worktrees) {
-		return gitquery.Worktree{}, false
-	}
-	return worktrees[m.worktreeSelected], true
+	return m.worktrees.Selected()
 }
 
 func (m Model) selectedStash() (gitquery.Stash, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.Stash{}, false
 	}
-	stashes := m.filteredStashes()
-	if m.stashSelected < 0 || m.stashSelected >= len(stashes) {
-		return gitquery.Stash{}, false
-	}
-	return stashes[m.stashSelected], true
+	return m.stashes.Selected()
 }
 
 func (m Model) selectedCommit() (gitquery.Commit, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.Commit{}, false
 	}
-	commits := m.filteredCommits()
-	if m.commitSelected < 0 || m.commitSelected >= len(commits) {
-		return gitquery.Commit{}, false
-	}
-	return commits[m.commitSelected], true
+	return m.commits.Selected()
 }
 
 func (m Model) selectedReflog() (gitquery.ReflogEntry, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return gitquery.ReflogEntry{}, false
 	}
-	reflogs := m.filteredReflogs()
-	if m.reflogSelected < 0 || m.reflogSelected >= len(reflogs) {
-		return gitquery.ReflogEntry{}, false
-	}
-	return reflogs[m.reflogSelected], true
+	return m.reflogs.Selected()
 }
 
 func (m Model) isSelectedBranchDirtyWorktree() bool {
@@ -289,125 +263,65 @@ func (m Model) isSelectedBranchDirtyWorktree() bool {
 	return ok && row.Branch.Dirty && row.Branch.IsWorktree
 }
 
-func (m Model) ensureStashVisible() Model {
+func (m Model) reflowStashes() Model {
 	contentHeight := m.height - ui.StashContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 1
 	}
 	rightContentWidth := m.width - ui.LeftPaneWidth - 2
-	line := 0
-	for i, s := range m.filteredStashes() {
-		if i == m.stashSelected {
-			break
-		}
-		line += ui.StashLineCount(s.Message, rightContentWidth)
-	}
-	if m.stashScroll > line {
-		m.stashScroll = line
-	}
-	if line >= m.stashScroll+contentHeight {
-		m.stashScroll = line - contentHeight + 1
-	}
+	m.stashes = m.stashes.Reflow(contentHeight, rightContentWidth)
 	return m
 }
 
-func (m Model) ensureRepoVisible() Model {
+func (m Model) reflowRepos() Model {
 	contentHeight := m.height - ui.RepoContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 1
 	}
-	if len(m.filteredRepos()) == 0 {
-		m.repoScroll = 0
-		return m
-	}
-	if m.repoScroll > m.selected {
-		m.repoScroll = m.selected
-	}
-	if m.selected >= m.repoScroll+contentHeight {
-		m.repoScroll = m.selected - contentHeight + 1
-	}
+	m.repos = m.repos.Reflow(contentHeight, ui.LeftPaneWidth-2)
 	return m
 }
 
-func (m Model) ensureWorktreeVisible() Model {
+func (m Model) reflowWorktrees() Model {
 	contentHeight := m.height - ui.WorktreeContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
-	if len(m.filteredWorktrees()) == 0 {
-		m.worktreeScroll = 0
-		return m
-	}
-	if m.worktreeScroll > m.worktreeSelected {
-		m.worktreeScroll = m.worktreeSelected
-	}
-	if m.worktreeSelected >= m.worktreeScroll+contentHeight {
-		m.worktreeScroll = m.worktreeSelected - contentHeight + 1
-	}
+	m.worktrees = m.worktrees.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
-func (m Model) ensureReflogVisible() Model {
+func (m Model) reflowReflogs() Model {
 	contentHeight := m.height - ui.BranchContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
-	if len(m.filteredReflogs()) == 0 {
-		m.reflogScroll = 0
-		return m
-	}
-	if m.reflogScroll > m.reflogSelected {
-		m.reflogScroll = m.reflogSelected
-	}
-	if m.reflogSelected >= m.reflogScroll+contentHeight {
-		m.reflogScroll = m.reflogSelected - contentHeight + 1
-	}
+	m.reflogs = m.reflogs.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
-func (m Model) ensureCommitVisible() Model {
+func (m Model) reflowCommits() Model {
 	contentHeight := m.height - ui.BranchContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
-	if len(m.filteredCommits()) == 0 {
-		m.commitScroll = 0
-		return m
-	}
-	if m.commitScroll > m.commitSelected {
-		m.commitScroll = m.commitSelected
-	}
-	if m.commitSelected >= m.commitScroll+contentHeight {
-		m.commitScroll = m.commitSelected - contentHeight + 1
-	}
+	m.commits = m.commits.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
-func (m Model) ensureBranchVisible() Model {
+func (m Model) reflowBranches() Model {
 	contentHeight := m.height - ui.BranchContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
-	line := 0
-	for i, row := range m.filteredRows() {
-		if i == m.branchSelected {
-			break
-		}
-		line++
-		if !row.IsExpansion {
-			n := len(row.Branch.Unpushed)
-			if n > 5 {
-				line += 6
-			} else {
-				line += n
-			}
-		}
-	}
-	if m.branchScroll > line {
-		m.branchScroll = line
-	}
-	if line >= m.branchScroll+contentHeight {
-		m.branchScroll = line - contentHeight + 1
-	}
+	m.rows = m.rows.Reflow(contentHeight, m.contentWidth())
 	return m
+}
+
+func (m Model) contentWidth() int {
+	width := m.width - ui.LeftPaneWidth - 2
+	if width < 0 {
+		return 0
+	}
+	return width
 }
