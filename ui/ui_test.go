@@ -108,7 +108,7 @@ func TestRender_BranchesModeShowsPullWhenAvailable(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected: 0,
 		Width:    180,
-		Height:   10,
+		Height:   16,
 		Mode:     2,
 		Branches: []gitquery.BranchRow{
 			{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/a"},
@@ -630,6 +630,14 @@ func TestRender_ShortcutPaneSeparatesSectionsWithBlankRows(t *testing.T) {
 	}
 
 	lines := strings.Split(ansi.Strip(renderShortcutPane(sp, 26, 18)), "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "Actions") {
+			if i == 0 || strings.TrimSpace(lines[i-1]) != "" {
+				t.Fatalf("shortcut pane should leave a blank row below the title, got:\n%s", strings.Join(lines, "\n"))
+			}
+			break
+		}
+	}
 	for i, line := range lines {
 		if strings.Contains(line, "Navigate") {
 			if i == 0 || strings.TrimSpace(lines[i-1]) != "" {

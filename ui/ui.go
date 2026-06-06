@@ -528,6 +528,9 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	title := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render(modeShortcutTitle(sp.Mode))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
+	if !compact {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
 	sectionCount := 0
 
 	for _, section := range shortcutSections(sp) {
