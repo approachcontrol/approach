@@ -118,6 +118,24 @@ func setupRemoteRepo(t *testing.T) (localPath, upstreamPath, branch string) {
 	return localPath, upstreamPath, branch
 }
 
+func setupBareRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	seedPath := filepath.Join(dir, "seed")
+	barePath := filepath.Join(dir, "project.git")
+
+	mustRun(t, dir, "git", "init", seedPath)
+	mustRun(t, seedPath, "git", "checkout", "-b", "main")
+	mustRun(t, seedPath, "git", "config", "user.email", "test@test.com")
+	mustRun(t, seedPath, "git", "config", "user.name", "Test")
+	mustRun(t, seedPath, "git", "commit", "--allow-empty", "-m", "init")
+	mustRun(t, dir, "git", "init", "--bare", barePath)
+	mustRun(t, seedPath, "git", "remote", "add", "origin", barePath)
+	mustRun(t, seedPath, "git", "push", "-u", "origin", "main")
+	mustRun(t, barePath, "git", "symbolic-ref", "HEAD", "refs/heads/main")
+	return barePath
+}
+
 func configureGitHubOrigin(t *testing.T, localPath, owner, repo string) {
 	t.Helper()
 	originPath := filepath.Join(filepath.Dir(localPath), "origin.git")
@@ -362,6 +380,16 @@ func TestDefaultWorktreePath(t *testing.T) {
 	}
 }
 
+func TestDefaultWorktreePath_BareRepoStripsDotGit(t *testing.T) {
+	repoPath := setupBareRepo(t)
+
+	path := actions.DefaultWorktreePath(repoPath, "feature/new")
+	expected := filepath.Join(filepath.Dir(repoPath), "project-worktrees", "feature-new")
+	if path != expected {
+		t.Fatalf("expected %q, got %q", expected, path)
+	}
+}
+
 func TestWorktreeSessionName(t *testing.T) {
 	tests := []struct {
 		path       string
@@ -464,6 +492,26 @@ func TestCreateWorktree_FromExistingBranch(t *testing.T) {
 	}
 }
 
+func TestCreateWorktree_FromBareRepoExistingBranch(t *testing.T) {
+	repoPath := setupBareRepo(t)
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "main")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "project-worktrees", "main")
+	if worktreePath != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, worktreePath)
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree directory to exist: %v", err)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "main" {
+		t.Fatalf("expected checked out branch main, got %q", got)
+	}
+}
+
 func TestCreateWorktree_FromNewBranchName(t *testing.T) {
 	repoPath := setupRepo(t)
 
@@ -479,6 +527,27 @@ func TestCreateWorktree_FromNewBranchName(t *testing.T) {
 	out, _ = exec.Command("git", "-C", repoPath, "branch", "--list", "feature/new").Output()
 	if !strings.Contains(string(out), "feature/new") {
 		t.Fatal("expected new branch to exist in repo")
+	}
+}
+
+func TestCreateWorktree_FromBareRepoNewBranch(t *testing.T) {
+	repoPath := setupBareRepo(t)
+
+	worktreePath, err := actions.CreateWorktree(repoPath, "feature/new")
+	if err != nil {
+		t.Fatalf("CreateWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "project-worktrees", "feature-new")
+	if worktreePath != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, worktreePath)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "feature/new" {
+		t.Fatalf("expected checked out branch feature/new, got %q", got)
+	}
+	out := runOutput(t, repoPath, "git", "branch", "--list", "feature/new")
+	if !strings.Contains(out, "feature/new") {
+		t.Fatal("expected new branch to exist in bare repo")
 	}
 }
 
@@ -514,6 +583,42 @@ func TestCreatePullRequestWorktree_FromNumber(t *testing.T) {
 	}
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Fatalf("expected worktree directory to exist: %v", err)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+		t.Fatalf("expected branch pr-123, got %q", got)
+	}
+	if got := runOutput(t, worktreePath, "git", "rev-parse", "HEAD"); got != wantHead {
+		t.Fatalf("expected worktree HEAD %s, got %s", wantHead, got)
+	}
+}
+
+func TestCreatePullRequestWorktree_FromBareRepoNumber(t *testing.T) {
+	dir := t.TempDir()
+	upstreamPath := filepath.Join(dir, "upstream")
+	originPath := filepath.Join(dir, "origin.git")
+	localBarePath := filepath.Join(dir, "project.git")
+
+	mustRun(t, dir, "git", "init", upstreamPath)
+	mustRun(t, upstreamPath, "git", "checkout", "-b", "main")
+	mustRun(t, upstreamPath, "git", "config", "user.email", "test@test.com")
+	mustRun(t, upstreamPath, "git", "config", "user.name", "Test")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "init")
+	mustRun(t, dir, "git", "init", "--bare", originPath)
+	mustRun(t, upstreamPath, "git", "remote", "add", "origin", originPath)
+	mustRun(t, upstreamPath, "git", "push", "-u", "origin", "main")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "pr change")
+	wantHead := runOutput(t, upstreamPath, "git", "rev-parse", "HEAD")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+	mustRun(t, dir, "git", "clone", "--bare", originPath, localBarePath)
+
+	worktreePath, err := actions.CreatePullRequestWorktree(localBarePath, "123")
+	if err != nil {
+		t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(dir, "project-worktrees", "pr-123")
+	if worktreePath != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, worktreePath)
 	}
 	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
 		t.Fatalf("expected branch pr-123, got %q", got)

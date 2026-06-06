@@ -244,7 +244,7 @@ func TestQuerierListWorktrees_UsesInjectedRunnerForDirtyStatus(t *testing.T) {
 	f := &fakeRunner{
 		t: t,
 		run: map[string]fakeReply{
-			fakeKey("/repo", "worktree", "list", "--porcelain"): {
+			fakeKey(mainPath, "worktree", "list", "--porcelain"): {
 				out: "worktree " + mainPath + "\nHEAD abc123\nbranch refs/heads/main\n\nworktree " + dirtyPath + "\nHEAD def456\nbranch refs/heads/feature\n\nworktree " + stalePath + "\nHEAD 789abc\nbranch refs/heads/stale\n",
 			},
 			fakeKey(mainPath, "status", "--porcelain"): {},
@@ -257,7 +257,7 @@ func TestQuerierListWorktrees_UsesInjectedRunnerForDirtyStatus(t *testing.T) {
 		},
 	}
 
-	worktrees, err := gitquery.NewQuerier(f).ListWorktrees("/repo")
+	worktrees, err := gitquery.NewQuerier(f).ListWorktrees(mainPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,6 +275,121 @@ func TestQuerierListWorktrees_UsesInjectedRunnerForDirtyStatus(t *testing.T) {
 	}
 	if fakeCallContains(f.calls, stalePath+" | status --porcelain") {
 		t.Fatalf("stale worktree should not read dirty status; calls: %v", f.calls)
+	}
+}
+
+func TestQuerierListWorktrees_SkipsBareRootWithoutRootLabel(t *testing.T) {
+	worktreePath := t.TempDir()
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/dev/project.git", "worktree", "list", "--porcelain"): {
+				out: "worktree /dev/project.git\nbare\n\nworktree " + worktreePath + "\nHEAD abc123\nbranch refs/heads/feature\n",
+			},
+			fakeKey(worktreePath, "status", "--porcelain"): {},
+		},
+	}
+
+	worktrees, err := gitquery.NewQuerier(f).ListWorktrees("/dev/project.git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(worktrees) != 1 {
+		t.Fatalf("expected one attached worktree, got %+v", worktrees)
+	}
+	if worktrees[0].Path != worktreePath {
+		t.Fatalf("expected worktree path %q, got %+v", worktreePath, worktrees[0])
+	}
+	if worktrees[0].BranchName != "feature" {
+		t.Fatalf("expected branch feature, got %+v", worktrees[0])
+	}
+	if worktrees[0].IsMain {
+		t.Fatalf("attached worktree from bare repo should not be marked root: %+v", worktrees[0])
+	}
+	if fakeCallContains(f.calls, "/dev/project.git | status --porcelain") {
+		t.Fatalf("bare root should not be checked for dirty status; calls: %v", f.calls)
+	}
+}
+
+func TestQuerierListWorktrees_BareRepoWithNoCheckoutsReturnsEmpty(t *testing.T) {
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey("/dev/project.git", "worktree", "list", "--porcelain"): {
+				out: "worktree /dev/project.git\nbare\n",
+			},
+		},
+	}
+
+	worktrees, err := gitquery.NewQuerier(f).ListWorktrees("/dev/project.git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(worktrees) != 0 {
+		t.Fatalf("expected no worktrees, got %+v", worktrees)
+	}
+}
+
+func TestQuerierListWorktrees_RootLabelAllowsCleanedRepoPath(t *testing.T) {
+	mainPath := t.TempDir()
+	repoPath := mainPath + string(filepath.Separator)
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey(repoPath, "worktree", "list", "--porcelain"): {
+				out: "worktree " + mainPath + "\nHEAD abc123\nbranch refs/heads/main\n",
+			},
+			fakeKey(mainPath, "status", "--porcelain"): {},
+		},
+	}
+
+	worktrees, err := gitquery.NewQuerier(f).ListWorktrees(repoPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(worktrees) != 1 {
+		t.Fatalf("expected one worktree, got %+v", worktrees)
+	}
+	if !worktrees[0].IsMain {
+		t.Fatalf("expected cleaned repo path to match root worktree, got %+v", worktrees[0])
+	}
+}
+
+func TestQuerierListBranches_RootBranchAllowsCleanedRepoPath(t *testing.T) {
+	repoPath := "/repo/"
+	f := &fakeRunner{
+		t: t,
+		run: map[string]fakeReply{
+			fakeKey(repoPath, "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+				out: "dev\trefs/heads/dev\t\t\nfeature\trefs/heads/feature\t\t\n",
+			},
+			fakeKey(repoPath, "worktree", "list", "--porcelain"): {
+				out: "worktree /repo\nHEAD abc123\nbranch refs/heads/dev\n",
+			},
+			fakeKey("/repo", "status", "--porcelain"): {},
+		},
+		ok: map[string]error{
+			fakeKey(repoPath, "merge-base", "--is-ancestor", "feature", "dev"): nil,
+		},
+	}
+
+	branches, err := gitquery.NewQuerier(f).ListBranches(repoPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dev := findBranch(branches, "dev")
+	if dev == nil {
+		t.Fatal("branch dev not found")
+	}
+	if dev.Merged {
+		t.Fatalf("root worktree branch should not be marked merged, got %+v", *dev)
+	}
+	feature := findBranch(branches, "feature")
+	if feature == nil {
+		t.Fatal("branch feature not found")
+	}
+	if !feature.Merged || feature.MergedInto != "dev" {
+		t.Fatalf("expected feature merged into root branch dev, got %+v", *feature)
 	}
 }
 

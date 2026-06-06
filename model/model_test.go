@@ -110,6 +110,103 @@ func TestModel_InitialSelection(t *testing.T) {
 	}
 }
 
+func TestModel_BareRepoShowsCheckedOutWorktreeBranches(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: repo.Path, Branches: []gitquery.Branch{
+		{Name: "main"},
+		{
+			Name:          "feature",
+			IsWorktree:    true,
+			WorktreePaths: []string{"/dev/project-worktrees/feature"},
+		},
+	}})
+
+	rows := m.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("expected main and feature rows, got %+v", rows)
+	}
+	var sawMain, sawFeature bool
+	for _, row := range rows {
+		switch row.Branch.Name {
+		case "main":
+			sawMain = true
+		case "feature":
+			sawFeature = row.WorktreePath == "/dev/project-worktrees/feature"
+		}
+	}
+	if !sawMain || !sawFeature {
+		t.Fatalf("expected main and annotated feature rows, got %+v", rows)
+	}
+}
+
+func TestModel_BareRepoDoesNotPinRootBranch(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: repo.Path, Branches: []gitquery.Branch{
+		{Name: "alpha"},
+		{Name: "main"},
+		{
+			Name:          "zeta",
+			IsWorktree:    true,
+			WorktreePaths: []string{"/dev/project-worktrees/zeta"},
+		},
+	}})
+
+	rows := m.Rows()
+	if len(rows) != 3 {
+		t.Fatalf("expected all branches, got %+v", rows)
+	}
+	if rows[0].Branch.Name != "alpha" {
+		t.Fatalf("expected original branch order to remain unpinned, got %+v", rows)
+	}
+	for _, row := range rows {
+		if row.WorktreePath == repo.Path {
+			t.Fatalf("bare repo should not have a root branch row, got %+v", rows)
+		}
+	}
+}
+
+func TestModel_NormalRepoStillFiltersNonRootWorktreeBranches(t *testing.T) {
+	m := model.New([]scanner.Repo{{Path: "/dev/project", DisplayName: "project"}})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/project", Branches: []gitquery.Branch{
+		{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/project"}},
+		{Name: "feature", IsWorktree: true, WorktreePaths: []string{"/dev/project-worktrees/feature"}},
+		{Name: "topic"},
+	}})
+
+	rows := m.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("expected root worktree branch plus topic, got %+v", rows)
+	}
+	if rows[0].Branch.Name != "main" || rows[0].WorktreePath != "/dev/project" {
+		t.Fatalf("expected root branch pinned first, got %+v", rows)
+	}
+	if rows[1].Branch.Name != "topic" {
+		t.Fatalf("expected non-worktree branch to remain, got %+v", rows)
+	}
+}
+
+func TestModel_NormalRepoRootBranchAllowsCleanedRepoPath(t *testing.T) {
+	m := model.New([]scanner.Repo{{Path: "/dev/project/", DisplayName: "project"}})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/project/", Branches: []gitquery.Branch{
+		{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/project"}},
+		{Name: "feature", IsWorktree: true, WorktreePaths: []string{"/dev/project-worktrees/feature"}},
+	}})
+
+	rows := m.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("expected only root branch row, got %+v", rows)
+	}
+	if rows[0].Branch.Name != "main" || rows[0].WorktreePath != "/dev/project" {
+		t.Fatalf("expected cleaned root branch to remain, got %+v", rows)
+	}
+}
+
 func TestModel_DefaultModeIsWorktrees(t *testing.T) {
 	m := model.New(testRepos())
 	if m.Mode() != 1 {

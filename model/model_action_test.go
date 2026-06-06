@@ -11,6 +11,7 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -417,6 +418,36 @@ func TestModel_FKey_Worktree_FiresFetchCmd(t *testing.T) {
 	}
 }
 
+func TestModel_FKey_BareRepoWithoutWorktree_FiresFetchCmd(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inRightPane(m)
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for fetch on bare repo without worktrees")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.GitFetchFailedMsg); !ok {
+		t.Fatalf("expected GitFetchFailedMsg for nonexistent bare repo path, got %T", msg)
+	}
+}
+
+func TestModel_FKey_BareRepoBranchesWithoutSelection_FiresFetchCmd(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inBranchesMode(m)
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for branch-pane fetch on bare repo without rows")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.GitFetchFailedMsg); !ok {
+		t.Fatalf("expected GitFetchFailedMsg for nonexistent bare repo path, got %T", msg)
+	}
+}
+
 func TestModel_ShiftFKey_Worktree_FiresPullCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -461,6 +492,17 @@ func TestModel_ShiftFKey_NonWorktreeBranch_NoCmd(t *testing.T) {
 	}
 }
 
+func TestModel_ShiftFKey_BareRepoWithoutWorktree_NoCmd(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inRightPane(m)
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for pull on bare repo without selected worktree, got %T", cmd)
+	}
+}
+
 func TestModel_FAndShiftFKeys_NonWorktreeAndBranchModes_NoCmd(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -484,6 +526,58 @@ func TestModel_FAndShiftFKeys_NonWorktreeAndBranchModes_NoCmd(t *testing.T) {
 				t.Fatalf("expected nil cmd for %q in mode %d, got %T", tc.key, tc.mode, cmd)
 			}
 		})
+	}
+}
+
+func TestModel_BareRepoCheckedOutBranchDeleteNoCmd(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: repo.Path, Branches: []gitquery.Branch{
+		{
+			Name:          "feature",
+			IsWorktree:    true,
+			WorktreePaths: []string{"/dev/project-worktrees/feature"},
+		},
+	}})
+	m = enableDestructive(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no delete confirm for checked-out bare repo branch, got overlay %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for checked-out bare repo branch delete, got %T", cmd)
+	}
+}
+
+func TestModel_RootBranchDeleteAllowsCleanedRepoPath_NoCmd(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project/", DisplayName: "project"}
+	m := model.New([]scanner.Repo{repo})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{RepoPath: repo.Path, Branches: []gitquery.Branch{
+		{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/project"}},
+	}})
+	m = enableDestructive(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no delete confirm for cleaned root branch path, got overlay %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for cleaned root branch delete, got %T", cmd)
+	}
+}
+
+func TestModel_CKey_BareRepoHistory_NoCmd(t *testing.T) {
+	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
+	m := model.New([]scanner.Repo{repo})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for opening code from bare repo history, got %T", cmd)
 	}
 }
 

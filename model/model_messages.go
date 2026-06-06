@@ -2,12 +2,14 @@ package model
 
 import (
 	"fmt"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
+	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -238,11 +240,19 @@ type ActionFailedMsg struct {
 // --- Message handlers ---
 
 func (m Model) currentRepoPath() (string, bool) {
-	repo, ok := m.repos.Selected()
+	repo, ok := m.currentRepo()
 	if !ok {
 		return "", false
 	}
 	return repo.Path, true
+}
+
+func (m Model) currentRepo() (scanner.Repo, bool) {
+	repo, ok := m.repos.Selected()
+	if !ok {
+		return scanner.Repo{}, false
+	}
+	return repo, true
 }
 
 func (m Model) isCurrentRepo(repoPath string) bool {
@@ -447,26 +457,8 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 		return m
 	}
 	m = m.clearFetchListStatus(ui.ModeBranches)
-	allRows := gitquery.FlattenBranches(msg.Branches)
-	var filtered []gitquery.BranchRow
-	for _, row := range allRows {
-		if row.Branch.IsWorktree && row.WorktreePath != msg.RepoPath {
-			continue
-		}
-		filtered = append(filtered, row)
-	}
-	// Pin root worktree to position 0
-	for i, row := range filtered {
-		if row.WorktreePath == msg.RepoPath {
-			if i != 0 {
-				root := filtered[i]
-				copy(filtered[1:i+1], filtered[:i])
-				filtered[0] = root
-			}
-			break
-		}
-	}
-	m.rows = m.rows.SetItems(filtered)
+	repo, _ := m.currentRepo()
+	m.rows = m.rows.SetItems(branchRowsForRepo(repo, msg.Branches))
 	if m.pendingBranchSelection != "" {
 		pendingRef := "refs/heads/" + m.pendingBranchSelection
 		m.rows = m.rows.SelectFunc(func(row gitquery.BranchRow) bool {
@@ -476,6 +468,42 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 	}
 	m = m.clampSelectionsAfterFilter()
 	return m
+}
+
+func branchRowsForRepo(repo scanner.Repo, branches []gitquery.Branch) []gitquery.BranchRow {
+	allRows := gitquery.FlattenBranches(branches)
+	filtered := make([]gitquery.BranchRow, 0, len(allRows))
+	for _, row := range allRows {
+		if !repo.IsBare && row.Branch.IsWorktree && !samePath(row.WorktreePath, repo.Path) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	for i, row := range filtered {
+		if !repo.IsBare && samePath(row.WorktreePath, repo.Path) {
+			if i != 0 {
+				root := filtered[i]
+				copy(filtered[1:i+1], filtered[:i])
+				filtered[0] = root
+			}
+			break
+		}
+	}
+	return filtered
+}
+
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return a == b
+	}
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+func canonicalPath(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
 }
 
 func (m Model) handleStashResult(msg StashResultMsg) Model {
