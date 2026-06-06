@@ -515,6 +515,77 @@ func TestModel_ViewWorktreesModeLockedShowsUnlockHint(t *testing.T) {
 	}
 }
 
+func TestModel_ViewWorktreesModeShowsMoveHintForMovableWorktree(t *testing.T) {
+	tests := []struct {
+		name     string
+		worktree gitquery.Worktree
+	}{
+		{"clean", gitquery.Worktree{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"}},
+		{"dirty", gitquery.Worktree{Path: "/dev/alpha-worktrees/feat", BranchName: "feat", Dirty: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+			m = inRightPane(m)
+			m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+				{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+				tt.worktree,
+			}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+			view := m.View()
+			if !strings.Contains(view, "m: move") {
+				t.Fatalf("movable %s worktree should show move hint, got:\n%s", tt.name, view)
+			}
+		})
+	}
+}
+
+func TestModel_ViewWorktreesModeHidesMoveHintForIneligibleWorktrees(t *testing.T) {
+	tests := []struct {
+		name     string
+		worktree gitquery.Worktree
+	}{
+		{"main", gitquery.Worktree{Path: "/dev/alpha", BranchName: "main", IsMain: true}},
+		{"stale", gitquery.Worktree{Path: "/dev/alpha-worktrees/feat", BranchName: "feat", Stale: true}},
+		{"locked", gitquery.Worktree{Path: "/dev/alpha-worktrees/feat", BranchName: "feat", Locked: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+			m = inRightPane(m)
+			m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{tt.worktree}})
+
+			view := m.View()
+			if strings.Contains(view, "m: move") {
+				t.Fatalf("%s worktree should not show move hint, got:\n%s", tt.name, view)
+			}
+		})
+	}
+}
+
+func TestModel_ViewWorktreeMoveInputShowsPromptAndPlaceholder(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+
+	view := m.View()
+	if !strings.Contains(view, "Move worktree to:") {
+		t.Fatalf("move input should show prompt, got:\n%s", view)
+	}
+	if !strings.Contains(view, ui.WorktreeMoveInputPlaceholder) {
+		t.Fatalf("move input should show placeholder, got:\n%s", view)
+	}
+}
+
 func TestModel_ViewWorktreesModeLockedStaleHidesDeleteAndPruneHints(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})

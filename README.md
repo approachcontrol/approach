@@ -79,6 +79,7 @@ filter matches, or a load failure with details in the status bar.
 | `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
+| `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent (`codex` or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
@@ -113,8 +114,10 @@ new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory
 and refreshes the list. Press `P` to create a review worktree from a GitHub PR
 number or URL; wtui fetches the PR head into `pr-<number>` and checks it out
 under the same sibling worktree directory. Press `f` to `git fetch --prune` and
-`F` to `git pull --ff-only` for the selected worktree. Locked worktrees cannot
-be deleted or pruned; press `u` to unlock one.
+`F` to `git pull --ff-only` for the selected worktree. Press `m` on a linked
+non-stale, unlocked worktree to move it to an absolute path or rename it with a
+sibling-relative destination; dirty local changes move with the worktree.
+Locked worktrees cannot be moved, deleted, or pruned; press `u` to unlock one.
 
 ### Branches view (mode 2)
 

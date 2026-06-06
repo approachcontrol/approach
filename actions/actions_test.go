@@ -74,9 +74,219 @@ func TestRemoveWorktree_Error(t *testing.T) {
 	}
 }
 
+func TestMoveWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	worktreePath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat")
+	newPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat-renamed")
+	mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+
+	got, err := actions.MoveWorktree(repoPath, worktreePath, newPath)
+	if err != nil {
+		t.Fatalf("MoveWorktree returned error: %v", err)
+	}
+	if got != newPath {
+		t.Fatalf("expected returned path %q, got %q", newPath, got)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected old worktree path to be gone, stat err=%v", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("expected new worktree path to exist: %v", err)
+	}
+	out := runOutput(t, repoPath, "git", "worktree", "list", "--porcelain")
+	if !strings.Contains(out, "worktree "+newPath) {
+		t.Fatalf("expected worktree list to contain new path, got:\n%s", out)
+	}
+	if strings.Contains(out, "worktree "+worktreePath+"\n") {
+		t.Fatalf("expected worktree list not to contain old path, got:\n%s", out)
+	}
+	branch := runOutput(t, newPath, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if branch != "feat" {
+		t.Fatalf("expected moved worktree to remain on feat, got %q", branch)
+	}
+}
+
+func TestMoveWorktree_DirtyWorktreeMovesWithLocalChanges(t *testing.T) {
+	repoPath := setupRepo(t)
+	worktreePath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat")
+	newPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat-renamed")
+	mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := actions.MoveWorktree(repoPath, worktreePath, newPath)
+	if err != nil {
+		t.Fatalf("MoveWorktree returned error for dirty worktree: %v", err)
+	}
+	if got != newPath {
+		t.Fatalf("expected returned path %q, got %q", newPath, got)
+	}
+	if contents, err := os.ReadFile(filepath.Join(newPath, "dirty.txt")); err != nil {
+		t.Fatalf("expected dirty file to move with worktree: %v", err)
+	} else if string(contents) != "dirty" {
+		t.Fatalf("expected dirty contents preserved, got %q", contents)
+	}
+}
+
+func TestMoveWorktree_ResolvesDestinations(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantPath    func(root string) string
+		wantParents bool
+	}{
+		{
+			name:  "bare relative destination",
+			input: "feat-renamed",
+			wantPath: func(root string) string {
+				return filepath.Join(root, "repo-worktrees", "feat-renamed")
+			},
+		},
+		{
+			name:  "nested relative destination creates parents",
+			input: filepath.Join("team", "feat-renamed"),
+			wantPath: func(root string) string {
+				return filepath.Join(root, "repo-worktrees", "team", "feat-renamed")
+			},
+			wantParents: true,
+		},
+		{
+			name:  "absolute destination",
+			input: "ABS",
+			wantPath: func(root string) string {
+				return filepath.Join(root, "elsewhere", "feat-renamed")
+			},
+			wantParents: true,
+		},
+		{
+			name:  "path with spaces",
+			input: "feat renamed",
+			wantPath: func(root string) string {
+				return filepath.Join(root, "repo-worktrees", "feat renamed")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath := setupRepo(t)
+			root := filepath.Dir(repoPath)
+			worktreePath := filepath.Join(root, "repo-worktrees", "feat")
+			mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+			input := tt.input
+			wantPath := tt.wantPath(root)
+			if input == "ABS" {
+				input = wantPath
+			}
+
+			got, err := actions.MoveWorktree(repoPath, worktreePath, input)
+			if err != nil {
+				t.Fatalf("MoveWorktree returned error: %v", err)
+			}
+			if got != wantPath {
+				t.Fatalf("expected resolved path %q, got %q", wantPath, got)
+			}
+			if _, err := os.Stat(wantPath); err != nil {
+				t.Fatalf("expected destination to exist: %v", err)
+			}
+			if tt.wantParents {
+				if _, err := os.Stat(filepath.Dir(wantPath)); err != nil {
+					t.Fatalf("expected destination parent to exist: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestMoveWorktree_Failures(t *testing.T) {
+	t.Run("empty destination", func(t *testing.T) {
+		if _, err := actions.MoveWorktree("/repo", "/repo-wt", ""); err == nil {
+			t.Fatal("expected empty destination error")
+		}
+	})
+
+	t.Run("whitespace destination", func(t *testing.T) {
+		if _, err := actions.MoveWorktree("/repo", "/repo-wt", "   "); err == nil {
+			t.Fatal("expected whitespace destination error")
+		}
+	})
+
+	t.Run("empty worktree path", func(t *testing.T) {
+		if _, err := actions.MoveWorktree("/repo", "", "new"); err == nil {
+			t.Fatal("expected empty worktree path error")
+		}
+	})
+
+	t.Run("same destination", func(t *testing.T) {
+		repoPath := setupRepo(t)
+		worktreePath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat")
+		mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+		if _, err := actions.MoveWorktree(repoPath, worktreePath, worktreePath); err == nil {
+			t.Fatal("expected same destination error")
+		}
+	})
+
+	t.Run("destination already exists", func(t *testing.T) {
+		repoPath := setupRepo(t)
+		worktreePath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat")
+		newPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "existing")
+		mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+		if err := os.MkdirAll(newPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := actions.MoveWorktree(repoPath, worktreePath, newPath); err == nil {
+			t.Fatal("expected existing destination error")
+		}
+	})
+
+	t.Run("locked worktree", func(t *testing.T) {
+		repoPath := setupRepo(t)
+		worktreePath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat")
+		newPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat-renamed")
+		mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+		mustRun(t, repoPath, "git", "worktree", "lock", "--reason", "busy", worktreePath)
+		if _, err := actions.MoveWorktree(repoPath, worktreePath, newPath); err == nil {
+			t.Fatal("expected locked worktree error")
+		} else if strings.Contains(err.Error(), "exit status") {
+			t.Fatalf("expected clean git error, got %q", err.Error())
+		}
+	})
+
+	t.Run("failed move cleans created parent directories", func(t *testing.T) {
+		repoPath := setupRepo(t)
+		worktreePath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "feat")
+		newPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "team", "feat-renamed")
+		mustRun(t, repoPath, "git", "worktree", "add", worktreePath, "-b", "feat")
+		mustRun(t, repoPath, "git", "worktree", "lock", "--reason", "busy", worktreePath)
+		if _, err := actions.MoveWorktree(repoPath, worktreePath, newPath); err == nil {
+			t.Fatal("expected locked worktree error")
+		}
+		if _, err := os.Stat(filepath.Dir(newPath)); !os.IsNotExist(err) {
+			t.Fatalf("expected created destination parent to be cleaned up, stat err=%v", err)
+		}
+		if _, err := os.Stat(filepath.Dir(worktreePath)); err != nil {
+			t.Fatalf("expected existing worktree parent to remain: %v", err)
+		}
+	})
+
+	t.Run("main worktree", func(t *testing.T) {
+		repoPath := setupRepo(t)
+		newPath := filepath.Join(filepath.Dir(repoPath), "repo-renamed")
+		if _, err := actions.MoveWorktree(repoPath, repoPath, newPath); err == nil {
+			t.Fatal("expected main worktree error")
+		} else if strings.Contains(err.Error(), "exit status") {
+			t.Fatalf("expected clean git error, got %q", err.Error())
+		}
+	})
+}
+
 func setupRepo(t *testing.T) (repoPath string) {
 	t.Helper()
 	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	repoPath = filepath.Join(dir, "repo")
 	mustRun(t, dir, "git", "init", repoPath)
 	mustRun(t, repoPath, "git", "config", "user.email", "test@test.com")

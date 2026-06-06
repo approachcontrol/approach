@@ -7,6 +7,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/agent"
+	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -197,6 +198,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "P":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
+		}
+	case "m":
+		if m.mode == ui.ModeWorktrees {
+			return m.handleMoveWorktree()
 		}
 	case "N":
 		if m.mode == ui.ModeWorktrees {
@@ -393,6 +398,41 @@ func validateBranchInput(input string) error {
 
 func validatePullRequestWorktreeInput(repoPath, input string) error {
 	return actions.ValidatePullRequestWorktreeInput(repoPath, input)
+}
+
+func (m Model) handleMoveWorktree() (tea.Model, tea.Cmd) {
+	wt, ok := m.selectedWorktree()
+	if !ok || !canMoveWorktree(wt) {
+		return m, nil
+	}
+	oldPath := wt.Path
+	m.modal = modal.OpenInput(
+		ui.WorktreeMovePrompt,
+		ui.WorktreeMoveInputPlaceholder,
+		"",
+		validateWorktreeMoveInput,
+		func(input string) tea.Cmd { return m.moveWorktree(oldPath, input) },
+	)
+	return m, nil
+}
+
+func validateWorktreeMoveInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("enter a new path or sibling name")
+	}
+	return nil
+}
+
+func canMoveWorktree(wt gitquery.Worktree) bool {
+	return !wt.IsMain && !wt.Stale && !wt.Locked
+}
+
+func (m Model) canMoveWorktree() bool {
+	if m.activePane != 1 || m.mode != ui.ModeWorktrees {
+		return false
+	}
+	wt, ok := m.selectedWorktree()
+	return ok && canMoveWorktree(wt)
 }
 
 func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
@@ -715,6 +755,7 @@ func (m Model) resetModeCursors() Model {
 
 func (m Model) resetRightPaneCursors() Model {
 	m.pendingBranchSelection = ""
+	m.pendingWorktreeSelection = ""
 	m.rows = m.rows.SetItems(nil).ResetSelection()
 	m.stashes = m.stashes.SetItems(nil).ResetSelection()
 	m.worktrees = m.worktrees.SetItems(nil).ResetSelection()
