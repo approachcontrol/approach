@@ -158,7 +158,7 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 		SessionSelected: 0,
 	})
 
-	for _, want := range []string{"[6] sessions", "codex", "feature/sessions", "sessions", "ended", "Implement session capture"} {
+	for _, want := range []string{"[6] sessions", "Provider", "Branch", "Worktree", "Status", "Summary", "codex", "feature/sessions", "sessions", "ended", "Implement session capture"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sessions view missing %q:\n%s", want, view)
 		}

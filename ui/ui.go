@@ -1163,7 +1163,15 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 }
 
 func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width, height int) []string {
-	var content []string
+	if height <= 0 {
+		return nil
+	}
+	header := truncateToWidth(statusStyle.Render("   Provider  Branch  Worktree  Status  Summary"), width)
+	if height == 1 {
+		return []string{header}
+	}
+
+	var rows []string
 	for i, record := range records {
 		provider := string(record.Provider)
 		worktree := filepath.Base(record.WorktreePath)
@@ -1187,9 +1195,9 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 			), width)
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
-		content = append(content, truncateToWidth(line, width))
+		rows = append(rows, truncateToWidth(line, width))
 	}
-	return scrollAndPad(content, scroll, height)
+	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
 }
 
 func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, height int) []string {
