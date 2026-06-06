@@ -74,9 +74,9 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4`/`5`/`6` | Switch to worktrees / branches / stashes / history / reflog / sessions |
+| `1`/`2`/`3`/`4`/`5`/`6`/`7` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans |
 | `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) or session transcript |
+| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry), session transcript, or plan |
 | `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
@@ -95,8 +95,9 @@ filter matches, or a load failure with details in the status bar.
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close overlay or quit |
 
-The right pane header shows the active mode. Press `1`–`6` or use arrow keys to
-switch between worktrees, branches, stashes, history, reflog, and sessions.
+The right pane header shows the active mode. Press `1`–`7` or use arrow keys to
+switch between worktrees, branches, stashes, history, reflog, sessions, and
+plans.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
@@ -176,6 +177,47 @@ may contain secrets or private prompts; wtui keeps them outside repositories and
 uses restrictive file permissions for created session files. Provider session IDs
 are stored in hashed directory names instead of raw path components.
 
+### Plans view (mode 7)
+
+Browse saved agent plans for the selected repo. Rows show status, branch, phase
+progress (`completed/total`), the updated date, and the title. Use `/` to filter
+plans by title, summary, status, branch, worktree basename, provider, session
+ID, launch ID, and phase titles/statuses. Press `enter` to open the plan
+Markdown in a plain-text overlay.
+
+Plans are persisted explicitly by agents through the `wtui plan` CLI rather than
+captured from hooks. Plans share the agent-artifact root with sessions: they are
+stored under `<sessions root>/plans/<plan-id>/` (`meta.json` plus `plan.md`),
+that is `$XDG_STATE_HOME/wtui/sessions/v1/plans/...` or
+`~/.local/state/wtui/sessions/v1/plans/...` by default. **Because plans live
+beside sessions, moving or cleaning the sessions root (including via
+`WTUI_PLAN_STATE_ROOT`) also moves or removes your saved plans.**
+
+Agents persist plans with the `wtui plan` subcommands (these load config to
+resolve the artifact root but never scan repositories or start the TUI):
+
+```bash
+# Save (or update with --plan-id) a plan; reads Markdown from --file or stdin,
+# prints only the plan_id.
+printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" --status draft
+
+# Record per-phase progress.
+wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+
+# Read plans back.
+wtui plan list --repo-path "$REPO" --json   # requires --json in v1
+wtui plan read --plan-id "$PLAN_ID"          # prints Markdown only
+```
+
+The plan state root is resolved with this precedence: `--state-root` >
+`WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` > `[sessions].root` > the user
+state default. Agents launched by wtui get `WTUI_PLAN_STATE_ROOT` and
+`WTUI_SESSION_STATE_ROOT` set to the same resolved root. Omitted metadata is
+filled from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
+`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`. The repo `wtui-plan-persist`
+skill (`.agents/skills/`) instructs agents on when and how to save plans. v1 has
+no TUI plan editing or deletion.
+
 ## Configuration
 
 wtui reads an optional TOML config file before scanning repositories:
@@ -217,6 +259,7 @@ editor, terminal, provider, launch, and agent settings.
 | `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos; depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 | `WTUI_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by wtui |
+| `WTUI_PLAN_STATE_ROOT` | `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `wtui plan`; set automatically for agents launched by wtui. In the TUI it relocates the whole artifact root, moving both sessions and plans |
 
 ### Agent session hooks
 
