@@ -46,6 +46,14 @@ const (
 
 const LeftPaneWidth = 30
 
+// ShortcutPaneWidth is the total width reserved for the right-hand keyboard
+// shortcut rail, including its left and right borders.
+const ShortcutPaneWidth = 28
+
+// MinContentPaneWidth keeps the primary item pane useful before the shortcut
+// rail is shown. Narrow terminals continue using footer hints instead.
+const MinContentPaneWidth = 48
+
 // RepoContentOverhead is the number of rows consumed by chrome around the
 // repo list: status bar (1) + top/bottom borders (2).
 const RepoContentOverhead = 3
@@ -77,28 +85,32 @@ const StashPrefixWidth = 15
 //	14  = bright cyan    15  = bright white   238 = dark gray
 //	241 = medium gray
 var (
-	repoStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
-	selectedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Reverse(true) // 10 = bright green
-	placeholderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)            // 241 = medium gray
-	statusStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	branchStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	cleanStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
-	commitStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	activeModeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	inactiveModeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	stashDateStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	stashMsgStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
-	stashSelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true) // 15 = bright white
-	branchSelStyle    = lipgloss.NewStyle().Bold(true).Reverse(true)
-	rootStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 12 = bright blue
-	lockedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
-	noUpstreamStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // 5 = magenta
-	aheadBehindStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 11 = bright yellow
-	mergedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // 6 = cyan
-	dirtyRedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
-	diffAddStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 10 = bright green
-	diffDelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
-	diffHdrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
+	repoStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
+	selectedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Reverse(true) // 10 = bright green
+	placeholderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)            // 241 = medium gray
+	statusStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	branchStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	cleanStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
+	commitStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	activeModeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	inactiveModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	shortcutTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	shortcutGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)               // 14 = bright cyan
+	shortcutKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
+	shortcutTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
+	stashDateStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
+	stashMsgStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
+	stashSelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true) // 15 = bright white
+	branchSelStyle     = lipgloss.NewStyle().Bold(true).Reverse(true)
+	rootStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 12 = bright blue
+	lockedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
+	noUpstreamStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // 5 = magenta
+	aheadBehindStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 11 = bright yellow
+	mergedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // 6 = cyan
+	dirtyRedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
+	diffAddStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 10 = bright green
+	diffDelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
+	diffHdrStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
 )
 
 // RenderParams holds everything the renderer needs.
@@ -161,31 +173,61 @@ func Render(p RenderParams) string {
 		return renderOverlay(p)
 	}
 
-	var staleSelected, dirtySelected, lockedSelected bool
+	var repoPath string
+	if p.Selected >= 0 && p.Selected < len(p.Repos) {
+		repoPath = p.Repos[p.Selected].Path
+	}
+
+	var worktreeSelected, staleSelected, dirtySelected, lockedSelected, worktreeDeletableSelected, worktreeOpenableSelected bool
 	if p.Mode == ModeWorktrees && p.WorktreeSelected >= 0 && p.WorktreeSelected < len(p.Worktrees) {
+		worktreeSelected = true
 		wt := p.Worktrees[p.WorktreeSelected]
 		staleSelected = wt.Stale
 		dirtySelected = wt.Dirty
 		lockedSelected = wt.Locked
+		worktreeDeletableSelected = !wt.IsMain && !wt.Stale && !wt.Locked
+		worktreeOpenableSelected = !wt.Stale
 	}
-	statusBar := renderStatusBarWithState(statusBarParams{
-		Width:          p.Width,
-		Mode:           p.Mode,
-		Overlay:        p.Overlay,
-		ActivePane:     p.ActivePane,
-		Destructive:    p.Destructive,
-		StaleSelected:  staleSelected,
-		DirtySelected:  dirtySelected,
-		LockedSelected: lockedSelected,
-		TransientError: p.TransientError,
-		SearchActive:   p.SearchActive,
-		RepoSearch:     p.RepoSearch,
-		ItemSearch:     p.ItemSearch,
-		FetchAvailable: p.FetchAvailable,
-		PullAvailable:  p.PullAvailable,
-		AgentAvailable: p.AgentAvailable,
-		NewAgent:       p.NewAgentAvailable,
-	})
+	var branchDirtySelected, branchDeletableSelected, branchOpenableSelected bool
+	if p.Mode == ModeBranches && p.BranchSelected >= 0 && p.BranchSelected < len(p.Branches) {
+		row := p.Branches[p.BranchSelected]
+		branchDirtySelected = row.Branch.Dirty && row.Branch.IsWorktree
+		branchDeletableSelected = row.WorktreePath != repoPath
+		branchOpenableSelected = row.WorktreePath != ""
+	}
+	stashSelected := p.Mode == ModeStashes && p.StashSelected >= 0 && p.StashSelected < len(p.Stashes)
+	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
+	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
+	status := statusBarParams{
+		Width:                     p.Width,
+		Mode:                      p.Mode,
+		Overlay:                   p.Overlay,
+		ActivePane:                p.ActivePane,
+		Destructive:               p.Destructive,
+		RepoSelected:              repoPath != "",
+		WorktreeSelected:          worktreeSelected,
+		StaleSelected:             staleSelected,
+		DirtySelected:             dirtySelected,
+		LockedSelected:            lockedSelected,
+		WorktreeDeletableSelected: worktreeDeletableSelected,
+		WorktreeOpenableSelected:  worktreeOpenableSelected,
+		BranchDirtySelected:       branchDirtySelected,
+		BranchDeletableSelected:   branchDeletableSelected,
+		BranchOpenableSelected:    branchOpenableSelected,
+		StashSelected:             stashSelected,
+		CommitSelected:            commitSelected,
+		ReflogSelected:            reflogSelected,
+		TransientError:            p.TransientError,
+		SearchActive:              p.SearchActive,
+		RepoSearch:                p.RepoSearch,
+		ItemSearch:                p.ItemSearch,
+		FetchAvailable:            p.FetchAvailable,
+		PullAvailable:             p.PullAvailable,
+		AgentAvailable:            p.AgentAvailable,
+		NewAgent:                  p.NewAgentAvailable,
+	}
+	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, p.Height, status)
+	statusBar := renderFooterStatusBar(status, !showShortcutPane)
 
 	// Border colors based on active pane
 	activeBorderColor := lipgloss.Color("12")
@@ -216,17 +258,15 @@ func Render(p RenderParams) string {
 		Render(leftContent)
 
 	rightContentWidth := p.Width - LeftPaneWidth - 2 // left + right border
+	if showShortcutPane {
+		rightContentWidth = p.Width - LeftPaneWidth - ShortcutPaneWidth - 2
+	}
 	if rightContentWidth < 0 {
 		rightContentWidth = 0
 	}
 
 	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
 	rightContentHeight := p.Height - BranchContentOverhead
-
-	var repoPath string
-	if p.Selected < len(p.Repos) {
-		repoPath = p.Repos[p.Selected].Path
-	}
 
 	// Hide cursor in right pane when left pane is active
 	branchSel := p.BranchSelected
@@ -266,7 +306,19 @@ func Render(p RenderParams) string {
 		Height(innerHeight).
 		Render(rightContent)
 
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	panes := []string{leftPane, rightPane}
+	if showShortcutPane {
+		shortcutContentWidth := ShortcutPaneWidth - 2
+		shortcutPane := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(inactiveBorderColor).
+			Width(shortcutContentWidth).
+			Height(innerHeight).
+			Render(renderShortcutPane(status, shortcutContentWidth, innerHeight))
+		panes = append(panes, shortcutPane)
+	}
+
+	content := lipgloss.JoinHorizontal(lipgloss.Top, panes...)
 
 	return content + "\n" + statusBar
 }
@@ -307,57 +359,108 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 		pullAvailable = false
 	}
 	return renderStatusBarWithState(statusBarParams{
-		Width:          width,
-		Mode:           mode,
-		Overlay:        overlay,
-		ActivePane:     activePane,
-		Destructive:    destructive,
-		StaleSelected:  staleSelected,
-		DirtySelected:  dirtySelected,
-		FetchAvailable: fetchAvailable,
-		PullAvailable:  pullAvailable,
-		NewAgent:       newAgentAvailable,
+		Width:                     width,
+		Mode:                      mode,
+		Overlay:                   overlay,
+		ActivePane:                activePane,
+		Destructive:               destructive,
+		RepoSelected:              true,
+		WorktreeSelected:          mode == ModeWorktrees,
+		StaleSelected:             staleSelected,
+		DirtySelected:             dirtySelected,
+		WorktreeDeletableSelected: activePane == 1 && mode == ModeWorktrees && !staleSelected,
+		WorktreeOpenableSelected:  activePane == 1 && mode == ModeWorktrees && !staleSelected,
+		BranchDeletableSelected:   activePane == 1 && mode == ModeBranches,
+		BranchOpenableSelected:    activePane == 1 && mode == ModeBranches,
+		StashSelected:             activePane == 1 && mode == ModeStashes,
+		CommitSelected:            activePane == 1 && mode == ModeHistory,
+		ReflogSelected:            activePane == 1 && mode == ModeReflog,
+		FetchAvailable:            fetchAvailable,
+		PullAvailable:             pullAvailable,
+		NewAgent:                  newAgentAvailable,
 	})
 }
 
 // statusBarParams groups the many fields the status-bar renderer needs,
 // avoiding a long and error-prone positional parameter list.
 type statusBarParams struct {
-	Width          int
-	Mode           Mode
-	Overlay        OverlayState
-	ActivePane     int
-	Destructive    bool
-	StaleSelected  bool
-	DirtySelected  bool
-	LockedSelected bool
-	TransientError string
-	SearchActive   bool
-	RepoSearch     string
-	ItemSearch     string
-	FetchAvailable bool
-	PullAvailable  bool
-	AgentAvailable bool
-	NewAgent       bool
+	Width                     int
+	Mode                      Mode
+	Overlay                   OverlayState
+	ActivePane                int
+	Destructive               bool
+	RepoSelected              bool
+	WorktreeSelected          bool
+	StaleSelected             bool
+	DirtySelected             bool
+	LockedSelected            bool
+	WorktreeDeletableSelected bool
+	WorktreeOpenableSelected  bool
+	BranchDirtySelected       bool
+	BranchDeletableSelected   bool
+	BranchOpenableSelected    bool
+	StashSelected             bool
+	CommitSelected            bool
+	ReflogSelected            bool
+	TransientError            string
+	SearchActive              bool
+	RepoSearch                string
+	ItemSearch                string
+	FetchAvailable            bool
+	PullAvailable             bool
+	AgentAvailable            bool
+	NewAgent                  bool
+}
+
+type shortcutHint struct {
+	Key     string
+	Label   string
+	Warning bool
+	Inline  bool
+}
+
+type shortcutSection struct {
+	Title string
+	Hints []shortcutHint
+}
+
+func shouldRenderShortcutPane(width, height int, sp statusBarParams) bool {
+	if width < LeftPaneWidth+ShortcutPaneWidth+MinContentPaneWidth {
+		return false
+	}
+	return shortcutPaneLineCount(shortcutSections(sp)) <= height-3
+}
+
+func renderFooterStatusBar(sp statusBarParams, includeHints bool) string {
+	if includeHints {
+		return renderStatusBarWithState(sp)
+	}
+	query := sp.ItemSearch
+	if sp.ActivePane == 0 {
+		query = sp.RepoSearch
+	}
+	if sp.TransientError != "" || sp.SearchActive || query != "" {
+		return renderStatusBarWithState(sp)
+	}
+	return statusStyle.Width(sp.Width).Render("")
+}
+
+func hasActiveStatusQuery(sp statusBarParams) bool {
+	query := sp.ItemSearch
+	if sp.ActivePane == 0 {
+		query = sp.RepoSearch
+	}
+	return sp.SearchActive || query != ""
 }
 
 func renderStatusBarWithState(sp statusBarParams) string {
 	width := sp.Width
-	mode := sp.Mode
 	overlay := sp.Overlay
 	activePane := sp.ActivePane
-	destructive := sp.Destructive
-	staleSelected := sp.StaleSelected
-	dirtySelected := sp.DirtySelected
-	lockedSelected := sp.LockedSelected
 	transientError := sp.TransientError
 	searchActive := sp.SearchActive
 	repoSearch := sp.RepoSearch
 	itemSearch := sp.ItemSearch
-	fetchAvailable := sp.FetchAvailable
-	pullAvailable := sp.PullAvailable
-	agentAvailable := sp.AgentAvailable
-	newAgent := sp.NewAgent
 
 	if transientError != "" {
 		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
@@ -376,115 +479,447 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		return statusStyle.Width(width).Render(fmt.Sprintf("  filtered %s: %s  /: edit  esc: clear", label, query))
 	}
 
-	var hints string
 	switch {
 	case overlay == OverlayConfirm:
-		hints = "  y: confirm  n/esc: cancel"
+		return statusStyle.Width(width).Render("  y: confirm  n/esc: cancel")
 	case overlay == OverlayWorktreeInput:
-		hints = "  enter: create/set  esc: cancel  backspace: delete"
+		return statusStyle.Width(width).Render("  enter: create/set  esc: cancel  backspace: delete")
 	case overlay != OverlayNone:
-		hints = "  ↑/↓ scroll  esc: close"
-	case mode == ModeReflog:
-		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select  enter: diff  y: copy hash"
-		if fetchAvailable {
-			hints += "  f: fetch"
-		}
-		if pullAvailable {
-			hints += "  F: pull"
-		}
-	case mode == ModeHistory:
-		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select  enter: diff  y: copy hash  t: terminal  c: code"
-		if fetchAvailable {
-			hints += "  f: fetch"
-		}
-		if pullAvailable {
-			hints += "  F: pull"
-		}
-	case mode == ModeStashes:
-		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select  enter: diff"
-		if destructive {
-			hints += "  " + dirtyRedStyle.Render("d: drop")
-		} else {
-			hints += "  D: destructive mode"
-		}
-		if fetchAvailable {
-			hints += "  f: fetch"
-		}
-		if pullAvailable {
-			hints += "  F: pull"
-		}
-	case mode == ModeBranches:
-		keys := "  |  tab: pane  q/esc: quit  A: set agent"
-		if !destructive {
-			keys += "  D: destructive mode"
-		}
-		if activePane == 1 {
-			keys += "  n: new branch  t: terminal  c: code"
-			if agentAvailable {
-				keys += "  a: agent"
-			}
-			if destructive {
-				keys += "  " + dirtyRedStyle.Render("d: delete")
-			}
-			if fetchAvailable {
-				keys += "  f: fetch"
-			}
-			if pullAvailable {
-				keys += "  F: pull"
-			}
-		}
-		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
-	case mode == ModeWorktrees:
-		hints = "  tab: pane  q/esc: quit  A: set agent"
-		hints += "  ↑/↓ select"
-		if activePane == 1 && !staleSelected {
-			if !destructive {
-				hints += "  D: destructive mode"
-			}
-			hints += "  n: new worktree"
-			if lockedSelected {
-				hints += "  u: unlock"
-			}
-			if destructive && !lockedSelected {
-				hints += "  " + dirtyRedStyle.Render("d: delete")
-			}
-			if dirtySelected {
-				hints += "  enter: diff"
-			}
-			if fetchAvailable {
-				hints += "  f: fetch"
-			}
-			if pullAvailable {
-				hints += "  F: pull"
-			}
-			hints += "  t: terminal c: code P: PR"
-			if agentAvailable {
-				hints += "  a: agent"
-			}
-			if newAgent {
-				hints += "  N: new+agent"
-			}
-		}
-		if activePane == 1 && staleSelected && newAgent {
-			hints += "  N: new+agent"
-		}
-		if activePane == 1 && staleSelected && destructive && !lockedSelected {
-			hints += "  " + dirtyRedStyle.Render("p: prune")
-		}
-		if activePane == 1 && lockedSelected && staleSelected {
-			hints += "  u: unlock"
-		}
-		if activePane == 1 && staleSelected {
-			hints += "  A: set agent"
-		}
-		if !destructive && activePane != 1 {
-			hints += "  D: destructive mode"
-		}
-	default:
-		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select"
+		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
 
-	return statusStyle.Width(width).Render(hints)
+	return statusStyle.Width(width).Render(renderFooterShortcuts(sp, shortcutSections(sp)))
+}
+
+func renderShortcutPane(sp statusBarParams, width, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := make([]string, 0, height)
+	title := fmt.Sprintf("Shortcuts  %s", modeShortcutTitle(sp.Mode))
+	lines = append(lines, truncateToWidth(" "+shortcutTitleStyle.Render(title), width))
+
+	for _, section := range shortcutSections(sp) {
+		if len(section.Hints) == 0 {
+			continue
+		}
+		if len(lines) < height {
+			lines = append(lines, truncateToWidth(" "+shortcutGroupStyle.Render(section.Title), width))
+		}
+		for _, hint := range section.Hints {
+			if len(lines) >= height {
+				break
+			}
+			keyStyle := shortcutKeyStyle
+			if hint.Warning {
+				keyStyle = dirtyRedStyle.Bold(true)
+			}
+			key := keyStyle.Render(hint.Key + shortcutSeparator(hint))
+			label := shortcutTextStyle.Render(hint.Label)
+			lines = append(lines, truncateToWidth(" "+key+" "+label, width))
+		}
+		if len(lines) >= height {
+			break
+		}
+	}
+
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	truncateLines(lines, width)
+	return strings.Join(lines, "\n")
+}
+
+func shortcutPaneLineCount(sections []shortcutSection) int {
+	lines := 1 // title
+	for _, section := range sections {
+		if len(section.Hints) == 0 {
+			continue
+		}
+		lines += 1 + len(section.Hints)
+	}
+	return lines
+}
+
+func shortcutSections(sp statusBarParams) []shortcutSection {
+	navigation := []shortcutHint{{Key: "↑/↓", Label: "select", Inline: true}}
+
+	sections := []shortcutSection{
+		{
+			Title: "Global",
+			Hints: []shortcutHint{
+				{Key: "tab", Label: "pane"},
+				{Key: "q/esc", Label: "quit"},
+				{Key: "A", Label: "set agent"},
+			},
+		},
+		{
+			Title: "Navigate",
+			Hints: navigation,
+		},
+	}
+
+	var actions []shortcutHint
+	switch sp.Mode {
+	case ModeWorktrees:
+		if sp.ActivePane == 1 && sp.RepoSelected && !sp.StaleSelected {
+			actions = append(actions, shortcutHint{Key: "n", Label: "new worktree"})
+			if sp.NewAgent {
+				actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
+			}
+			actions = append(actions, shortcutHint{Key: "P", Label: "PR"})
+			if sp.DirtySelected {
+				actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
+			}
+			if sp.Destructive && sp.WorktreeDeletableSelected {
+				actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
+			}
+			if sp.FetchAvailable {
+				actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
+			}
+			if sp.PullAvailable {
+				actions = append(actions, shortcutHint{Key: "F", Label: "pull"})
+			}
+			if sp.WorktreeOpenableSelected {
+				actions = append(actions,
+					shortcutHint{Key: "t", Label: "terminal"},
+					shortcutHint{Key: "c", Label: "code"},
+				)
+				if sp.AgentAvailable {
+					actions = append(actions, shortcutHint{Key: "a", Label: "agent"})
+				}
+			}
+		}
+		if sp.ActivePane == 1 && sp.RepoSelected && sp.StaleSelected && sp.NewAgent {
+			actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
+		}
+		if sp.ActivePane == 1 && sp.StaleSelected && sp.Destructive && sp.WorktreeSelected && !sp.LockedSelected {
+			actions = append(actions, shortcutHint{Key: "p", Label: "prune", Warning: true})
+		}
+		if sp.ActivePane == 1 && sp.WorktreeSelected && sp.LockedSelected {
+			actions = append(actions, shortcutHint{Key: "u", Label: "unlock"})
+		}
+	case ModeBranches:
+		if sp.ActivePane == 1 {
+			if sp.RepoSelected {
+				actions = append(actions, shortcutHint{Key: "n", Label: "new branch"})
+			}
+			if sp.BranchDirtySelected {
+				actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
+			}
+			if sp.BranchOpenableSelected {
+				actions = append(actions,
+					shortcutHint{Key: "t", Label: "terminal"},
+					shortcutHint{Key: "c", Label: "code"},
+				)
+				if sp.AgentAvailable {
+					actions = append(actions, shortcutHint{Key: "a", Label: "agent"})
+				}
+			}
+			if sp.Destructive && sp.BranchDeletableSelected {
+				actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
+			}
+			if sp.FetchAvailable {
+				actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
+			}
+			if sp.PullAvailable {
+				actions = append(actions, shortcutHint{Key: "F", Label: "pull"})
+			}
+		}
+	case ModeStashes:
+		if sp.ActivePane == 1 && sp.StashSelected {
+			actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
+			if sp.Destructive {
+				actions = append(actions, shortcutHint{Key: "d", Label: "drop", Warning: true})
+			}
+		}
+	case ModeHistory:
+		if sp.ActivePane == 1 {
+			if sp.CommitSelected {
+				actions = append(actions,
+					shortcutHint{Key: "enter", Label: "diff"},
+					shortcutHint{Key: "y", Label: "copy hash"},
+				)
+			}
+			if sp.RepoSelected {
+				actions = append(actions,
+					shortcutHint{Key: "t", Label: "terminal"},
+					shortcutHint{Key: "c", Label: "code"},
+				)
+			}
+		}
+	case ModeReflog:
+		if sp.ActivePane == 1 && sp.ReflogSelected {
+			actions = append(actions,
+				shortcutHint{Key: "enter", Label: "diff"},
+				shortcutHint{Key: "y", Label: "copy hash"},
+			)
+		}
+	}
+	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
+		if sp.FetchAvailable {
+			actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
+		}
+		if sp.PullAvailable {
+			actions = append(actions, shortcutHint{Key: "F", Label: "pull"})
+		}
+	}
+	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes) {
+		actions = append([]shortcutHint{{Key: "D", Label: "destructive mode"}}, actions...)
+	}
+	if len(actions) > 0 {
+		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
+	}
+	if sp.Mode == ModeBranches {
+		sections = append(sections, shortcutSection{
+			Title: "Legend",
+			Hints: []shortcutHint{
+				{Key: "✔", Label: "clean"},
+				{Key: "●", Label: "ahead/behind"},
+				{Key: "●", Label: "dirty", Warning: true},
+				{Key: "●", Label: "no upstream"},
+				{Key: "merged", Label: "merged"},
+			},
+		})
+	}
+	return sections
+}
+
+func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	if sp.Mode == ModeWorktrees {
+		return renderWorktreeFooterShortcuts(sp, sections)
+	}
+	if sp.Mode == ModeBranches {
+		legend, rest := splitLegendSection(sections)
+		rest = withoutSection(rest, "Navigate")
+		rest = branchFooterSectionOrder(rest)
+		keys := renderFooterHintList(rest)
+		if keys != "" {
+			return renderFooterLegend(legend) + "  |  " + keys
+		}
+		return renderFooterLegend(legend)
+	}
+	return "  " + renderFooterHintList(sections)
+}
+
+func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	hints := flattenShortcutHints(sections)
+	parts := []string{}
+	for _, key := range []string{"tab", "q/esc"} {
+		if hint, ok := findShortcutHint(hints, key); ok {
+			parts = append(parts, renderFooterHint(hint))
+		}
+	}
+
+	required := worktreeFooterParts(hints, false)
+	requiredWithDestructive := worktreeFooterParts(hints, true)
+	if hint, ok := findShortcutHint(hints, "A"); ok {
+		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
+		// When agent actions are visible, keep A by making room from the D
+		// toggle first; otherwise preserve D ahead of lower-priority A.
+		if sp.AgentAvailable || sp.NewAgent {
+			if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, required...)...) {
+				parts = candidate
+			}
+		} else if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, requiredWithDestructive...)...) {
+			parts = candidate
+		}
+	}
+	if hint, ok := findShortcutHint(hints, "↑/↓"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	if hint, ok := findShortcutHint(hints, "D"); ok {
+		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
+		if footerPartsFit(sp.Width, candidate, required...) {
+			parts = candidate
+		}
+	}
+	for _, key := range []string{"n", "N", "d", "p", "u", "enter", "f", "F"} {
+		if hint, ok := findShortcutHint(hints, key); ok {
+			parts = append(parts, renderFooterHint(hint))
+		}
+	}
+
+	open := ""
+	if _, ok := findShortcutHint(hints, "t"); ok {
+		if _, ok := findShortcutHint(hints, "c"); ok {
+			open = "t: terminal c: code"
+		}
+	}
+	if open != "" {
+		parts = append(parts, open)
+	}
+	if hint, ok := findShortcutHint(hints, "P"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	if hint, ok := findShortcutHint(hints, "a"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+
+	return "  " + strings.Join(parts, " ")
+}
+
+func worktreeFooterParts(hints []shortcutHint, includeDestructiveMode bool) []string {
+	var parts []string
+	keys := []string{"n", "N", "d", "p", "u", "enter", "f", "F"}
+	if includeDestructiveMode {
+		keys = append([]string{"D"}, keys...)
+	}
+	for _, key := range keys {
+		if hint, ok := findShortcutHint(hints, key); ok {
+			parts = append(parts, renderFooterHint(hint))
+		}
+	}
+	if _, ok := findShortcutHint(hints, "t"); ok {
+		if _, ok := findShortcutHint(hints, "c"); ok {
+			parts = append(parts, "t: terminal c: code")
+		}
+	}
+	if hint, ok := findShortcutHint(hints, "P"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	if hint, ok := findShortcutHint(hints, "a"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	return parts
+}
+
+func footerPartsFit(width int, parts []string, extra ...string) bool {
+	all := append(append([]string{}, parts...), extra...)
+	return lipgloss.Width("  "+strings.Join(all, " ")) <= width
+}
+
+func flattenShortcutHints(sections []shortcutSection) []shortcutHint {
+	var hints []shortcutHint
+	for _, section := range sections {
+		hints = append(hints, section.Hints...)
+	}
+	return hints
+}
+
+func findShortcutHint(hints []shortcutHint, key string) (shortcutHint, bool) {
+	for _, hint := range hints {
+		if hint.Key == key {
+			return hint, true
+		}
+	}
+	return shortcutHint{}, false
+}
+
+func branchFooterSectionOrder(sections []shortcutSection) []shortcutSection {
+	ordered := make([]shortcutSection, 0, len(sections))
+	for _, title := range []string{"Global", "Safety", "Actions"} {
+		for _, section := range sections {
+			if section.Title == title {
+				ordered = append(ordered, section)
+			}
+		}
+	}
+	for _, section := range sections {
+		if section.Title != "Global" && section.Title != "Safety" && section.Title != "Actions" {
+			ordered = append(ordered, section)
+		}
+	}
+	return ordered
+}
+
+func withoutSection(sections []shortcutSection, title string) []shortcutSection {
+	filtered := make([]shortcutSection, 0, len(sections))
+	for _, section := range sections {
+		if section.Title == title {
+			continue
+		}
+		filtered = append(filtered, section)
+	}
+	return filtered
+}
+
+func splitLegendSection(sections []shortcutSection) ([]shortcutHint, []shortcutSection) {
+	rest := make([]shortcutSection, 0, len(sections))
+	var legend []shortcutHint
+	for _, section := range sections {
+		if section.Title == "Legend" {
+			legend = section.Hints
+			continue
+		}
+		rest = append(rest, section)
+	}
+	return legend, rest
+}
+
+func renderFooterLegend(hints []shortcutHint) string {
+	if len(hints) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	return " " + strings.Join(parts, "  ")
+}
+
+func renderFooterHintList(sections []shortcutSection) string {
+	var parts []string
+	for _, section := range sections {
+		for _, hint := range section.Hints {
+			parts = append(parts, renderFooterHint(hint))
+		}
+	}
+	return strings.Join(parts, "  ")
+}
+
+func renderFooterHint(hint shortcutHint) string {
+	switch hint.Key {
+	case "✔":
+		return cleanStyle.Render("✔") + " " + hint.Label
+	case "●":
+		return styledDotForLabel(hint.Label) + " " + hint.Label
+	case "merged":
+		return mergedStyle.Render("merged")
+	}
+
+	text := hint.Key + shortcutSeparator(hint) + " " + hint.Label
+	if hint.Warning {
+		return dirtyRedStyle.Render(text)
+	}
+	return text
+}
+
+func styledDotForLabel(label string) string {
+	switch label {
+	case "ahead/behind":
+		return aheadBehindStyle.Render("●")
+	case "dirty":
+		return dirtyRedStyle.Render("●")
+	case "no upstream":
+		return noUpstreamStyle.Render("●")
+	default:
+		return shortcutKeyStyle.Render("●")
+	}
+}
+
+func shortcutSeparator(hint shortcutHint) string {
+	if hint.Inline {
+		return ""
+	}
+	return ":"
+}
+
+func modeShortcutTitle(mode Mode) string {
+	switch mode {
+	case ModeWorktrees:
+		return "Worktrees"
+	case ModeBranches:
+		return "Branches"
+	case ModeStashes:
+		return "Stashes"
+	case ModeHistory:
+		return "History"
+	case ModeReflog:
+		return "Reflog"
+	default:
+		return "Items"
+	}
 }
 
 func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string) []string {
