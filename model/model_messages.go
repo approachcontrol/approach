@@ -134,6 +134,19 @@ type WorktreeCreatedMsg struct {
 	LaunchAgent  bool
 }
 
+type WorktreeMovedMsg struct {
+	RepoPath string
+	OldPath  string
+	NewPath  string
+}
+
+type WorktreeMoveFailedMsg struct {
+	RepoPath string
+	OldPath  string
+	Input    string
+	Err      string
+}
+
 type WorktreeCreateKind int
 
 const (
@@ -295,6 +308,13 @@ func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 	}
 	m = m.clearFetchListStatus(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
+	if m.pendingWorktreeSelection != "" {
+		pendingPath := m.pendingWorktreeSelection
+		m.worktrees = m.worktrees.SelectFunc(func(wt gitquery.Worktree) bool {
+			return wt.Path == pendingPath
+		})
+		m.pendingWorktreeSelection = ""
+	}
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
@@ -420,6 +440,33 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 			msg.Input,
 			validate,
 			submit,
+		).SetInputError(errText)
+	}
+	return m
+}
+
+func (m Model) handleWorktreeMoved(msg WorktreeMovedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	m.pendingWorktreeSelection = msg.NewPath
+	m = m.clearStatus(statusOther)
+	return m.startFetchWorktrees()
+}
+
+func (m Model) handleWorktreeMoveFailed(msg WorktreeMoveFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		errText := msg.Err
+		if errText == "" {
+			errText = "Unable to move worktree"
+		}
+		oldPath := msg.OldPath
+		m.modal = modal.OpenInput(
+			ui.WorktreeMovePrompt,
+			ui.WorktreeMoveInputPlaceholder,
+			msg.Input,
+			validateWorktreeMoveInput,
+			func(input string) tea.Cmd { return m.moveWorktree(oldPath, input) },
 		).SetInputError(errText)
 	}
 	return m

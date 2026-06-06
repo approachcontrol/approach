@@ -25,8 +25,10 @@ const (
 )
 
 const BranchPrompt = "New branch"
+const WorktreeMovePrompt = "Move worktree to"
 const PRWorktreePrompt = "PR worktree"
 const WorktreeInputPlaceholder = "branch, tag, or new branch name"
+const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
 const AgentInputPlaceholder = "codex or claude"
@@ -155,6 +157,7 @@ type RenderParams struct {
 	RightEmptyMessage        string
 	FetchAvailable           bool
 	PullAvailable            bool
+	WorktreeMoveAvailable    bool
 	AgentAvailable           bool
 	NewAgentAvailable        bool
 }
@@ -178,7 +181,7 @@ func Render(p RenderParams) string {
 		repoPath = p.Repos[p.Selected].Path
 	}
 
-	var worktreeSelected, staleSelected, dirtySelected, lockedSelected, worktreeDeletableSelected, worktreeOpenableSelected bool
+	var worktreeSelected, staleSelected, dirtySelected, lockedSelected, worktreeDeletableSelected, worktreeOpenableSelected, worktreeMoveSelected bool
 	if p.Mode == ModeWorktrees && p.WorktreeSelected >= 0 && p.WorktreeSelected < len(p.Worktrees) {
 		worktreeSelected = true
 		wt := p.Worktrees[p.WorktreeSelected]
@@ -187,6 +190,7 @@ func Render(p RenderParams) string {
 		lockedSelected = wt.Locked
 		worktreeDeletableSelected = !wt.IsMain && !wt.Stale && !wt.Locked
 		worktreeOpenableSelected = !wt.Stale
+		worktreeMoveSelected = p.WorktreeMoveAvailable
 	}
 	var branchDirtySelected, branchDeletableSelected, branchOpenableSelected bool
 	if p.Mode == ModeBranches && p.BranchSelected >= 0 && p.BranchSelected < len(p.Branches) {
@@ -211,6 +215,7 @@ func Render(p RenderParams) string {
 		LockedSelected:            lockedSelected,
 		WorktreeDeletableSelected: worktreeDeletableSelected,
 		WorktreeOpenableSelected:  worktreeOpenableSelected,
+		WorktreeMoveSelected:      worktreeMoveSelected,
 		BranchDirtySelected:       branchDirtySelected,
 		BranchDeletableSelected:   branchDeletableSelected,
 		BranchOpenableSelected:    branchOpenableSelected,
@@ -396,6 +401,7 @@ type statusBarParams struct {
 	LockedSelected            bool
 	WorktreeDeletableSelected bool
 	WorktreeOpenableSelected  bool
+	WorktreeMoveSelected      bool
 	BranchDirtySelected       bool
 	BranchDeletableSelected   bool
 	BranchOpenableSelected    bool
@@ -571,6 +577,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			if sp.DirtySelected {
 				actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
 			}
+			if sp.WorktreeMoveSelected {
+				actions = append(actions, shortcutHint{Key: "m", Label: "move"})
+			}
 			if sp.Destructive && sp.WorktreeDeletableSelected {
 				actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 			}
@@ -734,7 +743,7 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 			parts = candidate
 		}
 	}
-	for _, key := range []string{"n", "N", "d", "p", "u", "enter", "f", "F"} {
+	for _, key := range []string{"n", "N", "m", "d", "p", "u", "enter", "f", "F"} {
 		if hint, ok := findShortcutHint(hints, key); ok {
 			parts = append(parts, renderFooterHint(hint))
 		}
@@ -761,7 +770,7 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 
 func worktreeFooterParts(hints []shortcutHint, includeDestructiveMode bool) []string {
 	var parts []string
-	keys := []string{"n", "N", "d", "p", "u", "enter", "f", "F"}
+	keys := []string{"n", "N", "m", "d", "p", "u", "enter", "f", "F"}
 	if includeDestructiveMode {
 		keys = append([]string{"D"}, keys...)
 	}

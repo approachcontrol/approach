@@ -16,27 +16,28 @@ const listRequestSlots = int(ui.ModeReflog) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos                  pane.Pane[scanner.Repo]
-	width                  int
-	height                 int
-	mode                   ui.Mode
-	rows                   pane.Pane[gitquery.BranchRow]
-	stashes                pane.Pane[gitquery.Stash]
-	worktrees              pane.Pane[gitquery.Worktree]
-	commits                pane.Pane[gitquery.Commit]
-	reflogs                pane.Pane[gitquery.ReflogEntry]
-	modal                  modal.Modal
-	diffRequestSeq         uint64
-	listRequestSeq         uint64
-	listRequests           [listRequestSlots]uint64
-	activePane             int // 0=left (repos), 1=right (content)
-	destructive            bool
-	status                 statusError
-	searchActive           bool
-	pendingBranchSelection string
-	agentCommand           string
-	saveAgent              func(string) error
-	launchAgent            func(string, string) (actions.TerminalLaunchSpec, error)
+	repos                    pane.Pane[scanner.Repo]
+	width                    int
+	height                   int
+	mode                     ui.Mode
+	rows                     pane.Pane[gitquery.BranchRow]
+	stashes                  pane.Pane[gitquery.Stash]
+	worktrees                pane.Pane[gitquery.Worktree]
+	commits                  pane.Pane[gitquery.Commit]
+	reflogs                  pane.Pane[gitquery.ReflogEntry]
+	modal                    modal.Modal
+	diffRequestSeq           uint64
+	listRequestSeq           uint64
+	listRequests             [listRequestSlots]uint64
+	activePane               int // 0=left (repos), 1=right (content)
+	destructive              bool
+	status                   statusError
+	searchActive             bool
+	pendingBranchSelection   string
+	pendingWorktreeSelection string
+	agentCommand             string
+	saveAgent                func(string) error
+	launchAgent              func(string, string) (actions.TerminalLaunchSpec, error)
 }
 
 type statusSource int
@@ -198,6 +199,7 @@ func (m Model) View() string {
 		RightEmptyMessage:        rightEmptyMessage,
 		FetchAvailable:           m.canFetch(),
 		PullAvailable:            m.canPull(),
+		WorktreeMoveAvailable:    m.canMoveWorktree(),
 		AgentAvailable:           m.canLaunchAgent(),
 		NewAgentAvailable:        m.canCreateAndLaunchAgent(),
 	})
@@ -382,6 +384,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWorktreeCreated(msg)
 	case WorktreeCreateFailedMsg:
 		return m.handleWorktreeCreateFailed(msg), nil
+	case WorktreeMovedMsg:
+		return m.handleWorktreeMoved(msg)
+	case WorktreeMoveFailedMsg:
+		return m.handleWorktreeMoveFailed(msg), nil
 	case CommitResultMsg:
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:

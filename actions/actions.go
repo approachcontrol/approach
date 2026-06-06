@@ -55,6 +55,72 @@ func UnlockWorktree(repoPath, worktreePath string) error {
 	return exec.Command("git", "-C", repoPath, "worktree", "unlock", worktreePath).Run()
 }
 
+// MoveWorktree runs `git worktree move` for a linked worktree and returns the
+// resolved destination path on success.
+func MoveWorktree(repoPath, worktreePath, destination string) (string, error) {
+	finalPath, err := resolveWorktreeMoveDestination(worktreePath, destination)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(worktreePath) == finalPath {
+		return "", fmt.Errorf("worktree destination must be different")
+	}
+	if _, err := os.Stat(finalPath); err == nil {
+		return "", fmt.Errorf("worktree destination already exists: %s", finalPath)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	cleanupParent, err := createWorktreeMoveDestinationParent(finalPath)
+	if err != nil {
+		return "", err
+	}
+	if err := runGit(repoPath, "worktree", "move", "--", worktreePath, finalPath); err != nil {
+		cleanupParent()
+		return "", err
+	}
+	return finalPath, nil
+}
+
+func createWorktreeMoveDestinationParent(finalPath string) (func(), error) {
+	parent := filepath.Dir(finalPath)
+	var created []string
+	for dir := parent; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(dir); err == nil {
+			break
+		} else if os.IsNotExist(err) {
+			created = append(created, dir)
+		} else {
+			return nil, err
+		}
+		if next := filepath.Dir(dir); next == dir {
+			break
+		}
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, err
+	}
+	return func() {
+		for _, dir := range created {
+			_ = os.Remove(dir)
+		}
+	}, nil
+}
+
+func resolveWorktreeMoveDestination(worktreePath, input string) (string, error) {
+	worktreePath = strings.TrimSpace(worktreePath)
+	if worktreePath == "" {
+		return "", fmt.Errorf("worktree path cannot be empty")
+	}
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", fmt.Errorf("worktree destination cannot be empty")
+	}
+	if filepath.IsAbs(input) {
+		return filepath.Clean(input), nil
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(worktreePath), input)), nil
+}
+
 // Fetch runs `git fetch --prune` for the given repo or worktree path.
 func Fetch(path string) error {
 	return runGit(path, "fetch", "--prune")

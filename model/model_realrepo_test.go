@@ -218,6 +218,49 @@ func TestModel_CreateBranchFromSelectedBranchAgainstRealRepo(t *testing.T) {
 	}
 }
 
+func TestModel_MoveWorktreeAgainstRealRepo(t *testing.T) {
+	m, dir := setupModelRepo(t)
+	root := filepath.Dir(dir)
+	oldPath := filepath.Join(root, "repo-worktrees", "feat")
+	newPath := filepath.Join(root, "repo-worktrees", "feat-renamed")
+	mustGit(t, dir, "worktree", "add", oldPath, "-b", "feat")
+
+	m = inRightPane(m)
+	m, _ = update(m, m.Init()())
+	if len(m.Worktrees()) != 2 {
+		t.Fatalf("expected root and linked worktree, got %+v", m.Worktrees())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat-renamed")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected move command")
+	}
+	moved, ok := cmd().(model.WorktreeMovedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeMovedMsg, got %T", cmd())
+	}
+	if moved.OldPath != oldPath || moved.NewPath != newPath {
+		t.Fatalf("unexpected move message: %+v", moved)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("expected old worktree path removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("expected new worktree path to exist: %v", err)
+	}
+
+	m, cmd = update(m, moved)
+	if cmd == nil {
+		t.Fatal("expected refresh command after move")
+	}
+	m, _ = update(m, cmd())
+	if got := m.Worktrees()[m.WorktreeSelected()].Path; got != newPath {
+		t.Fatalf("expected moved worktree selected at %q, got %q", newPath, got)
+	}
+}
+
 func TestModel_StashDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, dir := setupModelRepo(t)
 	writeFile(t, dir, "README.md", "hello\nstashed\n")

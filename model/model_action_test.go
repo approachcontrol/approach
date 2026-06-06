@@ -98,6 +98,239 @@ func TestModel_EnterOnEmptyWorktreeListIsNoOp(t *testing.T) {
 	}
 }
 
+func TestModel_MoveWorktreeOpensInputForMovableLinkedWorktree(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if cmd != nil {
+		t.Fatal("expected opening move input to return no command")
+	}
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.ConfirmPrompt() != ui.WorktreeMovePrompt {
+		t.Fatalf("expected move prompt %q, got %q", ui.WorktreeMovePrompt, m.ConfirmPrompt())
+	}
+	if !strings.Contains(m.View(), ui.WorktreeMoveInputPlaceholder) {
+		t.Fatalf("expected move placeholder in view, got:\n%s", m.View())
+	}
+	if m.WorktreeInput() != "" {
+		t.Fatalf("expected empty initial move input, got %q", m.WorktreeInput())
+	}
+}
+
+func TestModel_MoveWorktreeInputNoOpsWhenUnavailable(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(model.Model) model.Model
+		wantOverlay ui.OverlayState
+	}{
+		{
+			name: "main worktree",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+					{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+				}})
+				return m
+			},
+		},
+		{
+			name: "stale worktree",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+					{Path: "/dev/alpha-worktrees/feat", BranchName: "feat", Stale: true},
+				}})
+				return m
+			},
+		},
+		{
+			name: "locked worktree",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+					{Path: "/dev/alpha-worktrees/feat", BranchName: "feat", Locked: true},
+				}})
+				return m
+			},
+		},
+		{
+			name: "dirty worktree is movable",
+			setup: func(m model.Model) model.Model {
+				m = inRightPane(m)
+				m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+					{Path: "/dev/alpha-worktrees/feat", BranchName: "feat", Dirty: true},
+				}})
+				return m
+			},
+			wantOverlay: ui.OverlayWorktreeInput,
+		},
+		{
+			name: "empty list",
+			setup: func(m model.Model) model.Model {
+				return inRightPane(m)
+			},
+		},
+		{
+			name: "left pane",
+			setup: func(m model.Model) model.Model {
+				m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+					{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
+				}})
+				return m
+			},
+		},
+		{
+			name: "non-worktrees mode",
+			setup: func(m model.Model) model.Model {
+				return inBranchesMode(m)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.setup(model.New(testRepos()))
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+			if cmd != nil {
+				t.Fatal("expected no command")
+			}
+			if m.Overlay() != tt.wantOverlay {
+				t.Fatalf("expected overlay %d, got %d", tt.wantOverlay, m.Overlay())
+			}
+		})
+	}
+}
+
+func TestModel_MoveWorktreeSubmitReturnsCommandAndFailureReopensInput(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	oldPath := "/dev/alpha-worktrees/feat"
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: oldPath, BranchName: "feat"},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat-renamed")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected move overlay to close on submit, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected move command")
+	}
+	msg, ok := cmd().(model.WorktreeMoveFailedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeMoveFailedMsg, got %T", msg)
+	}
+	if msg.RepoPath != "/dev/alpha" || msg.OldPath != oldPath || msg.Input != "feat-renamed" || msg.Err == "" {
+		t.Fatalf("unexpected failure message: %+v", msg)
+	}
+
+	m, _ = update(m, msg)
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected move input to reopen, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "feat-renamed" {
+		t.Fatalf("expected original input preserved, got %q", m.WorktreeInput())
+	}
+	if m.WorktreeInputErr() == "" {
+		t.Fatal("expected move error to be shown")
+	}
+}
+
+func TestModel_StaleWorktreeMoveFailureIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+	m, _ = update(m, model.WorktreeMoveFailedMsg{
+		RepoPath: "/dev/alpha",
+		OldPath:  "/dev/alpha-worktrees/feat",
+		Input:    "feat-renamed",
+		Err:      "boom",
+	})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected stale move failure to be ignored, got overlay %d", m.Overlay())
+	}
+}
+
+func TestModel_WorktreeMovedRefreshesAndSelectsMovedPath(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
+	}})
+
+	m, cmd := update(m, model.WorktreeMovedMsg{
+		RepoPath: "/dev/alpha",
+		OldPath:  "/dev/alpha-worktrees/feat",
+		NewPath:  "/dev/alpha-worktrees/feat-renamed",
+	})
+	if cmd == nil {
+		t.Fatal("expected worktree refresh command after move")
+	}
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/feat-renamed", BranchName: "feat"},
+	}})
+	if m.WorktreeSelected() != 1 {
+		t.Fatalf("expected moved worktree selected, got index %d", m.WorktreeSelected())
+	}
+}
+
+func TestModel_StaleWorktreeMovedIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+	m, cmd := update(m, model.WorktreeMovedMsg{
+		RepoPath: "/dev/alpha",
+		OldPath:  "/dev/alpha-worktrees/feat",
+		NewPath:  "/dev/alpha-worktrees/feat-renamed",
+	})
+	if cmd != nil {
+		t.Fatal("expected stale move success to return no command")
+	}
+	if m.WorktreeSelected() != 0 {
+		t.Fatalf("expected selection unchanged, got %d", m.WorktreeSelected())
+	}
+}
+
+func TestModel_WorktreeMovePendingSelectionClampsWhenPathMissing(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/feat", BranchName: "feat"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, model.WorktreeMovedMsg{
+		RepoPath: "/dev/alpha",
+		OldPath:  "/dev/alpha-worktrees/feat",
+		NewPath:  "/dev/alpha-worktrees/feat-renamed",
+	})
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	if m.WorktreeSelected() != 0 {
+		t.Fatalf("expected selection to clamp when moved path is missing, got %d", m.WorktreeSelected())
+	}
+
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/feat-renamed", BranchName: "feat"},
+	}})
+	if m.WorktreeSelected() != 0 {
+		t.Fatalf("expected missing-path pending selection to be cleared, got %d", m.WorktreeSelected())
+	}
+}
+
 func TestModel_WorktreeDiffResultStoresDiff(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)

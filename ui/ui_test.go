@@ -529,6 +529,81 @@ func TestRender_WorktreeRootOmitsDeleteHint(t *testing.T) {
 	}
 }
 
+func TestRender_WorktreeMoveHintAvailability(t *testing.T) {
+	tests := []struct {
+		name     string
+		worktree gitquery.Worktree
+		canMove  bool
+		wantMove bool
+	}{
+		{
+			name:     "movable linked worktree",
+			worktree: gitquery.Worktree{Path: "/a-worktrees/feat", BranchName: "feat"},
+			canMove:  true,
+			wantMove: true,
+		},
+		{
+			name:     "dirty linked worktree",
+			worktree: gitquery.Worktree{Path: "/a-worktrees/feat", BranchName: "feat", Dirty: true},
+			canMove:  true,
+			wantMove: true,
+		},
+		{
+			name:     "main worktree",
+			worktree: gitquery.Worktree{Path: "/a", BranchName: "main", IsMain: true},
+		},
+		{
+			name:     "stale worktree",
+			worktree: gitquery.Worktree{Path: "/a-worktrees/feat", BranchName: "feat", Stale: true},
+		},
+		{
+			name:     "locked worktree",
+			worktree: gitquery.Worktree{Path: "/a-worktrees/feat", BranchName: "feat", Locked: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:                 []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+				Selected:              0,
+				Width:                 120,
+				Height:                18,
+				Mode:                  ModeWorktrees,
+				Worktrees:             []gitquery.Worktree{tt.worktree},
+				WorktreeSelected:      0,
+				ActivePane:            1,
+				WorktreeMoveAvailable: tt.canMove,
+			})
+			hasMove := strings.Contains(view, "m: move")
+			if hasMove != tt.wantMove {
+				t.Fatalf("move hint visibility mismatch, want %v got %v:\n%s", tt.wantMove, hasMove, view)
+			}
+		})
+	}
+}
+
+func TestRender_NarrowWorktreeFooterIncludesMoveWhenAvailable(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                 []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:              0,
+		Width:                 100,
+		Height:                18,
+		Mode:                  ModeWorktrees,
+		Worktrees:             []gitquery.Worktree{{Path: "/a-worktrees/feat", BranchName: "feat"}},
+		WorktreeSelected:      0,
+		ActivePane:            1,
+		WorktreeMoveAvailable: true,
+	})
+	if strings.Contains(view, "Shortcuts") {
+		t.Fatal("narrow render should keep shortcuts in footer")
+	}
+	footer := strings.Split(view, "\n")[len(strings.Split(view, "\n"))-1]
+	if !strings.Contains(footer, "m: move") {
+		t.Fatalf("narrow footer should include move hint, got %q", footer)
+	}
+}
+
 func TestRender_BranchShortcutPaneShowsDiffButOmitsRootDelete(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
@@ -1179,6 +1254,24 @@ func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 	})
 	if !strings.Contains(view, "branch, tag, or new branch name") {
 		t.Error("worktree input dialog should show placeholder when input is empty")
+	}
+}
+
+func TestRender_WorktreeMoveInputDialogShowsPromptAndPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      WorktreeMovePrompt,
+		WorktreeInputPlaceholder: WorktreeMoveInputPlaceholder,
+	})
+	if !strings.Contains(view, "Move worktree to:") {
+		t.Error("move input dialog should show move prompt")
+	}
+	if !strings.Contains(view, WorktreeMoveInputPlaceholder) {
+		t.Error("move input dialog should show move placeholder")
 	}
 }
 

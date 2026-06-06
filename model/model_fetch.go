@@ -216,6 +216,20 @@ func (m Model) createPullRequestWorktree(input string) tea.Cmd {
 	}
 }
 
+func (m Model) moveWorktree(oldPath, input string) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		newPath, err := actions.MoveWorktree(repoPath, oldPath, input)
+		if err != nil {
+			return WorktreeMoveFailedMsg{RepoPath: repoPath, OldPath: oldPath, Input: input, Err: err.Error()}
+		}
+		return WorktreeMovedMsg{RepoPath: repoPath, OldPath: oldPath, NewPath: newPath}
+	}
+}
+
 func (m Model) fetchWorktrees(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
