@@ -698,7 +698,7 @@ func TestModel_LeftPaneFKeyFetchesFilteredReposOnly(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected batch fetch command")
 	}
-	if !strings.Contains(m.View(), "Fetching 0/1 visible repos...") {
+	if !strings.Contains(m.View(), "Fetching 0/1 visible repo...") {
 		t.Fatalf("expected initial batch fetch status, got:\n%s", m.View())
 	}
 
@@ -730,6 +730,24 @@ func TestModel_LeftPaneFKeyWithNoVisibleReposShowsStatus(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "No visible repos to fetch") {
 		t.Fatalf("expected no-visible-repos status, got:\n%s", m.View())
+	}
+}
+
+func TestModel_LeftPaneFKeyDuringVisibleRepoFetchDoesNotStartAnotherBatch(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if firstCmd == nil {
+		t.Fatal("expected first batch fetch command")
+	}
+	m, secondCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if secondCmd != nil {
+		t.Fatal("expected no command when batch fetch is already in progress")
+	}
+	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
+		t.Fatalf("expected original batch progress to remain visible, got:\n%s", m.View())
 	}
 }
 
@@ -892,16 +910,14 @@ func TestModel_VisibleRepoFetchStaleResultIgnoredByRequest(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
-	m, oldCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	oldMsg := runBatchCmd(t, oldCmd)[0]
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 
-	m, cmd := update(m, oldMsg)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, model.VisibleRepoFetchResultMsg{Request: 999, RepoPath: "/dev/alpha"})
 	if cmd != nil {
 		t.Fatal("stale batch result should not trigger refresh")
 	}
 	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
-		t.Fatalf("stale result should not advance newer batch progress, got:\n%s", m.View())
+		t.Fatalf("stale result should not advance batch progress, got:\n%s", m.View())
 	}
 }
 
@@ -922,7 +938,7 @@ func TestModel_VisibleRepoFetchRefreshesOnlyIfCurrentSelectionWasCaptured(t *tes
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 	m, _ = update(m, msgs[0])
-	if !strings.Contains(m.View(), "Fetched 1 visible repos") {
+	if !strings.Contains(m.View(), "Fetched 1 visible repo") {
 		t.Fatalf("expected final success status, got:\n%s", m.View())
 	}
 }

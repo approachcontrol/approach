@@ -343,6 +343,8 @@ func (m Model) clearAnyStatus() Model {
 
 func (m Model) visibleStatusText() string {
 	if m.visibleRepoFetch.Request != 0 {
+		// In-flight batch fetch progress owns the transient status line until
+		// the batch completes; later statuses replace the final batch summary.
 		return m.visibleRepoFetchProgressText()
 	}
 	return m.status.Text

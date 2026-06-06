@@ -110,6 +110,10 @@ func (m Model) startFetchReflog() (Model, tea.Cmd) {
 }
 
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
+	if m.visibleRepoFetch.Request != 0 {
+		return m, nil
+	}
+
 	repos := m.filteredRepos()
 	if len(repos) == 0 {
 		m.visibleRepoFetch = visibleRepoFetchState{}
@@ -158,20 +162,27 @@ func (m Model) canFetchVisibleRepos() bool {
 }
 
 func (m Model) visibleRepoFetchProgressText() string {
-	return fmt.Sprintf("Fetching %d/%d visible repos...", m.visibleRepoFetch.Completed, m.visibleRepoFetch.Total)
+	return fmt.Sprintf("Fetching %d/%d visible %s...", m.visibleRepoFetch.Completed, m.visibleRepoFetch.Total, visibleRepoNoun(m.visibleRepoFetch.Total))
 }
 
 func (m Model) visibleRepoFetchFinalStatusText() string {
 	total := m.visibleRepoFetch.Total
 	if m.visibleRepoFetch.FailureCount == 0 {
-		return fmt.Sprintf("Fetched %d visible repos", total)
+		return fmt.Sprintf("Fetched %d visible %s", total, visibleRepoNoun(total))
 	}
 	failed := strings.Join(m.visibleRepoFetch.FailureNames, ", ")
 	remaining := m.visibleRepoFetch.FailureCount - len(m.visibleRepoFetch.FailureNames)
 	if remaining > 0 {
 		failed = fmt.Sprintf("%s +%d more", failed, remaining)
 	}
-	return fmt.Sprintf("Fetched %d/%d visible repos; failed: %s", m.visibleRepoFetch.Successes, total, failed)
+	return fmt.Sprintf("Fetched %d/%d visible %s; failed: %s", m.visibleRepoFetch.Successes, total, visibleRepoNoun(total), failed)
+}
+
+func visibleRepoNoun(count int) string {
+	if count == 1 {
+		return "repo"
+	}
+	return "repos"
 }
 
 func expireVisibleRepoFetchStatus(request uint64, text string) tea.Cmd {
