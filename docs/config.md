@@ -131,7 +131,9 @@ updates this value immediately, creating the config file if needed.
 ### `[sessions]`
 
 Controls portable agent-session storage. Session metadata and normalized
-transcripts are stored outside repositories by default.
+transcripts are stored outside repositories by default. Each provider session is
+stored under a hashed session directory, with the raw provider session ID kept in
+`meta.json`.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -140,6 +142,7 @@ transcripts are stored outside repositories by default.
 
 When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or
 `~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset.
+Relative roots other than `~`/`~/...` fail config parsing.
 
 ### `[bootstrap]`
 
@@ -185,6 +188,13 @@ For development and tests, pass an explicit state root:
 wtui session-hook --provider codex --state-root /tmp/wtui-sessions-test
 ```
 
+`session-hook` loads the normal wtui config before ingesting the hook payload.
+`--state-root` overrides `[sessions].root`, and `WTUI_SESSION_STATE_ROOT`
+overrides the configured root when `--state-root` is omitted. The
+`copy_raw_transcripts` setting controls whether provider-native transcript data
+is copied to `raw.jsonl`; normalized transcript events are still written for the
+sessions view.
+
 Claude Code hook example:
 
 ```json
@@ -227,6 +237,10 @@ When wtui launches an agent with `a` or `N`, it appends these environment
 variables so hooks can associate sessions with the selected repo/worktree:
 `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
 `WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
+
+For Codex hook payloads with `hook_event_name = "Stop"`, wtui records the
+session as ended. Claude hook ingestion also records ended sessions, using the
+payload end time when present and the current time as a fallback.
 
 Transcripts can contain secrets, credentials, private prompts, and proprietary
 code. Keep the sessions root in user-private storage and avoid committing

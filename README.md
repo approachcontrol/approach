@@ -173,7 +173,8 @@ Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
 `~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset. Transcripts
 may contain secrets or private prompts; wtui keeps them outside repositories and
-uses restrictive file permissions for created session files.
+uses restrictive file permissions for created session files. Provider session IDs
+are stored in hashed directory names instead of raw path components.
 
 ## Configuration
 
@@ -229,6 +230,12 @@ wtui session-hook --provider codex
 For local testing, use `--state-root /tmp/wtui-sessions-test`. Agents launched
 from wtui receive `WTUI_*` metadata so hook records can be associated with the
 repo, worktree, branch, and launch.
+
+`session-hook` loads the normal wtui config, so `[sessions].root` and
+`copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
+configured sessions root for one hook invocation. Set
+`copy_raw_transcripts = false` to skip preserving provider-native `raw.jsonl`
+copies while keeping normalized transcript events for the sessions view.
 
 ## Development
 

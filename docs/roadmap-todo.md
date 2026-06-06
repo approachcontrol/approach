@@ -43,7 +43,8 @@ Goal: add context that helps users decide which worktree needs attention.
 - [ ] P2 - CI status per branch/worktree: show pass, fail, and running indicators for active branches.
 - [ ] P2 - GitHub/GitLab provider config: support PR creation, PR detection, and CI lookup without hardcoding one provider.
 - [ ] P3 - Worktree notes, labels, or tags: help users manage many parallel branches, especially for review or agent-driven work.
-- [ ] P3 - AI-agent session awareness: detect active coding-agent sessions in worktrees when reliable signals exist.
+- [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, and show normalized transcripts in mode 6.
+- [ ] P3 - Agent session follow-ups: add resume/open-native-transcript actions and richer status when provider signals are reliable.
 - [ ] P3 - Desktop notifications: notify on long-running fetch, pull, or batch completion after the operation model is mature.
 
 ## Phase 5: Release and Community Hygiene
