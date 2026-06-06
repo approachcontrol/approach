@@ -23,6 +23,8 @@ are already implemented and should be treated as the baseline product:
   drop, or prune actions are exposed.
 - Worktree creation from an existing branch, tag, ref, or new branch name using
   `n`, with new checkouts placed under `<repo>-worktrees/<ref>`.
+- Branch creation from the branches pane using `n`, creating from the selected
+  branch without checking out or creating a worktree.
 - Worktree deletion followed by an optional associated branch deletion prompt.
 - Stale worktree pruning, with locked worktrees protected from delete/prune and
   unlock exposed as a separate `u` action.

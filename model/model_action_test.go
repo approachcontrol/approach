@@ -1565,13 +1565,12 @@ func TestModel_PKeyOpensPullRequestWorktreeInput(t *testing.T) {
 	}
 }
 
-func TestModel_NKeyNoOpOutsideWorktreesMode(t *testing.T) {
+func TestModel_NKeyNoOpOutsideCreationModes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		key  rune
 		mode ui.Mode
 	}{
-		{name: "branches", key: '2', mode: ui.ModeBranches},
 		{name: "stashes", key: '3', mode: ui.ModeStashes},
 		{name: "history", key: '4', mode: ui.ModeHistory},
 		{name: "reflog", key: '5', mode: ui.ModeReflog},
@@ -1836,6 +1835,278 @@ func TestModel_WorktreeCreateFailedUsesFallbackError(t *testing.T) {
 	}
 	if m.WorktreeInputErr() != "Unable to create worktree" {
 		t.Errorf("expected fallback error, got %q", m.WorktreeInputErr())
+	}
+}
+
+// --- Branch creation ---
+
+func TestModel_NKeyInBranchesModeOpensBranchInput(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "" {
+		t.Errorf("expected empty branch input, got %q", m.WorktreeInput())
+	}
+	if !strings.Contains(m.View(), "Create branch:") {
+		t.Errorf("expected branch prompt in view, got %q", m.View())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd opening input, got %T", cmd)
+	}
+}
+
+func TestModel_NKeyInBranchesModeWithNoRepoIsNoOp(t *testing.T) {
+	m := model.New(nil)
+	m = inBranchesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected OverlayNone, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd, got %T", cmd)
+	}
+}
+
+func TestModel_BranchInputEnterRequiresText(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
+	}
+	if m.WorktreeInputErr() == "" {
+		t.Fatal("expected validation error")
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd for empty input, got %T", cmd)
+	}
+}
+
+func TestModel_BranchInputEnterCreatesBranch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/one")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.BranchCreateFailedMsg); !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+}
+
+func TestModel_BranchInputUsesSelectedBranchAsStartPoint(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg, ok := cmd().(model.BranchCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if msg.StartPoint != "refs/heads/base" {
+		t.Fatalf("expected start point refs/heads/base, got %q", msg.StartPoint)
+	}
+}
+
+func TestModel_BranchInputUsesFullRefForHeadsPrefixedBranch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main", FullRef: "refs/heads/main"},
+			{Name: "heads/base", FullRef: "refs/heads/heads/base"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-heads-base")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg, ok := cmd().(model.BranchCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if msg.StartPoint != "refs/heads/heads/base" {
+		t.Fatalf("expected start point refs/heads/heads/base, got %q", msg.StartPoint)
+	}
+}
+
+func TestModel_BranchCreatedRefetchesBranches(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, cmd := update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	if m.Mode() != ui.ModeBranches {
+		t.Errorf("expected mode branches after create, got %d", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchBranches cmd after create")
+	}
+}
+
+func TestModel_BranchCreateFailedReopensBranchInput(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.BranchCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feature/one", Err: "boom"})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "feature/one" {
+		t.Errorf("expected input restored, got %q", m.WorktreeInput())
+	}
+	if m.WorktreeInputErr() != "boom" {
+		t.Errorf("expected error restored, got %q", m.WorktreeInputErr())
+	}
+	if !strings.Contains(m.View(), "Create branch:") {
+		t.Errorf("expected branch prompt in view, got %q", m.View())
+	}
+}
+
+func TestModel_BranchCreateFailedRetryPreservesStartPoint(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+		},
+	})
+	m, _ = update(m, model.BranchCreateFailedMsg{
+		RepoPath:   "/dev/alpha",
+		Input:      "bad name",
+		Err:        "bad branch name",
+		StartPoint: "refs/heads/base",
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected retry create branch cmd")
+	}
+	msg, ok := cmd().(model.BranchCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if msg.StartPoint != "refs/heads/base" {
+		t.Fatalf("expected retry to preserve start point refs/heads/base, got %q", msg.StartPoint)
+	}
+}
+
+func TestModel_BranchCreateFailedUsesFallbackError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.BranchCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feature/one"})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInputErr() != "Unable to create branch" {
+		t.Errorf("expected fallback error, got %q", m.WorktreeInputErr())
+	}
+}
+
+func TestModel_BranchCreatedClearsFilterBeforeSelectingNewBranch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("base")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+			{Name: "feature/one"},
+		},
+	})
+	if m.ItemSearch() != "" {
+		t.Fatalf("expected branch filter cleared after create, got %q", m.ItemSearch())
+	}
+	if m.BranchSelected() != 2 {
+		t.Fatalf("expected new branch selected at index 2, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BranchCreatedSelectsNewBranchAfterRefresh(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "feature/one"},
+		},
+	})
+	if m.BranchSelected() != 1 {
+		t.Fatalf("expected new branch selected at index 1, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BranchCreatedSelectsNewBranchByFullRef(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "base"})
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main", FullRef: "refs/heads/main"},
+			{Name: "heads/base", FullRef: "refs/heads/base"},
+		},
+	})
+	if m.BranchSelected() != 1 {
+		t.Fatalf("expected new branch selected by full ref at index 1, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})  // left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/bravo",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "feature/one"},
+		},
+	})
+
+	if m.BranchSelected() != 0 {
+		t.Fatalf("expected repo switch to clear pending branch selection, got index %d", m.BranchSelected())
 	}
 }
 

@@ -91,7 +91,7 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 
 func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false) // activePane=1 (right)
-	for _, hint := range []string{"f: fetch", "t: terminal", "c: code", "d: delete"} {
+	for _, hint := range []string{"n: new branch", "f: fetch", "t: terminal", "c: code", "d: delete"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be shown when right pane is active", hint)
 		}
@@ -781,6 +781,23 @@ func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 	})
 	if !strings.Contains(view, "branch, tag, or new branch name") {
 		t.Error("worktree input dialog should show placeholder when input is empty")
+	}
+}
+
+func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:               []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:               80,
+		Height:              24,
+		Mode:                2,
+		Overlay:             OverlayWorktreeInput,
+		WorktreeInputPrompt: BranchPrompt,
+	})
+	if !strings.Contains(view, "Create branch:") {
+		t.Error("branch input dialog should show branch-specific prompt")
+	}
+	if !strings.Contains(view, "branch name") {
+		t.Error("branch input dialog should show branch-specific placeholder")
 	}
 }
 

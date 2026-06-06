@@ -76,7 +76,7 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5` | Switch to worktrees / branches / stashes / history / reflog |
 | `←`/`h`/`→`/`l` | Cycle through modes |
 | `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
-| `n` | Create a new worktree from a branch, tag, or new branch name |
+| `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `A` | Choose and persist the coding agent (`codex` or `claude`) |
@@ -129,13 +129,14 @@ Status indicators stack on each branch:
 - `merged` cyan: branch is fully merged into the cleanup branch (`main` or `master`)
 
 Branches ahead of upstream show up to 5 unpushed commit messages, with overflow
-count. When the root branch is dirty, `enter` opens a full-screen diff overlay.
-`t` opens or attaches to a tmux/Zellij session, `c` opens VSCode at the
-worktree path, and `a` launches the selected coding agent for checked-out branch
-rows only. `f` runs `git fetch --prune`, and `F` runs `git pull --ff-only` for
-branches that have a checked-out worktree. `d` deletes non-worktree branches,
-with a force-retry prompt on failure. Deletion requires destructive mode to be
-enabled first (`D`).
+count. Press `n` to create a new branch from the selected branch, without
+checking it out or creating a worktree. When the root branch is dirty, `enter`
+opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij
+session, `c` opens VSCode at the worktree path, and `a` launches the selected
+coding agent for checked-out branch rows only. `f` runs `git fetch --prune`,
+and `F` runs `git pull --ff-only` for branches that have a checked-out
+worktree. `d` deletes non-worktree branches, with a force-retry prompt on
+failure. Deletion requires destructive mode to be enabled first (`D`).
 
 ### Stashes view (mode 3)
 

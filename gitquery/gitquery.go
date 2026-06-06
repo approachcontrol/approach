@@ -48,6 +48,7 @@ type Worktree struct {
 // Branch represents a local git branch with its status.
 type Branch struct {
 	Name          string
+	FullRef       string
 	HasUpstream   bool
 	UpstreamGone  bool
 	Ahead         int
@@ -275,7 +276,7 @@ func (q *Querier) StashDiff(repoPath string, index int) (string, error) {
 	return out, nil
 }
 
-const refFormat = "%(refname:short)\t%(upstream)\t%(upstream:track)"
+const refFormat = "%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)"
 
 // ListBranches returns all local branches sorted alphabetically by name.
 func ListBranches(repoPath string) ([]Branch, error) {

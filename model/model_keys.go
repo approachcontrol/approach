@@ -191,6 +191,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(false)
 		}
+		if m.mode == ui.ModeBranches {
+			return m.handleNewBranch()
+		}
 	case "P":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
@@ -343,6 +346,19 @@ func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleNewBranch() (tea.Model, tea.Cmd) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
+	m.modal = modal.OpenInput(
+		ui.BranchPrompt,
+		"",
+		validateBranchInput,
+		func(input string) tea.Cmd { return m.createBranch(input) },
+	)
+	return m, nil
+}
+
 func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
@@ -360,6 +376,13 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 func validateWorktreeInput(input string) error {
 	if input == "" {
 		return fmt.Errorf("Enter a branch, tag, or new branch name")
+	}
+	return nil
+}
+
+func validateBranchInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("Enter a branch name")
 	}
 	return nil
 }
@@ -684,6 +707,7 @@ func (m Model) resetModeCursors() Model {
 }
 
 func (m Model) resetRightPaneCursors() Model {
+	m.pendingBranchSelection = ""
 	m.rows = m.rows.SetItems(nil).ResetSelection()
 	m.stashes = m.stashes.SetItems(nil).ResetSelection()
 	m.worktrees = m.worktrees.SetItems(nil).ResetSelection()
