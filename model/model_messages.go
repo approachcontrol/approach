@@ -46,6 +46,18 @@ type BranchDeletedMsg struct {
 	RepoPath string
 }
 
+type BranchCreatedMsg struct {
+	RepoPath string
+	Name     string
+}
+
+type BranchCreateFailedMsg struct {
+	RepoPath   string
+	Input      string
+	Err        string
+	StartPoint string
+}
+
 type StashDroppedMsg struct {
 	RepoPath string
 }
@@ -119,6 +131,7 @@ type GitPullFailedMsg struct {
 type WorktreeCreatedMsg struct {
 	RepoPath     string
 	WorktreePath string
+	LaunchAgent  bool
 }
 
 type WorktreeCreateKind int
@@ -129,10 +142,11 @@ const (
 )
 
 type WorktreeCreateFailedMsg struct {
-	RepoPath string
-	Input    string
-	Err      string
-	Kind     WorktreeCreateKind
+	RepoPath    string
+	Input       string
+	Err         string
+	Kind        WorktreeCreateKind
+	LaunchAgent bool
 }
 
 type ReflogResultMsg struct {
@@ -153,6 +167,19 @@ type ClipboardResultMsg struct {
 }
 
 type TerminalResultMsg struct {
+	Err string
+}
+
+type AgentSetMsg struct {
+	Command string
+}
+
+type AgentSetFailedMsg struct {
+	Command string
+	Err     string
+}
+
+type AgentResultMsg struct {
 	Err string
 }
 
@@ -361,7 +388,12 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	}
 	m.mode = ui.ModeWorktrees
 	m.worktrees = m.worktrees.ResetSelection()
-	return m.startFetchWorktrees()
+	m, fetchCmd := m.startFetchWorktrees()
+	if !msg.LaunchAgent {
+		return m, fetchCmd
+	}
+	m, launchCmd := m.launchAgentAtPath(msg.WorktreePath)
+	return m, tea.Batch(fetchCmd, launchCmd)
 }
 
 func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
@@ -371,20 +403,42 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 			errText = "Unable to create worktree"
 		}
 		prompt := "New worktree"
+		placeholder := ui.WorktreeInputPlaceholder
 		validate := validateWorktreeInput
-		submit := func(input string) tea.Cmd { return m.createWorktree(input) }
+		submit := func(input string) tea.Cmd { return m.createWorktree(input, msg.LaunchAgent) }
 		if msg.Kind == WorktreeCreatePullRequest {
 			prompt = ui.PRWorktreePrompt
+			placeholder = ui.PRWorktreeInputPlaceholder
 			validate = func(input string) error { return validatePullRequestWorktreeInput(msg.RepoPath, input) }
 			submit = func(input string) tea.Cmd { return m.createPullRequestWorktree(input) }
+		} else if msg.LaunchAgent {
+			prompt = "Create worktree and launch agent from"
 		}
 		m.modal = modal.OpenInput(
 			prompt,
+			placeholder,
 			msg.Input,
 			validate,
 			submit,
 		).SetInputError(errText)
 	}
+	return m
+}
+
+func (m Model) handleAgentSet(msg AgentSetMsg) Model {
+	m.agentCommand = msg.Command
+	m = m.clearStatus(statusOther)
+	return m
+}
+
+func (m Model) handleAgentSetFailed(msg AgentSetFailedMsg) Model {
+	// Keep the selection usable for this session even when persistence fails.
+	m.agentCommand = msg.Command
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to persist agent selection"
+	}
+	m = m.setStatus(statusOther, errText)
 	return m
 }
 
@@ -413,6 +467,13 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 		}
 	}
 	m.rows = m.rows.SetItems(filtered)
+	if m.pendingBranchSelection != "" {
+		pendingRef := "refs/heads/" + m.pendingBranchSelection
+		m.rows = m.rows.SelectFunc(func(row gitquery.BranchRow) bool {
+			return row.Branch.Name == m.pendingBranchSelection || row.Branch.FullRef == pendingRef
+		})
+		m.pendingBranchSelection = ""
+	}
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
@@ -469,6 +530,33 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 		return m.startFetchBranches()
 	}
 	return m, nil
+}
+
+func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.mode = ui.ModeBranches
+		m.rows = m.rows.SetQuery("")
+		m.pendingBranchSelection = msg.Name
+		return m.startFetchBranches()
+	}
+	return m, nil
+}
+
+func (m Model) handleBranchCreateFailed(msg BranchCreateFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		errText := msg.Err
+		if msg.Err == "" {
+			errText = "Unable to create branch"
+		}
+		m.modal = modal.OpenInput(
+			ui.BranchPrompt,
+			ui.BranchInputPlaceholder,
+			msg.Input,
+			validateBranchInput,
+			func(input string) tea.Cmd { return m.createBranchFromStartPoint(input, msg.StartPoint) },
+		).SetInputError(errText)
+	}
+	return m
 }
 
 func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {

@@ -59,7 +59,7 @@ func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 }
 
 func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
 	tabIdx := strings.Index(bar, "tab: pane")
 	tIdx := strings.Index(bar, "t: terminal")
 	if tabIdx == -1 || tIdx == -1 {
@@ -91,7 +91,7 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 
 func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false) // activePane=1 (right)
-	for _, hint := range []string{"f: fetch", "t: terminal", "c: code", "d: delete"} {
+	for _, hint := range []string{"n: new branch", "f: fetch", "t: terminal", "c: code", "d: delete"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be shown when right pane is active", hint)
 		}
@@ -129,6 +129,75 @@ func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
 	}
 	if !strings.Contains(bar, "P: PR") {
 		t.Fatalf("expected PR worktree hint in worktrees mode, got %q", bar)
+	}
+}
+
+func TestStatusBar_ShowsSetAgentHint(t *testing.T) {
+	for _, activePane := range []int{0, 1} {
+		bar := RenderStatusBar(160, 1, 0, activePane, false, false, false)
+		if !strings.Contains(bar, "A: set agent") {
+			t.Fatalf("expected set agent hint for activePane %d, got %q", activePane, bar)
+		}
+	}
+}
+
+func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:          0,
+		Width:             140,
+		Height:            10,
+		Mode:              1,
+		ActivePane:        1,
+		Worktrees:         []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
+		AgentAvailable:    true,
+		NewAgentAvailable: true,
+	})
+	for _, hint := range []string{"A: set agent", "a: agent", "N: new+agent"} {
+		if !strings.Contains(view, hint) {
+			t.Fatalf("expected worktrees view to contain %q, got %q", hint, view)
+		}
+	}
+}
+
+func TestRender_StaleWorktreeShowsSetAgentHint(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:          0,
+		Width:             140,
+		Height:            10,
+		Mode:              1,
+		ActivePane:        1,
+		Worktrees:         []gitquery.Worktree{{Path: "/gone", BranchName: "gone", Stale: true}},
+		NewAgentAvailable: true,
+	})
+	for _, hint := range []string{"A: set agent", "N: new+agent"} {
+		if !strings.Contains(view, hint) {
+			t.Fatalf("expected stale worktree view to contain %q, got %q", hint, view)
+		}
+	}
+}
+
+func TestRender_BranchesModeShowsAgentHintOnlyWhenTargetAvailable(t *testing.T) {
+	params := RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      140,
+		Height:     10,
+		Mode:       2,
+		ActivePane: 1,
+		Branches:   []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "feat"}}},
+	}
+	view := Render(params)
+	if strings.Contains(view, "a: agent") {
+		t.Fatalf("bare branch should not show agent hint, got %q", view)
+	}
+
+	params.AgentAvailable = true
+	params.Branches = []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/a"}}
+	view = Render(params)
+	if !strings.Contains(view, "a: agent") {
+		t.Fatalf("checked-out branch should show agent hint, got %q", view)
 	}
 }
 
@@ -1082,13 +1151,14 @@ func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             1,
-		Overlay:          OverlayWorktreeInput,
-		WorktreeInput:    "feature/new",
-		WorktreeInputErr: "already exists",
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPlaceholder: WorktreeInputPlaceholder,
+		WorktreeInput:            "feature/new",
+		WorktreeInputErr:         "already exists",
 	})
 	if !strings.Contains(view, "Create worktree from: feature/new") {
 		t.Error("worktree input dialog should show typed input")
@@ -1100,31 +1170,69 @@ func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:   []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:   80,
-		Height:  24,
-		Mode:    1,
-		Overlay: OverlayWorktreeInput,
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPlaceholder: WorktreeInputPlaceholder,
 	})
 	if !strings.Contains(view, "branch, tag, or new branch name") {
 		t.Error("worktree input dialog should show placeholder when input is empty")
 	}
 }
 
+func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     2,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      BranchPrompt,
+		WorktreeInputPlaceholder: BranchInputPlaceholder,
+	})
+	if !strings.Contains(view, "Create branch:") {
+		t.Error("branch input dialog should show branch-specific prompt")
+	}
+	if !strings.Contains(view, "branch name") {
+		t.Error("branch input dialog should show branch-specific placeholder")
+	}
+}
+
 func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:               80,
-		Height:              24,
-		Mode:                1,
-		Overlay:             OverlayWorktreeInput,
-		WorktreeInputPrompt: PRWorktreePrompt,
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      PRWorktreePrompt,
+		WorktreeInputPlaceholder: PRWorktreeInputPlaceholder,
 	})
 	if !strings.Contains(view, "Create PR worktree from:") {
 		t.Error("PR input dialog should show PR-specific prompt")
 	}
 	if !strings.Contains(view, "PR number or URL") {
 		t.Error("PR input dialog should show PR-specific placeholder")
+	}
+}
+
+func TestRender_AgentInputDialogUsesExplicitPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      "Choose interactive helper",
+		WorktreeInputPlaceholder: AgentInputPlaceholder,
+	})
+	if !strings.Contains(view, "Choose interactive helper:") {
+		t.Error("agent input dialog should show caller-provided prompt")
+	}
+	if !strings.Contains(view, AgentInputPlaceholder) {
+		t.Error("agent input dialog should show caller-provided placeholder")
 	}
 }
 

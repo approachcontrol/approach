@@ -23,6 +23,7 @@ exist:
 |---------|--------------------|-----------------|------------------|
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
 | Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
+| Coding agent | none | `[agent].command` | unset |
 
 `[scan].root` supports `~` and `~/...` expansion. `WORKTREE_ROOT` is passed
 through as provided by the environment.
@@ -45,6 +46,9 @@ name = "github"
 
 [launch]
 prefer_multiplexer = true
+
+[agent]
+command = "codex"
 ```
 
 ## Sections
@@ -94,3 +98,12 @@ Parsed for future launch behavior.
 | Key | Type | Description |
 |-----|------|-------------|
 | `prefer_multiplexer` | boolean | Future launch preference for tmux/Zellij behavior. |
+
+### `[agent]`
+
+Stores the selected coding agent for interactive launches. Pressing `A` in wtui
+updates this value immediately, creating the config file if needed.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `command` | string | Supported values: `codex` or `claude`. |

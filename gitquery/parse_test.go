@@ -229,6 +229,25 @@ func TestParseBranchLine_WithUpstream(t *testing.T) {
 	}
 }
 
+func TestParseBranchLine_WithFullRef(t *testing.T) {
+	line := "heads/base\trefs/heads/base\trefs/remotes/origin/base\t"
+
+	b, upstream := gitquery.ParseBranchLine(line)
+
+	if b.Name != "heads/base" {
+		t.Errorf("expected Name %q, got %q", "heads/base", b.Name)
+	}
+	if b.FullRef != "refs/heads/base" {
+		t.Errorf("expected FullRef %q, got %q", "refs/heads/base", b.FullRef)
+	}
+	if !b.HasUpstream {
+		t.Error("expected HasUpstream = true")
+	}
+	if upstream != "refs/remotes/origin/base" {
+		t.Errorf("expected upstream %q, got %q", "refs/remotes/origin/base", upstream)
+	}
+}
+
 func TestParseBranchLine_UpstreamGone(t *testing.T) {
 	line := "old-feature\trefs/remotes/origin/old-feature\t[gone]"
 

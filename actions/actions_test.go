@@ -745,6 +745,90 @@ func TestCreateWorktree_RefStartingWithDashFails(t *testing.T) {
 	}
 }
 
+func TestCreateBranch_FromHEAD(t *testing.T) {
+	repoPath := setupRepo(t)
+	head := runOutput(t, repoPath, "git", "rev-parse", "HEAD")
+	initial := runOutput(t, repoPath, "git", "branch", "--show-current")
+
+	if err := actions.CreateBranch(repoPath, "feature/one", ""); err != nil {
+		t.Fatalf("CreateBranch returned error: %v", err)
+	}
+
+	got := runOutput(t, repoPath, "git", "rev-parse", "feature/one")
+	if got != head {
+		t.Fatalf("expected feature/one at HEAD %s, got %s", head, got)
+	}
+	current := runOutput(t, repoPath, "git", "branch", "--show-current")
+	if current != initial {
+		t.Fatalf("expected current branch to remain %s, got %q", initial, current)
+	}
+}
+
+func TestCreateBranch_FromStartPoint(t *testing.T) {
+	repoPath := setupRepo(t)
+	initial := runOutput(t, repoPath, "git", "branch", "--show-current")
+	mustRun(t, repoPath, "git", "branch", "base")
+	mustRun(t, repoPath, "git", "checkout", "base")
+	mustRun(t, repoPath, "git", "commit", "--allow-empty", "-m", "base change")
+	base := runOutput(t, repoPath, "git", "rev-parse", "base")
+	mustRun(t, repoPath, "git", "checkout", initial)
+
+	if err := actions.CreateBranch(repoPath, "feature/from-base", "base"); err != nil {
+		t.Fatalf("CreateBranch returned error: %v", err)
+	}
+
+	got := runOutput(t, repoPath, "git", "rev-parse", "feature/from-base")
+	if got != base {
+		t.Fatalf("expected feature/from-base at base %s, got %s", base, got)
+	}
+	current := runOutput(t, repoPath, "git", "branch", "--show-current")
+	if current != initial {
+		t.Fatalf("expected current branch to remain %s, got %q", initial, current)
+	}
+}
+
+func TestCreateBranch_InvalidInputFails(t *testing.T) {
+	repoPath := setupRepo(t)
+	for _, input := range []string{"", "  ", "--bad"} {
+		t.Run(input, func(t *testing.T) {
+			if err := actions.CreateBranch(repoPath, input, ""); err == nil {
+				t.Fatal("expected invalid branch name to fail")
+			}
+		})
+	}
+}
+
+func TestCreateBranch_GitValidationErrorsAreReadable(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "existing")
+
+	for _, input := range []string{"existing", "bad name"} {
+		t.Run(input, func(t *testing.T) {
+			err := actions.CreateBranch(repoPath, input, "")
+			if err == nil {
+				t.Fatal("expected branch creation to fail")
+			}
+			if strings.Contains(err.Error(), "exit status") {
+				t.Fatalf("expected clean git error without exit status, got %q", err.Error())
+			}
+		})
+	}
+}
+
+func TestCreateBranch_StartPointStartingWithDashIsTreatedAsRef(t *testing.T) {
+	repoPath := setupRepo(t)
+	err := actions.CreateBranch(repoPath, "feature/from-dash", "--bad")
+	if err == nil {
+		t.Fatal("expected invalid start point to fail")
+	}
+	if strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("expected clean git error without exit status, got %q", err.Error())
+	}
+	if out := runOutput(t, repoPath, "git", "branch", "--list", "feature/from-dash"); out != "" {
+		t.Fatalf("expected branch not to be created, got %q", out)
+	}
+}
+
 func TestUnlockWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	worktreePath := filepath.Join(filepath.Dir(repoPath), "wt-unlock")
@@ -950,4 +1034,34 @@ func TestOpenVSCode_RunsWithoutPanic(t *testing.T) {
 	}
 	// code exits 0 for any path; just verify no panic
 	_ = actions.OpenVSCode(t.TempDir())
+}
+
+func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			launch, err := actions.AgentLaunch("/repo/worktree", command)
+			if err != nil {
+				t.Fatalf("AgentLaunch returned error: %v", err)
+			}
+			if launch.Cmd.Dir != "/repo/worktree" {
+				t.Fatalf("expected command dir /repo/worktree, got %q", launch.Cmd.Dir)
+			}
+			if !launch.Interactive {
+				t.Fatal("expected agent launch to be interactive")
+			}
+			if len(launch.Cmd.Args) != 1 || launch.Cmd.Args[0] != command {
+				t.Fatalf("expected direct command args [%q], got %#v", command, launch.Cmd.Args)
+			}
+		})
+	}
+}
+
+func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
+	for _, command := range []string{"", "vim"} {
+		t.Run(command, func(t *testing.T) {
+			if _, err := actions.AgentLaunch("/repo/worktree", command); err == nil {
+				t.Fatal("expected AgentLaunch error")
+			}
+		})
+	}
 }

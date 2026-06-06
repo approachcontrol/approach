@@ -58,7 +58,7 @@ func TestQuerierListBranches_AheadBehindFailureLeavesCountsZero(t *testing.T) {
 	f := &fakeRunner{
 		t: t,
 		run: map[string]fakeReply{
-			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
 				out: "feature\trefs/remotes/origin/feature\t[ahead 3]\nmain\t\t\n",
 			},
 			fakeKey("/repo", "worktree", "list", "--porcelain"): {
@@ -99,7 +99,7 @@ func TestQuerierListBranches_ForEachRefFailureIsFatal(t *testing.T) {
 	f := &fakeRunner{
 		t: t,
 		run: map[string]fakeReply{
-			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
 				err: wantErr,
 			},
 		},
@@ -122,7 +122,7 @@ func TestQuerierListBranches_UnpushedCommitsOnlyReadForAheadBranches(t *testing.
 	f := &fakeRunner{
 		t: t,
 		run: map[string]fakeReply{
-			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
 				out: "behind\trefs/remotes/origin/behind\t[behind 1]\nfeature\trefs/remotes/origin/feature\t[ahead 2]\nmain\t\t\n",
 			},
 			fakeKey("/repo", "worktree", "list", "--porcelain"): {
@@ -170,7 +170,7 @@ func TestQuerierListBranches_DirtyStatusFailureIsBestEffort(t *testing.T) {
 	f := &fakeRunner{
 		t: t,
 		run: map[string]fakeReply{
-			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
 				out: "feature\t\t\nmain\t\t\n",
 			},
 			fakeKey("/repo", "worktree", "list", "--porcelain"): {
@@ -207,7 +207,7 @@ func TestQuerierListBranches_OkProbeMarksMergedBranches(t *testing.T) {
 	f := &fakeRunner{
 		t: t,
 		run: map[string]fakeReply{
-			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
+			fakeKey("/repo", "for-each-ref", "--format=%(refname:short)\t%(refname)\t%(upstream)\t%(upstream:track)", "refs/heads/"): {
 				out: "feature\t\t\nmain\t\t\n",
 			},
 			fakeKey("/repo", "worktree", "list", "--porcelain"): {

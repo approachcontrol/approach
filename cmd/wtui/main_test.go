@@ -22,7 +22,7 @@ func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 			t.Fatal("scan should not run for --version")
 			return nil, nil
 		},
-		startProgram: func([]scanner.Repo) error {
+		startProgram: func([]scanner.Repo, config.Config) error {
 			t.Fatal("program should not start for --version")
 			return nil
 		},
@@ -53,7 +53,7 @@ func TestRun_LoadsConfigBeforeScanning(t *testing.T) {
 			got = opts
 			return []scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, nil
 		},
-		startProgram: func([]scanner.Repo) error { return nil },
+		startProgram: func([]scanner.Repo, config.Config) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -85,7 +85,7 @@ func TestRun_WorktreeRootEnvOverridesConfigRoot(t *testing.T) {
 			got = opts
 			return nil, nil
 		},
-		startProgram: func([]scanner.Repo) error { return nil },
+		startProgram: func([]scanner.Repo, config.Config) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -110,12 +110,35 @@ func TestRun_ConfigErrorStopsBeforeScan(t *testing.T) {
 			scanned = true
 			return nil, nil
 		},
-		startProgram: func([]scanner.Repo) error { return nil },
+		startProgram: func([]scanner.Repo, config.Config) error { return nil },
 	})
 	if err == nil {
 		t.Fatal("expected config error")
 	}
 	if scanned {
 		t.Fatal("scan should not run when config fails")
+	}
+}
+
+func TestRun_PassesConfigToProgram(t *testing.T) {
+	var got config.Config
+	err := run([]string{"wtui"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Agent: config.AgentConfig{Command: "codex"}}, nil
+		},
+		getenv: func(string) string { return "" },
+		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
+			return []scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, nil
+		},
+		startProgram: func(_ []scanner.Repo, cfg config.Config) error {
+			got = cfg
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if got.Agent.Command != "codex" {
+		t.Fatalf("expected agent config passed to program, got %q", got.Agent.Command)
 	}
 }

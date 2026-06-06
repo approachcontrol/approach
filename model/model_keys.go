@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -53,6 +54,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "D" {
 		m.destructive = !m.destructive
 		return m, nil
+	}
+
+	if key == "A" {
+		return m.handleSetAgent()
 	}
 
 	if m.activePane == 0 {
@@ -184,12 +189,21 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleEnter()
 	case "n":
 		if m.mode == ui.ModeWorktrees {
-			return m.handleNewWorktree()
+			return m.handleNewWorktree(false)
+		}
+		if m.mode == ui.ModeBranches {
+			return m.handleNewBranch()
 		}
 	case "P":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
 		}
+	case "N":
+		if m.mode == ui.ModeWorktrees {
+			return m.handleNewWorktree(true)
+		}
+	case "a":
+		return m.handleOpenAgent()
 	case "d":
 		return m.handleDelete()
 	case "p":
@@ -288,15 +302,62 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleNewWorktree() (tea.Model, tea.Cmd) {
+func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
+	m.modal = modal.OpenInput(
+		"Set agent (codex or claude)",
+		ui.AgentInputPlaceholder,
+		m.agentCommand,
+		validateAgentInput,
+		func(input string) tea.Cmd { return m.setAgent(agent.Normalize(input)) },
+	)
+	return m, nil
+}
+
+func validateAgentInput(input string) error {
+	return agent.Validate(input)
+}
+
+func (m Model) setAgent(command string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.saveAgent(command); err != nil {
+			return AgentSetFailedMsg{Command: command, Err: err.Error()}
+		}
+		return AgentSetMsg{Command: command}
+	}
+}
+
+func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
+	if launchAgent && m.agentCommand == "" {
+		m = m.setStatus(statusOther, "Press A to choose codex or claude before launching an agent")
+		return m, nil
+	}
+	prompt := "Create worktree from"
+	if launchAgent {
+		prompt = "Create worktree and launch agent from"
+	}
+	m.modal = modal.OpenInput(
+		prompt,
+		ui.WorktreeInputPlaceholder,
+		"",
+		validateWorktreeInput,
+		func(input string) tea.Cmd { return m.createWorktree(input, launchAgent) },
+	)
+	return m, nil
+}
+
+func (m Model) handleNewBranch() (tea.Model, tea.Cmd) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return m, nil
 	}
 	m.modal = modal.OpenInput(
-		"New worktree",
+		ui.BranchPrompt,
+		ui.BranchInputPlaceholder,
 		"",
-		validateWorktreeInput,
-		func(input string) tea.Cmd { return m.createWorktree(input) },
+		validateBranchInput,
+		func(input string) tea.Cmd { return m.createBranch(input) },
 	)
 	return m, nil
 }
@@ -308,6 +369,7 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 	}
 	m.modal = modal.OpenInput(
 		ui.PRWorktreePrompt,
+		ui.PRWorktreeInputPlaceholder,
 		"",
 		func(input string) error { return validatePullRequestWorktreeInput(repoPath, input) },
 		func(input string) tea.Cmd { return m.createPullRequestWorktree(input) },
@@ -318,6 +380,13 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 func validateWorktreeInput(input string) error {
 	if input == "" {
 		return fmt.Errorf("Enter a branch, tag, or new branch name")
+	}
+	return nil
+}
+
+func validateBranchInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("Enter a branch name")
 	}
 	return nil
 }
@@ -381,6 +450,36 @@ func (m Model) openAtPath(action func(string) error) (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg { _ = action(path); return nil }
 }
 
+func (m Model) canLaunchAgent() bool {
+	if m.activePane != 1 {
+		return false
+	}
+	_, ok := m.agentTargetPath()
+	return ok
+}
+
+func (m Model) canCreateAndLaunchAgent() bool {
+	return m.activePane == 1 && m.mode == ui.ModeWorktrees
+}
+
+func (m Model) agentTargetPath() (string, bool) {
+	if m.mode == ui.ModeWorktrees {
+		if _, ok := m.currentRepoPath(); !ok {
+			return "", false
+		}
+		if wt, ok := m.selectedWorktree(); ok && !wt.Stale {
+			return wt.Path, true
+		}
+		return "", false
+	}
+	if m.mode == ui.ModeBranches {
+		if row, ok := m.selectedRow(); ok && !row.Stale && row.WorktreePath != "" {
+			return row.WorktreePath, true
+		}
+	}
+	return "", false
+}
+
 func (m Model) pathForOpenAction() (string, bool) {
 	if m.mode == ui.ModeWorktrees {
 		if _, ok := m.currentRepoPath(); !ok {
@@ -404,6 +503,40 @@ func (m Model) pathForOpenAction() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
+	path, ok := m.agentTargetPath()
+	if !ok {
+		return m, nil
+	}
+	if m.agentCommand == "" {
+		m = m.setStatus(statusOther, "Press A to choose codex or claude before launching an agent")
+		return m, nil
+	}
+	return m.launchAgentAtPath(path)
+}
+
+func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
+	launch, err := m.launchAgent(path, m.agentCommand)
+	if err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	if launch.Interactive {
+		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
+			if err != nil {
+				return AgentResultMsg{Err: err.Error()}
+			}
+			return AgentResultMsg{}
+		})
+	}
+	return m, func() tea.Msg {
+		if err := launch.Cmd.Run(); err != nil {
+			return AgentResultMsg{Err: err.Error()}
+		}
+		return AgentResultMsg{}
+	}
 }
 
 func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
@@ -578,6 +711,7 @@ func (m Model) resetModeCursors() Model {
 }
 
 func (m Model) resetRightPaneCursors() Model {
+	m.pendingBranchSelection = ""
 	m.rows = m.rows.SetItems(nil).ResetSelection()
 	m.stashes = m.stashes.SetItems(nil).ResetSelection()
 	m.worktrees = m.worktrees.SetItems(nil).ResetSelection()

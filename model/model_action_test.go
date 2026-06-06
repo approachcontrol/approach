@@ -1,11 +1,14 @@
 package model_test
 
 import (
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/ui"
@@ -1562,13 +1565,12 @@ func TestModel_PKeyOpensPullRequestWorktreeInput(t *testing.T) {
 	}
 }
 
-func TestModel_NKeyNoOpOutsideWorktreesMode(t *testing.T) {
+func TestModel_NKeyNoOpOutsideCreationModes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		key  rune
 		mode ui.Mode
 	}{
-		{name: "branches", key: '2', mode: ui.ModeBranches},
 		{name: "stashes", key: '3', mode: ui.ModeStashes},
 		{name: "history", key: '4', mode: ui.ModeHistory},
 		{name: "reflog", key: '5', mode: ui.ModeReflog},
@@ -1833,6 +1835,278 @@ func TestModel_WorktreeCreateFailedUsesFallbackError(t *testing.T) {
 	}
 	if m.WorktreeInputErr() != "Unable to create worktree" {
 		t.Errorf("expected fallback error, got %q", m.WorktreeInputErr())
+	}
+}
+
+// --- Branch creation ---
+
+func TestModel_NKeyInBranchesModeOpensBranchInput(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "" {
+		t.Errorf("expected empty branch input, got %q", m.WorktreeInput())
+	}
+	if !strings.Contains(m.View(), "Create branch:") {
+		t.Errorf("expected branch prompt in view, got %q", m.View())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd opening input, got %T", cmd)
+	}
+}
+
+func TestModel_NKeyInBranchesModeWithNoRepoIsNoOp(t *testing.T) {
+	m := model.New(nil)
+	m = inBranchesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected OverlayNone, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd, got %T", cmd)
+	}
+}
+
+func TestModel_BranchInputEnterRequiresText(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
+	}
+	if m.WorktreeInputErr() == "" {
+		t.Fatal("expected validation error")
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd for empty input, got %T", cmd)
+	}
+}
+
+func TestModel_BranchInputEnterCreatesBranch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/one")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.BranchCreateFailedMsg); !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+}
+
+func TestModel_BranchInputUsesSelectedBranchAsStartPoint(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg, ok := cmd().(model.BranchCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if msg.StartPoint != "refs/heads/base" {
+		t.Fatalf("expected start point refs/heads/base, got %q", msg.StartPoint)
+	}
+}
+
+func TestModel_BranchInputUsesFullRefForHeadsPrefixedBranch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main", FullRef: "refs/heads/main"},
+			{Name: "heads/base", FullRef: "refs/heads/heads/base"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-heads-base")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg, ok := cmd().(model.BranchCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if msg.StartPoint != "refs/heads/heads/base" {
+		t.Fatalf("expected start point refs/heads/heads/base, got %q", msg.StartPoint)
+	}
+}
+
+func TestModel_BranchCreatedRefetchesBranches(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, cmd := update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	if m.Mode() != ui.ModeBranches {
+		t.Errorf("expected mode branches after create, got %d", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchBranches cmd after create")
+	}
+}
+
+func TestModel_BranchCreateFailedReopensBranchInput(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.BranchCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feature/one", Err: "boom"})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "feature/one" {
+		t.Errorf("expected input restored, got %q", m.WorktreeInput())
+	}
+	if m.WorktreeInputErr() != "boom" {
+		t.Errorf("expected error restored, got %q", m.WorktreeInputErr())
+	}
+	if !strings.Contains(m.View(), "Create branch:") {
+		t.Errorf("expected branch prompt in view, got %q", m.View())
+	}
+}
+
+func TestModel_BranchCreateFailedRetryPreservesStartPoint(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+		},
+	})
+	m, _ = update(m, model.BranchCreateFailedMsg{
+		RepoPath:   "/dev/alpha",
+		Input:      "bad name",
+		Err:        "bad branch name",
+		StartPoint: "refs/heads/base",
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected retry create branch cmd")
+	}
+	msg, ok := cmd().(model.BranchCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected BranchCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if msg.StartPoint != "refs/heads/base" {
+		t.Fatalf("expected retry to preserve start point refs/heads/base, got %q", msg.StartPoint)
+	}
+}
+
+func TestModel_BranchCreateFailedUsesFallbackError(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.BranchCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feature/one"})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.WorktreeInputErr() != "Unable to create branch" {
+		t.Errorf("expected fallback error, got %q", m.WorktreeInputErr())
+	}
+}
+
+func TestModel_BranchCreatedClearsFilterBeforeSelectingNewBranch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("base")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "base"},
+			{Name: "feature/one"},
+		},
+	})
+	if m.ItemSearch() != "" {
+		t.Fatalf("expected branch filter cleared after create, got %q", m.ItemSearch())
+	}
+	if m.BranchSelected() != 2 {
+		t.Fatalf("expected new branch selected at index 2, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BranchCreatedSelectsNewBranchAfterRefresh(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "feature/one"},
+		},
+	})
+	if m.BranchSelected() != 1 {
+		t.Fatalf("expected new branch selected at index 1, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BranchCreatedSelectsNewBranchByFullRef(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "base"})
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main", FullRef: "refs/heads/main"},
+			{Name: "heads/base", FullRef: "refs/heads/base"},
+		},
+	})
+	if m.BranchSelected() != 1 {
+		t.Fatalf("expected new branch selected by full ref at index 1, got %d", m.BranchSelected())
+	}
+}
+
+func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})  // left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/bravo",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "feature/one"},
+		},
+	})
+
+	if m.BranchSelected() != 0 {
+		t.Fatalf("expected repo switch to clear pending branch selection, got index %d", m.BranchSelected())
 	}
 }
 
@@ -2154,6 +2428,330 @@ func TestModel_CKey_NonWorktreeBranch_NoCmd(t *testing.T) {
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd != nil {
 		t.Error("expected nil cmd when pressing c on a non-worktree branch")
+	}
+}
+
+// --- Coding agent actions ---
+
+func TestModel_NewHasUnsetAgent(t *testing.T) {
+	m := model.New(testRepos())
+	if m.AgentCommand() != "" {
+		t.Fatalf("expected default model agent unset, got %q", m.AgentCommand())
+	}
+}
+
+func TestModel_NewWithOptionsStoresAgent(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	if m.AgentCommand() != "codex" {
+		t.Fatalf("expected configured agent codex, got %q", m.AgentCommand())
+	}
+}
+
+func TestModel_ShiftAOpensAgentInputFromBothPanes(t *testing.T) {
+	for _, setup := range []struct {
+		name string
+		fn   func(model.Model) model.Model
+	}{
+		{name: "left", fn: func(m model.Model) model.Model { return m }},
+		{name: "right", fn: inRightPane},
+	} {
+		t.Run(setup.name, func(t *testing.T) {
+			m := setup.fn(model.New(testRepos()))
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			if m.Overlay() != ui.OverlayWorktreeInput {
+				t.Fatalf("expected agent input overlay, got %d", m.Overlay())
+			}
+			if !strings.Contains(m.View(), "codex or claude") {
+				t.Fatalf("expected agent prompt in view")
+			}
+			if cmd != nil {
+				t.Fatalf("expected nil cmd opening agent input, got %T", cmd)
+			}
+		})
+	}
+}
+
+func TestModel_AgentInputSavesAndSetsCodex(t *testing.T) {
+	var saved string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SaveAgentCommand: func(command string) error {
+			saved = command
+			return nil
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("codex")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected save-agent command")
+	}
+	m, _ = update(m, cmd())
+	if saved != "codex" {
+		t.Fatalf("expected saved codex, got %q", saved)
+	}
+	if m.AgentCommand() != "codex" {
+		t.Fatalf("expected session agent codex, got %q", m.AgentCommand())
+	}
+}
+
+func TestModel_AgentInputSavesAndSetsClaude(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("claude")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save-agent command")
+	}
+	m, _ = update(m, cmd())
+	if m.AgentCommand() != "claude" {
+		t.Fatalf("expected session agent claude, got %q", m.AgentCommand())
+	}
+}
+
+func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SaveAgentCommand: func(string) error { return errors.New("disk full") },
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("codex")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save-agent command")
+	}
+	m, _ = update(m, cmd())
+	if m.AgentCommand() != "codex" {
+		t.Fatalf("expected failed save to keep session agent, got %q", m.AgentCommand())
+	}
+	if !strings.Contains(m.View(), "disk full") {
+		t.Fatal("expected save failure in status bar")
+	}
+}
+
+func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
+	var gotPath, gotCommand string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			gotPath = path
+			gotCommand = command
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if gotPath != "/dev/alpha" || gotCommand != "codex" {
+		t.Fatalf("expected launch /dev/alpha with codex, got path=%q command=%q", gotPath, gotCommand)
+	}
+}
+
+func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
+	var gotPath string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "claude",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			gotPath = path
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "main", IsWorktree: true, WorktreePaths: []string{"/dev/alpha"}},
+		},
+	})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if gotPath != "/dev/alpha" {
+		t.Fatalf("expected launch from branch worktree path, got %q", gotPath)
+	}
+}
+
+func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
+	t.Run("bare branch", func(t *testing.T) {
+		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m = inBranchesMode(m)
+		m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{{Name: "feat"}}})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		if cmd != nil {
+			t.Fatal("expected nil command for bare branch")
+		}
+	})
+	t.Run("stale worktree", func(t *testing.T) {
+		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m = inRightPane(m)
+		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+			{Path: "/dev/gone", BranchName: "gone", Stale: true},
+		}})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		if cmd != nil {
+			t.Fatal("expected nil command for stale worktree")
+		}
+	})
+	t.Run("stale branch row", func(t *testing.T) {
+		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m = inBranchesMode(m)
+		m, _ = update(m, model.BranchResultMsg{
+			RepoPath: "/dev/alpha",
+			Branches: []gitquery.Branch{
+				{Name: "gone", IsWorktree: true, WorktreePaths: []string{"/dev/gone"}, WorktreeStale: []bool{true}},
+			},
+		})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		if cmd != nil {
+			t.Fatal("expected nil command for stale branch row")
+		}
+	})
+}
+
+func TestModel_AKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	}
+	if !strings.Contains(m.View(), "Press A to choose") {
+		t.Fatal("expected unset-agent status")
+	}
+}
+
+func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("agent unavailable")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd when launch cannot be built, got %T", cmd)
+	}
+	if !strings.Contains(m.View(), "agent unavailable") {
+		t.Fatal("expected launch build error in status bar")
+	}
+}
+
+func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("false")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	m, _ = update(m, cmd())
+	if !strings.Contains(m.View(), "exit status") {
+		t.Fatal("expected agent process error in status bar")
+	}
+}
+
+func TestModel_ShiftNOpensAgentWorktreeInput(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = inWorktreesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected worktree input overlay, got %d", m.Overlay())
+	}
+	if !strings.Contains(m.View(), "launch agent") {
+		t.Fatalf("expected agent worktree prompt in view")
+	}
+	if !strings.Contains(m.View(), "branch, tag, or new branch name") {
+		t.Fatalf("expected worktree input placeholder in view")
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening input, got %T", cmd)
+	}
+}
+
+func TestModel_ShiftNWithNoSelectedAgentShowsStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	}
+	if !strings.Contains(m.View(), "Press A to choose") {
+		t.Fatal("expected unset-agent status")
+	}
+}
+
+func TestModel_AgentWorktreeInputRequestsLaunch(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create worktree command")
+	}
+	msg, ok := cmd().(model.WorktreeCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected fake repo create failure, got %T", msg)
+	}
+	if !msg.LaunchAgent {
+		t.Fatal("expected create failure to preserve launch-agent mode")
+	}
+}
+
+func TestModel_WorktreeCreatedWithLaunchRequestsAgent(t *testing.T) {
+	var gotPath string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			gotPath = path
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", LaunchAgent: true})
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("expected mode worktrees after create, got %d", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("expected batch command after create+launch")
+	}
+	if gotPath != "/dev/alpha-worktrees/feat" {
+		t.Fatalf("expected launch from created worktree, got %q", gotPath)
+	}
+}
+
+func TestModel_AgentWorktreeCreateFailedReopensAgentPrompt(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.WorktreeCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feat", Err: "boom", LaunchAgent: true})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected input overlay, got %d", m.Overlay())
+	}
+	if !strings.Contains(m.View(), "launch agent") {
+		t.Fatal("expected agent prompt after create failure")
+	}
+	if m.WorktreeInput() != "feat" || m.WorktreeInputErr() != "boom" {
+		t.Fatalf("expected restored input/error, got input=%q err=%q", m.WorktreeInput(), m.WorktreeInputErr())
 	}
 }
 

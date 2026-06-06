@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/brian-bell/wtui/agent"
 )
 
 type commandSpec struct {
@@ -112,6 +114,25 @@ func CreateWorktree(repoPath, ref string) (string, error) {
 	return worktreePath, nil
 }
 
+// CreateBranch creates a new branch without checking it out. When startPoint is
+// empty, git creates the branch at HEAD.
+func CreateBranch(repoPath, name, startPoint string) error {
+	name = strings.TrimSpace(name)
+	startPoint = strings.TrimSpace(startPoint)
+	if name == "" {
+		return fmt.Errorf("branch name cannot be empty")
+	}
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("branch name cannot start with -: %q", name)
+	}
+
+	args := []string{"branch", "--", name}
+	if startPoint != "" {
+		args = append(args, startPoint)
+	}
+	return runGit(repoPath, args...)
+}
+
 // CreatePullRequestWorktree fetches a pull request head into a local review
 // branch, then creates a worktree for that branch.
 func CreatePullRequestWorktree(repoPath, input string) (string, error) {
@@ -203,12 +224,24 @@ func OpenVSCode(path string) error {
 	return exec.Command("code", path).Run()
 }
 
-// TerminalLaunchSpec describes how wtui should open a shell for a worktree.
+// TerminalLaunchSpec describes how wtui should open an external process for a worktree.
 // Interactive commands should be run with Bubble Tea's ExecProcess so the TUI
-// releases the current terminal until the multiplexer exits.
+// releases the current terminal until the process exits.
 type TerminalLaunchSpec struct {
 	Cmd         *exec.Cmd
 	Interactive bool
+}
+
+// AgentLaunch returns a safe, direct command for launching a supported coding
+// agent in path.
+func AgentLaunch(path, command string) (TerminalLaunchSpec, error) {
+	command = agent.Normalize(command)
+	if err := agent.Validate(command); err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	cmd := exec.Command(command)
+	cmd.Dir = path
+	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }
 
 // TerminalLaunch returns a command that opens or switches to a multiplexer

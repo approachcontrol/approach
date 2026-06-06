@@ -24,7 +24,12 @@ const (
 	OverlayWorktreeInput
 )
 
+const BranchPrompt = "New branch"
 const PRWorktreePrompt = "PR worktree"
+const WorktreeInputPlaceholder = "branch, tag, or new branch name"
+const BranchInputPlaceholder = "branch name"
+const PRWorktreeInputPlaceholder = "PR number or URL"
+const AgentInputPlaceholder = "codex or claude"
 
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
@@ -110,45 +115,48 @@ var (
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos               []scanner.Repo
-	Selected            int
-	Width               int
-	Height              int
-	Mode                Mode
-	Branches            []gitquery.BranchRow
-	Stashes             []gitquery.Stash
-	BranchSelected      int
-	StashSelected       int
-	Overlay             OverlayState
-	OverlayDiff         string
-	OverlayScroll       int
-	ConfirmPrompt       string
-	ConfirmForce        bool
-	WorktreeInputPrompt string
-	WorktreeInput       string
-	WorktreeInputErr    string
-	BranchScroll        int
-	RepoScroll          int
-	StashScroll         int
-	ActivePane          int
-	Destructive         bool
-	Worktrees           []gitquery.Worktree
-	WorktreeSelected    int
-	WorktreeScroll      int
-	Commits             []gitquery.Commit
-	CommitSelected      int
-	CommitScroll        int
-	Reflogs             []gitquery.ReflogEntry
-	ReflogSelected      int
-	ReflogScroll        int
-	TransientError      string
-	SearchActive        bool
-	RepoSearch          string
-	ItemSearch          string
-	RepoEmptyMessage    string
-	RightEmptyMessage   string
-	FetchAvailable      bool
-	PullAvailable       bool
+	Repos                    []scanner.Repo
+	Selected                 int
+	Width                    int
+	Height                   int
+	Mode                     Mode
+	Branches                 []gitquery.BranchRow
+	Stashes                  []gitquery.Stash
+	BranchSelected           int
+	StashSelected            int
+	Overlay                  OverlayState
+	OverlayDiff              string
+	OverlayScroll            int
+	ConfirmPrompt            string
+	ConfirmForce             bool
+	WorktreeInputPrompt      string
+	WorktreeInputPlaceholder string
+	WorktreeInput            string
+	WorktreeInputErr         string
+	BranchScroll             int
+	RepoScroll               int
+	StashScroll              int
+	ActivePane               int
+	Destructive              bool
+	Worktrees                []gitquery.Worktree
+	WorktreeSelected         int
+	WorktreeScroll           int
+	Commits                  []gitquery.Commit
+	CommitSelected           int
+	CommitScroll             int
+	Reflogs                  []gitquery.ReflogEntry
+	ReflogSelected           int
+	ReflogScroll             int
+	TransientError           string
+	SearchActive             bool
+	RepoSearch               string
+	ItemSearch               string
+	RepoEmptyMessage         string
+	RightEmptyMessage        string
+	FetchAvailable           bool
+	PullAvailable            bool
+	AgentAvailable           bool
+	NewAgentAvailable        bool
 }
 
 // Render produces the full terminal view string.
@@ -215,6 +223,8 @@ func Render(p RenderParams) string {
 		ItemSearch:                p.ItemSearch,
 		FetchAvailable:            p.FetchAvailable,
 		PullAvailable:             p.PullAvailable,
+		AgentAvailable:            p.AgentAvailable,
+		NewAgent:                  p.NewAgentAvailable,
 	}
 	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, p.Height, status)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
@@ -343,6 +353,7 @@ func renderModeHeader(mode Mode, width int) string {
 func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
 	fetchAvailable := activePane == 1 && (mode == ModeWorktrees || mode == ModeBranches)
 	pullAvailable := activePane == 1 && mode == ModeWorktrees
+	newAgentAvailable := false
 	if mode == ModeWorktrees && staleSelected {
 		fetchAvailable = false
 		pullAvailable = false
@@ -366,6 +377,7 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 		ReflogSelected:            activePane == 1 && mode == ModeReflog,
 		FetchAvailable:            fetchAvailable,
 		PullAvailable:             pullAvailable,
+		NewAgent:                  newAgentAvailable,
 	})
 }
 
@@ -396,6 +408,8 @@ type statusBarParams struct {
 	ItemSearch                string
 	FetchAvailable            bool
 	PullAvailable             bool
+	AgentAvailable            bool
+	NewAgent                  bool
 }
 
 type shortcutHint struct {
@@ -470,7 +484,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	case overlay == OverlayConfirm:
 		return statusStyle.Width(width).Render("  y: confirm  n/esc: cancel")
 	case overlay == OverlayWorktreeInput:
-		return statusStyle.Width(width).Render("  enter: create  esc: cancel  backspace: delete")
+		return statusStyle.Width(width).Render("  enter: create/set  esc: cancel  backspace: delete")
 	case overlay != OverlayNone:
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
@@ -530,9 +544,6 @@ func shortcutPaneLineCount(sections []shortcutSection) int {
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
 	navigation := []shortcutHint{{Key: "↑/↓", Label: "select", Inline: true}}
-	if sp.ActivePane == 1 {
-		navigation = append(navigation, shortcutHint{Key: "1-5", Label: "switch views", PaneOnly: true})
-	}
 
 	sections := []shortcutSection{
 		{
@@ -540,6 +551,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			Hints: []shortcutHint{
 				{Key: "tab", Label: "pane"},
 				{Key: "q/esc", Label: "quit"},
+				{Key: "A", Label: "set agent"},
 			},
 		},
 		{
@@ -553,6 +565,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeWorktrees:
 		if sp.ActivePane == 1 && sp.RepoSelected && !sp.StaleSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new worktree"})
+			if sp.NewAgent {
+				actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
+			}
 			actions = append(actions, shortcutHint{Key: "P", Label: "PR"})
 			if sp.DirtySelected {
 				actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
@@ -571,7 +586,13 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					shortcutHint{Key: "t", Label: "terminal"},
 					shortcutHint{Key: "c", Label: "code"},
 				)
+				if sp.AgentAvailable {
+					actions = append(actions, shortcutHint{Key: "a", Label: "agent"})
+				}
 			}
+		}
+		if sp.ActivePane == 1 && sp.RepoSelected && sp.StaleSelected && sp.NewAgent {
+			actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
 		}
 		if sp.ActivePane == 1 && sp.StaleSelected && sp.Destructive && sp.WorktreeSelected && !sp.LockedSelected {
 			actions = append(actions, shortcutHint{Key: "p", Label: "prune", Warning: true})
@@ -581,6 +602,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		}
 	case ModeBranches:
 		if sp.ActivePane == 1 {
+			if sp.RepoSelected {
+				actions = append(actions, shortcutHint{Key: "n", Label: "new branch"})
+			}
 			if sp.BranchDirtySelected {
 				actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
 			}
@@ -589,6 +613,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					shortcutHint{Key: "t", Label: "terminal"},
 					shortcutHint{Key: "c", Label: "code"},
 				)
+				if sp.AgentAvailable {
+					actions = append(actions, shortcutHint{Key: "a", Label: "agent"})
+				}
 			}
 			if sp.Destructive && sp.BranchDeletableSelected {
 				actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
@@ -679,16 +706,35 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
 	hints := flattenShortcutHints(sections)
 	parts := []string{}
-	for _, key := range []string{"tab", "q/esc", "↑/↓"} {
+	for _, key := range []string{"tab", "q/esc"} {
 		if hint, ok := findShortcutHint(hints, key); ok {
 			parts = append(parts, renderFooterHint(hint))
 		}
 	}
-	for _, key := range []string{"D", "n", "d", "p", "u", "enter", "f", "F"} {
-		if hint, ok := findShortcutHint(hints, key); ok {
-			if key == "D" && sp.DirtySelected && !footerPartsFit(sp.Width, append(parts, renderFooterHint(hint)), "t: terminal c: code") {
-				continue
+
+	required := worktreeFooterParts(hints, false)
+	requiredWithDestructive := worktreeFooterParts(hints, true)
+	if hint, ok := findShortcutHint(hints, "A"); ok {
+		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
+		if sp.AgentAvailable || sp.NewAgent {
+			if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, required...)...) {
+				parts = candidate
 			}
+		} else if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, requiredWithDestructive...)...) {
+			parts = candidate
+		}
+	}
+	if hint, ok := findShortcutHint(hints, "↑/↓"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	if hint, ok := findShortcutHint(hints, "D"); ok {
+		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
+		if footerPartsFit(sp.Width, candidate, required...) {
+			parts = candidate
+		}
+	}
+	for _, key := range []string{"n", "N", "d", "p", "u", "enter", "f", "F"} {
+		if hint, ok := findShortcutHint(hints, key); ok {
 			parts = append(parts, renderFooterHint(hint))
 		}
 	}
@@ -703,13 +749,38 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 		parts = append(parts, open)
 	}
 	if hint, ok := findShortcutHint(hints, "P"); ok {
-		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
-		if footerPartsFit(sp.Width, candidate) {
-			parts = candidate
-		}
+		parts = append(parts, renderFooterHint(hint))
+	}
+	if hint, ok := findShortcutHint(hints, "a"); ok {
+		parts = append(parts, renderFooterHint(hint))
 	}
 
 	return "  " + strings.Join(parts, " ")
+}
+
+func worktreeFooterParts(hints []shortcutHint, includeDestructiveMode bool) []string {
+	var parts []string
+	keys := []string{"n", "N", "d", "p", "u", "enter", "f", "F"}
+	if includeDestructiveMode {
+		keys = append([]string{"D"}, keys...)
+	}
+	for _, key := range keys {
+		if hint, ok := findShortcutHint(hints, key); ok {
+			parts = append(parts, renderFooterHint(hint))
+		}
+	}
+	if _, ok := findShortcutHint(hints, "t"); ok {
+		if _, ok := findShortcutHint(hints, "c"); ok {
+			parts = append(parts, "t: terminal c: code")
+		}
+	}
+	if hint, ok := findShortcutHint(hints, "P"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	if hint, ok := findShortcutHint(hints, "a"); ok {
+		parts = append(parts, renderFooterHint(hint))
+	}
+	return parts
 }
 
 func footerPartsFit(width int, parts []string, extra ...string) bool {
@@ -1104,6 +1175,8 @@ func renderOverlay(p RenderParams) string {
 		ItemSearch:     p.ItemSearch,
 		FetchAvailable: p.FetchAvailable,
 		PullAvailable:  p.PullAvailable,
+		AgentAvailable: p.AgentAvailable,
+		NewAgent:       p.NewAgentAvailable,
 	})
 	contentHeight := p.Height - 1
 
@@ -1113,7 +1186,7 @@ func renderOverlay(p RenderParams) string {
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayWorktreeInput {
-		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
+		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInputPlaceholder, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 
@@ -1178,25 +1251,31 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 	return lines
 }
 
-func renderWorktreeInputDialog(promptText, input, errText string, width, height int) []string {
+func renderWorktreeInputDialog(promptText, placeholder, input, errText string, width, height int) []string {
 	lines := make([]string, height)
 	mid := height / 2
 	if mid >= len(lines) {
 		return lines
 	}
 
-	label := "Create worktree from: "
-	placeholder := "branch, tag, or new branch name"
-	if promptText == PRWorktreePrompt {
+	if promptText == "" {
+		promptText = "Create worktree from"
+	}
+	label := strings.TrimSpace(promptText) + ": "
+	if placeholder == "" {
+		placeholder = WorktreeInputPlaceholder
+	}
+	if promptText == BranchPrompt {
+		label = "Create branch: "
+	} else if promptText == PRWorktreePrompt {
 		label = "Create PR worktree from: "
-		placeholder = "PR number or URL"
 	}
 	value := input
 	if value == "" {
 		value = placeholderStyle.Render(placeholder)
 	}
-	prompt := label + value + activeModeStyle.Render("█")
-	lines[mid] = centeredLine(prompt, width)
+	line := label + value + activeModeStyle.Render("█")
+	lines[mid] = centeredLine(line, width)
 
 	if errText != "" && mid+1 < len(lines) {
 		lines[mid+1] = centeredLine(dirtyRedStyle.Render(errText), width)

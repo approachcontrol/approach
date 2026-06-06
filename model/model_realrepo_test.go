@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
@@ -61,6 +62,13 @@ func setupModelRepo(t *testing.T) (model.Model, string) {
 	mustGit(t, dir, "add", "README.md")
 	mustGit(t, dir, "commit", "-m", "initial commit")
 	m := model.New([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}})
+	return m, dir
+}
+
+func setupModelRepoWithOptions(t *testing.T, opts model.Options) (model.Model, string) {
+	t.Helper()
+	m, dir := setupModelRepo(t)
+	m = model.NewWithOptions([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}}, opts)
 	return m, dir
 }
 
@@ -157,6 +165,59 @@ func TestModel_BranchDiffPayloadAgainstRealRepo(t *testing.T) {
 	}
 }
 
+func TestModel_CreateBranchFromSelectedBranchAgainstRealRepo(t *testing.T) {
+	m, dir := setupModelRepo(t)
+	initial := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	mustGit(t, dir, "checkout", "-b", "base")
+	writeFile(t, dir, "base.txt", "base\n")
+	mustGit(t, dir, "add", "base.txt")
+	mustGit(t, dir, "commit", "-m", "base commit")
+	baseHead := gitOut(t, dir, "rev-parse", "base")
+	mustGit(t, dir, "checkout", initial)
+	mustGit(t, dir, "tag", "base", initial)
+
+	m = inRightPane(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if cmd == nil {
+		t.Fatal("expected branches fetch cmd")
+	}
+	m, _ = update(m, cmd())
+	baseIndex := -1
+	for i, row := range m.Rows() {
+		if row.Branch.Name == "base" || row.Branch.Name == "heads/base" {
+			baseIndex = i
+			break
+		}
+	}
+	if baseIndex == -1 {
+		t.Fatalf("expected base branch in rows: %+v", m.Rows())
+	}
+	for i := 0; i < baseIndex; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.BranchCreatedMsg); !ok {
+		t.Fatalf("expected BranchCreatedMsg, got %T", msg)
+	}
+	got := gitOut(t, dir, "rev-parse", "feature/from-base")
+	if got != baseHead {
+		t.Fatalf("expected feature/from-base at base %s, got %s", baseHead, got)
+	}
+	if current := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); current != initial {
+		t.Fatalf("expected current branch to remain %s, got %s", initial, current)
+	}
+	if m.Mode() != ui.ModeBranches {
+		t.Fatalf("expected mode branches, got %d", m.Mode())
+	}
+}
+
 func TestModel_StashDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, dir := setupModelRepo(t)
 	writeFile(t, dir, "README.md", "hello\nstashed\n")
@@ -237,6 +298,88 @@ func TestModel_ReflogDiffPayloadAgainstRealRepo(t *testing.T) {
 	}
 	if !strings.Contains(res.Diff, "README.md") {
 		t.Errorf("expected reflog diff to mention changed file, got %q", res.Diff)
+	}
+}
+
+func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
+	var launchedPath string
+	m, dir := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			launchedPath = path
+			cmd := exec.Command("pwd")
+			cmd.Dir = path
+			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
+		},
+	})
+
+	m = inRightPane(m)
+	m, _ = update(m, m.Init()())
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	msg := cmd()
+	if got, ok := msg.(model.AgentResultMsg); !ok || got.Err != "" {
+		t.Fatalf("expected successful AgentResultMsg, got %T: %#v", msg, msg)
+	}
+	if launchedPath != dir {
+		t.Fatalf("expected launch from repo worktree %q, got %q", dir, launchedPath)
+	}
+}
+
+func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
+	var launchedPath string
+	m, dir := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "claude",
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			launchedPath = path
+			cmd := exec.Command("pwd")
+			cmd.Dir = path
+			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
+		},
+	})
+
+	m = inRightPane(m)
+	m, _ = update(m, m.Init()())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-smoke")})
+	_, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected create worktree command")
+	}
+	created, ok := createCmd().(model.WorktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreatedMsg, got %T", createCmd())
+	}
+	if !created.LaunchAgent {
+		t.Fatal("expected created message to request agent launch")
+	}
+
+	_, batchCmd := update(m, created)
+	if batchCmd == nil {
+		t.Fatal("expected create+launch batch command")
+	}
+	var agentResult model.AgentResultMsg
+	switch msg := batchCmd().(type) {
+	case tea.BatchMsg:
+		for _, batched := range msg {
+			if got, ok := batched().(model.AgentResultMsg); ok {
+				agentResult = got
+			}
+		}
+	case model.AgentResultMsg:
+		agentResult = msg
+	default:
+		t.Fatalf("expected BatchMsg or AgentResultMsg, got %T", msg)
+	}
+	if agentResult.Err != "" {
+		t.Fatalf("expected successful agent launch, got %q", agentResult.Err)
+	}
+
+	want := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-worktrees", "agent-smoke")
+	if launchedPath != want {
+		t.Fatalf("expected launch from created worktree %q, got %q", want, launchedPath)
 	}
 }
 

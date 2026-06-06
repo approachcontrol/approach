@@ -5,17 +5,25 @@ import (
 	"strings"
 )
 
-// ParseBranchLine parses one line of git for-each-ref --format=%(refname:short)\t%(upstream)\t%(upstream:track).
+// ParseBranchLine parses one line of git for-each-ref output for a local branch.
 // Returns the branch (with Name, HasUpstream, UpstreamGone populated) and the upstream ref string.
 func ParseBranchLine(line string) (Branch, string) {
-	parts := strings.SplitN(line, "\t", 3)
+	parts := strings.SplitN(line, "\t", 4)
 	b := Branch{Name: parts[0]}
 
+	upstreamIndex := 1
+	trackIndex := 2
+	if len(parts) > 1 && strings.HasPrefix(parts[1], "refs/heads/") {
+		b.FullRef = parts[1]
+		upstreamIndex = 2
+		trackIndex = 3
+	}
+
 	var upstream string
-	if len(parts) > 1 && parts[1] != "" {
+	if len(parts) > upstreamIndex && parts[upstreamIndex] != "" {
 		b.HasUpstream = true
-		upstream = parts[1]
-		if len(parts) > 2 && strings.Contains(parts[2], "gone") {
+		upstream = parts[upstreamIndex]
+		if len(parts) > trackIndex && strings.Contains(parts[trackIndex], "gone") {
 			b.UpstreamGone = true
 		}
 	}

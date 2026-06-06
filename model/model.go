@@ -3,6 +3,8 @@ package model
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
@@ -14,23 +16,27 @@ const listRequestSlots = int(ui.ModeReflog) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos          pane.Pane[scanner.Repo]
-	width          int
-	height         int
-	mode           ui.Mode
-	rows           pane.Pane[gitquery.BranchRow]
-	stashes        pane.Pane[gitquery.Stash]
-	worktrees      pane.Pane[gitquery.Worktree]
-	commits        pane.Pane[gitquery.Commit]
-	reflogs        pane.Pane[gitquery.ReflogEntry]
-	modal          modal.Modal
-	diffRequestSeq uint64
-	listRequestSeq uint64
-	listRequests   [listRequestSlots]uint64
-	activePane     int // 0=left (repos), 1=right (content)
-	destructive    bool
-	status         statusError
-	searchActive   bool
+	repos                  pane.Pane[scanner.Repo]
+	width                  int
+	height                 int
+	mode                   ui.Mode
+	rows                   pane.Pane[gitquery.BranchRow]
+	stashes                pane.Pane[gitquery.Stash]
+	worktrees              pane.Pane[gitquery.Worktree]
+	commits                pane.Pane[gitquery.Commit]
+	reflogs                pane.Pane[gitquery.ReflogEntry]
+	modal                  modal.Modal
+	diffRequestSeq         uint64
+	listRequestSeq         uint64
+	listRequests           [listRequestSlots]uint64
+	activePane             int // 0=left (repos), 1=right (content)
+	destructive            bool
+	status                 statusError
+	searchActive           bool
+	pendingBranchSelection string
+	agentCommand           string
+	saveAgent              func(string) error
+	launchAgent            func(string, string) (actions.TerminalLaunchSpec, error)
 }
 
 type statusSource int
@@ -49,16 +55,40 @@ type statusError struct {
 	Mode      ui.Mode
 }
 
+// Options customizes production-only integrations while keeping New(repos)
+// simple for tests.
+type Options struct {
+	AgentCommand     string
+	SaveAgentCommand func(string) error
+	LaunchAgent      func(string, string) (actions.TerminalLaunchSpec, error)
+}
+
 // New creates a Model from discovered repos.
 func New(repos []scanner.Repo) Model {
+	return NewWithOptions(repos, Options{})
+}
+
+// NewWithOptions creates a Model from discovered repos and startup options.
+func NewWithOptions(repos []scanner.Repo, opts Options) Model {
+	saveAgent := opts.SaveAgentCommand
+	if saveAgent == nil {
+		saveAgent = func(string) error { return nil }
+	}
+	launchAgent := opts.LaunchAgent
+	if launchAgent == nil {
+		launchAgent = actions.AgentLaunch
+	}
 	m := Model{
-		repos:     newRepoPane().SetItems(repos),
-		rows:      newBranchPane(),
-		stashes:   newStashPane(),
-		worktrees: newWorktreePane(),
-		commits:   newCommitPane(),
-		reflogs:   newReflogPane(),
-		mode:      ui.ModeWorktrees,
+		repos:        newRepoPane().SetItems(repos),
+		rows:         newBranchPane(),
+		stashes:      newStashPane(),
+		worktrees:    newWorktreePane(),
+		commits:      newCommitPane(),
+		reflogs:      newReflogPane(),
+		mode:         ui.ModeWorktrees,
+		agentCommand: agent.Normalize(opts.AgentCommand),
+		saveAgent:    saveAgent,
+		launchAgent:  launchAgent,
 	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeReflog; mode++ {
 		m.listRequestSeq++
@@ -104,6 +134,7 @@ func (m Model) SearchActive() bool              { return m.searchActive }
 func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
 func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
+func (m Model) AgentCommand() string            { return m.agentCommand }
 
 func (m Model) Init() tea.Cmd {
 	return m.fetchForMode()
@@ -127,45 +158,48 @@ func (m Model) View() string {
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
-		Repos:               repos,
-		Selected:            selected,
-		Width:               m.width,
-		Height:              m.height,
-		Mode:                m.mode,
-		Branches:            rows,
-		Stashes:             stashes,
-		BranchSelected:      branchSelected,
-		StashSelected:       stashSelected,
-		Overlay:             m.overlayState(),
-		OverlayDiff:         modalView.Diff,
-		OverlayScroll:       modalView.Scroll,
-		ConfirmPrompt:       modalView.Prompt,
-		ConfirmForce:        modalView.Force,
-		WorktreeInputPrompt: modalView.Prompt,
-		WorktreeInput:       modalView.Input,
-		WorktreeInputErr:    modalView.InputErr,
-		BranchScroll:        branchScroll,
-		RepoScroll:          repoScroll,
-		StashScroll:         stashScroll,
-		ActivePane:          m.activePane,
-		Destructive:         m.destructive,
-		Worktrees:           worktrees,
-		WorktreeSelected:    worktreeSelected,
-		WorktreeScroll:      worktreeScroll,
-		Commits:             commits,
-		CommitSelected:      commitSelected,
-		CommitScroll:        commitScroll,
-		Reflogs:             reflogs,
-		ReflogSelected:      reflogSelected,
-		ReflogScroll:        reflogScroll,
-		TransientError:      m.status.Text,
-		SearchActive:        m.searchActive,
-		RepoSearch:          m.repos.Query(),
-		ItemSearch:          m.activeItemPaneQuery(),
-		RepoEmptyMessage:    repoEmptyMessage,
-		RightEmptyMessage:   rightEmptyMessage,
-		FetchAvailable:      m.canFetch(),
-		PullAvailable:       m.canPull(),
+		Repos:                    repos,
+		Selected:                 selected,
+		Width:                    m.width,
+		Height:                   m.height,
+		Mode:                     m.mode,
+		Branches:                 rows,
+		Stashes:                  stashes,
+		BranchSelected:           branchSelected,
+		StashSelected:            stashSelected,
+		Overlay:                  m.overlayState(),
+		OverlayDiff:              modalView.Diff,
+		OverlayScroll:            modalView.Scroll,
+		ConfirmPrompt:            modalView.Prompt,
+		ConfirmForce:             modalView.Force,
+		WorktreeInputPrompt:      modalView.Prompt,
+		WorktreeInputPlaceholder: modalView.Placeholder,
+		WorktreeInput:            modalView.Input,
+		WorktreeInputErr:         modalView.InputErr,
+		BranchScroll:             branchScroll,
+		RepoScroll:               repoScroll,
+		StashScroll:              stashScroll,
+		ActivePane:               m.activePane,
+		Destructive:              m.destructive,
+		Worktrees:                worktrees,
+		WorktreeSelected:         worktreeSelected,
+		WorktreeScroll:           worktreeScroll,
+		Commits:                  commits,
+		CommitSelected:           commitSelected,
+		CommitScroll:             commitScroll,
+		Reflogs:                  reflogs,
+		ReflogSelected:           reflogSelected,
+		ReflogScroll:             reflogScroll,
+		TransientError:           m.status.Text,
+		SearchActive:             m.searchActive,
+		RepoSearch:               m.repos.Query(),
+		ItemSearch:               m.activeItemPaneQuery(),
+		RepoEmptyMessage:         repoEmptyMessage,
+		RightEmptyMessage:        rightEmptyMessage,
+		FetchAvailable:           m.canFetch(),
+		PullAvailable:            m.canPull(),
+		AgentAvailable:           m.canLaunchAgent(),
+		NewAgentAvailable:        m.canCreateAndLaunchAgent(),
 	})
 }
 
@@ -320,6 +354,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStashDropped(msg)
 	case BranchDeletedMsg:
 		return m.handleBranchDeleted(msg)
+	case BranchCreatedMsg:
+		return m.handleBranchCreated(msg)
+	case BranchCreateFailedMsg:
+		return m.handleBranchCreateFailed(msg), nil
 	case WorktreeResultMsg:
 		return m.handleWorktreeResult(msg), nil
 	case WorktreeRemovedMsg:
@@ -360,6 +398,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case TerminalResultMsg:
+		if msg.Err != "" {
+			m = m.setStatus(statusOther, msg.Err)
+		}
+		return m, nil
+	case AgentSetMsg:
+		return m.handleAgentSet(msg), nil
+	case AgentSetFailedMsg:
+		return m.handleAgentSetFailed(msg), nil
+	case AgentResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)
 		}
