@@ -228,9 +228,8 @@ func fuzzyMatch(query, target string) bool {
 
 func fuzzyMatchRunes(query, target string) bool {
 	q := []rune(strings.ToLower(query))
-	t := []rune(strings.ToLower(target))
 	next := 0
-	for _, r := range t {
+	for _, r := range strings.ToLower(target) {
 		if next < len(q) && q[next] == r {
 			next++
 		}

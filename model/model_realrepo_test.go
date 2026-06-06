@@ -67,8 +67,8 @@ func setupModelRepo(t *testing.T) (model.Model, string) {
 
 func setupModelRepoWithOptions(t *testing.T, opts model.Options) (model.Model, string) {
 	t.Helper()
-	m, dir := setupModelRepo(t)
-	m = model.NewWithOptions([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}}, opts)
+	_, dir := setupModelRepo(t)
+	m := model.NewWithOptions([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}}, opts)
 	return m, dir
 }
 

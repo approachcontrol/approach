@@ -270,7 +270,7 @@ func TestModel_EmptyReposNoPanic(t *testing.T) {
 	m := model.New(nil)
 	_ = m.View()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	_, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
 }
 
 func TestModel_QuitKeys(t *testing.T) {
@@ -655,7 +655,7 @@ func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T)
 	}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	for _, r := range []rune("work") {
+	for _, r := range "work" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -695,7 +695,7 @@ func TestModel_RightPaneFilterAppliesToAsyncReplacement(t *testing.T) {
 	}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	for _, r := range []rune("api") {
+	for _, r := range "api" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{

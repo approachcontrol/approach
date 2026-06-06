@@ -1475,7 +1475,7 @@ func TestModel_WorktreePrunedRefetchesWorktrees(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/gone", BranchName: "stale", Stale: true},
 	}})
-	m, cmd := update(m, model.WorktreePrunedMsg{RepoPath: "/dev/alpha"})
+	_, cmd := update(m, model.WorktreePrunedMsg{RepoPath: "/dev/alpha"})
 	if cmd == nil {
 		t.Fatal("expected fetchWorktrees cmd after prune, got nil")
 	}
