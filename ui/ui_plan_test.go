@@ -38,6 +38,13 @@ func TestRender_PlansModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestPlanPhaseProgressShowsDashWhenNoPhases(t *testing.T) {
+	got := planPhaseProgress(planstore.PlanRecord{})
+	if got != "-" {
+		t.Fatalf("want dash for plan with no phases, got %q", got)
+	}
+}
+
 func TestRender_PlansModeEmptyMessages(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

@@ -1300,8 +1300,11 @@ func formatPlanColumns(prefix, status, branch, phase, updated, title string) str
 	)
 }
 
-// planPhaseProgress reports completed/total phases, e.g. "1/2".
+// planPhaseProgress reports completed/total phases, e.g. "1/2", or "-" when no phases are recorded.
 func planPhaseProgress(record planstore.PlanRecord) string {
+	if len(record.Phases) == 0 {
+		return "-"
+	}
 	completed := 0
 	for _, phase := range record.Phases {
 		if phase.Status == "completed" {
