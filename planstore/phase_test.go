@@ -54,6 +54,29 @@ func TestSetPhaseCreatesAndUpdatesOrderedPhase(t *testing.T) {
 	}
 }
 
+func TestSetPhasePreservesMarkdownBody(t *testing.T) {
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	const body = "# Plan\n\nDistinctive body that must survive a metadata-only update.\n"
+	if _, err := store.Save(planstore.PlanRecord{PlanID: "keep-body", Title: "T", Markdown: body, Status: "draft"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := store.SetPhase("keep-body", planstore.PlanPhase{PhaseID: "a", Title: "First", Status: "completed", Order: 1}); err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+
+	got, err := store.ReadPlan("keep-body")
+	if err != nil {
+		t.Fatalf("ReadPlan() error = %v", err)
+	}
+	if got != body {
+		t.Fatalf("SetPhase blanked or altered plan.md:\n got = %q\nwant = %q", got, body)
+	}
+}
+
 func TestSetPhaseRejectsInvalidStatusAndMissingPlan(t *testing.T) {
 	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
 	if err != nil {
