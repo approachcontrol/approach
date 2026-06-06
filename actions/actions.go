@@ -188,8 +188,16 @@ func ValidatePullRequestWorktreeInput(repoPath, input string) error {
 // worktrees: <repo>-worktrees/<branch-or-tag>.
 func DefaultWorktreePath(repoPath, ref string) string {
 	base := filepath.Base(repoPath)
+	if isBareRepo(repoPath) {
+		base = strings.TrimSuffix(base, ".git")
+	}
 	parent := filepath.Dir(repoPath)
 	return filepath.Join(parent, base+"-worktrees", sanitizePathPart(ref))
+}
+
+func isBareRepo(repoPath string) bool {
+	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "--is-bare-repository").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
 // DeleteBranch runs `git branch -d`.

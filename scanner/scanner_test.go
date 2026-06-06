@@ -2,6 +2,7 @@ package scanner_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,22 @@ import (
 func makeRepo(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(path, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func makeBareRepo(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(path, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "refs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "config"), []byte("[core]\n\tbare = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -33,6 +50,93 @@ func TestScan_DiscoversTopLevelRepo(t *testing.T) {
 	}
 	if repos[0].Path != repoDir {
 		t.Errorf("expected Path %q, got %q", repoDir, repos[0].Path)
+	}
+	if repos[0].IsBare {
+		t.Error("expected normal repo IsBare=false")
+	}
+}
+
+func TestScan_DiscoversTopLevelBareRepo(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "project.git")
+	makeBareRepo(t, repoDir)
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	if repos[0].Path != repoDir {
+		t.Errorf("expected Path %q, got %q", repoDir, repos[0].Path)
+	}
+	if repos[0].DisplayName != "project.git" {
+		t.Errorf("expected DisplayName %q, got %q", "project.git", repos[0].DisplayName)
+	}
+	if !repos[0].IsBare {
+		t.Error("expected bare repo IsBare=true")
+	}
+}
+
+func TestScan_DiscoversNestedBareRepo(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "org", "project.git")
+	makeBareRepo(t, repoDir)
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	if repos[0].DisplayName != "org/project.git" {
+		t.Errorf("expected DisplayName %q, got %q", "org/project.git", repos[0].DisplayName)
+	}
+	if !repos[0].IsBare {
+		t.Error("expected nested bare repo IsBare=true")
+	}
+}
+
+func TestScan_BareRepoCarriesIsBare(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "real.git")
+	if err := exec.Command("git", "init", "--bare", repoDir).Run(); err != nil {
+		t.Fatalf("git init --bare failed: %v", err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(repos))
+	}
+	if !repos[0].IsBare {
+		t.Fatalf("expected real bare repo IsBare=true, got %+v", repos[0])
+	}
+}
+
+func TestScan_DoesNotTreatRandomGitLikeDirectoryAsBare(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "project.git")
+	if err := os.MkdirAll(filepath.Join(dir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "refs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("not a ref\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("expected no repos, got %+v", repos)
 	}
 }
 
@@ -149,5 +253,8 @@ func TestScan_GitFileWorktreeDiscovered(t *testing.T) {
 	}
 	if repos[0].DisplayName != "wt-repo" {
 		t.Fatalf("expected DisplayName %q, got %q", "wt-repo", repos[0].DisplayName)
+	}
+	if repos[0].IsBare {
+		t.Error("expected git-file worktree IsBare=false")
 	}
 }

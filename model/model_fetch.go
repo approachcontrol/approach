@@ -115,14 +115,18 @@ func (m Model) pullTargetPath() (string, string, bool) {
 // requires the selected branch to have a checked-out worktree, since a bare
 // branch has no working tree to pull into.
 func (m Model) gitTargetPath(forPull bool) (string, string, bool) {
-	repoPath, ok := m.currentRepoPath()
+	repo, ok := m.currentRepo()
 	if !ok {
 		return "", "", false
 	}
+	repoPath := repo.Path
 	switch m.mode {
 	case ui.ModeWorktrees:
 		wt, ok := m.selectedWorktree()
 		if !ok {
+			if forPull && repo.IsBare {
+				return "", "", false
+			}
 			return repoPath, repoPath, true
 		}
 		if wt.Stale {
@@ -132,6 +136,9 @@ func (m Model) gitTargetPath(forPull bool) (string, string, bool) {
 	case ui.ModeBranches:
 		row, ok := m.selectedRow()
 		if !ok {
+			if forPull && repo.IsBare {
+				return "", "", false
+			}
 			return repoPath, repoPath, true
 		}
 		if row.Stale {

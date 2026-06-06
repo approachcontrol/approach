@@ -3,6 +3,7 @@ package gitquery
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -91,12 +92,14 @@ func FlattenBranches(branches []Branch) []BranchRow {
 	return rows
 }
 
-// ListWorktrees returns all worktrees for the given repo, with the main worktree first.
+// ListWorktrees returns non-bare worktree checkouts for the given repo.
+// A checkout whose path equals repoPath is marked as the root worktree.
 func ListWorktrees(repoPath string) ([]Worktree, error) {
 	return defaultQuery().ListWorktrees(repoPath)
 }
 
-// ListWorktrees returns all worktrees for the given repo, with the main worktree first.
+// ListWorktrees returns non-bare worktree checkouts for the given repo.
+// Bare roots are omitted, so a central bare repository can return zero rows.
 func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 	out, err := q.git.Run(repoPath, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -104,7 +107,6 @@ func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 	}
 
 	var worktrees []Worktree
-	first := true
 	for _, wt := range ParseWorktreeList(out) {
 		if wt.IsBare {
 			continue
@@ -113,7 +115,7 @@ func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 		w := Worktree{
 			Path:       wt.Path,
 			Detached:   wt.Detached,
-			IsMain:     first,
+			IsMain:     samePath(wt.Path, repoPath),
 			Locked:     wt.Locked,
 			LockReason: wt.LockReason,
 		}
@@ -122,7 +124,6 @@ func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 		} else {
 			w.BranchName = wt.Branch
 		}
-		first = false
 		worktrees = append(worktrees, w)
 	}
 
@@ -389,7 +390,7 @@ func (q *Querier) branchAheadBehind(repoPath, branchName, upstream string) (int,
 func (q *Querier) rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
 	for branch, paths := range wtMap {
 		for _, path := range paths {
-			if path == repoPath {
+			if samePath(path, repoPath) {
 				return branch
 			}
 		}
@@ -466,6 +467,17 @@ func firstWorktreePath(paths []string) string {
 		return ""
 	}
 	return paths[0]
+}
+
+func samePath(a, b string) bool {
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+func canonicalPath(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
 }
 
 func (q *Querier) maybeGitCmd(dir string, args ...string) string {

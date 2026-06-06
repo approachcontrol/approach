@@ -11,6 +11,7 @@ import (
 type Repo struct {
 	Path        string
 	DisplayName string
+	IsBare      bool
 }
 
 // ScanOptions configures the scanner.
@@ -57,10 +58,11 @@ func Scan(opts ScanOptions) ([]Repo, error) {
 
 		path := filepath.Join(root, entry.Name())
 
-		if isRepo(path) {
+		if isRepo, isBare := repoInfo(path); isRepo {
 			repos = append(repos, Repo{
 				Path:        path,
 				DisplayName: entry.Name(),
+				IsBare:      isBare,
 			})
 			continue
 		}
@@ -78,10 +80,11 @@ func Scan(opts ScanOptions) ([]Repo, error) {
 					continue
 				}
 				subPath := filepath.Join(path, sub.Name())
-				if isRepo(subPath) {
+				if isRepo, isBare := repoInfo(subPath); isRepo {
 					repos = append(repos, Repo{
 						Path:        subPath,
 						DisplayName: entry.Name() + "/" + sub.Name(),
+						IsBare:      isBare,
 					})
 				}
 			}
@@ -95,13 +98,84 @@ func Scan(opts ScanOptions) ([]Repo, error) {
 	return repos, nil
 }
 
-func isRepo(path string) bool {
-	// A repo has a ".git" entry that is either a directory (normal repo) or a
-	// regular file (a git worktree/submodule pointer). Bare repos (which have no
-	// ".git" entry at all) are intentionally not detected here.
+func repoInfo(path string) (isRepo bool, isBare bool) {
+	// A normal checkout has a ".git" entry that is either a directory or a
+	// regular file (a git worktree/submodule pointer).
 	info, err := os.Stat(filepath.Join(path, ".git"))
+	if err == nil {
+		return info.IsDir() || info.Mode().IsRegular(), false
+	}
+	if !os.IsNotExist(err) {
+		return false, false
+	}
+
+	if !isRegularFile(filepath.Join(path, "HEAD")) ||
+		!isDir(filepath.Join(path, "objects")) ||
+		!isDir(filepath.Join(path, "refs")) ||
+		!configHasCoreBare(filepath.Join(path, "config")) {
+		return false, false
+	}
+
+	head, err := os.ReadFile(filepath.Join(path, "HEAD"))
+	if err != nil {
+		return false, false
+	}
+	if !looksLikeGitHEAD(strings.TrimSpace(string(head))) {
+		return false, false
+	}
+	return true, true
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func looksLikeGitHEAD(head string) bool {
+	if strings.HasPrefix(head, "ref: refs/") {
+		return true
+	}
+	if len(head) != 40 {
+		return false
+	}
+	for _, r := range head {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func configHasCoreBare(path string) bool {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	return info.IsDir() || info.Mode().IsRegular()
+	inCore := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			inCore = strings.EqualFold(strings.TrimSpace(strings.Trim(line, "[]")), "core")
+			continue
+		}
+		if !inCore {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(key), "bare") && strings.EqualFold(strings.TrimSpace(value), "true") {
+			return true
+		}
+	}
+	return false
 }

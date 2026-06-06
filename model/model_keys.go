@@ -491,11 +491,11 @@ func (m Model) pathForOpenAction() (string, bool) {
 		return "", false
 	}
 	if m.mode == ui.ModeHistory {
-		path, ok := m.currentRepoPath()
-		if !ok {
+		repo, ok := m.currentRepo()
+		if !ok || repo.IsBare {
 			return "", false
 		}
-		return path, true
+		return repo.Path, true
 	}
 	if m.mode == ui.ModeBranches {
 		if row, ok := m.selectedRow(); ok && row.WorktreePath != "" {
@@ -603,7 +603,10 @@ func (m Model) confirmBranchDelete() (tea.Model, tea.Cmd) {
 	}
 
 	// Root branch cannot be deleted
-	if row.WorktreePath == repoPath {
+	if samePath(row.WorktreePath, repoPath) {
+		return m, nil
+	}
+	if repo, ok := m.currentRepo(); ok && repo.IsBare && row.WorktreePath != "" {
 		return m, nil
 	}
 
