@@ -188,7 +188,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.startFetchForMode()
 		}
 	case "right", "l":
-		if m.mode < ui.ModeSessions {
+		if m.mode < ui.ModePlans {
 			m.mode++
 			m = m.resetModeCursors()
 			return m.startFetchForMode()
@@ -228,6 +228,12 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			m.mode = ui.ModeSessions
 			m = m.resetModeCursors()
 			return m.startFetchSessions()
+		}
+	case "7":
+		if m.mode != ui.ModePlans {
+			m.mode = ui.ModePlans
+			m = m.resetModeCursors()
+			return m.startFetchPlans()
 		}
 	case "y":
 		return m.handleCopyHash()
@@ -303,6 +309,8 @@ func (m Model) moveCursor(delta int) Model {
 		m.reflogs = m.reflogs.Move(delta, h, w)
 	case ui.ModeSessions:
 		m.sessions = m.sessions.Move(delta, h, w)
+	case ui.ModePlans:
+		m.plans = m.plans.Move(delta, h, w)
 	}
 	return m
 }
@@ -337,6 +345,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeSessions && len(m.filteredSessions()) > 0 {
 		m = m.openDiff(modal.DiffSessionTranscript)
 		return m, m.fetchSessionTranscript()
+	}
+	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
+		m = m.openPlanText()
+		return m, m.fetchPlanText()
 	}
 	return m, nil
 }
@@ -843,6 +855,7 @@ func (m Model) resetModeCursors() Model {
 	m.commits = m.commits.ResetSelection()
 	m.reflogs = m.reflogs.ResetSelection()
 	m.sessions = m.sessions.ResetSelection()
+	m.plans = m.plans.ResetSelection()
 	return m
 }
 
@@ -855,6 +868,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.commits = m.commits.SetItems(nil).ResetSelection()
 	m.reflogs = m.reflogs.SetItems(nil).ResetSelection()
 	m.sessions = m.sessions.SetItems(nil).ResetSelection()
+	m.plans = m.plans.SetItems(nil).ResetSelection()
 	return m
 }
 

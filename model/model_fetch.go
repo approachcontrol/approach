@@ -9,6 +9,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -33,6 +34,8 @@ func (m Model) startFetchForMode() (Model, tea.Cmd) {
 		return m.startFetchReflog()
 	case ui.ModeSessions:
 		return m.startFetchSessions()
+	case ui.ModePlans:
+		return m.startFetchPlans()
 	}
 	return m, nil
 }
@@ -52,6 +55,8 @@ func (m Model) fetchForMode() tea.Cmd {
 		return m.fetchReflog(request)
 	case ui.ModeSessions:
 		return m.fetchSessions(request)
+	case ui.ModePlans:
+		return m.fetchPlans(request)
 	}
 	return nil
 }
@@ -117,6 +122,11 @@ func (m Model) startFetchReflog() (Model, tea.Cmd) {
 func (m Model) startFetchSessions() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModeSessions)
 	return m, m.fetchSessions(request)
+}
+
+func (m Model) startFetchPlans() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModePlans)
+	return m, m.fetchPlans(request)
 }
 
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
@@ -578,6 +588,20 @@ func (m Model) fetchSessions(request uint64) tea.Cmd {
 	}
 }
 
+func (m Model) fetchPlans(request uint64) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		records, err := m.listPlans(planstore.PlanFilter{RepoPath: repoPath})
+		if err != nil {
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "plans", Err: fmt.Sprintf("failed to load plans: %v", err), Kind: FetchList, Mode: ui.ModePlans, ListRequest: request}
+		}
+		return PlanResultMsg{RepoPath: repoPath, Plans: records, ListRequest: request}
+	}
+}
+
 func (m Model) fetchReflogDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
@@ -636,6 +660,39 @@ func (m Model) fetchSessionTranscript() tea.Cmd {
 			SessionID:   record.SessionID,
 			DiffRequest: diffRequest,
 			Transcript:  formatTranscript(events),
+		}
+	}
+}
+
+func (m Model) fetchPlanText() tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	record, ok := m.selectedPlan()
+	if !ok {
+		return nil
+	}
+	planID := record.PlanID
+	diffRequest := m.modal.View().Request
+	return func() tea.Msg {
+		body, err := m.readPlan(planID)
+		if err != nil {
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        "plan",
+				Err:         fmt.Sprintf("failed to load plan: %v", err),
+				Kind:        FetchPlanText,
+				Mode:        ui.ModePlans,
+				DiffRequest: diffRequest,
+				PlanID:      planID,
+			}
+		}
+		return PlanReadResultMsg{
+			RepoPath:    repoPath,
+			PlanID:      planID,
+			DiffRequest: diffRequest,
+			Text:        body,
 		}
 	}
 }

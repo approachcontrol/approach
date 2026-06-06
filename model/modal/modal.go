@@ -13,6 +13,7 @@ const (
 	Confirm
 	Input
 	Diff
+	Text
 )
 
 type DiffKind int
@@ -49,6 +50,7 @@ type Modal struct {
 	submit      func(string) tea.Cmd
 	diffKind    DiffKind
 	diff        string
+	text        string
 	scroll      int
 	request     uint64
 }
@@ -62,6 +64,7 @@ type View struct {
 	InputErr    string
 	DiffKind    DiffKind
 	Diff        string
+	Text        string
 	Scroll      int
 	Request     uint64
 }
@@ -89,9 +92,27 @@ func OpenDiff(kind DiffKind, body string) Modal {
 	return Modal{kind: Diff, diffKind: kind, diff: body}
 }
 
+// OpenText opens a scrollable plain-text overlay (distinct from diff overlays;
+// no diff coloring is applied).
+func OpenText(body string) Modal {
+	return Modal{kind: Text, text: body}
+}
+
 func (m Modal) WithRequest(request uint64) Modal {
-	if m.kind == Diff {
+	if m.kind == Diff || m.kind == Text {
 		m.request = request
+	}
+	return m
+}
+
+// SetTextForRequest fills the text overlay body when the request matches the
+// one captured when the overlay was opened.
+func (m Modal) SetTextForRequest(request uint64, body string) Modal {
+	if request != 0 && m.kind == Text && m.request == request {
+		m.text = body
+		if m.scroll > maxDiffScroll(body) {
+			m.scroll = maxDiffScroll(body)
+		}
 	}
 	return m
 }
@@ -127,6 +148,7 @@ func (m Modal) View() View {
 		InputErr:    m.inputErr,
 		DiffKind:    m.diffKind,
 		Diff:        m.diff,
+		Text:        m.text,
 		Scroll:      m.scroll,
 		Request:     m.request,
 	}
@@ -140,6 +162,8 @@ func (m Modal) Update(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		return m.updateInput(msg)
 	case Diff:
 		return m.updateDiff(msg)
+	case Text:
+		return m.updateText(msg)
 	default:
 		return m, Ignored, nil
 	}
@@ -235,6 +259,25 @@ func (m Modal) updateDiff(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		return m, Consumed, nil
 	case "down", "j":
 		if m.scroll < maxDiffScroll(m.diff) {
+			m.scroll++
+		}
+		return m, Consumed, nil
+	default:
+		return m, Consumed, nil
+	}
+}
+
+func (m Modal) updateText(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		return Modal{}, Cancelled, nil
+	case "up", "k":
+		if m.scroll > 0 {
+			m.scroll--
+		}
+		return m, Consumed, nil
+	case "down", "j":
+		if m.scroll < maxDiffScroll(m.text) {
 			m.scroll++
 		}
 		return m, Consumed, nil

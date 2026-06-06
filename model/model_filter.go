@@ -7,6 +7,7 @@ import (
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/pane"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -65,6 +66,10 @@ func newSessionPane() pane.Pane[sessions.SessionRecord] {
 	return pane.New(sessionSearchText, fixedHeight[sessions.SessionRecord])
 }
 
+func newPlanPane() pane.Pane[planstore.PlanRecord] {
+	return pane.New(planSearchText, fixedHeight[planstore.PlanRecord])
+}
+
 func (m Model) activeSearchQuery() string {
 	if m.activePane == 0 {
 		return m.repos.Query()
@@ -86,6 +91,8 @@ func (m Model) activeItemPaneQuery() string {
 		return m.reflogs.Query()
 	case ui.ModeSessions:
 		return m.sessions.Query()
+	case ui.ModePlans:
+		return m.plans.Query()
 	default:
 		return ""
 	}
@@ -103,6 +110,7 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	m.commits = m.commits.SetQueryPreserveIndex(query)
 	m.reflogs = m.reflogs.SetQueryPreserveIndex(query)
 	m.sessions = m.sessions.SetQueryPreserveIndex(query)
+	m.plans = m.plans.SetQueryPreserveIndex(query)
 
 	switch m.mode {
 	case ui.ModeWorktrees:
@@ -123,6 +131,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	case ui.ModeSessions:
 		m.sessions = m.sessions.SetQuery(query)
 		m = m.reflowSessions()
+	case ui.ModePlans:
+		m.plans = m.plans.SetQuery(query)
+		m = m.reflowPlans()
 	}
 	return m
 }
@@ -135,6 +146,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowCommits()
 	m = m.reflowReflogs()
 	m = m.reflowSessions()
+	m = m.reflowPlans()
 	return m
 }
 
@@ -188,6 +200,32 @@ func (m Model) filteredSessions() []sessions.SessionRecord {
 	}
 	sessions, _, _ := m.sessions.View()
 	return sessions
+}
+
+func (m Model) filteredPlans() []planstore.PlanRecord {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	plans, _, _ := m.plans.View()
+	return plans
+}
+
+func planSearchText(record planstore.PlanRecord) string {
+	parts := []string{
+		record.Title,
+		record.Summary,
+		record.Status,
+		record.Branch,
+		record.WorktreePath,
+		filepath.Base(record.WorktreePath),
+		record.Provider,
+		record.SessionID,
+		record.LaunchID,
+	}
+	for _, phase := range record.Phases {
+		parts = append(parts, phase.Title, phase.Status)
+	}
+	return strings.Join(parts, " ")
 }
 
 func branchSearchText(row gitquery.BranchRow) string {
