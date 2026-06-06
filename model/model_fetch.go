@@ -202,6 +202,20 @@ func (m Model) selectedBranchStartPoint() string {
 	return "refs/heads/" + row.Branch.Name
 }
 
+func (m Model) createPullRequestWorktree(input string) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		worktreePath, err := actions.CreatePullRequestWorktree(repoPath, input)
+		if err != nil {
+			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), Kind: WorktreeCreatePullRequest}
+		}
+		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath}
+	}
+}
+
 func (m Model) fetchWorktrees(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {

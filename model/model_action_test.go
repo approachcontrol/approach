@@ -1544,6 +1544,24 @@ func TestModel_NKeyOpensWorktreeInput(t *testing.T) {
 	}
 }
 
+func TestModel_PKeyOpensPullRequestWorktreeInput(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.ConfirmPrompt() != ui.PRWorktreePrompt {
+		t.Errorf("expected PR worktree prompt, got %q", m.ConfirmPrompt())
+	}
+	if m.WorktreeInput() != "" {
+		t.Errorf("expected empty PR input, got %q", m.WorktreeInput())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd opening PR input, got %T", cmd)
+	}
+}
+
 func TestModel_NKeyNoOpOutsideCreationModes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1570,6 +1588,48 @@ func TestModel_NKeyNoOpOutsideCreationModes(t *testing.T) {
 				t.Errorf("expected nil cmd, got %T", cmd)
 			}
 		})
+	}
+}
+
+func TestModel_PKeyNoOpOutsideWorktreesMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  rune
+		mode ui.Mode
+	}{
+		{name: "branches", key: '2', mode: ui.ModeBranches},
+		{name: "stashes", key: '3', mode: ui.ModeStashes},
+		{name: "history", key: '4', mode: ui.ModeHistory},
+		{name: "reflog", key: '5', mode: ui.ModeReflog},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m = inWorktreesMode(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			if m.Mode() != tc.mode {
+				t.Fatalf("expected mode %d, got %d", tc.mode, m.Mode())
+			}
+
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+			if m.Overlay() != ui.OverlayNone {
+				t.Errorf("expected OverlayNone, got %d", m.Overlay())
+			}
+			if cmd != nil {
+				t.Errorf("expected nil cmd, got %T", cmd)
+			}
+		})
+	}
+}
+
+func TestModel_PKeyNoOpWithoutSelectedRepo(t *testing.T) {
+	m := model.New(nil)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected OverlayNone, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd, got %T", cmd)
 	}
 }
 
@@ -1634,6 +1694,45 @@ func TestModel_WorktreeInputEnterRequiresText(t *testing.T) {
 	}
 }
 
+func TestModel_PullRequestWorktreeInputEnterRequiresText(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
+	}
+	if m.ConfirmPrompt() != ui.PRWorktreePrompt {
+		t.Errorf("expected PR worktree prompt, got %q", m.ConfirmPrompt())
+	}
+	if m.WorktreeInputErr() == "" {
+		t.Fatal("expected validation error")
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd for empty PR input, got %T", cmd)
+	}
+}
+
+func TestModel_PullRequestWorktreeInputRejectsUnsupportedURL(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("https://gitlab.com/acme/project/-/merge_requests/123")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected input overlay to remain, got %d", m.Overlay())
+	}
+	if m.ConfirmPrompt() != ui.PRWorktreePrompt {
+		t.Errorf("expected PR worktree prompt, got %q", m.ConfirmPrompt())
+	}
+	if !strings.Contains(m.WorktreeInputErr(), "unsupported PR URL host") {
+		t.Fatalf("expected unsupported host validation error, got %q", m.WorktreeInputErr())
+	}
+	if cmd != nil {
+		t.Errorf("expected nil cmd for invalid PR URL, got %T", cmd)
+	}
+}
+
 func TestModel_WorktreeInputEnterCreatesWorktree(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
@@ -1649,6 +1748,28 @@ func TestModel_WorktreeInputEnterCreatesWorktree(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(model.WorktreeCreateFailedMsg); !ok {
 		t.Fatalf("expected WorktreeCreateFailedMsg from fake repo, got %T", msg)
+	}
+}
+
+func TestModel_PullRequestWorktreeInputEnterCreatesWorktree(t *testing.T) {
+	m := model.New(testRepos())
+	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("123")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected create PR worktree cmd")
+	}
+	msg := cmd()
+	failed, ok := msg.(model.WorktreeCreateFailedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreateFailedMsg from fake repo, got %T", msg)
+	}
+	if failed.Kind != model.WorktreeCreatePullRequest {
+		t.Fatalf("expected pull request create kind, got %d", failed.Kind)
 	}
 }
 
@@ -1671,6 +1792,28 @@ func TestModel_WorktreeCreateFailedReopensInput(t *testing.T) {
 		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
 	}
 	if m.WorktreeInput() != "feat" {
+		t.Errorf("expected input restored, got %q", m.WorktreeInput())
+	}
+	if m.WorktreeInputErr() != "boom" {
+		t.Errorf("expected error restored, got %q", m.WorktreeInputErr())
+	}
+}
+
+func TestModel_PullRequestWorktreeCreateFailedReopensPRInput(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, model.WorktreeCreateFailedMsg{
+		RepoPath: "/dev/alpha",
+		Input:    "123",
+		Err:      "boom",
+		Kind:     model.WorktreeCreatePullRequest,
+	})
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Errorf("expected OverlayWorktreeInput, got %d", m.Overlay())
+	}
+	if m.ConfirmPrompt() != ui.PRWorktreePrompt {
+		t.Errorf("expected PR worktree prompt, got %q", m.ConfirmPrompt())
+	}
+	if m.WorktreeInput() != "123" {
 		t.Errorf("expected input restored, got %q", m.WorktreeInput())
 	}
 	if m.WorktreeInputErr() != "boom" {

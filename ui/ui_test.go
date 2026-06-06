@@ -127,6 +127,9 @@ func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
 	if !strings.Contains(bar, "n: new worktree") {
 		t.Fatalf("expected new worktree hint in worktrees mode, got %q", bar)
 	}
+	if !strings.Contains(bar, "P: PR") {
+		t.Fatalf("expected PR worktree hint in worktrees mode, got %q", bar)
+	}
 }
 
 func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
@@ -729,6 +732,23 @@ func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	}
 }
 
+func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:               []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:               80,
+		Height:              24,
+		Mode:                1,
+		Overlay:             OverlayWorktreeInput,
+		WorktreeInputPrompt: PRWorktreePrompt,
+	})
+	if !strings.Contains(view, "Create PR worktree from:") {
+		t.Error("PR input dialog should show PR-specific prompt")
+	}
+	if !strings.Contains(view, "PR number or URL") {
+		t.Error("PR input dialog should show PR-specific placeholder")
+	}
+}
+
 func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
 	bar := RenderStatusBar(120, 3, 0, 1, true, false, false)
 	for _, hint := range []string{"f: fetch", "F: pull"} {
@@ -1169,6 +1189,18 @@ func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
 	}
 	if strings.Contains(bar, "p: prune") {
 		t.Error("worktrees mode read-only should NOT show 'p: prune'")
+	}
+}
+
+func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHintBeforeActions(t *testing.T) {
+	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
+	dIdx := strings.Index(bar, "D: destructive mode")
+	nIdx := strings.Index(bar, "n: new worktree")
+	if dIdx == -1 || nIdx == -1 {
+		t.Fatalf("expected destructive and new-worktree hints in %q", bar)
+	}
+	if dIdx > nIdx {
+		t.Fatalf("expected destructive hint before worktree actions, got %q", bar)
 	}
 }
 

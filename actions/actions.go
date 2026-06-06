@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -127,6 +129,57 @@ func CreateBranch(repoPath, name, startPoint string) error {
 		args = append(args, startPoint)
 	}
 	return runGit(repoPath, args...)
+}
+
+// CreatePullRequestWorktree fetches a pull request head into a local review
+// branch, then creates a worktree for that branch.
+func CreatePullRequestWorktree(repoPath, input string) (string, error) {
+	pr, err := parsePullRequestInput(input)
+	if err != nil {
+		return "", err
+	}
+	if err := validatePullRequestRepo(repoPath, pr); err != nil {
+		return "", err
+	}
+
+	branch := fmt.Sprintf("pr-%d", pr.Number)
+	worktreePath := DefaultWorktreePath(repoPath, branch)
+	if refExists(repoPath, branch) {
+		return "", fmt.Errorf("branch %s already exists", branch)
+	}
+	if _, err := os.Stat(worktreePath); err == nil {
+		return "", fmt.Errorf("worktree path already exists: %s", worktreePath)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	refspec := fmt.Sprintf("refs/pull/%d/head:refs/heads/%s", pr.Number, branch)
+	if err := runGit(repoPath, "fetch", "origin", refspec); err != nil {
+		return "", fmt.Errorf("fetching PR #%d: %w", pr.Number, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if cleanupErr := runGit(repoPath, "branch", "-D", branch); cleanupErr != nil {
+			return "", fmt.Errorf("%w; also failed to delete branch %s: %v", err, branch, cleanupErr)
+		}
+		return "", err
+	}
+	if err := runGit(repoPath, "worktree", "add", worktreePath, branch); err != nil {
+		if cleanupErr := runGit(repoPath, "branch", "-D", branch); cleanupErr != nil {
+			return "", fmt.Errorf("%w; also failed to delete branch %s: %v", err, branch, cleanupErr)
+		}
+		return "", err
+	}
+	return worktreePath, nil
+}
+
+// ValidatePullRequestWorktreeInput checks whether input is a supported PR
+// number or URL for repoPath.
+func ValidatePullRequestWorktreeInput(repoPath, input string) error {
+	pr, err := parsePullRequestInput(input)
+	if err != nil {
+		return err
+	}
+	return validatePullRequestRepo(repoPath, pr)
 }
 
 // DefaultWorktreePath returns the conventional sibling path used for new
@@ -342,6 +395,98 @@ func refExists(repoPath, ref string) bool {
 		return false
 	}
 	return exec.Command("git", "-C", repoPath, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Run() == nil
+}
+
+type pullRequestInput struct {
+	Number int
+	Owner  string
+	Repo   string
+}
+
+func parsePullRequestInput(input string) (pullRequestInput, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return pullRequestInput{}, fmt.Errorf("PR number or URL cannot be empty")
+	}
+	if strings.HasPrefix(input, "-") {
+		return pullRequestInput{}, fmt.Errorf("PR number or URL cannot start with -: %q", input)
+	}
+	if strings.HasPrefix(input, "#") {
+		input = strings.TrimPrefix(input, "#")
+	}
+	if number, ok := parsePositiveInt(input); ok {
+		return pullRequestInput{Number: number}, nil
+	}
+
+	rawURL := input
+	if strings.HasPrefix(rawURL, "github.com/") {
+		rawURL = "https://" + rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return pullRequestInput{}, fmt.Errorf("invalid PR number or URL: %q", input)
+	}
+	if strings.EqualFold(u.Host, "github.com") {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) >= 4 && parts[2] == "pull" {
+			if number, ok := parsePositiveInt(parts[3]); ok {
+				return pullRequestInput{Number: number, Owner: parts[0], Repo: strings.TrimSuffix(parts[1], ".git")}, nil
+			}
+		}
+		return pullRequestInput{}, fmt.Errorf("invalid GitHub PR URL: %q", input)
+	}
+	return pullRequestInput{}, fmt.Errorf("unsupported PR URL host: %s", u.Host)
+}
+
+func parsePositiveInt(s string) (int, bool) {
+	number, err := strconv.Atoi(s)
+	if err != nil || number <= 0 {
+		return 0, false
+	}
+	return number, true
+}
+
+func validatePullRequestRepo(repoPath string, pr pullRequestInput) error {
+	if pr.Owner == "" || pr.Repo == "" {
+		return nil
+	}
+	owner, repo, ok := originGitHubRepo(repoPath)
+	if !ok {
+		return fmt.Errorf("cannot verify GitHub PR URL because origin is not a GitHub repository")
+	}
+	if !strings.EqualFold(owner, pr.Owner) || !strings.EqualFold(repo, pr.Repo) {
+		return fmt.Errorf("PR URL repository %s/%s does not match origin %s/%s", pr.Owner, pr.Repo, owner, repo)
+	}
+	return nil
+}
+
+func originGitHubRepo(repoPath string) (owner, repo string, ok bool) {
+	out, err := exec.Command("git", "-C", repoPath, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return "", "", false
+	}
+	return parseGitHubRemote(strings.TrimSpace(string(out)))
+}
+
+func parseGitHubRemote(remote string) (owner, repo string, ok bool) {
+	remote = strings.TrimSpace(remote)
+	if strings.HasPrefix(remote, "git@github.com:") {
+		path := strings.TrimSuffix(strings.Trim(strings.TrimPrefix(remote, "git@github.com:"), "/"), ".git")
+		parts := strings.Split(path, "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0], parts[1], true
+		}
+		return "", "", false
+	}
+	u, err := url.Parse(remote)
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0], strings.TrimSuffix(parts[1], ".git"), true
+	}
+	return "", "", false
 }
 
 func sanitizePathPart(s string) string {

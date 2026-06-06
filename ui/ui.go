@@ -25,6 +25,7 @@ const (
 )
 
 const BranchPrompt = "New branch"
+const PRWorktreePrompt = "PR worktree"
 
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
@@ -417,13 +418,19 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == ModeWorktrees:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
+		if !destructive {
+			hints += "  D: destructive mode"
+		}
 		if activePane == 1 && !staleSelected {
 			hints += "  n: new worktree"
-			if dirtySelected {
-				hints += "  enter: diff"
+			if lockedSelected {
+				hints += "  u: unlock"
 			}
 			if destructive && !lockedSelected {
 				hints += "  " + dirtyRedStyle.Render("d: delete")
+			}
+			if dirtySelected {
+				hints += "  enter: diff"
 			}
 			if fetchAvailable {
 				hints += "  f: fetch"
@@ -431,16 +438,11 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			if pullAvailable {
 				hints += "  F: pull"
 			}
-			hints += "  t: terminal  c: code"
+			hints += "  t: terminal c: code"
+			hints += " P: PR"
 		}
 		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
-		}
-		if activePane == 1 && lockedSelected {
-			hints += "  u: unlock"
-		}
-		if !destructive {
-			hints += "  D: destructive mode"
 		}
 	default:
 		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
@@ -774,7 +776,7 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 	return lines
 }
 
-func renderWorktreeInputDialog(prompt, input, errText string, width, height int) []string {
+func renderWorktreeInputDialog(promptText, input, errText string, width, height int) []string {
 	lines := make([]string, height)
 	mid := height / 2
 	if mid >= len(lines) {
@@ -783,9 +785,12 @@ func renderWorktreeInputDialog(prompt, input, errText string, width, height int)
 
 	label := "Create worktree from: "
 	placeholder := "branch, tag, or new branch name"
-	if prompt == BranchPrompt {
+	if promptText == BranchPrompt {
 		label = "Create branch: "
 		placeholder = "branch name"
+	} else if promptText == PRWorktreePrompt {
+		label = "Create PR worktree from: "
+		placeholder = "PR number or URL"
 	}
 	value := input
 	if value == "" {
