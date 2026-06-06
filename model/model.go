@@ -16,32 +16,36 @@ const listRequestSlots = int(ui.ModeReflog) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos                    pane.Pane[scanner.Repo]
-	width                    int
-	height                   int
-	mode                     ui.Mode
-	rows                     pane.Pane[gitquery.BranchRow]
-	stashes                  pane.Pane[gitquery.Stash]
-	worktrees                pane.Pane[gitquery.Worktree]
-	commits                  pane.Pane[gitquery.Commit]
-	reflogs                  pane.Pane[gitquery.ReflogEntry]
-	modal                    modal.Modal
-	diffRequestSeq           uint64
-	listRequestSeq           uint64
-	worktreeCreateSeq        uint64
-	activeWorktreeCreate     uint64
-	listRequests             [listRequestSlots]uint64
-	activePane               int // 0=left (repos), 1=right (content)
-	destructive              bool
-	status                   statusError
-	searchActive             bool
-	pendingBranchSelection   string
-	pendingWorktreeSelection string
-	agentCommand             string
-	saveAgent                func(string) error
-	launchAgent              func(string, string) (actions.TerminalLaunchSpec, error)
-	bootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
+	repos                     pane.Pane[scanner.Repo]
+	width                     int
+	height                    int
+	mode                      ui.Mode
+	rows                      pane.Pane[gitquery.BranchRow]
+	stashes                   pane.Pane[gitquery.Stash]
+	worktrees                 pane.Pane[gitquery.Worktree]
+	commits                   pane.Pane[gitquery.Commit]
+	reflogs                   pane.Pane[gitquery.ReflogEntry]
+	modal                     modal.Modal
+	diffRequestSeq            uint64
+	listRequestSeq            uint64
+	worktreeCreateSeq         uint64
+	activeWorktreeCreate      uint64
+	listRequests              [listRequestSlots]uint64
+	activePane                int // 0=left (repos), 1=right (content)
+	destructive               bool
+	status                    statusError
+	visibleRepoFetchSeq       uint64
+	visibleRepoFetchStatusSeq uint64
+	visibleRepoFetch          visibleRepoFetchState
+	searchActive              bool
+	pendingBranchSelection    string
+	pendingWorktreeSelection  string
+	agentCommand              string
+	fetchRepo                 func(string) error
+	saveAgent                 func(string) error
+	launchAgent               func(string, string) (actions.TerminalLaunchSpec, error)
+	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type statusSource int
@@ -58,12 +62,24 @@ type statusError struct {
 	Source    statusSource
 	FetchKind FetchKind
 	Mode      ui.Mode
+	FadeStep  int
+}
+
+type visibleRepoFetchState struct {
+	Request       uint64
+	Total         int
+	Completed     int
+	Successes     int
+	FailureNames  []string
+	FailureCount  int
+	CapturedPaths map[string]struct{}
 }
 
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
 	AgentCommand         string
+	FetchRepo            func(string) error
 	SaveAgentCommand     func(string) error
 	LaunchAgent          func(string, string) (actions.TerminalLaunchSpec, error)
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
@@ -80,6 +96,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgent := opts.SaveAgentCommand
 	if saveAgent == nil {
 		saveAgent = func(string) error { return nil }
+	}
+	fetchRepo := opts.FetchRepo
+	if fetchRepo == nil {
+		fetchRepo = actions.Fetch
 	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
@@ -102,6 +122,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reflogs:              newReflogPane(),
 		mode:                 ui.ModeWorktrees,
 		agentCommand:         agent.Normalize(opts.AgentCommand),
+		fetchRepo:            fetchRepo,
 		saveAgent:            saveAgent,
 		launchAgent:          launchAgent,
 		bootstrapHookForRepo: bootstrapHookForRepo,
@@ -146,7 +167,8 @@ func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
 func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
-func (m Model) TransientError() string          { return m.status.Text }
+func (m Model) TransientError() string          { return m.visibleStatusText() }
+func (m Model) TransientErrorFadeStep() int     { return m.visibleStatusFadeStep() }
 func (m Model) SearchActive() bool              { return m.searchActive }
 func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
@@ -207,13 +229,15 @@ func (m Model) View() string {
 		Reflogs:                  reflogs,
 		ReflogSelected:           reflogSelected,
 		ReflogScroll:             reflogScroll,
-		TransientError:           m.status.Text,
+		TransientError:           m.visibleStatusText(),
+		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
 		SearchActive:             m.searchActive,
 		RepoSearch:               m.repos.Query(),
 		ItemSearch:               m.activeItemPaneQuery(),
 		RepoEmptyMessage:         repoEmptyMessage,
 		RightEmptyMessage:        rightEmptyMessage,
 		FetchAvailable:           m.canFetch(),
+		FetchVisibleAvailable:    m.canFetchVisibleRepos(),
 		PullAvailable:            m.canPull(),
 		WorktreeMoveAvailable:    m.canMoveWorktree(),
 		AgentAvailable:           m.canLaunchAgent(),
@@ -392,6 +416,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGitFetched(msg)
 	case GitFetchFailedMsg:
 		return m.handleGitFetchFailed(msg), nil
+	case VisibleRepoFetchResultMsg:
+		return m.handleVisibleRepoFetchResult(msg)
+	case VisibleRepoFetchStatusFadeMsg:
+		return m.handleVisibleRepoFetchStatusFade(msg), nil
+	case VisibleRepoFetchStatusExpiredMsg:
+		return m.handleVisibleRepoFetchStatusExpired(msg), nil
 	case GitPulledMsg:
 		return m.handleGitPulled(msg)
 	case GitPullFailedMsg:

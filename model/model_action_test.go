@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -681,6 +682,311 @@ func TestModel_FKey_BareRepoBranchesWithoutSelection_FiresFetchCmd(t *testing.T)
 	}
 }
 
+func TestModel_LeftPaneFKeyFetchesFilteredReposOnly(t *testing.T) {
+	var fetched []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(path string) error {
+			fetched = append(fetched, path)
+			return nil
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bravo")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatal("expected batch fetch command")
+	}
+	if !strings.Contains(m.View(), "Fetching 0/1 visible repo...") {
+		t.Fatalf("expected initial batch fetch status, got:\n%s", m.View())
+	}
+
+	msgs := runBatchCmd(t, cmd)
+	if len(msgs) != 1 {
+		t.Fatalf("expected one fetch result, got %d", len(msgs))
+	}
+	if len(fetched) != 1 || fetched[0] != "/dev/bravo" {
+		t.Fatalf("expected only filtered repo to be fetched, got %v", fetched)
+	}
+	result, ok := msgs[0].(model.VisibleRepoFetchResultMsg)
+	if !ok {
+		t.Fatalf("expected VisibleRepoFetchResultMsg, got %T", msgs[0])
+	}
+	if result.RepoPath != "/dev/bravo" || result.DisplayName != "bravo" || result.Err != "" {
+		t.Fatalf("unexpected fetch result: %#v", result)
+	}
+}
+
+func TestModel_LeftPaneFKeyWithNoVisibleReposShowsStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("missing")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd != nil {
+		t.Fatal("expected no command when no repos are visible")
+	}
+	if !strings.Contains(m.View(), "No visible repos to fetch") {
+		t.Fatalf("expected no-visible-repos status, got:\n%s", m.View())
+	}
+}
+
+func TestModel_LeftPaneFKeyDuringVisibleRepoFetchDoesNotStartAnotherBatch(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if firstCmd == nil {
+		t.Fatal("expected first batch fetch command")
+	}
+	m, secondCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if secondCmd != nil {
+		t.Fatal("expected no command when batch fetch is already in progress")
+	}
+	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
+		t.Fatalf("expected original batch progress to remain visible, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchProgressSurvivesOrdinaryKeypress(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	msgs := runBatchCmd(t, cmd)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
+		t.Fatalf("active progress should survive ordinary keypress, got:\n%s", m.View())
+	}
+	m, _ = update(m, msgs[0])
+	if !strings.Contains(m.View(), "Fetching 1/3 visible repos...") {
+		t.Fatalf("active progress should continue after result, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	msgs := runBatchCmd(t, cmd)
+	for i, msg := range msgs {
+		m, cmd = update(m, msg)
+		if i < len(msgs)-1 {
+			want := fmt.Sprintf("Fetching %d/3 visible repos...", i+1)
+			if !strings.Contains(m.View(), want) {
+				t.Fatalf("expected progress %q, got:\n%s", want, m.View())
+			}
+			if cmd != nil {
+				t.Fatal("did not expect refresh before batch completion")
+			}
+		}
+	}
+	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status, got:\n%s", m.View())
+	}
+	if cmd == nil {
+		t.Fatal("expected one selected-repo refresh when batch completes")
+	}
+}
+
+func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status before expiry, got:\n%s", m.View())
+	}
+
+	m, _ = update(m, model.VisibleRepoFetchStatusExpiredMsg{Request: 1, Text: "Fetched 3 visible repos"})
+	if strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status to expire, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	if m.TransientErrorFadeStep() != 0 {
+		t.Fatalf("expected fresh status to start unfaded, got step %d", m.TransientErrorFadeStep())
+	}
+
+	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 1})
+	if m.TransientErrorFadeStep() != 1 {
+		t.Fatalf("expected fade step 1, got %d", m.TransientErrorFadeStep())
+	}
+	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("fade should keep status visible, got:\n%s", m.View())
+	}
+
+	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 2})
+	if m.TransientErrorFadeStep() != 2 {
+		t.Fatalf("expected fade step 2, got %d", m.TransientErrorFadeStep())
+	}
+}
+
+func TestModel_VisibleRepoFetchFinalStatusStillClearsOnKeypress(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 1})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected keypress to clear faded status immediately, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchStatusExpiryDoesNotClearNewerStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	m, _ = update(m, model.GitFetchFailedMsg{RepoPath: "/dev/alpha", Err: "fetch failed: newer"})
+
+	m, _ = update(m, model.VisibleRepoFetchStatusExpiredMsg{Request: 1, Text: "Fetched 3 visible repos"})
+	view := m.View()
+	if !strings.Contains(view, "fetch failed: newer") {
+		t.Fatalf("expiry should not clear a newer git status, got:\n%s", view)
+	}
+}
+
+func TestModel_VisibleRepoFetchPartialFailureSummaryIsCapped(t *testing.T) {
+	repos := []scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/bravo", DisplayName: "bravo"},
+		{Path: "/dev/charlie", DisplayName: "charlie"},
+		{Path: "/dev/delta", DisplayName: "delta"},
+		{Path: "/dev/echo", DisplayName: "echo"},
+	}
+	m := model.NewWithOptions(repos, model.Options{
+		FetchRepo: func(path string) error {
+			if path == "/dev/alpha" {
+				return nil
+			}
+			return errors.New("nope")
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, cmd = update(m, msg)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Fetched 1/5 visible repos; failed: bravo, charlie, delta +1 more") {
+		t.Fatalf("expected capped failure summary, got:\n%s", view)
+	}
+	if cmd == nil {
+		t.Fatal("expected refresh for current selected repo after completion")
+	}
+}
+
+func TestModel_VisibleRepoFetchStaleResultIgnoredByRequest(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m, cmd := update(m, model.VisibleRepoFetchResultMsg{Request: 999, RepoPath: "/dev/alpha"})
+	if cmd != nil {
+		t.Fatal("stale batch result should not trigger refresh")
+	}
+	if !strings.Contains(m.View(), "Fetching 0/3 visible repos...") {
+		t.Fatalf("stale result should not advance batch progress, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchRefreshesOnlyIfCurrentSelectionWasCaptured(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bravo")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	msgs := runBatchCmd(t, cmd)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, msgs[0])
+	if !strings.Contains(m.View(), "Fetched 1 visible repo") {
+		t.Fatalf("expected final success status, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchRefreshesChangedSelectionInsideCapturedBatch(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	msgs := runBatchCmd(t, cmd)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	for _, msg := range msgs {
+		m, cmd = update(m, msg)
+	}
+	if cmd == nil {
+		t.Fatal("expected refresh when changed selection is part of captured batch")
+	}
+	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status, got:\n%s", m.View())
+	}
+}
+
+func TestModel_RightPaneFetchUsesInjectedFetchRepo(t *testing.T) {
+	var fetched []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(path string) error {
+			fetched = append(fetched, path)
+			return nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatal("expected fetch command")
+	}
+	if msg := cmd(); msg != (model.GitFetchedMsg{RepoPath: "/dev/alpha"}) {
+		t.Fatalf("expected GitFetchedMsg, got %#v", msg)
+	}
+	if len(fetched) != 1 || fetched[0] != "/dev/alpha" {
+		t.Fatalf("expected injected fetch for selected worktree path, got %v", fetched)
+	}
+}
+
 func TestModel_ShiftFKey_Worktree_FiresPullCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -852,6 +1158,23 @@ func TestModel_StaleGitPullFailedMsgIgnored(t *testing.T) {
 	if strings.Contains(m.View(), "pull failed") {
 		t.Fatal("expected stale pull failure to be ignored")
 	}
+}
+
+func runBatchCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	msgs := make([]tea.Msg, 0, len(batch))
+	for _, subcmd := range batch {
+		msgs = append(msgs, subcmd())
+	}
+	return msgs
 }
 
 // --- Branch diff (enter key) ---

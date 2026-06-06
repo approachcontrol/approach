@@ -150,12 +150,14 @@ type RenderParams struct {
 	ReflogSelected           int
 	ReflogScroll             int
 	TransientError           string
+	TransientErrorFadeStep   int
 	SearchActive             bool
 	RepoSearch               string
 	ItemSearch               string
 	RepoEmptyMessage         string
 	RightEmptyMessage        string
 	FetchAvailable           bool
+	FetchVisibleAvailable    bool
 	PullAvailable            bool
 	WorktreeMoveAvailable    bool
 	AgentAvailable           bool
@@ -223,10 +225,12 @@ func Render(p RenderParams) string {
 		CommitSelected:            commitSelected,
 		ReflogSelected:            reflogSelected,
 		TransientError:            p.TransientError,
+		TransientErrorFadeStep:    p.TransientErrorFadeStep,
 		SearchActive:              p.SearchActive,
 		RepoSearch:                p.RepoSearch,
 		ItemSearch:                p.ItemSearch,
 		FetchAvailable:            p.FetchAvailable,
+		FetchVisibleAvailable:     p.FetchVisibleAvailable,
 		PullAvailable:             p.PullAvailable,
 		AgentAvailable:            p.AgentAvailable,
 		NewAgent:                  p.NewAgentAvailable,
@@ -409,10 +413,12 @@ type statusBarParams struct {
 	CommitSelected            bool
 	ReflogSelected            bool
 	TransientError            string
+	TransientErrorFadeStep    int
 	SearchActive              bool
 	RepoSearch                string
 	ItemSearch                string
 	FetchAvailable            bool
+	FetchVisibleAvailable     bool
 	PullAvailable             bool
 	AgentAvailable            bool
 	NewAgent                  bool
@@ -469,7 +475,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	itemSearch := sp.ItemSearch
 
 	if transientError != "" {
-		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
+		return statusStyle.Width(width).Render("  " + transientStatusStyle(sp.TransientErrorFadeStep).Render(transientError))
 	}
 
 	label := "items"
@@ -566,6 +572,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 
 	var actions []shortcutHint
+	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
+		actions = append(actions, shortcutHint{Key: "f", Label: "fetch visible"})
+	}
 	switch sp.Mode {
 	case ModeWorktrees:
 		if sp.ActivePane == 1 && sp.RepoSelected && !sp.StaleSelected {
@@ -709,6 +718,17 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 		return renderFooterLegend(legend)
 	}
 	return "  " + renderFooterHintList(sections)
+}
+
+func transientStatusStyle(fadeStep int) lipgloss.Style {
+	switch fadeStep {
+	case 1:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	case 2:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	default:
+		return dirtyRedStyle
+	}
 }
 
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
@@ -1171,19 +1191,20 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 
 func renderOverlay(p RenderParams) string {
 	statusBar := renderStatusBarWithState(statusBarParams{
-		Width:          p.Width,
-		Mode:           p.Mode,
-		Overlay:        p.Overlay,
-		ActivePane:     p.ActivePane,
-		Destructive:    p.Destructive,
-		TransientError: p.TransientError,
-		SearchActive:   p.SearchActive,
-		RepoSearch:     p.RepoSearch,
-		ItemSearch:     p.ItemSearch,
-		FetchAvailable: p.FetchAvailable,
-		PullAvailable:  p.PullAvailable,
-		AgentAvailable: p.AgentAvailable,
-		NewAgent:       p.NewAgentAvailable,
+		Width:                  p.Width,
+		Mode:                   p.Mode,
+		Overlay:                p.Overlay,
+		ActivePane:             p.ActivePane,
+		Destructive:            p.Destructive,
+		TransientError:         p.TransientError,
+		TransientErrorFadeStep: p.TransientErrorFadeStep,
+		SearchActive:           p.SearchActive,
+		RepoSearch:             p.RepoSearch,
+		ItemSearch:             p.ItemSearch,
+		FetchAvailable:         p.FetchAvailable,
+		PullAvailable:          p.PullAvailable,
+		AgentAvailable:         p.AgentAvailable,
+		NewAgent:               p.NewAgentAvailable,
 	})
 	contentHeight := p.Height - 1
 

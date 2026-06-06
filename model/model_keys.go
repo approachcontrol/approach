@@ -167,6 +167,8 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 			m = m.resetRightPaneCursors()
 			return m.startFetchForMode()
 		}
+	case "f":
+		return m.startFetchVisibleRepos()
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
 	}
@@ -501,7 +503,7 @@ func (m Model) handleFetch() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, func() tea.Msg {
-		if err := actions.Fetch(path); err != nil {
+		if err := m.fetchRepo(path); err != nil {
 			return GitFetchFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("fetch failed: %v", err)}
 		}
 		return GitFetchedMsg{RepoPath: repoPath}

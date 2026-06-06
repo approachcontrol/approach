@@ -121,6 +121,24 @@ type GitFetchFailedMsg struct {
 	Err      string
 }
 
+type VisibleRepoFetchResultMsg struct {
+	Request     uint64
+	RepoPath    string
+	DisplayName string
+	Err         string
+}
+
+type VisibleRepoFetchStatusFadeMsg struct {
+	Request uint64
+	Text    string
+	Step    int
+}
+
+type VisibleRepoFetchStatusExpiredMsg struct {
+	Request uint64
+	Text    string
+}
+
 type GitPulledMsg struct {
 	RepoPath string
 }
@@ -323,6 +341,22 @@ func (m Model) clearAnyStatus() Model {
 	return m
 }
 
+func (m Model) visibleStatusText() string {
+	if m.visibleRepoFetch.Request != 0 {
+		// In-flight batch fetch progress owns the transient status line until
+		// the batch completes; later statuses replace the final batch summary.
+		return m.visibleRepoFetchProgressText()
+	}
+	return m.status.Text
+}
+
+func (m Model) visibleStatusFadeStep() int {
+	if m.visibleRepoFetch.Request != 0 {
+		return 0
+	}
+	return m.status.FadeStep
+}
+
 func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeWorktrees, msg.ListRequest) {
 		return m
@@ -404,6 +438,67 @@ func (m Model) handleGitFetched(msg GitFetchedMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleGitFetchFailed(msg GitFetchFailedMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusGitMutation, msg.Err)
+	}
+	return m
+}
+
+func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Request == 0 || msg.Request != m.visibleRepoFetch.Request {
+		return m, nil
+	}
+	if msg.Err == "" {
+		m.visibleRepoFetch.Successes++
+	} else {
+		m.visibleRepoFetch.FailureCount++
+		if len(m.visibleRepoFetch.FailureNames) < visibleRepoFetchFailureNameLimit {
+			name := msg.DisplayName
+			if name == "" {
+				name = msg.RepoPath
+			}
+			m.visibleRepoFetch.FailureNames = append(m.visibleRepoFetch.FailureNames, name)
+		}
+	}
+	m.visibleRepoFetch.Completed++
+	if m.visibleRepoFetch.Completed < m.visibleRepoFetch.Total {
+		return m, nil
+	}
+
+	currentPath, currentOK := m.currentRepoPath()
+	_, shouldRefresh := m.visibleRepoFetch.CapturedPaths[currentPath]
+	finalStatus := m.visibleRepoFetchFinalStatusText()
+	m.visibleRepoFetch = visibleRepoFetchState{}
+	m.visibleRepoFetchStatusSeq++
+	statusRequest := m.visibleRepoFetchStatusSeq
+	m = m.setStatus(statusGitMutation, finalStatus)
+	statusCmds := []tea.Cmd{
+		fadeVisibleRepoFetchStatus(statusRequest, finalStatus, 1),
+		fadeVisibleRepoFetchStatus(statusRequest, finalStatus, 2),
+		expireVisibleRepoFetchStatus(statusRequest, finalStatus),
+	}
+	if currentOK && shouldRefresh {
+		var fetchCmd tea.Cmd
+		m, fetchCmd = m.startFetchForMode()
+		statusCmds = append([]tea.Cmd{fetchCmd}, statusCmds...)
+	}
+	return m, tea.Batch(statusCmds...)
+}
+
+func (m Model) handleVisibleRepoFetchStatusFade(msg VisibleRepoFetchStatusFadeMsg) Model {
+	if msg.Request == 0 || msg.Request != m.visibleRepoFetchStatusSeq {
+		return m
+	}
+	if m.status.Source == statusGitMutation && m.status.Text == msg.Text {
+		m.status.FadeStep = msg.Step
+	}
+	return m
+}
+
+func (m Model) handleVisibleRepoFetchStatusExpired(msg VisibleRepoFetchStatusExpiredMsg) Model {
+	if msg.Request == 0 || msg.Request != m.visibleRepoFetchStatusSeq {
+		return m
+	}
+	if m.status.Source == statusGitMutation && m.status.Text == msg.Text {
+		m.status = statusError{}
 	}
 	return m
 }
