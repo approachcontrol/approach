@@ -379,10 +379,10 @@ func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
 	var launchedPath string
 	m, dir := setupModelRepoWithOptions(t, model.Options{
 		AgentCommand: "codex",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			launchedPath = path
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchedPath = ctx.WorktreePath
 			cmd := exec.Command("pwd")
-			cmd.Dir = path
+			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
 		},
 	})
@@ -406,10 +406,10 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	var launchedPath string
 	m, dir := setupModelRepoWithOptions(t, model.Options{
 		AgentCommand: "claude",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			launchedPath = path
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchedPath = ctx.WorktreePath
 			cmd := exec.Command("pwd")
-			cmd.Dir = path
+			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
 		},
 	})
@@ -647,11 +647,11 @@ func TestModel_CreateThenAgentLaunchWaitsForBootstrapHook(t *testing.T) {
 			hookRan = true
 			return nil
 		},
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			if !hookRan {
 				t.Fatal("agent launched before bootstrap hook completed")
 			}
-			launchedPath = path
+			launchedPath = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 		},
 	})
@@ -689,7 +689,7 @@ func TestModel_CreateThenAgentLaunchSkipsAgentWhenBootstrapFails(t *testing.T) {
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			return errors.New("setup failed")
 		},
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = true
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 		},

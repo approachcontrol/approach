@@ -448,15 +448,36 @@ type TerminalLaunchSpec struct {
 	Interactive bool
 }
 
+// AgentLaunchContext carries metadata wtui knows at launch time so provider
+// hooks can associate later session records with the selected repo/worktree.
+type AgentLaunchContext struct {
+	Command          string
+	LaunchID         string
+	RepoPath         string
+	WorktreePath     string
+	Branch           string
+	Commit           string
+	SessionStateRoot string
+}
+
 // AgentLaunch returns a safe, direct command for launching a supported coding
 // agent in path.
-func AgentLaunch(path, command string) (TerminalLaunchSpec, error) {
-	command = agent.Normalize(command)
+func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
+	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
 	cmd := exec.Command(command)
-	cmd.Dir = path
+	cmd.Dir = ctx.WorktreePath
+	cmd.Env = append(os.Environ(),
+		"WTUI_AGENT="+command,
+		"WTUI_LAUNCH_ID="+ctx.LaunchID,
+		"WTUI_REPO_PATH="+ctx.RepoPath,
+		"WTUI_WORKTREE_PATH="+ctx.WorktreePath,
+		"WTUI_BRANCH="+ctx.Branch,
+		"WTUI_COMMIT="+ctx.Commit,
+		"WTUI_SESSION_STATE_ROOT="+ctx.SessionStateRoot,
+	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }
 

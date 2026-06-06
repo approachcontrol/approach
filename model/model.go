@@ -1,6 +1,9 @@
 package model
 
 import (
+	"fmt"
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
@@ -9,10 +12,11 @@ import (
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
-const listRequestSlots = int(ui.ModeReflog) + 1
+const listRequestSlots = int(ui.ModeSessions) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
@@ -25,6 +29,7 @@ type Model struct {
 	worktrees                 pane.Pane[gitquery.Worktree]
 	commits                   pane.Pane[gitquery.Commit]
 	reflogs                   pane.Pane[gitquery.ReflogEntry]
+	sessions                  pane.Pane[sessions.SessionRecord]
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	listRequestSeq            uint64
@@ -42,8 +47,12 @@ type Model struct {
 	pendingWorktreeSelection  string
 	agentCommand              string
 	fetchRepo                 func(string) error
+	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	saveAgent                 func(string) error
-	launchAgent               func(string, string) (actions.TerminalLaunchSpec, error)
+	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	finalizeAgentSession      func(actions.AgentLaunchContext) error
+	sessionStateRoot          string
 	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
 }
@@ -80,8 +89,12 @@ type visibleRepoFetchState struct {
 type Options struct {
 	AgentCommand         string
 	FetchRepo            func(string) error
+	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	SaveAgentCommand     func(string) error
-	LaunchAgent          func(string, string) (actions.TerminalLaunchSpec, error)
+	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	FinalizeAgentSession func(actions.AgentLaunchContext) error
+	SessionStateRoot     string
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
@@ -101,6 +114,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if fetchRepo == nil {
 		fetchRepo = actions.Fetch
 	}
+	listSessions := opts.ListSessions
+	if listSessions == nil {
+		listSessions = func(sessions.SessionFilter) ([]sessions.SessionRecord, error) { return nil, nil }
+	}
+	readTranscript := opts.ReadTranscript
+	if readTranscript == nil {
+		readTranscript = func(sessions.Provider, string) ([]sessions.TranscriptEvent, error) { return nil, nil }
+	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
@@ -113,6 +134,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	finalizeAgentSession := opts.FinalizeAgentSession
+	if finalizeAgentSession == nil {
+		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
+	}
 	m := Model{
 		repos:                newRepoPane().SetItems(repos),
 		rows:                 newBranchPane(),
@@ -120,19 +145,28 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		worktrees:            newWorktreePane(),
 		commits:              newCommitPane(),
 		reflogs:              newReflogPane(),
+		sessions:             newSessionPane(),
 		mode:                 ui.ModeWorktrees,
 		agentCommand:         agent.Normalize(opts.AgentCommand),
 		fetchRepo:            fetchRepo,
+		listSessions:         listSessions,
+		readTranscript:       readTranscript,
 		saveAgent:            saveAgent,
 		launchAgent:          launchAgent,
+		finalizeAgentSession: finalizeAgentSession,
+		sessionStateRoot:     opts.SessionStateRoot,
 		bootstrapHookForRepo: bootstrapHookForRepo,
 		runBootstrapHook:     runBootstrapHook,
 	}
-	for mode := ui.ModeWorktrees; mode <= ui.ModeReflog; mode++ {
+	for mode := ui.ModeWorktrees; mode <= ui.ModeSessions; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
 	return m
+}
+
+func newLaunchID() string {
+	return fmt.Sprintf("wtui-%d", time.Now().UnixNano())
 }
 
 func (m Model) Selected() int              { return m.repos.SelectedIndex() }
@@ -153,6 +187,10 @@ func (m Model) Commits() []gitquery.Commit      { commits, _, _ := m.commits.Vie
 func (m Model) CommitSelected() int             { return m.commits.SelectedIndex() }
 func (m Model) CommitScroll() int               { return m.commits.Scroll() }
 func (m Model) Reflogs() []gitquery.ReflogEntry { reflogs, _, _ := m.reflogs.View(); return reflogs }
+func (m Model) Sessions() []sessions.SessionRecord {
+	sessions, _, _ := m.sessions.View()
+	return sessions
+}
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
@@ -186,14 +224,16 @@ func (m Model) View() string {
 	stashes, stashSelected, stashScroll := m.stashes.View()
 	commits, commitSelected, commitScroll := m.commits.View()
 	reflogs, reflogSelected, reflogScroll := m.reflogs.View()
+	sessions, sessionSelected, sessionScroll := m.sessions.View()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
-	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs))
+	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions))
 	if len(repos) == 0 {
 		worktrees = nil
 		rows = nil
 		stashes = nil
 		commits = nil
 		reflogs = nil
+		sessions = nil
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
@@ -229,6 +269,9 @@ func (m Model) View() string {
 		Reflogs:                  reflogs,
 		ReflogSelected:           reflogSelected,
 		ReflogScroll:             reflogScroll,
+		Sessions:                 sessions,
+		SessionSelected:          sessionSelected,
+		SessionScroll:            sessionScroll,
 		TransientError:           m.visibleStatusText(),
 		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
 		SearchActive:             m.searchActive,
@@ -259,14 +302,14 @@ func (m Model) repoEmptyMessage(filteredRepos int) string {
 	return "No repo results"
 }
 
-func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs int) string {
+func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions int) string {
 	if filteredRepos == 0 {
 		if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
 			return "No matching repo"
 		}
 		return "No selected repo"
 	}
-	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs)
+	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
 		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
 	}
@@ -276,7 +319,7 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	return modeEmptyMessage(m.mode)
 }
 
-func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs int) (int, int) {
+func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions int) (int, int) {
 	switch m.mode {
 	case ui.ModeWorktrees:
 		return m.worktrees.ItemCount(), filteredWorktrees
@@ -288,6 +331,8 @@ func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredSta
 		return m.commits.ItemCount(), filteredCommits
 	case ui.ModeReflog:
 		return m.reflogs.ItemCount(), filteredReflogs
+	case ui.ModeSessions:
+		return m.sessions.ItemCount(), filteredSessions
 	default:
 		return 0, 0
 	}
@@ -305,6 +350,8 @@ func modeDataName(mode ui.Mode) string {
 		return "commits"
 	case ui.ModeReflog:
 		return "reflog"
+	case ui.ModeSessions:
+		return "sessions"
 	default:
 		return "items"
 	}
@@ -322,6 +369,8 @@ func modeResultName(mode ui.Mode) string {
 		return "commit"
 	case ui.ModeReflog:
 		return "reflog"
+	case ui.ModeSessions:
+		return "session"
 	default:
 		return "item"
 	}
@@ -339,6 +388,8 @@ func modeEmptyMessage(mode ui.Mode) string {
 		return "No commits"
 	case ui.ModeReflog:
 		return "No reflog entries"
+	case ui.ModeSessions:
+		return "No sessions"
 	default:
 		return "nothing here yet"
 	}
@@ -363,6 +414,8 @@ func (m Model) overlayState() ui.OverlayState {
 			return ui.OverlayWorktreeDiff
 		case modal.DiffReflog:
 			return ui.OverlayReflogDiff
+		case modal.DiffSessionTranscript:
+			return ui.OverlaySessionTranscript
 		}
 	}
 	return ui.OverlayNone
@@ -440,6 +493,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:
 		return m.handleReflogResult(msg), nil
+	case SessionResultMsg:
+		return m.handleSessionResult(msg), nil
+	case SessionTranscriptResultMsg:
+		return m.handleSessionTranscriptResult(msg), nil
 	case WorktreeDiffResultMsg:
 		return m.handleWorktreeDiffResult(msg), nil
 	case CommitDiffResultMsg:
@@ -461,6 +518,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
 	case AgentResultMsg:
+		if msg.LaunchContext.LaunchID != "" {
+			_ = m.finalizeAgentSession(msg.LaunchContext)
+		}
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)
 		}
@@ -514,6 +574,13 @@ func (m Model) selectedReflog() (gitquery.ReflogEntry, bool) {
 	return m.reflogs.Selected()
 }
 
+func (m Model) selectedSession() (sessions.SessionRecord, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return sessions.SessionRecord{}, false
+	}
+	return m.sessions.Selected()
+}
+
 func (m Model) isSelectedBranchDirtyWorktree() bool {
 	row, ok := m.selectedRow()
 	return ok && row.Branch.Dirty && row.Branch.IsWorktree
@@ -553,6 +620,15 @@ func (m Model) reflowReflogs() Model {
 		contentHeight = 16
 	}
 	m.reflogs = m.reflogs.Reflow(contentHeight, m.contentWidth())
+	return m
+}
+
+func (m Model) reflowSessions() Model {
+	contentHeight := m.height - ui.BranchContentOverhead
+	if contentHeight <= 0 {
+		contentHeight = 16
+	}
+	m.sessions = m.sessions.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 

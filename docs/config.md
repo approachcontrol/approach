@@ -24,10 +24,11 @@ exist:
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
 | Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Sessions root | `WTUI_SESSION_STATE_ROOT` for hooks | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
-`[scan].root` supports `~` and `~/...` expansion. `WORKTREE_ROOT` is passed
-through as provided by the environment.
+`[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
+`WORKTREE_ROOT` is passed through as provided by the environment.
 
 ## Example
 
@@ -50,6 +51,10 @@ prefer_multiplexer = true
 
 [agent]
 command = "codex"
+
+[sessions]
+root = "~/.local/state/wtui/sessions/v1"
+copy_raw_transcripts = true
 
 [bootstrap]
 timeout_seconds = 120
@@ -121,6 +126,19 @@ updates this value immediately, creating the config file if needed.
 |-----|------|-------------|
 | `command` | string | Supported values: `codex` or `claude`. |
 
+### `[sessions]`
+
+Controls portable agent-session storage. Session metadata and normalized
+transcripts are stored outside repositories by default.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `root` | string | Optional state root for session files. Supports `~` expansion. |
+| `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `true`. |
+
+When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or
+`~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset.
+
 ### `[bootstrap]`
 
 Configures optional per-repo scripts that run after wtui successfully creates a
@@ -149,3 +167,65 @@ If a hook fails, wtui keeps the created worktree and branch, refreshes the
 worktree list, and shows the hook error in the status bar. For `N`, a hook
 failure prevents automatic agent launch; the agent can still be launched
 manually afterward.
+
+## Agent Session Hooks
+
+wtui can ingest Claude Code and Codex hook payloads:
+
+```bash
+wtui session-hook --provider claude
+wtui session-hook --provider codex
+```
+
+For development and tests, pass an explicit state root:
+
+```bash
+wtui session-hook --provider codex --state-root /tmp/wtui-sessions-test
+```
+
+Claude Code hook example:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "wtui session-hook --provider claude"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex hook example:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "wtui session-hook --provider codex"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+When wtui launches an agent with `a` or `N`, it appends these environment
+variables so hooks can associate sessions with the selected repo/worktree:
+`WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
+`WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
+
+Transcripts can contain secrets, credentials, private prompts, and proprietary
+code. Keep the sessions root in user-private storage and avoid committing
+captured transcript files.

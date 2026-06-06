@@ -188,7 +188,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.startFetchForMode()
 		}
 	case "right", "l":
-		if m.mode < ui.ModeReflog {
+		if m.mode < ui.ModeSessions {
 			m.mode++
 			m = m.resetModeCursors()
 			return m.startFetchForMode()
@@ -222,6 +222,12 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			m.mode = ui.ModeReflog
 			m = m.resetModeCursors()
 			return m.startFetchReflog()
+		}
+	case "6":
+		if m.mode != ui.ModeSessions {
+			m.mode = ui.ModeSessions
+			m = m.resetModeCursors()
+			return m.startFetchSessions()
 		}
 	case "y":
 		return m.handleCopyHash()
@@ -295,6 +301,8 @@ func (m Model) moveCursor(delta int) Model {
 		m.commits = m.commits.Move(delta, h, w)
 	case ui.ModeReflog:
 		m.reflogs = m.reflogs.Move(delta, h, w)
+	case ui.ModeSessions:
+		m.sessions = m.sessions.Move(delta, h, w)
 	}
 	return m
 }
@@ -325,6 +333,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeReflog && len(m.filteredReflogs()) > 0 {
 		m = m.openDiff(modal.DiffReflog)
 		return m, m.fetchReflogDiff()
+	}
+	if m.mode == ui.ModeSessions && len(m.filteredSessions()) > 0 {
+		m = m.openDiff(modal.DiffSessionTranscript)
+		return m, m.fetchSessionTranscript()
 	}
 	return m, nil
 }
@@ -599,7 +611,8 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
-	launch, err := m.launchAgent(path, m.agentCommand)
+	ctx := m.agentLaunchContext(path)
+	launch, err := m.launchAgent(ctx)
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
 		return m, nil
@@ -607,16 +620,39 @@ func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
 	if launch.Interactive {
 		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
 			if err != nil {
-				return AgentResultMsg{Err: err.Error()}
+				return AgentResultMsg{LaunchContext: ctx, Err: err.Error()}
 			}
-			return AgentResultMsg{}
+			return AgentResultMsg{LaunchContext: ctx}
 		})
 	}
 	return m, func() tea.Msg {
 		if err := launch.Cmd.Run(); err != nil {
-			return AgentResultMsg{Err: err.Error()}
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error()}
 		}
-		return AgentResultMsg{}
+		return AgentResultMsg{LaunchContext: ctx}
+	}
+}
+
+func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
+	repoPath, _ := m.currentRepoPath()
+	branch := ""
+	if m.mode == ui.ModeWorktrees {
+		if wt, ok := m.selectedWorktree(); ok {
+			branch = wt.BranchName
+		}
+	}
+	if m.mode == ui.ModeBranches {
+		if row, ok := m.selectedRow(); ok {
+			branch = row.Branch.Name
+		}
+	}
+	return actions.AgentLaunchContext{
+		Command:          m.agentCommand,
+		LaunchID:         newLaunchID(),
+		RepoPath:         repoPath,
+		WorktreePath:     path,
+		Branch:           branch,
+		SessionStateRoot: m.sessionStateRoot,
 	}
 }
 
@@ -791,6 +827,7 @@ func (m Model) resetModeCursors() Model {
 	m.stashes = m.stashes.ResetSelection()
 	m.commits = m.commits.ResetSelection()
 	m.reflogs = m.reflogs.ResetSelection()
+	m.sessions = m.sessions.ResetSelection()
 	return m
 }
 
@@ -802,6 +839,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.worktrees = m.worktrees.SetItems(nil).ResetSelection()
 	m.commits = m.commits.SetItems(nil).ResetSelection()
 	m.reflogs = m.reflogs.SetItems(nil).ResetSelection()
+	m.sessions = m.sessions.SetItems(nil).ResetSelection()
 	return m
 }
 

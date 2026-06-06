@@ -9,6 +9,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -30,6 +31,8 @@ func (m Model) startFetchForMode() (Model, tea.Cmd) {
 		return m.startFetchCommits()
 	case ui.ModeReflog:
 		return m.startFetchReflog()
+	case ui.ModeSessions:
+		return m.startFetchSessions()
 	}
 	return m, nil
 }
@@ -47,6 +50,8 @@ func (m Model) fetchForMode() tea.Cmd {
 		return m.fetchCommits(request)
 	case ui.ModeReflog:
 		return m.fetchReflog(request)
+	case ui.ModeSessions:
+		return m.fetchSessions(request)
 	}
 	return nil
 }
@@ -107,6 +112,11 @@ func (m Model) startFetchCommits() (Model, tea.Cmd) {
 func (m Model) startFetchReflog() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModeReflog)
 	return m, m.fetchReflog(request)
+}
+
+func (m Model) startFetchSessions() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeSessions)
+	return m, m.fetchSessions(request)
 }
 
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
@@ -543,6 +553,20 @@ func (m Model) fetchReflog(request uint64) tea.Cmd {
 	}
 }
 
+func (m Model) fetchSessions(request uint64) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		records, err := m.listSessions(sessions.SessionFilter{RepoPath: repoPath})
+		if err != nil {
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "sessions", Err: fmt.Sprintf("failed to load sessions: %v", err), Kind: FetchList, Mode: ui.ModeSessions, ListRequest: request}
+		}
+		return SessionResultMsg{RepoPath: repoPath, Sessions: records, ListRequest: request}
+	}
+}
+
 func (m Model) fetchReflogDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
@@ -569,6 +593,52 @@ func (m Model) fetchReflogDiff() tea.Cmd {
 		}
 		return ReflogDiffResultMsg{RepoPath: repoPath, Hash: hash, DiffRequest: diffRequest, Diff: diff}
 	}
+}
+
+func (m Model) fetchSessionTranscript() tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	record, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	diffRequest := m.modal.View().Request
+	return func() tea.Msg {
+		events, err := m.readTranscript(record.Provider, record.SessionID)
+		if err != nil {
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        "session transcript",
+				Err:         fmt.Sprintf("failed to load transcript: %v", err),
+				Kind:        FetchSessionTranscript,
+				Mode:        ui.ModeSessions,
+				DiffRequest: diffRequest,
+				Provider:    record.Provider,
+				SessionID:   record.SessionID,
+			}
+		}
+		return SessionTranscriptResultMsg{
+			RepoPath:    repoPath,
+			Provider:    record.Provider,
+			SessionID:   record.SessionID,
+			DiffRequest: diffRequest,
+			Transcript:  formatTranscript(events),
+		}
+	}
+}
+
+func formatTranscript(events []sessions.TranscriptEvent) string {
+	lines := make([]string, 0, len(events))
+	for _, event := range events {
+		prefix := event.Role
+		if event.Kind != "" && event.Kind != "message" {
+			prefix += " " + event.Kind
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s", prefix, event.Text))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) fetchCommitDiff() tea.Cmd {

@@ -43,6 +43,10 @@ prefer_multiplexer = true
 [agent]
 command = "codex"
 
+[sessions]
+root = "~/state/wtui/sessions"
+copy_raw_transcripts = false
+
 [bootstrap]
 timeout_seconds = 180
 
@@ -86,6 +90,12 @@ timeout_seconds = 300
 	}
 	if cfg.Agent.Command != "codex" {
 		t.Fatalf("expected agent command codex, got %q", cfg.Agent.Command)
+	}
+	if cfg.Sessions.Root != filepath.Join(home, "state", "wtui", "sessions") {
+		t.Fatalf("expected expanded sessions root, got %q", cfg.Sessions.Root)
+	}
+	if cfg.Sessions.CopyRawTranscripts {
+		t.Fatal("expected sessions copy_raw_transcripts false")
 	}
 	if cfg.Bootstrap.TimeoutSeconds != 180 {
 		t.Fatalf("expected bootstrap timeout 180, got %d", cfg.Bootstrap.TimeoutSeconds)
@@ -132,6 +142,16 @@ script = ".wtui/bootstrap"
 
 	if cfg.Bootstrap.TimeoutSeconds != 120 {
 		t.Fatalf("expected default bootstrap timeout 120, got %d", cfg.Bootstrap.TimeoutSeconds)
+	}
+}
+
+func TestLoadFrom_DefaultsSessionsCopyRawTranscripts(t *testing.T) {
+	cfg, err := config.LoadFrom(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if !cfg.Sessions.CopyRawTranscripts {
+		t.Fatal("expected sessions copy_raw_transcripts to default true")
 	}
 }
 

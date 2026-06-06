@@ -74,9 +74,9 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4`/`5` | Switch to worktrees / branches / stashes / history / reflog |
+| `1`/`2`/`3`/`4`/`5`/`6` | Switch to worktrees / branches / stashes / history / reflog / sessions |
 | `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
+| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) or session transcript |
 | `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
@@ -95,7 +95,8 @@ filter matches, or a load failure with details in the status bar.
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close overlay or quit |
 
-The right pane header shows the active mode. Press `1`–`5` or use arrow keys to switch between worktrees, branches, stashes, history, and reflog.
+The right pane header shows the active mode. Press `1`–`6` or use arrow keys to
+switch between worktrees, branches, stashes, history, reflog, and sessions.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
@@ -161,6 +162,19 @@ Browse recent commits (up to 50) for the selected repo. Each row shows the commi
 
 Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the abbreviated hash, selector (e.g. `HEAD@{0}`), relative date, and subject. Use `enter` to view the diff for that entry — checkout entries with no tree changes show "No changes at this reflog entry". Use `y` to copy the entry hash to clipboard.
 
+### Sessions view (mode 6)
+
+Browse captured Claude Code and Codex sessions associated with the selected
+repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
+filter sessions by provider, session ID, launch ID, branch, worktree, model,
+status, or summary. Press `enter` to open the normalized transcript overlay.
+
+Session data is stored under the user state directory by default:
+`$XDG_STATE_HOME/wtui/sessions/v1`, or
+`~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset. Transcripts
+may contain secrets or private prompts; wtui keeps them outside repositories and
+uses restrictive file permissions for created session files.
+
 ## Configuration
 
 wtui reads an optional TOML config file before scanning repositories:
@@ -180,6 +194,10 @@ max_depth = 2
 [agent]
 command = "codex"
 
+[sessions]
+root = "~/.local/state/wtui/sessions/v1"
+copy_raw_transcripts = true
+
 [bootstrap]
 timeout_seconds = 120
 
@@ -190,13 +208,27 @@ script = ".wtui/bootstrap"
 
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. See
 [docs/config.md](docs/config.md) for the full config reference, including
-bootstrap hook settings and parsed foundation fields for editor, terminal,
-provider, launch, and agent settings.
+sessions storage, bootstrap hook settings, and parsed foundation fields for
+editor, terminal, provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos; depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
+| `WTUI_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by wtui |
+
+### Agent session hooks
+
+Configure Claude Code or Codex hooks to call wtui:
+
+```bash
+wtui session-hook --provider claude
+wtui session-hook --provider codex
+```
+
+For local testing, use `--state-root /tmp/wtui-sessions-test`. Agents launched
+from wtui receive `WTUI_*` metadata so hook records can be associated with the
+repo, worktree, branch, and launch.
 
 ## Development
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,6 +144,75 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 	if got.Agent.Command != "codex" {
 		t.Fatalf("expected agent config passed to program, got %q", got.Agent.Command)
 	}
+}
+
+func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
+	root := t.TempDir()
+	transcriptPath := filepath.Join(root, "claude.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(`{"timestamp":"2026-06-06T14:01:00Z","role":"user","kind":"message","text":"Fix scanner tests"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	stdin := bytes.NewBufferString(`{
+		"session_id": "claude-session-1",
+		"cwd": "/repo/worktree",
+		"transcript_path": ` + quoteJSON(transcriptPath) + `,
+		"summary": "Fix scanner tests",
+		"ended_at": "2026-06-06T14:45:00Z"
+	}`)
+
+	err := run([]string{"wtui", "session-hook", "--provider", "claude", "--state-root", root}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for session-hook")
+			return config.Config{}, nil
+		},
+		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
+			t.Fatal("scan should not run for session-hook")
+			return nil, nil
+		},
+		stdin: stdin,
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	metaPath := filepath.Join(root, "sessions", "claude", "claude-session-1", "meta.json")
+	meta, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	for _, want := range []string{`"provider": "claude"`, `"session_id": "claude-session-1"`, `"status": "ended"`, `"summary": "Fix scanner tests"`} {
+		if !strings.Contains(string(meta), want) {
+			t.Fatalf("metadata missing %s:\n%s", want, meta)
+		}
+	}
+}
+
+func TestRunSessionHookRejectsMalformedJSON(t *testing.T) {
+	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", t.TempDir()}, runDeps{
+		stdin: strings.NewReader(`{"session_id":`),
+	})
+	if err == nil {
+		t.Fatal("expected malformed JSON error")
+	}
+	if !strings.Contains(err.Error(), "parse hook payload") {
+		t.Fatalf("expected parse hook payload error, got %q", err)
+	}
+}
+
+func TestRunSessionHookRejectsUnsupportedProvider(t *testing.T) {
+	err := run([]string{"wtui", "session-hook", "--provider", "other", "--state-root", t.TempDir()}, runDeps{
+		stdin: strings.NewReader(`{}`),
+	})
+	if err == nil {
+		t.Fatal("expected unsupported provider error")
+	}
+	if !strings.Contains(err.Error(), "unsupported session provider") {
+		t.Fatalf("expected unsupported provider error, got %q", err)
+	}
+}
+
+func quoteJSON(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
 
 func TestBootstrapHookResolverMatchesConfiguredRepoPath(t *testing.T) {

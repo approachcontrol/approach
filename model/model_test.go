@@ -1185,12 +1185,12 @@ func TestModel_Key5SwitchesToReflog(t *testing.T) {
 	}
 }
 
-func TestModel_Key6IsNoOp(t *testing.T) {
+func TestModel_Key6SwitchesToSessions(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
-	if m.Mode() != 1 {
-		t.Errorf("expected mode unchanged at 1, got %d", m.Mode())
+	if m.Mode() != ui.ModeSessions {
+		t.Errorf("expected sessions mode, got %d", m.Mode())
 	}
 }
 
@@ -1303,14 +1303,15 @@ func TestModel_ModeClampsAtEdges(t *testing.T) {
 	if m.Mode() != 1 {
 		t.Errorf("expected mode 1 (clamped), got %d", m.Mode())
 	}
-	// Go to mode 5 (ModeReflog), right should stay at 5
+	// Go to mode 6 (ModeSessions), right should stay at 6
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 2
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 3
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 4
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 5
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // still 5
-	if m.Mode() != 5 {
-		t.Errorf("expected mode 5 (clamped), got %d", m.Mode())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 6
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // still 6
+	if m.Mode() != ui.ModeSessions {
+		t.Errorf("expected sessions mode (clamped), got %d", m.Mode())
 	}
 }
 

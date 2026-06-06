@@ -1524,7 +1524,14 @@ func TestOpenVSCode_RunsWithoutPanic(t *testing.T) {
 func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
-			launch, err := actions.AgentLaunch("/repo/worktree", command)
+			launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:      command,
+				LaunchID:     "launch-1",
+				RepoPath:     "/repo",
+				WorktreePath: "/repo/worktree",
+				Branch:       "main",
+				Commit:       "abcdef",
+			})
 			if err != nil {
 				t.Fatalf("AgentLaunch returned error: %v", err)
 			}
@@ -1541,10 +1548,51 @@ func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_AGENT":              "codex",
+		"WTUI_LAUNCH_ID":          "launch-1",
+		"WTUI_REPO_PATH":          "/repo",
+		"WTUI_WORKTREE_PATH":      "/repo/worktree",
+		"WTUI_BRANCH":             "main",
+		"WTUI_COMMIT":             "abcdef",
+		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+		}
+	}
+}
+
+func envMap(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
 func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
 	for _, command := range []string{"", "vim"} {
 		t.Run(command, func(t *testing.T) {
-			if _, err := actions.AgentLaunch("/repo/worktree", command); err == nil {
+			if _, err := actions.AgentLaunch(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"}); err == nil {
 				t.Fatal("expected AgentLaunch error")
 			}
 		})
