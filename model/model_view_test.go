@@ -288,8 +288,8 @@ func TestModel_ViewStatusBarShowsKeyHints(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
 	view := m.View()
-	if !strings.Contains(view, "tab: pane") {
-		t.Error("status bar should contain 'tab: pane' hint")
+	if !strings.Contains(view, "tab    pane") {
+		t.Error("view should contain 'tab    pane' shortcut")
 	}
 }
 
@@ -360,8 +360,8 @@ func TestModel_StatusBarStashesModeShowsDropHint(t *testing.T) {
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
 	view := m.View()
-	if !strings.Contains(view, "d: drop") {
-		t.Error("stashes status bar should mention 'd: drop' in destructive mode")
+	if !strings.Contains(view, "d      drop") {
+		t.Error("stashes view should mention 'd      drop' in destructive mode")
 	}
 }
 
@@ -396,8 +396,8 @@ func TestModel_ViewReadOnlyShowsDestructiveModeHint(t *testing.T) {
 	m = inBranchesMode(m)
 
 	view := m.View()
-	if !strings.Contains(view, "D: destructive mode") {
-		t.Error("read-only mode should show 'D: destructive mode' hint")
+	if !strings.Contains(view, "D      destructive mode") {
+		t.Error("read-only mode should show 'D      destructive mode' hint")
 	}
 }
 
@@ -414,8 +414,8 @@ func TestModel_ViewDestructiveModeShowsDeleteHint(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 
 	view := m.View()
-	if !strings.Contains(view, "d: delete") {
-		t.Error("destructive mode should show 'd: delete'")
+	if !strings.Contains(view, "d      delete") {
+		t.Error("destructive mode should show 'd      delete'")
 	}
 }
 
@@ -455,17 +455,14 @@ func TestModel_StatusBarHistoryModeShowsHistoryKeys(t *testing.T) {
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
 
 	view := m.View()
-	if !strings.Contains(view, "enter: diff") {
-		t.Error("mode 3 status bar should mention 'enter: diff'")
+	if !strings.Contains(view, "enter  diff") {
+		t.Error("mode 3 view should mention 'enter  diff'")
 	}
-	if !strings.Contains(view, "y: copy hash") {
-		t.Error("mode 3 status bar should mention 'y: copy hash'")
+	if !strings.Contains(view, "y      copy hash") {
+		t.Error("mode 3 view should mention 'y      copy hash'")
 	}
-	if !strings.Contains(view, "t: terminal") {
-		t.Error("mode 3 status bar should mention 't: terminal'")
-	}
-	if !strings.Contains(view, "c: code") {
-		t.Error("mode 3 status bar should mention 'c: code'")
+	if !strings.Contains(view, "t/c    terminal / code") {
+		t.Error("mode 3 view should mention 't/c    terminal / code'")
 	}
 }
 
@@ -476,8 +473,8 @@ func TestModel_ViewDestructiveModeHidesDestructiveHint(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 
 	view := m.View()
-	if strings.Contains(view, "D: destructive mode") {
-		t.Error("destructive mode should NOT show 'D: destructive mode' hint")
+	if strings.Contains(view, "D      destructive mode") {
+		t.Error("destructive mode should NOT show 'D      destructive mode' hint")
 	}
 }
 
@@ -495,11 +492,11 @@ func TestModel_ViewWorktreesModeDestructiveShowsDeleteHint(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 	view := m.View()
-	if !strings.Contains(view, "d: delete") {
-		t.Error("worktrees mode destructive non-stale should show 'd: delete'")
+	if !strings.Contains(view, "d      delete") {
+		t.Error("worktrees mode destructive non-stale should show 'd      delete'")
 	}
-	if strings.Contains(view, "p: prune") {
-		t.Error("worktrees mode destructive non-stale should NOT show 'p: prune'")
+	if strings.Contains(view, "p      prune") {
+		t.Error("worktrees mode destructive non-stale should NOT show 'p      prune'")
 	}
 }
 
@@ -527,8 +524,8 @@ func TestModel_ViewWorktreesModeLockedShowsUnlockHint(t *testing.T) {
 	}})
 
 	view := m.View()
-	if !strings.Contains(view, "u: unlock") {
-		t.Error("locked worktree should show 'u: unlock'")
+	if !strings.Contains(view, "u      unlock") {
+		t.Error("locked worktree should show 'u      unlock'")
 	}
 }
 
@@ -553,7 +550,7 @@ func TestModel_ViewWorktreesModeShowsMoveHintForMovableWorktree(t *testing.T) {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 			view := m.View()
-			if !strings.Contains(view, "m: move") {
+			if !strings.Contains(view, "m      move") {
 				t.Fatalf("movable %s worktree should show move hint, got:\n%s", tt.name, view)
 			}
 		})
@@ -578,7 +575,7 @@ func TestModel_ViewWorktreesModeHidesMoveHintForIneligibleWorktrees(t *testing.T
 			m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{tt.worktree}})
 
 			view := m.View()
-			if strings.Contains(view, "m: move") {
+			if strings.Contains(view, "m      move") {
 				t.Fatalf("%s worktree should not show move hint, got:\n%s", tt.name, view)
 			}
 		})
@@ -613,7 +610,7 @@ func TestModel_ViewWorktreesModeLockedStaleHidesDeleteAndPruneHints(t *testing.T
 	}})
 
 	view := m.View()
-	for _, hint := range []string{"d: delete", "p: prune"} {
+	for _, hint := range []string{"d      delete", "p      prune"} {
 		if strings.Contains(view, hint) {
 			t.Errorf("locked stale worktree should not show %q", hint)
 		}
@@ -631,11 +628,11 @@ func TestModel_ViewWorktreesModeDestructiveStaleShowsPruneHint(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	view := m.View()
-	if !strings.Contains(view, "p: prune") {
-		t.Error("worktrees mode destructive stale should show 'p: prune'")
+	if !strings.Contains(view, "p      prune") {
+		t.Error("worktrees mode destructive stale should show 'p      prune'")
 	}
-	if strings.Contains(view, "d: delete") {
-		t.Error("worktrees mode destructive stale should NOT show 'd: delete'")
+	if strings.Contains(view, "d      delete") {
+		t.Error("worktrees mode destructive stale should NOT show 'd      delete'")
 	}
 }
 
@@ -650,11 +647,11 @@ func TestModel_ViewWorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	view := m.View()
-	if !strings.Contains(view, "D: destructive mode") {
-		t.Error("worktrees mode read-only should show 'D: destructive mode'")
+	if !strings.Contains(view, "D      destructive mode") {
+		t.Error("worktrees mode read-only should show 'D      destructive mode'")
 	}
-	if strings.Contains(view, "d: delete") {
-		t.Error("worktrees mode read-only should NOT show 'd: delete'")
+	if strings.Contains(view, "d      delete") {
+		t.Error("worktrees mode read-only should NOT show 'd      delete'")
 	}
 }
 
@@ -689,7 +686,7 @@ func TestModel_ViewWorktreesDirtyShowsDiffHint(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	view := m.View()
-	for _, hint := range []string{"enter: diff", "t: terminal", "c: code"} {
+	for _, hint := range []string{"enter  diff", "t/c    terminal / code"} {
 		if !strings.Contains(view, hint) {
 			t.Errorf("view should show %q for dirty worktree", hint)
 		}
@@ -706,11 +703,11 @@ func TestModel_ViewWorktreesCleanHidesEnterDiff(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	view := m.View()
-	if strings.Contains(view, "enter: diff") {
-		t.Error("view should NOT show 'enter: diff' for clean worktree")
+	if strings.Contains(view, "enter  diff") {
+		t.Error("view should NOT show 'enter  diff' for clean worktree")
 	}
-	if !strings.Contains(view, "t: terminal") {
-		t.Error("view should show 't: terminal' for clean worktree")
+	if !strings.Contains(view, "t/c    terminal / code") {
+		t.Error("view should show 't/c    terminal / code' for clean worktree")
 	}
 }
 
