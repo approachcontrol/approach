@@ -413,11 +413,10 @@ type statusBarParams struct {
 }
 
 type shortcutHint struct {
-	Key      string
-	Label    string
-	Warning  bool
-	Inline   bool
-	PaneOnly bool
+	Key     string
+	Label   string
+	Warning bool
+	Inline  bool
 }
 
 type shortcutSection struct {
@@ -716,6 +715,8 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 	requiredWithDestructive := worktreeFooterParts(hints, true)
 	if hint, ok := findShortcutHint(hints, "A"); ok {
 		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
+		// When agent actions are visible, keep A by making room from the D
+		// toggle first; otherwise preserve D ahead of lower-priority A.
 		if sp.AgentAvailable || sp.NewAgent {
 			if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, required...)...) {
 				parts = candidate
@@ -861,9 +862,6 @@ func renderFooterHintList(sections []shortcutSection) string {
 	var parts []string
 	for _, section := range sections {
 		for _, hint := range section.Hints {
-			if hint.PaneOnly {
-				continue
-			}
 			parts = append(parts, renderFooterHint(hint))
 		}
 	}
