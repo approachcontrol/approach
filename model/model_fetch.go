@@ -61,6 +61,23 @@ func (m Model) nextListFetchRequest(mode ui.Mode) (Model, uint64) {
 	return m, request
 }
 
+func (m Model) nextWorktreeCreateRequest() (Model, uint64) {
+	m.worktreeCreateSeq++
+	m.activeWorktreeCreate = m.worktreeCreateSeq
+	return m, m.activeWorktreeCreate
+}
+
+func (m Model) isCurrentWorktreeCreateRequest(request uint64) bool {
+	return request == m.activeWorktreeCreate
+}
+
+func (m Model) clearWorktreeCreateRequest(request uint64) Model {
+	if request != 0 && request == m.activeWorktreeCreate {
+		m.activeWorktreeCreate = 0
+	}
+	return m
+}
+
 func (m Model) startFetchWorktrees() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModeWorktrees)
 	return m, m.fetchWorktrees(request)
@@ -156,7 +173,7 @@ func (m Model) gitTargetPath(forPull bool) (string, string, bool) {
 	}
 }
 
-func (m Model) createWorktree(input string, launchAgent bool) tea.Cmd {
+func (m Model) createWorktree(input string, launchAgent bool, request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -164,9 +181,9 @@ func (m Model) createWorktree(input string, launchAgent bool) tea.Cmd {
 	return func() tea.Msg {
 		worktreePath, err := actions.CreateWorktree(repoPath, input)
 		if err != nil {
-			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), LaunchAgent: launchAgent}
+			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), LaunchAgent: launchAgent, Request: request}
 		}
-		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, LaunchAgent: launchAgent}
+		return m.finishWorktreeCreate(repoPath, worktreePath, input, actions.WorktreeCreateGeneric, launchAgent, request)
 	}
 }
 
@@ -209,7 +226,7 @@ func (m Model) selectedBranchStartPoint() string {
 	return "refs/heads/" + row.Branch.Name
 }
 
-func (m Model) createPullRequestWorktree(input string) tea.Cmd {
+func (m Model) createPullRequestWorktree(input string, request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -217,9 +234,13 @@ func (m Model) createPullRequestWorktree(input string) tea.Cmd {
 	return func() tea.Msg {
 		worktreePath, err := actions.CreatePullRequestWorktree(repoPath, input)
 		if err != nil {
-			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), Kind: WorktreeCreatePullRequest}
+			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), Kind: WorktreeCreatePullRequest, Request: request}
 		}
-		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath}
+		ref, err := actions.NormalizePullRequestWorktreeRef(input)
+		if err != nil {
+			ref = input
+		}
+		return m.finishWorktreeCreate(repoPath, worktreePath, ref, actions.WorktreeCreatePullRequest, false, request)
 	}
 }
 
@@ -235,6 +256,23 @@ func (m Model) moveWorktree(oldPath, input string) tea.Cmd {
 		}
 		return WorktreeMovedMsg{RepoPath: repoPath, OldPath: oldPath, NewPath: newPath}
 	}
+}
+
+func (m Model) finishWorktreeCreate(repoPath, worktreePath, ref string, kind actions.WorktreeCreateKind, launchAgent bool, request uint64) tea.Msg {
+	hook, ok := m.bootstrapHookForRepo(repoPath)
+	if !ok {
+		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, LaunchAgent: launchAgent, Request: request}
+	}
+	ctx := actions.BootstrapContext{
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		Ref:          ref,
+		Kind:         kind,
+	}
+	if err := m.runBootstrapHook(ctx, hook); err != nil {
+		return WorktreeBootstrapFailedMsg{RepoPath: repoPath, WorktreePath: worktreePath, Err: err.Error(), LaunchAgent: launchAgent, Request: request}
+	}
+	return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, LaunchAgent: launchAgent, BootstrapRan: true, Request: request}
 }
 
 func (m Model) fetchWorktrees(request uint64) tea.Cmd {

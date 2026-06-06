@@ -17,7 +17,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.modal.IsOpen() {
 		var cmd tea.Cmd
-		m.modal, _, cmd = m.modal.Update(msg)
+		view := m.modal.View()
+		var outcome modal.Outcome
+		m.modal, outcome, cmd = m.modal.Update(msg)
+		if outcome == modal.Accepted && cmd != nil && isWorktreeCreateInput(view) {
+			var request uint64
+			m, request = m.nextWorktreeCreateRequest()
+			cmd = tagWorktreeCreateRequest(cmd, request)
+		}
 		return m, cmd
 	}
 
@@ -65,6 +72,38 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
+}
+
+func isWorktreeCreateInput(view modal.View) bool {
+	if view.Kind != modal.Input {
+		return false
+	}
+	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
+}
+
+func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		switch msg := msg.(type) {
+		case WorktreeCreatedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		case WorktreeCreateFailedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		case WorktreeBootstrapFailedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		default:
+			return msg
+		}
+	}
 }
 
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -348,7 +387,7 @@ func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
 		ui.WorktreeInputPlaceholder,
 		"",
 		validateWorktreeInput,
-		func(input string) tea.Cmd { return m.createWorktree(input, launchAgent) },
+		func(input string) tea.Cmd { return m.createWorktree(input, launchAgent, 0) },
 	)
 	return m, nil
 }
@@ -377,7 +416,7 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 		ui.PRWorktreeInputPlaceholder,
 		"",
 		func(input string) error { return validatePullRequestWorktreeInput(repoPath, input) },
-		func(input string) tea.Cmd { return m.createPullRequestWorktree(input) },
+		func(input string) tea.Cmd { return m.createPullRequestWorktree(input, 0) },
 	)
 	return m, nil
 }

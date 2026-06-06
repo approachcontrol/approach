@@ -16,12 +16,13 @@ type homeDirFunc func() (string, error)
 
 // Config is wtui's parsed configuration file.
 type Config struct {
-	Scan     ScanConfig     `toml:"scan"`
-	Editor   EditorConfig   `toml:"editor"`
-	Terminal TerminalConfig `toml:"terminal"`
-	Provider ProviderConfig `toml:"provider"`
-	Launch   LaunchConfig   `toml:"launch"`
-	Agent    AgentConfig    `toml:"agent"`
+	Scan      ScanConfig      `toml:"scan"`
+	Editor    EditorConfig    `toml:"editor"`
+	Terminal  TerminalConfig  `toml:"terminal"`
+	Provider  ProviderConfig  `toml:"provider"`
+	Launch    LaunchConfig    `toml:"launch"`
+	Agent     AgentConfig     `toml:"agent"`
+	Bootstrap BootstrapConfig `toml:"bootstrap"`
 }
 
 // ScanConfig configures repository discovery.
@@ -53,6 +54,19 @@ type LaunchConfig struct {
 // AgentConfig stores the user's preferred interactive coding agent.
 type AgentConfig struct {
 	Command string `toml:"command"`
+}
+
+// BootstrapConfig configures optional scripts that run after worktree creation.
+type BootstrapConfig struct {
+	TimeoutSeconds int                   `toml:"timeout_seconds"`
+	Hooks          []BootstrapHookConfig `toml:"hooks"`
+}
+
+// BootstrapHookConfig maps one repository to its bootstrap script.
+type BootstrapHookConfig struct {
+	RepoPath       string `toml:"repo_path"`
+	Script         string `toml:"script"`
+	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
 
 type loadOptions struct {
@@ -147,7 +161,48 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		}
 	}
 
+	if err := normalizeBootstrapConfig(path, &cfg.Bootstrap, opts); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+func normalizeBootstrapConfig(path string, cfg *BootstrapConfig, opts loadOptions) error {
+	if cfg.TimeoutSeconds < 0 {
+		return fmt.Errorf("parse config %s: bootstrap.timeout_seconds must be >= 0", path)
+	}
+	if cfg.TimeoutSeconds == 0 {
+		cfg.TimeoutSeconds = 120
+	}
+
+	for i := range cfg.Hooks {
+		hook := &cfg.Hooks[i]
+		hook.RepoPath = strings.TrimSpace(hook.RepoPath)
+		hook.Script = strings.TrimSpace(hook.Script)
+		if hook.RepoPath == "" {
+			return fmt.Errorf("parse config %s: bootstrap.hooks[%d].repo_path is required", path, i)
+		}
+		if hook.Script == "" {
+			return fmt.Errorf("parse config %s: bootstrap.hooks[%d].script is required", path, i)
+		}
+		if hook.TimeoutSeconds < 0 {
+			return fmt.Errorf("parse config %s: bootstrap.hooks[%d].timeout_seconds must be >= 0", path, i)
+		}
+
+		repoPath, err := expandHome(hook.RepoPath, opts.homeDir)
+		if err != nil {
+			return fmt.Errorf("expand bootstrap repo_path in config %s: %w", path, err)
+		}
+		hook.RepoPath = filepath.Clean(repoPath)
+
+		script, err := expandHome(hook.Script, opts.homeDir)
+		if err != nil {
+			return fmt.Errorf("expand bootstrap script in config %s: %w", path, err)
+		}
+		hook.Script = script
+	}
+	return nil
 }
 
 // DefaultPath returns the default config path:

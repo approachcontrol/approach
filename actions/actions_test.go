@@ -1060,6 +1060,176 @@ func TestCreateWorktree_RefStartingWithDashFails(t *testing.T) {
 	}
 }
 
+func TestRunBootstrapHook_RunsExecutableScriptInWorktree(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "repo")
+	worktreePath := filepath.Join(dir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(worktreePath, ".wtui", "bootstrap")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(`#!/bin/sh
+pwd > cwd.txt
+printf "%s
+%s
+%s
+%s
+" "$WTUI_REPO_PATH" "$WTUI_WORKTREE_PATH" "$WTUI_WORKTREE_REF" "$WTUI_WORKTREE_CREATE_KIND" > env.txt
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := actions.RunBootstrapHook(actions.BootstrapContext{
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		Ref:          "feature/one",
+		Kind:         actions.WorktreeCreateGeneric,
+	}, actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5})
+	if err != nil {
+		t.Fatalf("RunBootstrapHook returned error: %v", err)
+	}
+
+	cwd, err := os.ReadFile(filepath.Join(worktreePath, "cwd.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalWorktreePath, err := filepath.EvalSymlinks(worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(cwd)) != physicalWorktreePath {
+		t.Fatalf("expected hook cwd %q, got %q", physicalWorktreePath, strings.TrimSpace(string(cwd)))
+	}
+	env, err := os.ReadFile(filepath.Join(worktreePath, "env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join([]string{repoPath, worktreePath, "feature/one", "generic"}, "\n")
+	if strings.TrimSpace(string(env)) != want {
+		t.Fatalf("unexpected hook env:\n%s", env)
+	}
+}
+
+func TestRunBootstrapHook_AbsoluteScript(t *testing.T) {
+	dir := t.TempDir()
+	worktreePath := filepath.Join(dir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(dir, "bootstrap")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\ntouch absolute-ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := actions.RunBootstrapHook(actions.BootstrapContext{
+		RepoPath:     filepath.Join(dir, "repo"),
+		WorktreePath: worktreePath,
+		Ref:          "123",
+		Kind:         actions.WorktreeCreatePullRequest,
+	}, actions.BootstrapHook{Script: scriptPath, TimeoutSeconds: 5})
+	if err != nil {
+		t.Fatalf("RunBootstrapHook returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktreePath, "absolute-ran")); err != nil {
+		t.Fatalf("expected absolute hook to run in worktree: %v", err)
+	}
+}
+
+func TestRunBootstrapHook_ReportsScriptValidationErrors(t *testing.T) {
+	worktreePath := t.TempDir()
+	missingErr := actions.RunBootstrapHook(actions.BootstrapContext{
+		RepoPath:     "/repo",
+		WorktreePath: worktreePath,
+		Ref:          "feat",
+		Kind:         actions.WorktreeCreateGeneric,
+	}, actions.BootstrapHook{Script: ".wtui/missing", TimeoutSeconds: 5})
+	if missingErr == nil || !strings.Contains(missingErr.Error(), "bootstrap hook not found") {
+		t.Fatalf("expected missing hook error, got %v", missingErr)
+	}
+
+	scriptPath := filepath.Join(worktreePath, "bootstrap")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execErr := actions.RunBootstrapHook(actions.BootstrapContext{
+		RepoPath:     "/repo",
+		WorktreePath: worktreePath,
+		Ref:          "feat",
+		Kind:         actions.WorktreeCreateGeneric,
+	}, actions.BootstrapHook{Script: "bootstrap", TimeoutSeconds: 5})
+	if execErr == nil || !strings.Contains(execErr.Error(), "bootstrap hook is not executable") {
+		t.Fatalf("expected executable-bit error, got %v", execErr)
+	}
+}
+
+func TestRunBootstrapHook_FailurePrefersScriptOutput(t *testing.T) {
+	worktreePath := t.TempDir()
+	scriptPath := filepath.Join(worktreePath, "bootstrap")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho first\necho useful failure >&2\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := actions.RunBootstrapHook(actions.BootstrapContext{
+		RepoPath:     "/repo",
+		WorktreePath: worktreePath,
+		Ref:          "feat",
+		Kind:         actions.WorktreeCreateGeneric,
+	}, actions.BootstrapHook{Script: "bootstrap", TimeoutSeconds: 5})
+	if err == nil {
+		t.Fatal("expected hook failure")
+	}
+	if !strings.Contains(err.Error(), "useful failure") {
+		t.Fatalf("expected script output, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), scriptPath) {
+		t.Fatalf("expected script path in error, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("expected clean output without exit status, got %q", err.Error())
+	}
+}
+
+func TestRunBootstrapHook_Timeout(t *testing.T) {
+	worktreePath := t.TempDir()
+	scriptPath := filepath.Join(worktreePath, "bootstrap")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := actions.RunBootstrapHook(actions.BootstrapContext{
+		RepoPath:     "/repo",
+		WorktreePath: worktreePath,
+		Ref:          "feat",
+		Kind:         actions.WorktreeCreateGeneric,
+	}, actions.BootstrapHook{Script: "bootstrap", TimeoutSeconds: 1})
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if !strings.Contains(err.Error(), "timed out after 1s") {
+		t.Fatalf("expected timeout error, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), scriptPath) {
+		t.Fatalf("expected script path in timeout error, got %q", err.Error())
+	}
+}
+
+func TestNormalizePullRequestWorktreeRef(t *testing.T) {
+	for _, input := range []string{"123", "#123", "https://github.com/acme/project/pull/123/files"} {
+		t.Run(input, func(t *testing.T) {
+			ref, err := actions.NormalizePullRequestWorktreeRef(input)
+			if err != nil {
+				t.Fatalf("NormalizePullRequestWorktreeRef returned error: %v", err)
+			}
+			if ref != "123" {
+				t.Fatalf("expected normalized ref 123, got %q", ref)
+			}
+		})
+	}
+}
+
 func TestCreateBranch_FromHEAD(t *testing.T) {
 	repoPath := setupRepo(t)
 	head := runOutput(t, repoPath, "git", "rev-parse", "HEAD")

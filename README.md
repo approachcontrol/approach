@@ -113,11 +113,14 @@ create a worktree without launching an agent. Enter an existing branch, tag, or
 new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory
 and refreshes the list. Press `P` to create a review worktree from a GitHub PR
 number or URL; wtui fetches the PR head into `pr-<number>` and checks it out
-under the same sibling worktree directory. Press `f` to `git fetch --prune` and
-`F` to `git pull --ff-only` for the selected worktree. Press `m` on a linked
-non-stale, unlocked worktree to move it to an absolute path or rename it with a
-sibling-relative destination; dirty local changes move with the worktree.
-Locked worktrees cannot be moved, deleted, or pruned; press `u` to unlock one.
+under the same sibling worktree directory. If a matching `[bootstrap]` hook is
+configured, wtui runs it after successful worktree creation; hook failures keep
+the worktree, show a status error, and prevent automatic agent launch for `N`.
+Press `f` to `git fetch --prune` and `F` to `git pull --ff-only` for the
+selected worktree. Press `m` on a linked non-stale, unlocked worktree to move it
+to an absolute path or rename it with a sibling-relative destination; dirty local
+changes move with the worktree. Locked worktrees cannot be moved, deleted, or
+pruned; press `u` to unlock one.
 
 ### Branches view (mode 2)
 
@@ -171,11 +174,19 @@ max_depth = 2
 
 [agent]
 command = "codex"
+
+[bootstrap]
+timeout_seconds = 120
+
+[[bootstrap.hooks]]
+repo_path = "~/projects/wtui"
+script = ".wtui/bootstrap"
 ```
 
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. See
-[docs/config.md](docs/config.md) for the full config reference, including parsed
-foundation fields for editor, terminal, provider, launch, and agent settings.
+[docs/config.md](docs/config.md) for the full config reference, including
+bootstrap hook settings and parsed foundation fields for editor, terminal,
+provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|

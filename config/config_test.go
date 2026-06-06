@@ -42,6 +42,18 @@ prefer_multiplexer = true
 
 [agent]
 command = "codex"
+
+[bootstrap]
+timeout_seconds = 180
+
+[[bootstrap.hooks]]
+repo_path = "~/wtui"
+script = ".wtui/bootstrap"
+
+[[bootstrap.hooks]]
+repo_path = "/dev/client-api/"
+script = "~/bin/bootstrap-client-api"
+timeout_seconds = 300
 `), 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +86,123 @@ command = "codex"
 	}
 	if cfg.Agent.Command != "codex" {
 		t.Fatalf("expected agent command codex, got %q", cfg.Agent.Command)
+	}
+	if cfg.Bootstrap.TimeoutSeconds != 180 {
+		t.Fatalf("expected bootstrap timeout 180, got %d", cfg.Bootstrap.TimeoutSeconds)
+	}
+	if len(cfg.Bootstrap.Hooks) != 2 {
+		t.Fatalf("expected 2 bootstrap hooks, got %d", len(cfg.Bootstrap.Hooks))
+	}
+	if cfg.Bootstrap.Hooks[0].RepoPath != filepath.Join(home, "wtui") {
+		t.Fatalf("expected expanded repo path, got %q", cfg.Bootstrap.Hooks[0].RepoPath)
+	}
+	if cfg.Bootstrap.Hooks[0].Script != ".wtui/bootstrap" {
+		t.Fatalf("expected relative script preserved, got %q", cfg.Bootstrap.Hooks[0].Script)
+	}
+	if cfg.Bootstrap.Hooks[0].TimeoutSeconds != 0 {
+		t.Fatalf("expected hook timeout override omitted, got %d", cfg.Bootstrap.Hooks[0].TimeoutSeconds)
+	}
+	if cfg.Bootstrap.Hooks[1].RepoPath != filepath.Clean("/dev/client-api/") {
+		t.Fatalf("expected cleaned repo path, got %q", cfg.Bootstrap.Hooks[1].RepoPath)
+	}
+	if cfg.Bootstrap.Hooks[1].Script != filepath.Join(home, "bin", "bootstrap-client-api") {
+		t.Fatalf("expected expanded script path, got %q", cfg.Bootstrap.Hooks[1].Script)
+	}
+	if cfg.Bootstrap.Hooks[1].TimeoutSeconds != 300 {
+		t.Fatalf("expected per-hook timeout 300, got %d", cfg.Bootstrap.Hooks[1].TimeoutSeconds)
+	}
+}
+
+func TestLoadFrom_DefaultsBootstrapTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`
+[bootstrap]
+
+[[bootstrap.hooks]]
+repo_path = "/dev/wtui"
+script = ".wtui/bootstrap"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+
+	if cfg.Bootstrap.TimeoutSeconds != 120 {
+		t.Fatalf("expected default bootstrap timeout 120, got %d", cfg.Bootstrap.TimeoutSeconds)
+	}
+}
+
+func TestLoadFrom_RejectsUnknownBootstrapFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[bootstrap]\ntimeout = 120\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected unknown bootstrap field error")
+	}
+	if !strings.Contains(err.Error(), "strict mode") {
+		t.Fatalf("expected strict decoder error, got %q", err.Error())
+	}
+}
+
+func TestLoadFrom_RejectsInvalidBootstrapHooks(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "missing repo path",
+			body: "[[bootstrap.hooks]]\nscript = \".wtui/bootstrap\"\n",
+			want: "repo_path",
+		},
+		{
+			name: "blank repo path",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"   \"\nscript = \".wtui/bootstrap\"\n",
+			want: "repo_path",
+		},
+		{
+			name: "missing script",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\n",
+			want: "script",
+		},
+		{
+			name: "blank script",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\nscript = \"   \"\n",
+			want: "script",
+		},
+		{
+			name: "negative section timeout",
+			body: "[bootstrap]\ntimeout_seconds = -1\n",
+			want: "timeout_seconds",
+		},
+		{
+			name: "negative hook timeout",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\nscript = \".wtui/bootstrap\"\ntimeout_seconds = -1\n",
+			want: "timeout_seconds",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := config.LoadFrom(path)
+			if err == nil {
+				t.Fatal("expected invalid bootstrap config error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error to mention %q, got %q", tc.want, err.Error())
+			}
+		})
 	}
 }
 

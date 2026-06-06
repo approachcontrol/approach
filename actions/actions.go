@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -11,6 +12,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 
 	"github.com/brian-bell/wtui/agent"
@@ -23,6 +26,37 @@ type commandSpec struct {
 
 type lookPathFunc func(string) (string, error)
 type getenvFunc func(string) string
+
+// BootstrapHook configures a script to run after a worktree is created.
+type BootstrapHook struct {
+	Script         string
+	TimeoutSeconds int
+}
+
+// WorktreeCreateKind identifies which create flow produced the worktree.
+type WorktreeCreateKind int
+
+const (
+	WorktreeCreateGeneric WorktreeCreateKind = iota
+	WorktreeCreatePullRequest
+)
+
+func (k WorktreeCreateKind) String() string {
+	switch k {
+	case WorktreeCreatePullRequest:
+		return "pull_request"
+	default:
+		return "generic"
+	}
+}
+
+// BootstrapContext describes the worktree creation that triggered a hook.
+type BootstrapContext struct {
+	RepoPath     string
+	WorktreePath string
+	Ref          string
+	Kind         WorktreeCreateKind
+}
 
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
 // then prunes stale references to ensure the worktree no longer appears
@@ -144,6 +178,104 @@ func runGit(path string, args ...string) error {
 	return nil
 }
 
+// RunBootstrapHook executes a configured bootstrap script directly, with the
+// created worktree as its working directory.
+func RunBootstrapHook(ctx BootstrapContext, hook BootstrapHook) error {
+	scriptPath := hook.Script
+	if !filepath.IsAbs(scriptPath) {
+		scriptPath = filepath.Join(ctx.WorktreePath, scriptPath)
+	}
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("bootstrap hook not found: %s", scriptPath)
+		}
+		return fmt.Errorf("stat bootstrap hook %s: %w", scriptPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("bootstrap hook is not a regular file: %s", scriptPath)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("bootstrap hook is not executable: %s", scriptPath)
+	}
+
+	timeout := hook.TimeoutSeconds
+	if timeout == 0 {
+		timeout = 120
+	}
+	if timeout < 0 {
+		return fmt.Errorf("bootstrap hook timeout must be >= 0")
+	}
+	commandCtx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(commandCtx, scriptPath)
+	cmd.Dir = ctx.WorktreePath
+	cmd.Env = append(os.Environ(),
+		"WTUI_REPO_PATH="+ctx.RepoPath,
+		"WTUI_WORKTREE_PATH="+ctx.WorktreePath,
+		"WTUI_WORKTREE_REF="+ctx.Ref,
+		"WTUI_WORKTREE_CREATE_KIND="+ctx.Kind.String(),
+	)
+	output := newTailBuffer(4096)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	cmd.WaitDelay = 2 * time.Second
+	err = cmd.Run()
+	msg := output.String()
+	if commandCtx.Err() == context.DeadlineExceeded {
+		if msg != "" {
+			return fmt.Errorf("bootstrap hook %s timed out after %ds: %s", scriptPath, timeout, msg)
+		}
+		return fmt.Errorf("bootstrap hook %s timed out after %ds", scriptPath, timeout)
+	}
+	if err != nil {
+		if msg == "" {
+			return fmt.Errorf("bootstrap hook %s failed: %w", scriptPath, err)
+		}
+		return fmt.Errorf("bootstrap hook %s failed: %s", scriptPath, msg)
+	}
+	return nil
+}
+
+type tailBuffer struct {
+	mu        sync.Mutex
+	buf       []byte
+	limit     int
+	truncated bool
+}
+
+func newTailBuffer(limit int) *tailBuffer {
+	return &tailBuffer{limit: limit}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	if len(b.buf) > b.limit {
+		b.truncated = true
+		b.buf = append([]byte(nil), b.buf[len(b.buf)-b.limit:]...)
+		if idx := strings.IndexByte(string(b.buf), '\n'); idx >= 0 && idx+1 < len(b.buf) {
+			b.buf = append([]byte(nil), b.buf[idx+1:]...)
+		}
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	msg := strings.TrimSpace(string(b.buf))
+	if msg == "" {
+		return ""
+	}
+	if b.truncated {
+		return "... " + msg
+	}
+	return msg
+}
+
 // CreateWorktree creates a new worktree from an existing branch/tag/ref, or
 // creates a new branch with that name from HEAD when the input does not resolve.
 func CreateWorktree(repoPath, ref string) (string, error) {
@@ -248,6 +380,16 @@ func ValidatePullRequestWorktreeInput(repoPath, input string) error {
 		return err
 	}
 	return validatePullRequestRepo(repoPath, pr)
+}
+
+// NormalizePullRequestWorktreeRef returns the stable PR ref value wtui exposes
+// to post-create integrations.
+func NormalizePullRequestWorktreeRef(input string) (string, error) {
+	pr, err := parsePullRequestInput(input)
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(pr.Number), nil
 }
 
 // DefaultWorktreePath returns the conventional sibling path used for new

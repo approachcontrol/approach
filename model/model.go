@@ -28,6 +28,8 @@ type Model struct {
 	modal                    modal.Modal
 	diffRequestSeq           uint64
 	listRequestSeq           uint64
+	worktreeCreateSeq        uint64
+	activeWorktreeCreate     uint64
 	listRequests             [listRequestSlots]uint64
 	activePane               int // 0=left (repos), 1=right (content)
 	destructive              bool
@@ -38,6 +40,8 @@ type Model struct {
 	agentCommand             string
 	saveAgent                func(string) error
 	launchAgent              func(string, string) (actions.TerminalLaunchSpec, error)
+	bootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type statusSource int
@@ -59,9 +63,11 @@ type statusError struct {
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
-	AgentCommand     string
-	SaveAgentCommand func(string) error
-	LaunchAgent      func(string, string) (actions.TerminalLaunchSpec, error)
+	AgentCommand         string
+	SaveAgentCommand     func(string) error
+	LaunchAgent          func(string, string) (actions.TerminalLaunchSpec, error)
+	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
+	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 // New creates a Model from discovered repos.
@@ -79,17 +85,27 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
 	}
+	bootstrapHookForRepo := opts.BootstrapHookForRepo
+	if bootstrapHookForRepo == nil {
+		bootstrapHookForRepo = func(string) (actions.BootstrapHook, bool) { return actions.BootstrapHook{}, false }
+	}
+	runBootstrapHook := opts.RunBootstrapHook
+	if runBootstrapHook == nil {
+		runBootstrapHook = actions.RunBootstrapHook
+	}
 	m := Model{
-		repos:        newRepoPane().SetItems(repos),
-		rows:         newBranchPane(),
-		stashes:      newStashPane(),
-		worktrees:    newWorktreePane(),
-		commits:      newCommitPane(),
-		reflogs:      newReflogPane(),
-		mode:         ui.ModeWorktrees,
-		agentCommand: agent.Normalize(opts.AgentCommand),
-		saveAgent:    saveAgent,
-		launchAgent:  launchAgent,
+		repos:                newRepoPane().SetItems(repos),
+		rows:                 newBranchPane(),
+		stashes:              newStashPane(),
+		worktrees:            newWorktreePane(),
+		commits:              newCommitPane(),
+		reflogs:              newReflogPane(),
+		mode:                 ui.ModeWorktrees,
+		agentCommand:         agent.Normalize(opts.AgentCommand),
+		saveAgent:            saveAgent,
+		launchAgent:          launchAgent,
+		bootstrapHookForRepo: bootstrapHookForRepo,
+		runBootstrapHook:     runBootstrapHook,
 	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeReflog; mode++ {
 		m.listRequestSeq++
@@ -388,6 +404,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWorktreeMoved(msg)
 	case WorktreeMoveFailedMsg:
 		return m.handleWorktreeMoveFailed(msg), nil
+	case WorktreeBootstrapFailedMsg:
+		return m.handleWorktreeBootstrapFailed(msg)
 	case CommitResultMsg:
 		return m.handleCommitResult(msg), nil
 	case ReflogResultMsg:

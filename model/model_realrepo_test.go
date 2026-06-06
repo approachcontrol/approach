@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +71,36 @@ func setupModelRepoWithOptions(t *testing.T, opts model.Options) (model.Model, s
 	_, dir := setupModelRepo(t)
 	m := model.NewWithOptions([]scanner.Repo{{Path: dir, DisplayName: filepath.Base(dir)}}, opts)
 	return m, dir
+}
+
+func setupModelPullRequestRepoWithOptions(t *testing.T, opts model.Options) (model.Model, string) {
+	t.Helper()
+	dir := t.TempDir()
+	upstream := filepath.Join(dir, "upstream")
+	origin := filepath.Join(dir, "origin.git")
+	local := filepath.Join(dir, "local")
+	mustGit(t, dir, "init", upstream)
+	mustGit(t, upstream, "config", "user.email", "test@test.com")
+	mustGit(t, upstream, "config", "user.name", "Test")
+	writeFile(t, upstream, "README.md", "hello\n")
+	mustGit(t, upstream, "add", "README.md")
+	mustGit(t, upstream, "commit", "-m", "initial commit")
+	mustGit(t, dir, "init", "--bare", origin)
+	mustGit(t, upstream, "remote", "add", "origin", origin)
+	mustGit(t, upstream, "push", "-u", "origin", "HEAD")
+	mustGit(t, upstream, "checkout", "-b", "pr-head")
+	writeFile(t, upstream, "pr.txt", "review me\n")
+	mustGit(t, upstream, "add", "pr.txt")
+	mustGit(t, upstream, "commit", "-m", "pr change")
+	mustGit(t, upstream, "push", "origin", "HEAD:refs/pull/123/head")
+	mustGit(t, dir, "clone", origin, local)
+	if resolved, err := filepath.EvalSymlinks(local); err == nil {
+		local = resolved
+	}
+	mustGit(t, local, "config", "user.email", "test@test.com")
+	mustGit(t, local, "config", "user.name", "Test")
+	m := model.NewWithOptions([]scanner.Repo{{Path: local, DisplayName: filepath.Base(local)}}, opts)
+	return m, local
 }
 
 // TestModel_ModeFetchesProduceResultsAgainstRealRepo verifies that each mode's
@@ -387,13 +418,14 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	m, _ = update(m, m.Init()())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-smoke")})
-	_, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if createCmd == nil {
 		t.Fatal("expected create worktree command")
 	}
-	created, ok := createCmd().(model.WorktreeCreatedMsg)
+	msg := createCmd()
+	created, ok := msg.(model.WorktreeCreatedMsg)
 	if !ok {
-		t.Fatalf("expected WorktreeCreatedMsg, got %T", createCmd())
+		t.Fatalf("expected WorktreeCreatedMsg, got %T", msg)
 	}
 	if !created.LaunchAgent {
 		t.Fatal("expected created message to request agent launch")
@@ -423,6 +455,264 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	want := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-worktrees", "agent-smoke")
 	if launchedPath != want {
 		t.Fatalf("expected launch from created worktree %q, got %q", want, launchedPath)
+	}
+}
+
+func TestModel_CreateWorktreeRunsBootstrapHookAgainstRealRepo(t *testing.T) {
+	var gotCtx actions.BootstrapContext
+	var gotHook actions.BootstrapHook
+	var m model.Model
+	var dir string
+	m, dir = setupModelRepoWithOptions(t, model.Options{
+		BootstrapHookForRepo: func(repoPath string) (actions.BootstrapHook, bool) {
+			if repoPath != dir {
+				t.Fatalf("expected hook lookup for %q, got %q", dir, repoPath)
+			}
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
+			gotCtx = ctx
+			gotHook = hook
+			return nil
+		},
+	})
+
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bootstrap-smoke")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected create worktree command")
+	}
+	msg := createCmd()
+	created, ok := msg.(model.WorktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreatedMsg, got %T", msg)
+	}
+	if !created.BootstrapRan {
+		t.Fatal("expected created message to record bootstrap run")
+	}
+	wantPath := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-worktrees", "bootstrap-smoke")
+	if gotCtx.RepoPath != dir || gotCtx.WorktreePath != wantPath || gotCtx.Ref != "bootstrap-smoke" || gotCtx.Kind != actions.WorktreeCreateGeneric {
+		t.Fatalf("unexpected bootstrap context: %#v", gotCtx)
+	}
+	if gotHook.Script != ".wtui/bootstrap" || gotHook.TimeoutSeconds != 7 {
+		t.Fatalf("unexpected bootstrap hook: %#v", gotHook)
+	}
+}
+
+func TestModel_CreateWorktreeWithoutHookPreservesCreatedMessageAgainstRealRepo(t *testing.T) {
+	m, _ := setupModelRepo(t)
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("no-hook")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected create worktree command")
+	}
+	msg := createCmd()
+	created, ok := msg.(model.WorktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreatedMsg, got %T", msg)
+	}
+	if created.BootstrapRan {
+		t.Fatal("expected bootstrap to be skipped when no hook is configured")
+	}
+}
+
+func TestModel_BootstrapFailureRefreshesWorktreesAndShowsStatus(t *testing.T) {
+	m := inBranchesMode(model.New(testRepos()))
+	m, cmd := update(m, model.WorktreeBootstrapFailedMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		Err:          "setup failed",
+	})
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("expected mode worktrees after bootstrap failure, got %d", m.Mode())
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected input modal to stay closed, got overlay %d", m.Overlay())
+	}
+	if !strings.Contains(m.TransientError(), "bootstrap hook failed: setup failed") {
+		t.Fatalf("expected bootstrap error status, got %q", m.TransientError())
+	}
+	if cmd == nil {
+		t.Fatal("expected worktree refresh command")
+	}
+}
+
+func TestModel_StaleBootstrapFailureIsIgnored(t *testing.T) {
+	m := model.New(testRepos())
+	m, cmd := update(m, model.WorktreeBootstrapFailedMsg{
+		RepoPath:     "/dev/bravo",
+		WorktreePath: "/dev/bravo-worktrees/feat",
+		Err:          "setup failed",
+	})
+	if cmd != nil {
+		t.Fatal("expected stale bootstrap failure to be ignored")
+	}
+	if m.TransientError() != "" {
+		t.Fatalf("expected no status for stale bootstrap failure, got %q", m.TransientError())
+	}
+}
+
+func TestModel_StaleBootstrapFailureRequestIsIgnoredAfterNewerSubmit(t *testing.T) {
+	m := inWorktreesMode(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
+	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("new")})
+	m, secondCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if firstCmd == nil || secondCmd == nil {
+		t.Fatal("expected create commands")
+	}
+
+	m, cmd := update(m, model.WorktreeBootstrapFailedMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/old",
+		Err:          "old setup failed",
+		Request:      1,
+	})
+	if cmd != nil {
+		t.Fatal("expected stale bootstrap failure request to be ignored")
+	}
+	if m.TransientError() != "" {
+		t.Fatalf("expected no status for stale request, got %q", m.TransientError())
+	}
+}
+
+func TestModel_CancelledPromptDoesNotSupersedeInFlightCreate(t *testing.T) {
+	m := inWorktreesMode(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
+	m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if firstCmd == nil {
+		t.Fatal("expected create command")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	msg := firstCmd()
+	m, _ = update(m, msg)
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected in-flight create failure to reopen input, got %d", m.Overlay())
+	}
+	if m.WorktreeInput() != "old" {
+		t.Fatalf("expected original input restored, got %q", m.WorktreeInput())
+	}
+}
+
+func TestModel_PullRequestWorktreeBootstrapFailureAgainstRealRepo(t *testing.T) {
+	var m model.Model
+	var dir string
+	m, dir = setupModelPullRequestRepoWithOptions(t, model.Options{
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5}, true
+		},
+		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
+			if ctx.Kind != actions.WorktreeCreatePullRequest || ctx.Ref != "123" || ctx.RepoPath != dir {
+				t.Fatalf("unexpected PR bootstrap context: %#v", ctx)
+			}
+			return errors.New("pr setup failed")
+		},
+	})
+
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("123")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected create PR worktree command")
+	}
+	msg := createCmd()
+	failed, ok := msg.(model.WorktreeBootstrapFailedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeBootstrapFailedMsg, got %T", msg)
+	}
+	if failed.WorktreePath == "" || !strings.Contains(failed.Err, "pr setup failed") {
+		t.Fatalf("unexpected bootstrap failure message: %#v", failed)
+	}
+}
+
+func TestModel_CreateThenAgentLaunchWaitsForBootstrapHook(t *testing.T) {
+	var launchedPath string
+	hookRan := false
+	m, dir := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "codex",
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			hookRan = true
+			return nil
+		},
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			if !hookRan {
+				t.Fatal("agent launched before bootstrap hook completed")
+			}
+			launchedPath = path
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-bootstrap")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	msg := createCmd()
+	created, ok := msg.(model.WorktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreatedMsg, got %T", msg)
+	}
+	if !created.LaunchAgent || !created.BootstrapRan {
+		t.Fatalf("expected launch + bootstrap metadata, got %#v", created)
+	}
+	_, batchCmd := update(m, created)
+	if batchCmd == nil {
+		t.Fatal("expected launch command after successful bootstrap")
+	}
+	want := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-worktrees", "agent-bootstrap")
+	if launchedPath != want {
+		t.Fatalf("expected launch from created worktree %q, got %q", want, launchedPath)
+	}
+	_ = batchCmd()
+}
+
+func TestModel_CreateThenAgentLaunchSkipsAgentWhenBootstrapFails(t *testing.T) {
+	launched := false
+	m, _ := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "codex",
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("setup failed")
+		},
+		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-bootstrap-fail")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	msg := createCmd()
+	failed, ok := msg.(model.WorktreeBootstrapFailedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeBootstrapFailedMsg, got %T", msg)
+	}
+	if !failed.LaunchAgent {
+		t.Fatal("expected bootstrap failure to preserve original launch intent")
+	}
+	_, refreshCmd := update(m, failed)
+	if refreshCmd == nil {
+		t.Fatal("expected refresh command after bootstrap failure")
+	}
+	if launched {
+		t.Fatal("agent should not launch when bootstrap fails")
 	}
 }
 
