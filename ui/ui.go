@@ -1166,7 +1166,7 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 	if height <= 0 {
 		return nil
 	}
-	header := truncateToWidth(statusStyle.Render("   Provider  Branch  Worktree  Status  Summary"), width)
+	header := truncateToWidth(statusStyle.Render(formatSessionColumns("   ", "Provider", "Branch", "Worktree", "Status", "Summary")), width)
 	if height == 1 {
 		return []string{header}
 	}
@@ -1178,15 +1178,15 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		if worktree == "." || worktree == string(filepath.Separator) {
 			worktree = ""
 		}
-		line := fmt.Sprintf("   %s  %s  %s  %s  %s",
-			diffHdrStyle.Render(provider),
-			branchStyle.Render(record.Branch),
-			stashDateStyle.Render(worktree),
-			statusStyle.Render(record.Status),
+		line := formatSessionColumns("   ",
+			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
+			branchStyle.Render(fitSessionColumn(record.Branch, sessionBranchWidth)),
+			stashDateStyle.Render(fitSessionColumn(worktree, sessionWorktreeWidth)),
+			statusStyle.Render(fitSessionColumn(record.Status, sessionStatusWidth)),
 			stashMsgStyle.Render(record.Summary),
 		)
 		if i == selected {
-			selectedLine := truncateToWidth(fmt.Sprintf(" > %s  %s  %s  %s  %s",
+			selectedLine := truncateToWidth(formatSessionColumns(" > ",
 				provider,
 				record.Branch,
 				worktree,
@@ -1198,6 +1198,32 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
+}
+
+const (
+	sessionProviderWidth = 8
+	sessionBranchWidth   = 24
+	sessionWorktreeWidth = 18
+	sessionStatusWidth   = 10
+)
+
+func formatSessionColumns(prefix, provider, branch, worktree, status, summary string) string {
+	return fmt.Sprintf("%s%s  %s  %s  %s  %s",
+		prefix,
+		fitSessionColumn(provider, sessionProviderWidth),
+		fitSessionColumn(branch, sessionBranchWidth),
+		fitSessionColumn(worktree, sessionWorktreeWidth),
+		fitSessionColumn(status, sessionStatusWidth),
+		summary,
+	)
+}
+
+func fitSessionColumn(value string, width int) string {
+	value = truncateToWidth(value, width)
+	if lipgloss.Width(value) >= width {
+		return value
+	}
+	return value + strings.Repeat(" ", width-lipgloss.Width(value))
 }
 
 func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, height int) []string {

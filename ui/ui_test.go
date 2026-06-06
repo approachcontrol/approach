@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
@@ -151,18 +152,44 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 			Status:       "ended",
 			RepoPath:     "/dev/wtui",
 			WorktreePath: "/dev/wtui-worktrees/sessions",
-			Branch:       "feature/sessions",
+			Branch:       "feature/headers",
 			Summary:      "Implement session capture",
 		}},
 		ActivePane:      1,
 		SessionSelected: 0,
 	})
 
-	for _, want := range []string{"[6] sessions", "Provider", "Branch", "Worktree", "Status", "Summary", "codex", "feature/sessions", "sessions", "ended", "Implement session capture"} {
+	for _, want := range []string{"[6] sessions", "Provider", "Branch", "Worktree", "Status", "Summary", "codex", "feature/headers", "sessions", "ended", "Implement session capture"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sessions view missing %q:\n%s", want, view)
 		}
 	}
+
+	headerLine := lineContaining(view, "Provider")
+	rowLine := lineContaining(view, "feature/headers")
+	for _, pair := range [][2]string{
+		{"Provider", "codex"},
+		{"Branch", "feature/headers"},
+		{"Worktree", "sessions"},
+		{"Status", "ended"},
+		{"Summary", "Implement session capture"},
+	} {
+		headerColumn := strings.Index(headerLine, pair[0])
+		rowColumn := strings.Index(rowLine, pair[1])
+		if headerColumn != rowColumn {
+			t.Fatalf("%s header starts at column %d, row value %q starts at column %d:\n%s\n%s", pair[0], headerColumn, pair[1], rowColumn, headerLine, rowLine)
+		}
+	}
+}
+
+func lineContaining(view, needle string) string {
+	for _, line := range strings.Split(view, "\n") {
+		stripped := ansi.Strip(line)
+		if strings.Contains(stripped, needle) {
+			return stripped
+		}
+	}
+	return ""
 }
 
 func TestRender_SessionsModeEmptyMessages(t *testing.T) {
