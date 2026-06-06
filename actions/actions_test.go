@@ -1541,8 +1541,8 @@ func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
 			if !launch.Interactive {
 				t.Fatal("expected agent launch to be interactive")
 			}
-			if len(launch.Cmd.Args) != 1 || launch.Cmd.Args[0] != command {
-				t.Fatalf("expected direct command args [%q], got %#v", command, launch.Cmd.Args)
+			if len(launch.Cmd.Args) == 0 || launch.Cmd.Args[0] != command {
+				t.Fatalf("expected command args to start with %q, got %#v", command, launch.Cmd.Args)
 			}
 		})
 	}
@@ -1574,6 +1574,58 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+		}
+	}
+}
+
+func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	args := strings.Join(launch.Cmd.Args, "\x00")
+	for _, want := range []string{
+		"--config",
+		"hooks.Stop",
+		"session-hook --provider codex",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("expected codex launch args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func TestAgentLaunchWiresClaudeSessionHook(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "claude",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	args := strings.Join(launch.Cmd.Args, "\x00")
+	for _, want := range []string{
+		"--settings",
+		"SessionEnd",
+		"session-hook --provider claude",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("expected claude launch args to contain %q, got %#v", want, launch.Cmd.Args)
 		}
 	}
 }

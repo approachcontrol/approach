@@ -15,7 +15,7 @@ test:
 	go test ./...
 
 run: build
-	./$(BINARY)
+	XDG_CONFIG_HOME="$(CURDIR)/.config" ./$(BINARY)
 
 clean:
 	rm -rf $(BIN_DIR)

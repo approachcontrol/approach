@@ -175,7 +175,12 @@ manually afterward.
 
 ## Agent Session Hooks
 
-wtui can ingest Claude Code and Codex hook payloads:
+Agents launched from wtui with `a` or `N` are wired automatically. wtui passes
+Claude Code or Codex a session-end hook that calls the current wtui binary, and
+it appends the environment metadata listed below so the hook can associate the
+session with the selected repo and worktree.
+
+wtui can also ingest hook payloads from manual provider configuration:
 
 ```bash
 wtui session-hook --provider claude
@@ -194,6 +199,10 @@ overrides the configured root when `--state-root` is omitted. The
 `copy_raw_transcripts` setting controls whether provider-native transcript data
 is copied to `raw.jsonl`; normalized transcript events are still written for the
 sessions view.
+
+Codex may ask you to review and trust the injected hook with `/hooks` before it
+runs it. After trust is recorded for the unchanged hook command, later
+wtui-launched Codex sessions can save normally.
 
 Claude Code hook example:
 
@@ -234,7 +243,7 @@ Codex hook example:
 ```
 
 When wtui launches an agent with `a` or `N`, it appends these environment
-variables so hooks can associate sessions with the selected repo/worktree:
+variables:
 `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
 `WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
 

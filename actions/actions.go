@@ -467,7 +467,8 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	cmd := exec.Command(command)
+	args := agentLaunchArgs(command)
+	cmd := exec.Command(command, args...)
 	cmd.Dir = ctx.WorktreePath
 	cmd.Env = append(os.Environ(),
 		"WTUI_AGENT="+command,
@@ -479,6 +480,29 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		"WTUI_SESSION_STATE_ROOT="+ctx.SessionStateRoot,
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+func agentLaunchArgs(command string) []string {
+	switch command {
+	case "codex":
+		hookCommand := wtuiSessionHookCommand("codex")
+		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
+		return []string{"--config", hookConfig}
+	case "claude":
+		hookCommand := wtuiSessionHookCommand("claude")
+		settings := "{\"hooks\":{\"SessionEnd\":[{\"hooks\":[{\"type\":\"command\",\"command\":" + strconv.Quote(hookCommand) + "}]}]}}"
+		return []string{"--settings", settings}
+	default:
+		return nil
+	}
+}
+
+func wtuiSessionHookCommand(provider string) string {
+	executable, err := os.Executable()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	return shellQuote(executable) + " session-hook --provider " + provider
 }
 
 // TerminalLaunch returns a command that opens or switches to a multiplexer

@@ -220,16 +220,24 @@ editor, terminal, provider, launch, and agent settings.
 
 ### Agent session hooks
 
-Configure Claude Code or Codex hooks to call wtui:
+Agents launched from wtui with `a` or `N` are wired automatically: wtui passes
+Claude Code or Codex a session-end hook that calls the current wtui binary, and
+it includes `WTUI_*` metadata so hook records can be associated with the repo,
+worktree, branch, and launch.
+
+For manual agent sessions that are not launched by wtui, configure Claude Code
+or Codex hooks to call wtui:
 
 ```bash
 wtui session-hook --provider claude
 wtui session-hook --provider codex
 ```
 
-For local testing, use `--state-root /tmp/wtui-sessions-test`. Agents launched
-from wtui receive `WTUI_*` metadata so hook records can be associated with the
-repo, worktree, branch, and launch.
+For local testing, use `--state-root /tmp/wtui-sessions-test`.
+
+Codex may ask you to review and trust the injected hook with `/hooks` before it
+runs it. After trust is recorded for the unchanged hook command, later
+wtui-launched Codex sessions can save normally.
 
 `session-hook` loads the normal wtui config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
@@ -242,7 +250,7 @@ copies while keeping normalized transcript events for the sessions view.
 ```bash
 make build   # Build binary to bin/wtui
 make test    # Run all tests
-make run     # Build and run
+make run     # Build and run with the repo-local .config/wtui/config.toml
 make tidy    # go mod tidy
 make clean   # Remove bin/
 ```
