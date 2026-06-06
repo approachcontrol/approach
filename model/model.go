@@ -16,35 +16,36 @@ const listRequestSlots = int(ui.ModeReflog) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos                    pane.Pane[scanner.Repo]
-	width                    int
-	height                   int
-	mode                     ui.Mode
-	rows                     pane.Pane[gitquery.BranchRow]
-	stashes                  pane.Pane[gitquery.Stash]
-	worktrees                pane.Pane[gitquery.Worktree]
-	commits                  pane.Pane[gitquery.Commit]
-	reflogs                  pane.Pane[gitquery.ReflogEntry]
-	modal                    modal.Modal
-	diffRequestSeq           uint64
-	listRequestSeq           uint64
-	worktreeCreateSeq        uint64
-	activeWorktreeCreate     uint64
-	listRequests             [listRequestSlots]uint64
-	activePane               int // 0=left (repos), 1=right (content)
-	destructive              bool
-	status                   statusError
-	visibleRepoFetchSeq      uint64
-	visibleRepoFetch         visibleRepoFetchState
-	searchActive             bool
-	pendingBranchSelection   string
-	pendingWorktreeSelection string
-	agentCommand             string
-	fetchRepo                func(string) error
-	saveAgent                func(string) error
-	launchAgent              func(string, string) (actions.TerminalLaunchSpec, error)
-	bootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
+	repos                     pane.Pane[scanner.Repo]
+	width                     int
+	height                    int
+	mode                      ui.Mode
+	rows                      pane.Pane[gitquery.BranchRow]
+	stashes                   pane.Pane[gitquery.Stash]
+	worktrees                 pane.Pane[gitquery.Worktree]
+	commits                   pane.Pane[gitquery.Commit]
+	reflogs                   pane.Pane[gitquery.ReflogEntry]
+	modal                     modal.Modal
+	diffRequestSeq            uint64
+	listRequestSeq            uint64
+	worktreeCreateSeq         uint64
+	activeWorktreeCreate      uint64
+	listRequests              [listRequestSlots]uint64
+	activePane                int // 0=left (repos), 1=right (content)
+	destructive               bool
+	status                    statusError
+	visibleRepoFetchSeq       uint64
+	visibleRepoFetchStatusSeq uint64
+	visibleRepoFetch          visibleRepoFetchState
+	searchActive              bool
+	pendingBranchSelection    string
+	pendingWorktreeSelection  string
+	agentCommand              string
+	fetchRepo                 func(string) error
+	saveAgent                 func(string) error
+	launchAgent               func(string, string) (actions.TerminalLaunchSpec, error)
+	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type statusSource int
@@ -414,6 +415,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGitFetchFailed(msg), nil
 	case VisibleRepoFetchResultMsg:
 		return m.handleVisibleRepoFetchResult(msg)
+	case VisibleRepoFetchStatusExpiredMsg:
+		return m.handleVisibleRepoFetchStatusExpired(msg), nil
 	case GitPulledMsg:
 		return m.handleGitPulled(msg)
 	case GitPullFailedMsg:

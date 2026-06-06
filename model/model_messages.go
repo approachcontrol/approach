@@ -128,6 +128,11 @@ type VisibleRepoFetchResultMsg struct {
 	Err         string
 }
 
+type VisibleRepoFetchStatusExpiredMsg struct {
+	Request uint64
+	Text    string
+}
+
 type GitPulledMsg struct {
 	RepoPath string
 }
@@ -447,11 +452,26 @@ func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.
 	_, shouldRefresh := m.visibleRepoFetch.CapturedPaths[currentPath]
 	finalStatus := m.visibleRepoFetchFinalStatusText()
 	m.visibleRepoFetch = visibleRepoFetchState{}
+	m.visibleRepoFetchStatusSeq++
+	statusRequest := m.visibleRepoFetchStatusSeq
 	m = m.setStatus(statusGitMutation, finalStatus)
+	expireCmd := expireVisibleRepoFetchStatus(statusRequest, finalStatus)
 	if currentOK && shouldRefresh {
-		return m.startFetchForMode()
+		var fetchCmd tea.Cmd
+		m, fetchCmd = m.startFetchForMode()
+		return m, tea.Batch(fetchCmd, expireCmd)
 	}
-	return m, nil
+	return m, expireCmd
+}
+
+func (m Model) handleVisibleRepoFetchStatusExpired(msg VisibleRepoFetchStatusExpiredMsg) Model {
+	if msg.Request == 0 || msg.Request != m.visibleRepoFetchStatusSeq {
+		return m
+	}
+	if m.status.Source == statusGitMutation && m.status.Text == msg.Text {
+		m.status = statusError{}
+	}
+	return m
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {

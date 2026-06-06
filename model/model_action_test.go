@@ -777,6 +777,43 @@ func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
 	}
 }
 
+func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status before expiry, got:\n%s", m.View())
+	}
+
+	m, _ = update(m, model.VisibleRepoFetchStatusExpiredMsg{Request: 1, Text: "Fetched 3 visible repos"})
+	if strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected final success status to expire, got:\n%s", m.View())
+	}
+}
+
+func TestModel_VisibleRepoFetchStatusExpiryDoesNotClearNewerStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	m, _ = update(m, model.GitFetchFailedMsg{RepoPath: "/dev/alpha", Err: "fetch failed: newer"})
+
+	m, _ = update(m, model.VisibleRepoFetchStatusExpiredMsg{Request: 1, Text: "Fetched 3 visible repos"})
+	view := m.View()
+	if !strings.Contains(view, "fetch failed: newer") {
+		t.Fatalf("expiry should not clear a newer git status, got:\n%s", view)
+	}
+}
+
 func TestModel_VisibleRepoFetchPartialFailureSummaryIsCapped(t *testing.T) {
 	repos := []scanner.Repo{
 		{Path: "/dev/alpha", DisplayName: "alpha"},
@@ -840,10 +877,7 @@ func TestModel_VisibleRepoFetchRefreshesOnlyIfCurrentSelectionWasCaptured(t *tes
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	m, cmd = update(m, msgs[0])
-	if cmd != nil {
-		t.Fatal("batch completion should not refresh when current selection was not captured")
-	}
+	m, _ = update(m, msgs[0])
 	if !strings.Contains(m.View(), "Fetched 1 visible repos") {
 		t.Fatalf("expected final success status, got:\n%s", m.View())
 	}

@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -14,6 +15,7 @@ import (
 // --- Fetch commands ---
 
 const visibleRepoFetchFailureNameLimit = 3
+const visibleRepoFetchStatusTTL = 3 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	switch m.mode {
@@ -169,6 +171,12 @@ func (m Model) visibleRepoFetchFinalStatusText() string {
 		failed = fmt.Sprintf("%s +%d more", failed, remaining)
 	}
 	return fmt.Sprintf("Fetched %d/%d visible repos; failed: %s", m.visibleRepoFetch.Successes, total, failed)
+}
+
+func expireVisibleRepoFetchStatus(request uint64, text string) tea.Cmd {
+	return tea.Tick(visibleRepoFetchStatusTTL, func(time.Time) tea.Msg {
+		return VisibleRepoFetchStatusExpiredMsg{Request: request, Text: text}
+	})
 }
 
 func (m Model) canPull() bool {
