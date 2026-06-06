@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
@@ -56,6 +57,11 @@ const LeftPaneWidth = 30
 // shortcut rail, including its left and right borders.
 const ShortcutPaneWidth = 28
 
+const (
+	shortcutKeyColumnWidth = 6
+	shortcutOverflowMarker = "..."
+)
+
 // MinContentPaneWidth keeps the primary item pane useful before the shortcut
 // rail is shown. Narrow terminals continue using footer hints instead.
 const MinContentPaneWidth = 48
@@ -101,9 +107,10 @@ var (
 	activeModeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
 	inactiveModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
 	shortcutTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	shortcutModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
 	shortcutGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)               // 14 = bright cyan
 	shortcutKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
-	shortcutTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
+	shortcutTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))                         // 250 = light gray
 	stashDateStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
 	stashMsgStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
 	stashSelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true) // 15 = bright white
@@ -244,7 +251,8 @@ func Render(p RenderParams) string {
 		AgentAvailable:            p.AgentAvailable,
 		NewAgent:                  p.NewAgentAvailable,
 	}
-	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, p.Height, status)
+	innerHeight := p.Height - 3 // status bar + top/bottom borders
+	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, innerHeight, status)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
 
 	// Border colors based on active pane
@@ -264,8 +272,6 @@ func Render(p RenderParams) string {
 	}
 
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
-	innerHeight := p.Height - 3           // status bar + top/bottom borders
-
 	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage)
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
@@ -367,7 +373,7 @@ func renderModeHeader(mode Mode, width int) string {
 			parts = append(parts, inactiveModeStyle.Render(fmt.Sprintf(" %d %s", m.key, m.name)))
 		}
 	}
-	line := " " + strings.Join(parts, " ")
+	line := ansi.Truncate(" "+strings.Join(parts, " "), width, "")
 	separator := strings.Repeat("─", width)
 	return line + "\n" + separator
 }
@@ -455,7 +461,7 @@ func shouldRenderShortcutPane(width, height int, sp statusBarParams) bool {
 	if width < LeftPaneWidth+ShortcutPaneWidth+MinContentPaneWidth {
 		return false
 	}
-	return shortcutPaneLineCount(shortcutSections(sp)) <= height-3
+	return height >= 3
 }
 
 func renderFooterStatusBar(sp statusBarParams, includeHints bool) string {
@@ -518,34 +524,39 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	if height <= 0 {
 		return ""
 	}
-	lines := make([]string, 0, height)
-	title := fmt.Sprintf("Shortcuts  %s", modeShortcutTitle(sp.Mode))
-	lines = append(lines, truncateToWidth(" "+shortcutTitleStyle.Render(title), width))
+	lines := make([]string, 0)
+	title := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render(modeShortcutTitle(sp.Mode))
+	lines = append(lines, ansi.Truncate(" "+title, width, ""))
+	compact := height <= 3
+	if !compact {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	sectionCount := 0
 
 	for _, section := range shortcutSections(sp) {
-		if len(section.Hints) == 0 {
+		hints := sidebarShortcutHints(section.Hints)
+		if len(hints) == 0 {
 			continue
 		}
-		if len(lines) < height {
+		if !compact {
+			if sectionCount > 0 {
+				lines = append(lines, strings.Repeat(" ", width))
+			}
 			lines = append(lines, truncateToWidth(" "+shortcutGroupStyle.Render(section.Title), width))
 		}
-		for _, hint := range section.Hints {
-			if len(lines) >= height {
-				break
-			}
-			keyStyle := shortcutKeyStyle
-			if hint.Warning {
-				keyStyle = dirtyRedStyle.Bold(true)
-			}
-			key := keyStyle.Render(hint.Key + shortcutSeparator(hint))
-			label := shortcutTextStyle.Render(hint.Label)
-			lines = append(lines, truncateToWidth(" "+key+" "+label, width))
+		for _, hint := range hints {
+			lines = append(lines, renderShortcutPaneHint(hint, width))
 		}
-		if len(lines) >= height {
-			break
-		}
+		sectionCount++
 	}
 
+	if len(lines) > height {
+		if height == 1 {
+			lines = []string{truncateToWidth(" "+statusStyle.Render(shortcutOverflowMarker), width)}
+		} else {
+			lines = append(lines[:height-1], truncateToWidth(" "+statusStyle.Render(shortcutOverflowMarker), width))
+		}
+	}
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
@@ -553,33 +564,55 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func shortcutPaneLineCount(sections []shortcutSection) int {
-	lines := 1 // title
-	for _, section := range sections {
-		if len(section.Hints) == 0 {
-			continue
-		}
-		lines += 1 + len(section.Hints)
+func renderShortcutPaneHint(hint shortcutHint, width int) string {
+	if hint.Key == "merged" && hint.Label == "merged" {
+		return ansi.Truncate(" "+shortcutTextStyle.Render(hint.Label), width, "")
 	}
-	return lines
+	keyStyle := shortcutKeyStyle
+	if hint.Warning {
+		keyStyle = dirtyRedStyle.Bold(true)
+	}
+	key := padShortcutKey(keyStyle.Render(hint.Key), shortcutKeyColumnWidth)
+	label := shortcutTextStyle.Render(hint.Label)
+	return ansi.Truncate(" "+key+" "+label, width, "")
+}
+
+func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
+	grouped := make([]shortcutHint, 0, len(hints))
+	for i := 0; i < len(hints); i++ {
+		hint := hints[i]
+		if i+1 < len(hints) {
+			next := hints[i+1]
+			switch {
+			case hint.Key == "f" && next.Key == "F":
+				grouped = append(grouped, shortcutHint{Key: "f/F", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
+				i++
+				continue
+			case hint.Key == "t" && next.Key == "c":
+				grouped = append(grouped, shortcutHint{Key: "t/c", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
+				i++
+				continue
+			}
+		}
+		grouped = append(grouped, hint)
+	}
+	return grouped
+}
+
+func padShortcutKey(key string, width int) string {
+	padding := width - lipgloss.Width(key)
+	if padding <= 0 {
+		return key
+	}
+	return key + strings.Repeat(" ", padding)
 }
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
 	navigation := []shortcutHint{{Key: "↑/↓", Label: "select", Inline: true}}
-
-	sections := []shortcutSection{
-		{
-			Title: "Global",
-			Hints: []shortcutHint{
-				{Key: "tab", Label: "pane"},
-				{Key: "q/esc", Label: "quit"},
-				{Key: "A", Label: "set agent"},
-			},
-		},
-		{
-			Title: "Navigate",
-			Hints: navigation,
-		},
+	global := []shortcutHint{
+		{Key: "tab", Label: "pane"},
+		{Key: "q/esc", Label: "quit"},
+		{Key: "A", Label: "set agent"},
 	}
 
 	var actions []shortcutHint
@@ -700,9 +733,14 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes) {
 		actions = append([]shortcutHint{{Key: "D", Label: "destructive mode"}}, actions...)
 	}
+	var sections []shortcutSection
 	if len(actions) > 0 {
 		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
 	}
+	sections = append(sections,
+		shortcutSection{Title: "Navigate", Hints: navigation},
+		shortcutSection{Title: "Global", Hints: global},
+	)
 	if sp.Mode == ModeBranches {
 		sections = append(sections, shortcutSection{
 			Title: "Legend",
@@ -732,7 +770,7 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 		}
 		return renderFooterLegend(legend)
 	}
-	return "  " + renderFooterHintList(sections)
+	return "  " + renderFooterHintList(footerSectionOrder(sections))
 }
 
 func transientStatusStyle(fadeStep int) lipgloss.Style {
@@ -861,6 +899,23 @@ func branchFooterSectionOrder(sections []shortcutSection) []shortcutSection {
 	}
 	for _, section := range sections {
 		if section.Title != "Global" && section.Title != "Safety" && section.Title != "Actions" {
+			ordered = append(ordered, section)
+		}
+	}
+	return ordered
+}
+
+func footerSectionOrder(sections []shortcutSection) []shortcutSection {
+	ordered := make([]shortcutSection, 0, len(sections))
+	for _, title := range []string{"Global", "Navigate", "Actions", "Legend"} {
+		for _, section := range sections {
+			if section.Title == title {
+				ordered = append(ordered, section)
+			}
+		}
+	}
+	for _, section := range sections {
+		if section.Title != "Global" && section.Title != "Navigate" && section.Title != "Actions" && section.Title != "Legend" {
 			ordered = append(ordered, section)
 		}
 	}
