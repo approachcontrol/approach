@@ -319,7 +319,7 @@ func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
 		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:          0,
 		Width:             140,
-		Height:            18,
+		Height:            20,
 		Mode:              1,
 		ActivePane:        1,
 		Worktrees:         []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
@@ -618,6 +618,37 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 	}
 }
 
+func TestRender_ShortcutPaneSeparatesSectionsWithBlankRows(t *testing.T) {
+	sp := statusBarParams{
+		Mode:                     ModeWorktrees,
+		ActivePane:               1,
+		RepoSelected:             true,
+		WorktreeSelected:         true,
+		WorktreeOpenableSelected: true,
+		FetchAvailable:           true,
+		PullAvailable:            true,
+	}
+
+	lines := strings.Split(ansi.Strip(renderShortcutPane(sp, 26, 18)), "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "Navigate") {
+			if i == 0 || strings.TrimSpace(lines[i-1]) != "" {
+				t.Fatalf("shortcut pane should leave a blank row before Navigate, got:\n%s", strings.Join(lines, "\n"))
+			}
+			return
+		}
+	}
+	t.Fatalf("shortcut pane should include Navigate section, got:\n%s", strings.Join(lines, "\n"))
+}
+
+func TestRender_ShortcutPaneStylesModeTitleSeparately(t *testing.T) {
+	pane := renderShortcutPane(statusBarParams{Mode: ModeWorktrees}, 26, 6)
+	want := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render("Worktrees")
+	if !strings.Contains(pane, want) {
+		t.Fatalf("shortcut pane title should style mode separately, got %q want fragment %q", pane, want)
+	}
+}
+
 func TestRender_ShortcutPaneGroupsRelatedRows(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:                 []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
@@ -799,7 +830,7 @@ func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected: 0,
 		Width:    160,
-		Height:   24,
+		Height:   26,
 		Mode:     ModeBranches,
 		Branches: []gitquery.BranchRow{
 			{Branch: gitquery.Branch{Name: "feature", HasUpstream: false, Dirty: true, IsWorktree: true}, WorktreePath: "/a-feature"},

@@ -107,6 +107,7 @@ var (
 	activeModeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
 	inactiveModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
 	shortcutTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
+	shortcutModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
 	shortcutGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)               // 14 = bright cyan
 	shortcutKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
 	shortcutTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))                         // 250 = light gray
@@ -524,9 +525,10 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 		return ""
 	}
 	lines := make([]string, 0)
-	title := fmt.Sprintf("Shortcuts  %s", modeShortcutTitle(sp.Mode))
-	lines = append(lines, truncateToWidth(" "+shortcutTitleStyle.Render(title), width))
+	title := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render(modeShortcutTitle(sp.Mode))
+	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
+	sectionCount := 0
 
 	for _, section := range shortcutSections(sp) {
 		hints := sidebarShortcutHints(section.Hints)
@@ -534,11 +536,15 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 			continue
 		}
 		if !compact {
+			if sectionCount > 0 {
+				lines = append(lines, strings.Repeat(" ", width))
+			}
 			lines = append(lines, truncateToWidth(" "+shortcutGroupStyle.Render(section.Title), width))
 		}
 		for _, hint := range hints {
 			lines = append(lines, renderShortcutPaneHint(hint, width))
 		}
+		sectionCount++
 	}
 
 	if len(lines) > height {
