@@ -566,7 +566,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 
 func renderShortcutPaneHint(hint shortcutHint, width int) string {
 	if hint.Key == "merged" && hint.Label == "merged" {
-		return truncateToWidth(" "+shortcutTextStyle.Render(hint.Label), width)
+		return ansi.Truncate(" "+shortcutTextStyle.Render(hint.Label), width, "")
 	}
 	keyStyle := shortcutKeyStyle
 	if hint.Warning {
@@ -574,7 +574,7 @@ func renderShortcutPaneHint(hint shortcutHint, width int) string {
 	}
 	key := padShortcutKey(keyStyle.Render(hint.Key), shortcutKeyColumnWidth)
 	label := shortcutTextStyle.Render(hint.Label)
-	return truncateToWidth(" "+key+" "+label, width)
+	return ansi.Truncate(" "+key+" "+label, width, "")
 }
 
 func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {

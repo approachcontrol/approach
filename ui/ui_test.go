@@ -192,7 +192,7 @@ func lineContaining(view, needle string) string {
 }
 
 func shortcutPaneLines(view string) []string {
-	var start int
+	start := -1
 	for _, line := range strings.Split(view, "\n") {
 		stripped := ansi.Strip(line)
 		if idx := strings.Index(stripped, "Shortcuts"); idx >= 0 {
@@ -200,7 +200,7 @@ func shortcutPaneLines(view string) []string {
 			break
 		}
 	}
-	if start == 0 {
+	if start < 0 {
 		return nil
 	}
 
@@ -654,6 +654,26 @@ func TestRender_ShortcutPaneStylesModeTitleSeparately(t *testing.T) {
 	want := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render("Worktrees")
 	if !strings.Contains(pane, want) {
 		t.Fatalf("shortcut pane title should style mode separately, got %q want fragment %q", pane, want)
+	}
+}
+
+func TestSidebarShortcutHintsGroupsOnlyAdjacentPairs(t *testing.T) {
+	grouped := sidebarShortcutHints([]shortcutHint{
+		{Key: "f", Label: "fetch"},
+		{Key: "F", Label: "pull"},
+		{Key: "t", Label: "terminal"},
+		{Key: "x", Label: "extra"},
+		{Key: "c", Label: "code"},
+	})
+
+	want := []shortcutHint{
+		{Key: "f/F", Label: "fetch / pull"},
+		{Key: "t", Label: "terminal"},
+		{Key: "x", Label: "extra"},
+		{Key: "c", Label: "code"},
+	}
+	if fmt.Sprint(grouped) != fmt.Sprint(want) {
+		t.Fatalf("sidebar grouping should only combine adjacent key pairs, got %#v want %#v", grouped, want)
 	}
 }
 
