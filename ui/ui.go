@@ -458,11 +458,7 @@ func renderFooterStatusBar(sp statusBarParams, includeHints bool) string {
 }
 
 func hasActiveStatusQuery(sp statusBarParams) bool {
-	query := sp.ItemSearch
-	if sp.ActivePane == 0 {
-		query = sp.RepoSearch
-	}
-	return sp.SearchActive || query != ""
+	return sp.SearchActive
 }
 
 func renderStatusBarWithState(sp statusBarParams) string {
