@@ -110,6 +110,23 @@ func TestModel_ViewDistinguishesFilteredEmptyRepos(t *testing.T) {
 	}
 }
 
+func TestModel_ViewRestoresShortcutPaneAfterKeepingRepoFilter(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alp")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := m.View()
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatalf("kept repo filter should restore shortcut pane, got:\n%s", view)
+	}
+	if !strings.Contains(view, "filtered repos: alp") {
+		t.Fatalf("kept repo filter should keep filter footer, got:\n%s", view)
+	}
+}
+
 func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 	tests := []struct {
 		name      string

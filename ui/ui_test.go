@@ -492,7 +492,7 @@ func TestRender_SearchActiveSuppressesShortcutPane(t *testing.T) {
 	}
 }
 
-func TestRender_FilteredStateSuppressesShortcutPane(t *testing.T) {
+func TestRender_FilteredItemStateKeepsShortcutPane(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:   0,
@@ -503,13 +503,34 @@ func TestRender_FilteredStateSuppressesShortcutPane(t *testing.T) {
 		ItemSearch: "feat",
 	})
 
-	if strings.Contains(view, "Shortcuts") {
-		t.Fatal("filtered state should suppress normal shortcut pane")
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("filtered item state should keep normal shortcut pane")
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
 	if !strings.Contains(footer, "filtered items: feat") || !strings.Contains(footer, "esc: clear") {
 		t.Fatalf("filtered footer should show filter controls, got %q", footer)
+	}
+}
+
+func TestRender_FilteredRepoStateKeepsShortcutPane(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      120,
+		Height:     18,
+		Mode:       ModeWorktrees,
+		ActivePane: 0,
+		RepoSearch: "alp",
+	})
+
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("filtered repo state should keep normal shortcut pane")
+	}
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "filtered repos: alp") || !strings.Contains(footer, "esc: clear") {
+		t.Fatalf("filtered repo footer should show filter controls, got %q", footer)
 	}
 }
 
