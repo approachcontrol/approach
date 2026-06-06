@@ -323,6 +323,7 @@ func TestModel_StatusBarStashesModeShowsStashKeys(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
 	view := m.View()
 	if !strings.Contains(view, "enter") {
@@ -339,6 +340,7 @@ func TestModel_StatusBarStashesModeShowsDropHint(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}}) // enable destructive
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
 	view := m.View()
 	if !strings.Contains(view, "d: drop") {
@@ -386,6 +388,12 @@ func TestModel_ViewDestructiveModeShowsDeleteHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/alpha",
+		Branches: []gitquery.Branch{
+			{Name: "feature", HasUpstream: true},
+		},
+	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 
 	view := m.View()
@@ -427,6 +435,7 @@ func TestModel_StatusBarHistoryModeShowsHistoryKeys(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
 
 	view := m.View()
 	if !strings.Contains(view, "enter: diff") {

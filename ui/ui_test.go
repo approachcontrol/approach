@@ -201,6 +201,402 @@ func TestRender_ModeHeaderInRightPane(t *testing.T) {
 	}
 }
 
+func TestRender_WideLayoutShowsShortcutPane(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    120,
+		Height:   18,
+		Mode:     ModeWorktrees,
+		Worktrees: []gitquery.Worktree{
+			{Path: "/a", BranchName: "main", IsMain: true},
+		},
+		WorktreeSelected: 0,
+		ActivePane:       1,
+		FetchAvailable:   true,
+		PullAvailable:    true,
+	})
+
+	for _, want := range []string{"Shortcuts", "Worktrees", "Global", "Navigate", "Actions", "n", "new worktree", "F", "pull"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("wide render should include shortcut pane text %q", want)
+		}
+	}
+}
+
+func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      120,
+		Height:     18,
+		Mode:       ModeWorktrees,
+		ActivePane: 1,
+	})
+
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "q/esc: quit") {
+		t.Fatalf("wide render footer should not carry shortcut hints, got %q", footer)
+	}
+	if !strings.Contains(view, "tab:") || !strings.Contains(view, "pane") {
+		t.Fatal("wide render should still expose global shortcuts in the shortcut pane")
+	}
+}
+
+func TestRender_NarrowLayoutKeepsFooterHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    80,
+		Height:   18,
+		Mode:     ModeWorktrees,
+	})
+
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "tab: pane") {
+		t.Fatalf("narrow render should keep footer hints, got %q", footer)
+	}
+	if strings.Contains(view, "Shortcuts") {
+		t.Fatal("narrow render should not reserve a shortcut pane")
+	}
+}
+
+func TestRender_ShortWideLayoutFallsBackToFooterHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    120,
+		Height:   12,
+		Mode:     ModeWorktrees,
+		Worktrees: []gitquery.Worktree{
+			{Path: "/a", BranchName: "main", IsMain: true},
+		},
+		WorktreeSelected: 0,
+		ActivePane:       1,
+		FetchAvailable:   true,
+		PullAvailable:    true,
+	})
+
+	if strings.Contains(view, "Shortcuts") {
+		t.Fatal("wide but short render should not replace footer hints with a truncated shortcut pane")
+	}
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	for _, want := range []string{"tab: pane", "n: new worktree", "F: pull", "c: code"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("short wide footer should retain %q, got %q", want, footer)
+		}
+	}
+}
+
+func TestRender_HistoryShortcutPaneOmitsDestructiveMode(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      120,
+		Height:     18,
+		Mode:       ModeHistory,
+		ActivePane: 1,
+	})
+
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("history wide render should use shortcut pane")
+	}
+	if strings.Contains(view, "D: destructive mode") {
+		t.Fatal("history shortcut pane should not advertise destructive mode")
+	}
+}
+
+func TestRender_LeftPaneShortcutPaneOmitsModeNumberHint(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      120,
+		Height:     18,
+		Mode:       ModeWorktrees,
+		ActivePane: 0,
+	})
+
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("wide render should use shortcut pane")
+	}
+	if strings.Contains(view, "1-5: switch views") {
+		t.Fatal("left-pane shortcut pane should not advertise right-pane-only mode number keys")
+	}
+}
+
+func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    160,
+		Height:   24,
+		Mode:     ModeBranches,
+		Branches: []gitquery.BranchRow{
+			{Branch: gitquery.Branch{Name: "feature", HasUpstream: false, Dirty: true, IsWorktree: true}, WorktreePath: "/a-feature"},
+		},
+		BranchSelected: 0,
+		ActivePane:     1,
+		Destructive:    true,
+		FetchAvailable: true,
+		PullAvailable:  true,
+	})
+
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("branch wide render should use shortcut pane when the full shortcut list fits")
+	}
+	for _, want := range []string{"Legend", "clean", "ahead/behind", "dirty", "no upstream", "merged", "d: delete", "F: pull"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("branch shortcut pane should include %q, got:\n%s", want, view)
+		}
+	}
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "no upstream") {
+		t.Fatalf("branch wide footer should not duplicate shortcut or legend hints, got %q", footer)
+	}
+}
+
+func TestRender_SearchActiveSuppressesShortcutPane(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:        []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:     0,
+		Width:        120,
+		Height:       18,
+		Mode:         ModeWorktrees,
+		ActivePane:   1,
+		SearchActive: true,
+		ItemSearch:   "feat",
+	})
+
+	if strings.Contains(view, "Shortcuts") {
+		t.Fatal("active search should suppress normal shortcut pane")
+	}
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "/ items: feat") || !strings.Contains(footer, "enter: keep") {
+		t.Fatalf("active search footer should show search controls, got %q", footer)
+	}
+}
+
+func TestRender_FilteredStateSuppressesShortcutPane(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      120,
+		Height:     18,
+		Mode:       ModeWorktrees,
+		ActivePane: 1,
+		ItemSearch: "feat",
+	})
+
+	if strings.Contains(view, "Shortcuts") {
+		t.Fatal("filtered state should suppress normal shortcut pane")
+	}
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "filtered items: feat") || !strings.Contains(footer, "esc: clear") {
+		t.Fatalf("filtered footer should show filter controls, got %q", footer)
+	}
+}
+
+func TestRender_LeftPaneOmitsRightPaneActions(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      Mode
+		forbidden []string
+	}{
+		{name: "stashes", mode: ModeStashes, forbidden: []string{"enter: diff", "d: drop"}},
+		{name: "history", mode: ModeHistory, forbidden: []string{"enter: diff", "y: copy hash", "t: terminal", "c: code"}},
+		{name: "reflog", mode: ModeReflog, forbidden: []string{"enter: diff", "y: copy hash"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:       []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+				Selected:    0,
+				Width:       120,
+				Height:      18,
+				Mode:        tt.mode,
+				ActivePane:  0,
+				Destructive: true,
+			})
+
+			if !strings.Contains(view, "Shortcuts") {
+				t.Fatal("wide left-pane render should still show global/navigation shortcuts")
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(view, forbidden) {
+					t.Fatalf("left-pane %s render should not advertise %q, got:\n%s", tt.name, forbidden, view)
+				}
+			}
+		})
+	}
+}
+
+func TestRender_WorktreeRootOmitsDeleteHint(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    120,
+		Height:   18,
+		Mode:     ModeWorktrees,
+		Worktrees: []gitquery.Worktree{
+			{Path: "/a", BranchName: "main", IsMain: true},
+		},
+		WorktreeSelected: 0,
+		ActivePane:       1,
+		Destructive:      true,
+	})
+
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("wide worktree render should use shortcut pane")
+	}
+	if strings.Contains(view, "d: delete") {
+		t.Fatalf("root worktree should not advertise delete, got:\n%s", view)
+	}
+}
+
+func TestRender_BranchShortcutPaneShowsDiffButOmitsRootDelete(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    160,
+		Height:   24,
+		Mode:     ModeBranches,
+		Branches: []gitquery.BranchRow{
+			{Branch: gitquery.Branch{Name: "main", HasUpstream: true, Dirty: true, IsWorktree: true}, WorktreePath: "/a"},
+		},
+		BranchSelected: 0,
+		ActivePane:     1,
+		Destructive:    true,
+	})
+
+	if !strings.Contains(view, "enter: diff") {
+		t.Fatalf("dirty branch worktree should advertise diff action, got:\n%s", view)
+	}
+	if strings.Contains(view, "d: delete") {
+		t.Fatalf("root branch should not advertise delete action, got:\n%s", view)
+	}
+}
+
+func TestRender_BranchWithoutWorktreeOmitsOpenHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    160,
+		Height:   24,
+		Mode:     ModeBranches,
+		Branches: []gitquery.BranchRow{
+			{Branch: gitquery.Branch{Name: "feature", HasUpstream: true}},
+		},
+		BranchSelected: 0,
+		ActivePane:     1,
+	})
+
+	if !strings.Contains(view, "Shortcuts") {
+		t.Fatal("wide branch render should use shortcut pane")
+	}
+	for _, forbidden := range []string{"t: terminal", "c: code"} {
+		if strings.Contains(view, forbidden) {
+			t.Fatalf("non-worktree branch should not advertise %q, got:\n%s", forbidden, view)
+		}
+	}
+}
+
+func TestRender_EmptyItemPanesOmitItemActions(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      Mode
+		forbidden []string
+	}{
+		{name: "stashes", mode: ModeStashes, forbidden: []string{"enter: diff", "d: drop"}},
+		{name: "history", mode: ModeHistory, forbidden: []string{"enter: diff", "y: copy hash"}},
+		{name: "reflog", mode: ModeReflog, forbidden: []string{"enter: diff", "y: copy hash"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:       []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+				Selected:    0,
+				Width:       120,
+				Height:      18,
+				Mode:        tt.mode,
+				ActivePane:  1,
+				Destructive: true,
+			})
+
+			if !strings.Contains(view, "Shortcuts") {
+				t.Fatal("wide empty-pane render should still show global/navigation shortcuts")
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(view, forbidden) {
+					t.Fatalf("empty %s render should not advertise %q, got:\n%s", tt.name, forbidden, view)
+				}
+			}
+		})
+	}
+}
+
+func TestRender_NonWorktreeModesShowSyncHintsWhenAvailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		params RenderParams
+	}{
+		{
+			name: "stashes",
+			params: RenderParams{
+				Mode:          ModeStashes,
+				Stashes:       []gitquery.Stash{{Index: 0, Date: "2026-01-01", Message: "wip"}},
+				StashSelected: 0,
+			},
+		},
+		{
+			name: "history",
+			params: RenderParams{
+				Mode:           ModeHistory,
+				Commits:        []gitquery.Commit{{Hash: "abc1234", Author: "alice", Date: "today", Subject: "commit"}},
+				CommitSelected: 0,
+			},
+		},
+		{
+			name: "reflog",
+			params: RenderParams{
+				Mode:           ModeReflog,
+				Reflogs:        []gitquery.ReflogEntry{{Hash: "abc1234", Selector: "HEAD@{0}", Date: "today", Subject: "checkout"}},
+				ReflogSelected: 0,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := tt.params
+			params.Repos = []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}
+			params.Selected = 0
+			params.Width = 120
+			params.Height = 18
+			params.ActivePane = 1
+			params.FetchAvailable = true
+			params.PullAvailable = true
+
+			view := Render(params)
+			if !strings.Contains(view, "Shortcuts") {
+				t.Fatal("wide render should use shortcut pane")
+			}
+			for _, want := range []string{"f: fetch", "F: pull"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("%s render should include %q when available, got:\n%s", tt.name, want, view)
+				}
+			}
+		})
+	}
+}
+
 func TestRepoList_ScrollsWhenSelectionExceedsHeight(t *testing.T) {
 	repos := []scanner.Repo{
 		{Path: "/a", DisplayName: "alpha"},
