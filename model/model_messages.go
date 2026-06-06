@@ -119,6 +119,7 @@ type GitPullFailedMsg struct {
 type WorktreeCreatedMsg struct {
 	RepoPath     string
 	WorktreePath string
+	LaunchAgent  bool
 }
 
 type WorktreeCreateKind int
@@ -129,10 +130,11 @@ const (
 )
 
 type WorktreeCreateFailedMsg struct {
-	RepoPath string
-	Input    string
-	Err      string
-	Kind     WorktreeCreateKind
+	RepoPath    string
+	Input       string
+	Err         string
+	Kind        WorktreeCreateKind
+	LaunchAgent bool
 }
 
 type ReflogResultMsg struct {
@@ -153,6 +155,19 @@ type ClipboardResultMsg struct {
 }
 
 type TerminalResultMsg struct {
+	Err string
+}
+
+type AgentSetMsg struct {
+	Command string
+}
+
+type AgentSetFailedMsg struct {
+	Command string
+	Err     string
+}
+
+type AgentResultMsg struct {
 	Err string
 }
 
@@ -361,7 +376,12 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	}
 	m.mode = ui.ModeWorktrees
 	m.worktrees = m.worktrees.ResetSelection()
-	return m.startFetchWorktrees()
+	m, fetchCmd := m.startFetchWorktrees()
+	if !msg.LaunchAgent {
+		return m, fetchCmd
+	}
+	m, launchCmd := m.launchAgentAtPath(msg.WorktreePath)
+	return m, tea.Batch(fetchCmd, launchCmd)
 }
 
 func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
@@ -372,11 +392,13 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 		}
 		prompt := "New worktree"
 		validate := validateWorktreeInput
-		submit := func(input string) tea.Cmd { return m.createWorktree(input) }
+		submit := func(input string) tea.Cmd { return m.createWorktree(input, msg.LaunchAgent) }
 		if msg.Kind == WorktreeCreatePullRequest {
 			prompt = ui.PRWorktreePrompt
 			validate = func(input string) error { return validatePullRequestWorktreeInput(msg.RepoPath, input) }
 			submit = func(input string) tea.Cmd { return m.createPullRequestWorktree(input) }
+		} else if msg.LaunchAgent {
+			prompt = "Create worktree and launch agent from"
 		}
 		m.modal = modal.OpenInput(
 			prompt,
@@ -385,6 +407,22 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 			submit,
 		).SetInputError(errText)
 	}
+	return m
+}
+
+func (m Model) handleAgentSet(msg AgentSetMsg) Model {
+	m.agentCommand = msg.Command
+	m = m.clearStatus(statusOther)
+	return m
+}
+
+func (m Model) handleAgentSetFailed(msg AgentSetFailedMsg) Model {
+	m.agentCommand = msg.Command
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to persist agent selection"
+	}
+	m = m.setStatus(statusOther, errText)
 	return m
 }
 

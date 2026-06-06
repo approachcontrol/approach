@@ -132,6 +132,75 @@ func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
 	}
 }
 
+func TestStatusBar_ShowsSetAgentHint(t *testing.T) {
+	for _, activePane := range []int{0, 1} {
+		bar := RenderStatusBar(160, 1, 0, activePane, false, false, false)
+		if !strings.Contains(bar, "A: set agent") {
+			t.Fatalf("expected set agent hint for activePane %d, got %q", activePane, bar)
+		}
+	}
+}
+
+func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:          0,
+		Width:             140,
+		Height:            10,
+		Mode:              1,
+		ActivePane:        1,
+		Worktrees:         []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
+		AgentAvailable:    true,
+		NewAgentAvailable: true,
+	})
+	for _, hint := range []string{"A: set agent", "a: agent", "N: new+agent"} {
+		if !strings.Contains(view, hint) {
+			t.Fatalf("expected worktrees view to contain %q, got %q", hint, view)
+		}
+	}
+}
+
+func TestRender_StaleWorktreeShowsSetAgentHint(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:          0,
+		Width:             140,
+		Height:            10,
+		Mode:              1,
+		ActivePane:        1,
+		Worktrees:         []gitquery.Worktree{{Path: "/gone", BranchName: "gone", Stale: true}},
+		NewAgentAvailable: true,
+	})
+	for _, hint := range []string{"A: set agent", "N: new+agent"} {
+		if !strings.Contains(view, hint) {
+			t.Fatalf("expected stale worktree view to contain %q, got %q", hint, view)
+		}
+	}
+}
+
+func TestRender_BranchesModeShowsAgentHintOnlyWhenTargetAvailable(t *testing.T) {
+	params := RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      140,
+		Height:     10,
+		Mode:       2,
+		ActivePane: 1,
+		Branches:   []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "feat"}}},
+	}
+	view := Render(params)
+	if strings.Contains(view, "a: agent") {
+		t.Fatalf("bare branch should not show agent hint, got %q", view)
+	}
+
+	params.AgentAvailable = true
+	params.Branches = []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/a"}}
+	view = Render(params)
+	if !strings.Contains(view, "a: agent") {
+		t.Fatalf("checked-out branch should show agent hint, got %q", view)
+	}
+}
+
 func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
 	bar := RenderStatusBar(120, 1, OverlayWorktreeInput, 1, false, false, false)
 	for _, hint := range []string{"enter: create", "esc: cancel", "backspace: delete"} {

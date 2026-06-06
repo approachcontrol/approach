@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/brian-bell/wtui/agent"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -20,6 +21,7 @@ type Config struct {
 	Terminal TerminalConfig `toml:"terminal"`
 	Provider ProviderConfig `toml:"provider"`
 	Launch   LaunchConfig   `toml:"launch"`
+	Agent    AgentConfig    `toml:"agent"`
 }
 
 // ScanConfig configures repository discovery.
@@ -46,6 +48,11 @@ type ProviderConfig struct {
 // LaunchConfig is parsed now so launch behavior can be wired in later.
 type LaunchConfig struct {
 	PreferMultiplexer bool `toml:"prefer_multiplexer"`
+}
+
+// AgentConfig stores the user's preferred interactive coding agent.
+type AgentConfig struct {
+	Command string `toml:"command"`
 }
 
 type loadOptions struct {
@@ -125,6 +132,13 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 		cfg.Scan.Root = root
 	}
 
+	if cfg.Agent.Command != "" {
+		cfg.Agent.Command = agent.Normalize(cfg.Agent.Command)
+		if err := agent.Validate(cfg.Agent.Command); err != nil {
+			return Config{}, false, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+
 	return cfg, true, nil
 }
 
@@ -137,6 +151,57 @@ func DefaultPath(options ...Option) (string, error) {
 		return "", err
 	}
 	return paths[0], nil
+}
+
+// SaveAgentCommand persists the selected coding agent to wtui's default config
+// file, creating the config directory when needed.
+func SaveAgentCommand(command string, options ...Option) error {
+	command = agent.Normalize(command)
+	if err := agent.Validate(command); err != nil {
+		return err
+	}
+
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return saveAgentCommandTo(path, command, options...)
+}
+
+func writableDefaultPath(opts loadOptions) (string, error) {
+	paths, err := defaultPaths(opts)
+	if err != nil {
+		return "", err
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		} else if !os.IsNotExist(err) {
+			return path, nil
+		}
+	}
+	return paths[0], nil
+}
+
+func saveAgentCommandTo(path, command string, options ...Option) error {
+	cfg, err := LoadFrom(path, options...)
+	if err != nil {
+		return err
+	}
+	cfg.Agent.Command = command
+
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config %s: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
 }
 
 func defaultPaths(opts loadOptions) ([]string, error) {

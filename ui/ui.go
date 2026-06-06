@@ -137,6 +137,8 @@ type RenderParams struct {
 	RightEmptyMessage   string
 	FetchAvailable      bool
 	PullAvailable       bool
+	AgentAvailable      bool
+	NewAgentAvailable   bool
 }
 
 // Render produces the full terminal view string.
@@ -175,6 +177,8 @@ func Render(p RenderParams) string {
 		ItemSearch:     p.ItemSearch,
 		FetchAvailable: p.FetchAvailable,
 		PullAvailable:  p.PullAvailable,
+		AgentAvailable: p.AgentAvailable,
+		NewAgent:       p.NewAgentAvailable,
 	})
 
 	// Border colors based on active pane
@@ -291,6 +295,7 @@ func renderModeHeader(mode Mode, width int) string {
 func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
 	fetchAvailable := activePane == 1 && (mode == ModeWorktrees || mode == ModeBranches)
 	pullAvailable := activePane == 1 && mode == ModeWorktrees
+	newAgentAvailable := false
 	if mode == ModeWorktrees && staleSelected {
 		fetchAvailable = false
 		pullAvailable = false
@@ -305,6 +310,7 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 		DirtySelected:  dirtySelected,
 		FetchAvailable: fetchAvailable,
 		PullAvailable:  pullAvailable,
+		NewAgent:       newAgentAvailable,
 	})
 }
 
@@ -325,6 +331,8 @@ type statusBarParams struct {
 	ItemSearch     string
 	FetchAvailable bool
 	PullAvailable  bool
+	AgentAvailable bool
+	NewAgent       bool
 }
 
 func renderStatusBarWithState(sp statusBarParams) string {
@@ -342,6 +350,8 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	itemSearch := sp.ItemSearch
 	fetchAvailable := sp.FetchAvailable
 	pullAvailable := sp.PullAvailable
+	agentAvailable := sp.AgentAvailable
+	newAgent := sp.NewAgent
 
 	if transientError != "" {
 		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
@@ -365,11 +375,11 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	case overlay == OverlayConfirm:
 		hints = "  y: confirm  n/esc: cancel"
 	case overlay == OverlayWorktreeInput:
-		hints = "  enter: create  esc: cancel  backspace: delete"
+		hints = "  enter: create/set  esc: cancel  backspace: delete"
 	case overlay != OverlayNone:
 		hints = "  ↑/↓ scroll  esc: close"
 	case mode == ModeReflog:
-		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff  y: copy hash"
+		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select  enter: diff  y: copy hash"
 		if fetchAvailable {
 			hints += "  f: fetch"
 		}
@@ -377,7 +387,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			hints += "  F: pull"
 		}
 	case mode == ModeHistory:
-		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff  y: copy hash  t: terminal  c: code"
+		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select  enter: diff  y: copy hash  t: terminal  c: code"
 		if fetchAvailable {
 			hints += "  f: fetch"
 		}
@@ -385,7 +395,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			hints += "  F: pull"
 		}
 	case mode == ModeStashes:
-		hints = "  tab: pane  q/esc: quit  ↑/↓ select  enter: diff"
+		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select  enter: diff"
 		if destructive {
 			hints += "  " + dirtyRedStyle.Render("d: drop")
 		} else {
@@ -398,12 +408,15 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			hints += "  F: pull"
 		}
 	case mode == ModeBranches:
-		keys := "  |  tab: pane  q/esc: quit"
+		keys := "  |  tab: pane  q/esc: quit  A: set agent"
 		if !destructive {
 			keys += "  D: destructive mode"
 		}
 		if activePane == 1 {
 			keys += "  t: terminal  c: code"
+			if agentAvailable {
+				keys += "  a: agent"
+			}
 			if destructive {
 				keys += "  " + dirtyRedStyle.Render("d: delete")
 			}
@@ -416,11 +429,15 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		}
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == ModeWorktrees:
-		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
-		if !destructive {
-			hints += "  D: destructive mode"
+		hints = "  tab: pane  q/esc: quit"
+		if activePane != 1 {
+			hints += "  A: set agent"
 		}
+		hints += "  ↑/↓ select"
 		if activePane == 1 && !staleSelected {
+			if !destructive {
+				hints += "  D: destructive mode"
+			}
 			hints += "  n: new worktree"
 			if lockedSelected {
 				hints += "  u: unlock"
@@ -437,14 +454,32 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			if pullAvailable {
 				hints += "  F: pull"
 			}
-			hints += "  t: terminal c: code"
-			hints += " P: PR"
+			hints += "  t: terminal c: code P: PR"
+			hints += "  A: set agent"
+			if agentAvailable {
+				hints += "  a: agent"
+			}
+			if newAgent {
+				hints += "  N: new+agent"
+			}
+		}
+		if activePane == 1 && staleSelected && newAgent {
+			hints += "  N: new+agent"
 		}
 		if activePane == 1 && staleSelected && destructive && !lockedSelected {
 			hints += "  " + dirtyRedStyle.Render("p: prune")
 		}
+		if activePane == 1 && lockedSelected && staleSelected {
+			hints += "  u: unlock"
+		}
+		if activePane == 1 && staleSelected {
+			hints += "  A: set agent"
+		}
+		if !destructive && activePane != 1 {
+			hints += "  D: destructive mode"
+		}
 	default:
-		hints = "  tab: pane  q/esc: quit  ↑/↓ select"
+		hints = "  tab: pane  q/esc: quit  A: set agent  ↑/↓ select"
 	}
 
 	return statusStyle.Width(width).Render(hints)
@@ -701,6 +736,8 @@ func renderOverlay(p RenderParams) string {
 		ItemSearch:     p.ItemSearch,
 		FetchAvailable: p.FetchAvailable,
 		PullAvailable:  p.PullAvailable,
+		AgentAvailable: p.AgentAvailable,
+		NewAgent:       p.NewAgentAvailable,
 	})
 	contentHeight := p.Height - 1
 
@@ -782,11 +819,16 @@ func renderWorktreeInputDialog(promptText, input, errText string, width, height 
 		return lines
 	}
 
-	label := "Create worktree from: "
+	if promptText == "" {
+		promptText = "Create worktree from"
+	}
+	label := strings.TrimSpace(promptText) + ": "
 	placeholder := "branch, tag, or new branch name"
 	if promptText == PRWorktreePrompt {
 		label = "Create PR worktree from: "
 		placeholder = "PR number or URL"
+	} else if strings.HasPrefix(strings.ToLower(promptText), "set agent") {
+		placeholder = "codex or claude"
 	}
 	value := input
 	if value == "" {

@@ -35,6 +35,8 @@ are already implemented and should be treated as the baseline product:
 - tmux/Zellij-aware terminal launching, `$TERMINAL` fallback, macOS Terminal
   fallback, and shell fallback.
 - VS Code launching via `code`.
+- Coding-agent launches for Codex and Claude Code, including create-then-launch
+  from the worktrees view.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.
@@ -76,7 +78,6 @@ clear.
 |------|----------------|----------|
 | PR-based worktree creation | Enter a PR number or URL, fetch the head branch, and create a worktree for review. This is a high-value worktree workflow. | P1 |
 | Branch creation from branches pane | Complements worktree creation and makes branch-first workflows smoother. | P1 |
-| Coding-agent launch actions | Launch Codex or Claude Code from a selected worktree or worktree branch, and optionally start one immediately after creating a new worktree or branch. | P1 |
 | Worktree move/rename | Wrap `git worktree move` for users who need to reorganize generated paths. | P2 |
 | Bare repo support | Detect bare repositories and support worktree creation/listing correctly for users with central bare repo workflows. | P2 |
 | Bootstrap hooks | Optional per-repo setup script after worktree creation for copying env files, linking dependencies, or running setup commands. | P2 |

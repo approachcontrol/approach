@@ -39,6 +39,9 @@ name = "github"
 
 [launch]
 prefer_multiplexer = true
+
+[agent]
+command = "codex"
 `), 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +71,139 @@ prefer_multiplexer = true
 	}
 	if !cfg.Launch.PreferMultiplexer {
 		t.Fatal("expected launch prefer_multiplexer to parse true")
+	}
+	if cfg.Agent.Command != "codex" {
+		t.Fatalf("expected agent command codex, got %q", cfg.Agent.Command)
+	}
+}
+
+func TestSaveAgentCommand_CreatesMissingConfig(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveAgentCommand("claude",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.Command != "claude" {
+		t.Fatalf("expected saved agent claude, got %q", cfg.Agent.Command)
+	}
+}
+
+func TestSaveAgentCommand_PreservesExistingParsedSettings(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[scan]\nroot = \"/src\"\nmax_depth = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentCommand("codex",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Scan.Root != "/src" || cfg.Scan.MaxDepth != 1 {
+		t.Fatalf("expected scan settings preserved, got root=%q depth=%d", cfg.Scan.Root, cfg.Scan.MaxDepth)
+	}
+	if cfg.Agent.Command != "codex" {
+		t.Fatalf("expected saved agent codex, got %q", cfg.Agent.Command)
+	}
+}
+
+func TestSaveAgentCommand_UpdatesExistingFallbackConfig(t *testing.T) {
+	xdg := t.TempDir()
+	home := t.TempDir()
+	homePath := filepath.Join(home, ".config", "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(homePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(homePath, []byte("[scan]\nroot = \"/home-src\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentCommand("claude",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return home, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(xdg, "wtui", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("expected missing XDG config to stay missing, stat err=%v", err)
+	}
+	cfg, err := config.LoadFrom(homePath)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Scan.Root != "/home-src" || cfg.Agent.Command != "claude" {
+		t.Fatalf("expected fallback config preserved and updated, got root=%q agent=%q", cfg.Scan.Root, cfg.Agent.Command)
+	}
+}
+
+func TestLoadFrom_RejectsUnknownAgentFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[agent]\ncmd = \"codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected unknown agent field error")
+	}
+	if !strings.Contains(err.Error(), "strict mode") {
+		t.Fatalf("expected strict decoder error, got %q", err.Error())
+	}
+}
+
+func TestSaveAgentCommand_RejectsUnsupportedCommand(t *testing.T) {
+	err := config.SaveAgentCommand("vim",
+		config.WithGetenv(func(string) string { return t.TempDir() }),
+		config.WithHomeDir(func() (string, error) { return t.TempDir(), nil }),
+	)
+	if err == nil {
+		t.Fatal("expected unsupported command error")
+	}
+	if !strings.Contains(err.Error(), "unsupported agent") {
+		t.Fatalf("expected unsupported agent error, got %q", err.Error())
 	}
 }
 

@@ -25,7 +25,7 @@ type runDeps struct {
 	loadConfig   func() (config.Config, error)
 	getenv       func(string) string
 	scan         func(scanner.ScanOptions) ([]scanner.Repo, error)
-	startProgram func([]scanner.Repo) error
+	startProgram func([]scanner.Repo, config.Config) error
 	stdout       io.Writer
 }
 
@@ -63,7 +63,7 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error scanning repos: %w", err)
 	}
 
-	if err := deps.startProgram(repos); err != nil {
+	if err := deps.startProgram(repos, cfg); err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
@@ -90,8 +90,13 @@ func fillRunDeps(deps runDeps) runDeps {
 	return deps
 }
 
-func startProgram(repos []scanner.Repo) error {
-	p := tea.NewProgram(model.New(repos), tea.WithAltScreen())
+func startProgram(repos []scanner.Repo, cfg config.Config) error {
+	p := tea.NewProgram(model.NewWithOptions(repos, model.Options{
+		AgentCommand: cfg.Agent.Command,
+		SaveAgentCommand: func(command string) error {
+			return config.SaveAgentCommand(command)
+		},
+	}), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

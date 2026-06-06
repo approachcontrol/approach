@@ -951,3 +951,33 @@ func TestOpenVSCode_RunsWithoutPanic(t *testing.T) {
 	// code exits 0 for any path; just verify no panic
 	_ = actions.OpenVSCode(t.TempDir())
 }
+
+func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			launch, err := actions.AgentLaunch("/repo/worktree", command)
+			if err != nil {
+				t.Fatalf("AgentLaunch returned error: %v", err)
+			}
+			if launch.Cmd.Dir != "/repo/worktree" {
+				t.Fatalf("expected command dir /repo/worktree, got %q", launch.Cmd.Dir)
+			}
+			if !launch.Interactive {
+				t.Fatal("expected agent launch to be interactive")
+			}
+			if len(launch.Cmd.Args) != 1 || launch.Cmd.Args[0] != command {
+				t.Fatalf("expected direct command args [%q], got %#v", command, launch.Cmd.Args)
+			}
+		})
+	}
+}
+
+func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
+	for _, command := range []string{"", "vim"} {
+		t.Run(command, func(t *testing.T) {
+			if _, err := actions.AgentLaunch("/repo/worktree", command); err == nil {
+				t.Fatal("expected AgentLaunch error")
+			}
+		})
+	}
+}
