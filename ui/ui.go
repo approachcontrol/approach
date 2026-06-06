@@ -24,6 +24,7 @@ const (
 	OverlayWorktreeInput
 )
 
+const BranchPrompt = "New branch"
 const PRWorktreePrompt = "PR worktree"
 
 // Mode represents the active right-pane view. The model owns the application
@@ -403,7 +404,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			keys += "  D: destructive mode"
 		}
 		if activePane == 1 {
-			keys += "  t: terminal  c: code"
+			keys += "  n: new branch  t: terminal  c: code"
 			if destructive {
 				keys += "  " + dirtyRedStyle.Render("d: delete")
 			}
@@ -784,7 +785,10 @@ func renderWorktreeInputDialog(promptText, input, errText string, width, height 
 
 	label := "Create worktree from: "
 	placeholder := "branch, tag, or new branch name"
-	if promptText == PRWorktreePrompt {
+	if promptText == BranchPrompt {
+		label = "Create branch: "
+		placeholder = "branch name"
+	} else if promptText == PRWorktreePrompt {
 		label = "Create PR worktree from: "
 		placeholder = "PR number or URL"
 	}
@@ -792,8 +796,8 @@ func renderWorktreeInputDialog(promptText, input, errText string, width, height 
 	if value == "" {
 		value = placeholderStyle.Render(placeholder)
 	}
-	prompt := label + value + activeModeStyle.Render("█")
-	lines[mid] = centeredLine(prompt, width)
+	line := label + value + activeModeStyle.Render("█")
+	lines[mid] = centeredLine(line, width)
 
 	if errText != "" && mid+1 < len(lines) {
 		lines[mid+1] = centeredLine(dirtyRedStyle.Render(errText), width)

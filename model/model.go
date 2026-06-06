@@ -14,23 +14,24 @@ const listRequestSlots = int(ui.ModeReflog) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos          pane.Pane[scanner.Repo]
-	width          int
-	height         int
-	mode           ui.Mode
-	rows           pane.Pane[gitquery.BranchRow]
-	stashes        pane.Pane[gitquery.Stash]
-	worktrees      pane.Pane[gitquery.Worktree]
-	commits        pane.Pane[gitquery.Commit]
-	reflogs        pane.Pane[gitquery.ReflogEntry]
-	modal          modal.Modal
-	diffRequestSeq uint64
-	listRequestSeq uint64
-	listRequests   [listRequestSlots]uint64
-	activePane     int // 0=left (repos), 1=right (content)
-	destructive    bool
-	status         statusError
-	searchActive   bool
+	repos                  pane.Pane[scanner.Repo]
+	width                  int
+	height                 int
+	mode                   ui.Mode
+	rows                   pane.Pane[gitquery.BranchRow]
+	stashes                pane.Pane[gitquery.Stash]
+	worktrees              pane.Pane[gitquery.Worktree]
+	commits                pane.Pane[gitquery.Commit]
+	reflogs                pane.Pane[gitquery.ReflogEntry]
+	modal                  modal.Modal
+	diffRequestSeq         uint64
+	listRequestSeq         uint64
+	listRequests           [listRequestSlots]uint64
+	activePane             int // 0=left (repos), 1=right (content)
+	destructive            bool
+	status                 statusError
+	searchActive           bool
+	pendingBranchSelection string
 }
 
 type statusSource int
@@ -320,6 +321,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStashDropped(msg)
 	case BranchDeletedMsg:
 		return m.handleBranchDeleted(msg)
+	case BranchCreatedMsg:
+		return m.handleBranchCreated(msg)
+	case BranchCreateFailedMsg:
+		return m.handleBranchCreateFailed(msg), nil
 	case WorktreeResultMsg:
 		return m.handleWorktreeResult(msg), nil
 	case WorktreeRemovedMsg:
