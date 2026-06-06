@@ -78,6 +78,7 @@ func TestInputEditsValidatesAndSubmitsTrimmedValue(t *testing.T) {
 	var submitted string
 	m := modal.OpenInput(
 		"New worktree",
+		"branch, tag, or new branch name",
 		"",
 		func(input string) error {
 			if input == "" {
@@ -123,6 +124,7 @@ func TestInputEditsValidatesAndSubmitsTrimmedValue(t *testing.T) {
 func TestInputInvalidSubmitStaysOpenWithError(t *testing.T) {
 	m := modal.OpenInput(
 		"New worktree",
+		"branch, tag, or new branch name",
 		"   ",
 		func(input string) error {
 			if input == "" {
@@ -234,9 +236,12 @@ func TestViewSnapshotsKindSpecificState(t *testing.T) {
 		t.Fatalf("unexpected force confirm view: %#v", force)
 	}
 
-	input := modal.OpenInput("New worktree", "feat", nil, func(string) tea.Cmd { return nil }).View()
+	input := modal.OpenInput("New worktree", "branch, tag, or new branch name", "feat", nil, func(string) tea.Cmd { return nil }).View()
 	if input.Kind != modal.Input || input.Input != "feat" {
 		t.Fatalf("unexpected input view: %#v", input)
+	}
+	if input.Placeholder != "branch, tag, or new branch name" {
+		t.Fatalf("unexpected input placeholder: %q", input.Placeholder)
 	}
 
 	diff := modal.OpenDiff(modal.DiffReflog, "body").View()

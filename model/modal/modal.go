@@ -37,30 +37,32 @@ const (
 // Modal is the single in-process state machine for transient modal UI. Its
 // zero value is closed.
 type Modal struct {
-	kind     Kind
-	prompt   string
-	force    bool
-	action   func() tea.Cmd
-	input    string
-	inputErr string
-	validate func(string) error
-	submit   func(string) tea.Cmd
-	diffKind DiffKind
-	diff     string
-	scroll   int
-	request  uint64
+	kind        Kind
+	prompt      string
+	placeholder string
+	force       bool
+	action      func() tea.Cmd
+	input       string
+	inputErr    string
+	validate    func(string) error
+	submit      func(string) tea.Cmd
+	diffKind    DiffKind
+	diff        string
+	scroll      int
+	request     uint64
 }
 
 type View struct {
-	Kind     Kind
-	Prompt   string
-	Force    bool
-	Input    string
-	InputErr string
-	DiffKind DiffKind
-	Diff     string
-	Scroll   int
-	Request  uint64
+	Kind        Kind
+	Prompt      string
+	Placeholder string
+	Force       bool
+	Input       string
+	InputErr    string
+	DiffKind    DiffKind
+	Diff        string
+	Scroll      int
+	Request     uint64
 }
 
 func OpenConfirm(prompt string, action func() tea.Cmd) Modal {
@@ -71,13 +73,14 @@ func OpenForce(prompt string, action func() tea.Cmd) Modal {
 	return Modal{kind: Confirm, prompt: prompt, force: true, action: action}
 }
 
-func OpenInput(prompt, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
+func OpenInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
 	return Modal{
-		kind:     Input,
-		prompt:   prompt,
-		input:    initial,
-		validate: validate,
-		submit:   submit,
+		kind:        Input,
+		prompt:      prompt,
+		placeholder: placeholder,
+		input:       initial,
+		validate:    validate,
+		submit:      submit,
 	}
 }
 
@@ -115,15 +118,16 @@ func (m Modal) IsOpen() bool {
 
 func (m Modal) View() View {
 	return View{
-		Kind:     m.kind,
-		Prompt:   m.prompt,
-		Force:    m.force,
-		Input:    m.input,
-		InputErr: m.inputErr,
-		DiffKind: m.diffKind,
-		Diff:     m.diff,
-		Scroll:   m.scroll,
-		Request:  m.request,
+		Kind:        m.kind,
+		Prompt:      m.prompt,
+		Placeholder: m.placeholder,
+		Force:       m.force,
+		Input:       m.input,
+		InputErr:    m.inputErr,
+		DiffKind:    m.diffKind,
+		Diff:        m.diff,
+		Scroll:      m.scroll,
+		Request:     m.request,
 	}
 }
 

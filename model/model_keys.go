@@ -305,6 +305,7 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
 	m.modal = modal.OpenInput(
 		"Set agent (codex or claude)",
+		ui.AgentInputPlaceholder,
 		m.agentCommand,
 		validateAgentInput,
 		func(input string) tea.Cmd { return m.setAgent(agent.Normalize(input)) },
@@ -339,6 +340,7 @@ func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
 	}
 	m.modal = modal.OpenInput(
 		prompt,
+		ui.WorktreeInputPlaceholder,
 		"",
 		validateWorktreeInput,
 		func(input string) tea.Cmd { return m.createWorktree(input, launchAgent) },
@@ -352,6 +354,7 @@ func (m Model) handleNewBranch() (tea.Model, tea.Cmd) {
 	}
 	m.modal = modal.OpenInput(
 		ui.BranchPrompt,
+		ui.BranchInputPlaceholder,
 		"",
 		validateBranchInput,
 		func(input string) tea.Cmd { return m.createBranch(input) },
@@ -366,6 +369,7 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 	}
 	m.modal = modal.OpenInput(
 		ui.PRWorktreePrompt,
+		ui.PRWorktreeInputPlaceholder,
 		"",
 		func(input string) error { return validatePullRequestWorktreeInput(repoPath, input) },
 		func(input string) tea.Cmd { return m.createPullRequestWorktree(input) },

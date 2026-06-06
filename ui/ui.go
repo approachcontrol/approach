@@ -26,6 +26,10 @@ const (
 
 const BranchPrompt = "New branch"
 const PRWorktreePrompt = "PR worktree"
+const WorktreeInputPlaceholder = "branch, tag, or new branch name"
+const BranchInputPlaceholder = "branch name"
+const PRWorktreeInputPlaceholder = "PR number or URL"
+const AgentInputPlaceholder = "codex or claude"
 
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
@@ -99,47 +103,48 @@ var (
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos               []scanner.Repo
-	Selected            int
-	Width               int
-	Height              int
-	Mode                Mode
-	Branches            []gitquery.BranchRow
-	Stashes             []gitquery.Stash
-	BranchSelected      int
-	StashSelected       int
-	Overlay             OverlayState
-	OverlayDiff         string
-	OverlayScroll       int
-	ConfirmPrompt       string
-	ConfirmForce        bool
-	WorktreeInputPrompt string
-	WorktreeInput       string
-	WorktreeInputErr    string
-	BranchScroll        int
-	RepoScroll          int
-	StashScroll         int
-	ActivePane          int
-	Destructive         bool
-	Worktrees           []gitquery.Worktree
-	WorktreeSelected    int
-	WorktreeScroll      int
-	Commits             []gitquery.Commit
-	CommitSelected      int
-	CommitScroll        int
-	Reflogs             []gitquery.ReflogEntry
-	ReflogSelected      int
-	ReflogScroll        int
-	TransientError      string
-	SearchActive        bool
-	RepoSearch          string
-	ItemSearch          string
-	RepoEmptyMessage    string
-	RightEmptyMessage   string
-	FetchAvailable      bool
-	PullAvailable       bool
-	AgentAvailable      bool
-	NewAgentAvailable   bool
+	Repos                    []scanner.Repo
+	Selected                 int
+	Width                    int
+	Height                   int
+	Mode                     Mode
+	Branches                 []gitquery.BranchRow
+	Stashes                  []gitquery.Stash
+	BranchSelected           int
+	StashSelected            int
+	Overlay                  OverlayState
+	OverlayDiff              string
+	OverlayScroll            int
+	ConfirmPrompt            string
+	ConfirmForce             bool
+	WorktreeInputPrompt      string
+	WorktreeInputPlaceholder string
+	WorktreeInput            string
+	WorktreeInputErr         string
+	BranchScroll             int
+	RepoScroll               int
+	StashScroll              int
+	ActivePane               int
+	Destructive              bool
+	Worktrees                []gitquery.Worktree
+	WorktreeSelected         int
+	WorktreeScroll           int
+	Commits                  []gitquery.Commit
+	CommitSelected           int
+	CommitScroll             int
+	Reflogs                  []gitquery.ReflogEntry
+	ReflogSelected           int
+	ReflogScroll             int
+	TransientError           string
+	SearchActive             bool
+	RepoSearch               string
+	ItemSearch               string
+	RepoEmptyMessage         string
+	RightEmptyMessage        string
+	FetchAvailable           bool
+	PullAvailable            bool
+	AgentAvailable           bool
+	NewAgentAvailable        bool
 }
 
 // Render produces the full terminal view string.
@@ -430,10 +435,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		}
 		hints = " " + cleanStyle.Render("✔") + " clean  " + aheadBehindStyle.Render("●") + " ahead/behind  " + dirtyRedStyle.Render("●") + " dirty  " + noUpstreamStyle.Render("●") + " no upstream  " + mergedStyle.Render("merged") + keys
 	case mode == ModeWorktrees:
-		hints = "  tab: pane  q/esc: quit"
-		if activePane != 1 {
-			hints += "  A: set agent"
-		}
+		hints = "  tab: pane  q/esc: quit  A: set agent"
 		hints += "  ↑/↓ select"
 		if activePane == 1 && !staleSelected {
 			if !destructive {
@@ -456,7 +458,6 @@ func renderStatusBarWithState(sp statusBarParams) string {
 				hints += "  F: pull"
 			}
 			hints += "  t: terminal c: code P: PR"
-			hints += "  A: set agent"
 			if agentAvailable {
 				hints += "  a: agent"
 			}
@@ -748,7 +749,7 @@ func renderOverlay(p RenderParams) string {
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayWorktreeInput {
-		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
+		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInputPlaceholder, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 
@@ -813,7 +814,7 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 	return lines
 }
 
-func renderWorktreeInputDialog(promptText, input, errText string, width, height int) []string {
+func renderWorktreeInputDialog(promptText, placeholder, input, errText string, width, height int) []string {
 	lines := make([]string, height)
 	mid := height / 2
 	if mid >= len(lines) {
@@ -824,15 +825,13 @@ func renderWorktreeInputDialog(promptText, input, errText string, width, height 
 		promptText = "Create worktree from"
 	}
 	label := strings.TrimSpace(promptText) + ": "
-	placeholder := "branch, tag, or new branch name"
+	if placeholder == "" {
+		placeholder = WorktreeInputPlaceholder
+	}
 	if promptText == BranchPrompt {
 		label = "Create branch: "
-		placeholder = "branch name"
 	} else if promptText == PRWorktreePrompt {
 		label = "Create PR worktree from: "
-		placeholder = "PR number or URL"
-	} else if strings.HasPrefix(strings.ToLower(promptText), "set agent") {
-		placeholder = "codex or claude"
 	}
 	value := input
 	if value == "" {

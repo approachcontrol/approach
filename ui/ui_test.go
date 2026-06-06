@@ -59,7 +59,7 @@ func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 }
 
 func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
 	tabIdx := strings.Index(bar, "tab: pane")
 	tIdx := strings.Index(bar, "t: terminal")
 	if tabIdx == -1 || tIdx == -1 {
@@ -755,13 +755,14 @@ func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:            80,
-		Height:           24,
-		Mode:             1,
-		Overlay:          OverlayWorktreeInput,
-		WorktreeInput:    "feature/new",
-		WorktreeInputErr: "already exists",
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPlaceholder: WorktreeInputPlaceholder,
+		WorktreeInput:            "feature/new",
+		WorktreeInputErr:         "already exists",
 	})
 	if !strings.Contains(view, "Create worktree from: feature/new") {
 		t.Error("worktree input dialog should show typed input")
@@ -773,11 +774,12 @@ func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:   []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:   80,
-		Height:  24,
-		Mode:    1,
-		Overlay: OverlayWorktreeInput,
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPlaceholder: WorktreeInputPlaceholder,
 	})
 	if !strings.Contains(view, "branch, tag, or new branch name") {
 		t.Error("worktree input dialog should show placeholder when input is empty")
@@ -786,12 +788,13 @@ func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 
 func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:               80,
-		Height:              24,
-		Mode:                2,
-		Overlay:             OverlayWorktreeInput,
-		WorktreeInputPrompt: BranchPrompt,
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     2,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      BranchPrompt,
+		WorktreeInputPlaceholder: BranchInputPlaceholder,
 	})
 	if !strings.Contains(view, "Create branch:") {
 		t.Error("branch input dialog should show branch-specific prompt")
@@ -803,18 +806,37 @@ func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 
 func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:               80,
-		Height:              24,
-		Mode:                1,
-		Overlay:             OverlayWorktreeInput,
-		WorktreeInputPrompt: PRWorktreePrompt,
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      PRWorktreePrompt,
+		WorktreeInputPlaceholder: PRWorktreeInputPlaceholder,
 	})
 	if !strings.Contains(view, "Create PR worktree from:") {
 		t.Error("PR input dialog should show PR-specific prompt")
 	}
 	if !strings.Contains(view, "PR number or URL") {
 		t.Error("PR input dialog should show PR-specific placeholder")
+	}
+}
+
+func TestRender_AgentInputDialogUsesExplicitPlaceholder(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    80,
+		Height:                   24,
+		Mode:                     1,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      "Choose interactive helper",
+		WorktreeInputPlaceholder: AgentInputPlaceholder,
+	})
+	if !strings.Contains(view, "Choose interactive helper:") {
+		t.Error("agent input dialog should show caller-provided prompt")
+	}
+	if !strings.Contains(view, AgentInputPlaceholder) {
+		t.Error("agent input dialog should show caller-provided placeholder")
 	}
 }
 

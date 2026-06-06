@@ -113,21 +113,29 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 		return Config{}, false, fmt.Errorf("read config %s: %w", path, err)
 	}
 
+	cfg, err := parseConfigData(path, data, opts)
+	if err != nil {
+		return Config{}, false, err
+	}
+	return cfg, true, nil
+}
+
+func parseConfigData(path string, data []byte, opts loadOptions) (Config, error) {
 	var cfg Config
 	decoder := toml.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, false, fmt.Errorf("parse config %s: %w", path, err)
+		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
 	if cfg.Scan.MaxDepth < 0 {
-		return Config{}, false, fmt.Errorf("parse config %s: scan.max_depth must be >= 0", path)
+		return Config{}, fmt.Errorf("parse config %s: scan.max_depth must be >= 0", path)
 	}
 
 	if cfg.Scan.Root != "" {
 		root, err := expandHome(cfg.Scan.Root, opts.homeDir)
 		if err != nil {
-			return Config{}, false, fmt.Errorf("expand scan root in config %s: %w", path, err)
+			return Config{}, fmt.Errorf("expand scan root in config %s: %w", path, err)
 		}
 		cfg.Scan.Root = root
 	}
@@ -135,11 +143,11 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 	if cfg.Agent.Command != "" {
 		cfg.Agent.Command = agent.Normalize(cfg.Agent.Command)
 		if err := agent.Validate(cfg.Agent.Command); err != nil {
-			return Config{}, false, fmt.Errorf("parse config %s: %w", path, err)
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}
 	}
 
-	return cfg, true, nil
+	return cfg, nil
 }
 
 // DefaultPath returns the default config path:
@@ -185,16 +193,17 @@ func writableDefaultPath(opts loadOptions) (string, error) {
 }
 
 func saveAgentCommandTo(path, command string, options ...Option) error {
-	cfg, err := LoadFrom(path, options...)
+	opts := defaultOptions(options...)
+	data, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read config %s: %w", path, err)
+		}
+	} else if _, err := parseConfigData(path, data, opts); err != nil {
 		return err
 	}
-	cfg.Agent.Command = command
 
-	data, err := toml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal config %s: %w", path, err)
-	}
+	data = patchAgentCommand(data, command)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
 	}
@@ -202,6 +211,82 @@ func saveAgentCommandTo(path, command string, options ...Option) error {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+func patchAgentCommand(data []byte, command string) []byte {
+	if len(data) == 0 {
+		return []byte("[agent]\n" + agentCommandLine(command))
+	}
+
+	lines := strings.SplitAfter(string(data), "\n")
+	inAgent := false
+	agentHeader := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if isTableHeader(trimmed) {
+			if inAgent {
+				return []byte(strings.Join(insertLine(lines, i, agentCommandLine(command)), ""))
+			}
+			inAgent = trimmed == "[agent]"
+			if inAgent {
+				agentHeader = i
+			}
+			continue
+		}
+		if inAgent && isCommandAssignment(line) {
+			lines[i] = replaceCommandAssignment(line, command)
+			return []byte(strings.Join(lines, ""))
+		}
+	}
+
+	if inAgent {
+		return []byte(strings.Join(insertLine(lines, agentHeader+1, agentCommandLine(command)), ""))
+	}
+
+	text := string(data)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	if strings.TrimSpace(text) != "" && !strings.HasSuffix(text, "\n\n") {
+		text += "\n"
+	}
+	return []byte(text + "[agent]\n" + agentCommandLine(command))
+}
+
+func isTableHeader(line string) bool {
+	return strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]")
+}
+
+func isCommandAssignment(line string) bool {
+	eq := strings.Index(line, "=")
+	if eq == -1 {
+		return false
+	}
+	return strings.TrimSpace(line[:eq]) == "command"
+}
+
+func replaceCommandAssignment(line, command string) string {
+	body := strings.TrimRight(line, "\r\n")
+	ending := line[len(body):]
+	indent := body[:len(body)-len(strings.TrimLeft(body, " \t"))]
+	return indent + strings.TrimSuffix(agentCommandLine(command), "\n") + ending
+}
+
+func agentCommandLine(command string) string {
+	return fmt.Sprintf("command = %q\n", command)
+}
+
+func insertLine(lines []string, index int, line string) []string {
+	if index > 0 && !strings.HasSuffix(lines[index-1], "\n") {
+		lines[index-1] += "\n"
+	}
+	lines = append(lines, "")
+	copy(lines[index+1:], lines[index:])
+	lines[index] = line
+	return lines
 }
 
 func defaultPaths(opts loadOptions) ([]string, error) {

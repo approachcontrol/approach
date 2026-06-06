@@ -106,15 +106,70 @@ func TestSaveAgentCommand_CreatesMissingConfig(t *testing.T) {
 
 func TestSaveAgentCommand_PreservesExistingParsedSettings(t *testing.T) {
 	xdg := t.TempDir()
+	home := t.TempDir()
 	path := filepath.Join(xdg, "wtui", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("[scan]\nroot = \"/src\"\nmax_depth = 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# keep me\n[scan]\nroot = \"~/src\"\nmax_depth = 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	err := config.SaveAgentCommand("codex",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return home, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	cfg, err := config.LoadFrom(path, config.WithHomeDir(func() (string, error) {
+		return home, nil
+	}))
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Scan.Root != filepath.Join(home, "src") || cfg.Scan.MaxDepth != 1 {
+		t.Fatalf("expected scan settings preserved, got root=%q depth=%d", cfg.Scan.Root, cfg.Scan.MaxDepth)
+	}
+	if cfg.Agent.Command != "codex" {
+		t.Fatalf("expected saved agent codex, got %q", cfg.Agent.Command)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"# keep me", `root = "~/src"`, "[agent]", `command = "codex"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"[editor]", "[terminal]", "[provider]", "[launch]"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("saved config should not add zero-value section %q, got:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestSaveAgentCommand_UpdatesExistingAgentSection(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[agent]\ncommand = \"codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentCommand("claude",
 		config.WithGetenv(func(key string) string {
 			if key == "XDG_CONFIG_HOME" {
 				return xdg
@@ -129,15 +184,16 @@ func TestSaveAgentCommand_PreservesExistingParsedSettings(t *testing.T) {
 		t.Fatalf("SaveAgentCommand returned error: %v", err)
 	}
 
-	cfg, err := config.LoadFrom(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("LoadFrom returned error: %v", err)
+		t.Fatal(err)
 	}
-	if cfg.Scan.Root != "/src" || cfg.Scan.MaxDepth != 1 {
-		t.Fatalf("expected scan settings preserved, got root=%q depth=%d", cfg.Scan.Root, cfg.Scan.MaxDepth)
+	text := string(raw)
+	if strings.Count(text, "[agent]") != 1 {
+		t.Fatalf("expected one agent section, got:\n%s", text)
 	}
-	if cfg.Agent.Command != "codex" {
-		t.Fatalf("expected saved agent codex, got %q", cfg.Agent.Command)
+	if !strings.Contains(text, `command = "claude"`) {
+		t.Fatalf("expected updated agent command, got:\n%s", text)
 	}
 }
 

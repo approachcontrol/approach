@@ -403,10 +403,12 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 			errText = "Unable to create worktree"
 		}
 		prompt := "New worktree"
+		placeholder := ui.WorktreeInputPlaceholder
 		validate := validateWorktreeInput
 		submit := func(input string) tea.Cmd { return m.createWorktree(input, msg.LaunchAgent) }
 		if msg.Kind == WorktreeCreatePullRequest {
 			prompt = ui.PRWorktreePrompt
+			placeholder = ui.PRWorktreeInputPlaceholder
 			validate = func(input string) error { return validatePullRequestWorktreeInput(msg.RepoPath, input) }
 			submit = func(input string) tea.Cmd { return m.createPullRequestWorktree(input) }
 		} else if msg.LaunchAgent {
@@ -414,6 +416,7 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 		}
 		m.modal = modal.OpenInput(
 			prompt,
+			placeholder,
 			msg.Input,
 			validate,
 			submit,
@@ -429,6 +432,7 @@ func (m Model) handleAgentSet(msg AgentSetMsg) Model {
 }
 
 func (m Model) handleAgentSetFailed(msg AgentSetFailedMsg) Model {
+	// Keep the selection usable for this session even when persistence fails.
 	m.agentCommand = msg.Command
 	errText := msg.Err
 	if errText == "" {
@@ -546,6 +550,7 @@ func (m Model) handleBranchCreateFailed(msg BranchCreateFailedMsg) Model {
 		}
 		m.modal = modal.OpenInput(
 			ui.BranchPrompt,
+			ui.BranchInputPlaceholder,
 			msg.Input,
 			validateBranchInput,
 			func(input string) tea.Cmd { return m.createBranchFromStartPoint(input, msg.StartPoint) },
