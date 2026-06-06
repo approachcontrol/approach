@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -123,13 +124,42 @@ func resolveGitMetadata(record *SessionRecord) {
 	if record.CWD == "" {
 		return
 	}
+	worktreePath := ""
+	if out, err := gitOutput(record.CWD, "rev-parse", "--show-toplevel"); err == nil {
+		worktreePath = out
+	}
+	gitCommonDir := ""
+	if out, err := gitOutput(record.CWD, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		gitCommonDir = out
+	}
+	gitDir := ""
+	if out, err := gitOutput(record.CWD, "rev-parse", "--path-format=absolute", "--git-dir"); err == nil {
+		gitDir = out
+	}
+	isBare := false
+	if out, err := gitOutput(record.CWD, "rev-parse", "--is-bare-repository"); err == nil {
+		isBare = out == "true"
+	}
+	commonDirIsBare := false
+	if gitCommonDir != "" {
+		if out, err := gitOutput(gitCommonDir, "rev-parse", "--is-bare-repository"); err == nil {
+			commonDirIsBare = out == "true"
+		}
+	}
+	repoPath := repoPathFromGitMetadata(worktreePath, gitDir, gitCommonDir, isBare, commonDirIsBare)
 	if record.RepoPath == "" {
-		if out, err := gitOutput(record.CWD, "rev-parse", "--show-toplevel"); err == nil {
-			record.RepoPath = out
+		if repoPath != "" {
+			record.RepoPath = repoPath
+		} else if worktreePath != "" {
+			record.RepoPath = worktreePath
 		}
 	}
 	if record.WorktreePath == "" {
-		record.WorktreePath = record.RepoPath
+		if worktreePath != "" {
+			record.WorktreePath = worktreePath
+		} else {
+			record.WorktreePath = record.RepoPath
+		}
 	}
 	if record.Branch == "" {
 		if out, err := gitOutput(record.CWD, "branch", "--show-current"); err == nil {
@@ -141,6 +171,53 @@ func resolveGitMetadata(record *SessionRecord) {
 			record.Commit = out
 		}
 	}
+}
+
+func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {
+	if isBare {
+		if commonDir != "" {
+			return filepath.Clean(commonDir)
+		}
+		if gitDir == "" {
+			return ""
+		}
+		return filepath.Clean(gitDir)
+	}
+	if commonDir != "" && gitDir != "" && isLinkedWorktreeGitDir(gitDir, commonDir) {
+		if commonDirIsBare {
+			return filepath.Clean(commonDir)
+		}
+		if filepath.Base(filepath.Clean(commonDir)) != ".git" {
+			return worktreePath
+		}
+		return repoPathFromGitCommonDir(commonDir)
+	}
+	if worktreePath != "" {
+		return worktreePath
+	}
+	if commonDir != "" {
+		return repoPathFromGitCommonDir(commonDir)
+	}
+	if gitDir == "" {
+		return ""
+	}
+	return repoPathFromGitCommonDir(gitDir)
+}
+
+func isLinkedWorktreeGitDir(gitDir, commonDir string) bool {
+	rel, err := filepath.Rel(filepath.Join(filepath.Clean(commonDir), "worktrees"), filepath.Clean(gitDir))
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func repoPathFromGitCommonDir(commonDir string) string {
+	commonDir = filepath.Clean(commonDir)
+	if filepath.Base(commonDir) == ".git" {
+		return filepath.Dir(commonDir)
+	}
+	return commonDir
 }
 
 func gitOutput(cwd string, args ...string) (string, error) {

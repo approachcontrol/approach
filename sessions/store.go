@@ -302,19 +302,7 @@ func (s *Store) writeTranscriptFiles(record SessionRecord) error {
 		}
 	}
 
-	events, err := normalizeTranscript(input)
-	if err != nil {
-		return err
-	}
-	var data []byte
-	buffer := bytes.NewBuffer(data)
-	encoder := json.NewEncoder(buffer)
-	for _, event := range events {
-		if err := encoder.Encode(event); err != nil {
-			return fmt.Errorf("encode normalized transcript: %w", err)
-		}
-	}
-	if err := writeFileAtomic(filepath.Join(dir, "transcript.jsonl"), buffer.Bytes()); err != nil {
+	if err := writeNormalizedTranscript(filepath.Join(dir, "transcript.jsonl"), input); err != nil {
 		return fmt.Errorf("write normalized transcript: %w", err)
 	}
 	return nil
@@ -326,17 +314,17 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("read raw transcript: %w", err)
 	}
 	defer input.Close()
-	data, err := io.ReadAll(input)
-	if err != nil {
-		return fmt.Errorf("copy raw transcript: %w", err)
-	}
-	if err := writeFileAtomic(dst, data); err != nil {
+	if err := writeFileAtomicFromReader(dst, input); err != nil {
 		return fmt.Errorf("write raw transcript: %w", err)
 	}
 	return nil
 }
 
 func writeFileAtomic(path string, data []byte) error {
+	return writeFileAtomicFromReader(path, bytes.NewReader(data))
+}
+
+func writeFileAtomicFromReader(path string, input io.Reader) error {
 	dir := filepath.Dir(path)
 	temp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
@@ -344,7 +332,7 @@ func writeFileAtomic(path string, data []byte) error {
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
-	if _, err := temp.Write(data); err != nil {
+	if _, err := io.Copy(temp, input); err != nil {
 		_ = temp.Close()
 		return err
 	}
@@ -358,19 +346,47 @@ func writeFileAtomic(path string, data []byte) error {
 	return os.Rename(tempName, path)
 }
 
-func normalizeTranscript(input io.Reader) ([]TranscriptEvent, error) {
-	events, err := readTranscriptEvents(input)
+func writeNormalizedTranscript(path string, input io.Reader) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
-		return nil, fmt.Errorf("normalize transcript: %w", err)
+		return err
 	}
-	visible := events[:0]
-	for _, event := range events {
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if err := temp.Chmod(filePerm); err != nil {
+		_ = temp.Close()
+		return err
+	}
+
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLineBytes)
+	encoder := json.NewEncoder(temp)
+	for scanner.Scan() {
+		event, ok, err := parseTranscriptLine(scanner.Bytes())
+		if err != nil {
+			_ = temp.Close()
+			return fmt.Errorf("normalize transcript: %w", err)
+		}
+		if !ok {
+			continue
+		}
 		if event.Text == "" || !visibleEventKind(event.Kind) || !visibleRole(event.Role) {
 			continue
 		}
-		visible = append(visible, event)
+		if err := encoder.Encode(event); err != nil {
+			_ = temp.Close()
+			return fmt.Errorf("encode normalized transcript: %w", err)
+		}
 	}
-	return visible, nil
+	if err := scanner.Err(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("normalize transcript: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, path)
 }
 
 func readTranscriptEvents(input io.Reader) ([]TranscriptEvent, error) {
@@ -397,7 +413,7 @@ func parseTranscriptLine(line []byte) (TranscriptEvent, bool, error) {
 	if err := json.Unmarshal(line, &event); err != nil {
 		return TranscriptEvent{}, false, err
 	}
-	if event.Text != "" || event.Role != "" || event.Kind != "" {
+	if event.Text != "" {
 		if event.Kind == "" {
 			event.Kind = "message"
 		}

@@ -336,6 +336,42 @@ func TestStoreNormalizesProviderNativeTranscriptLines(t *testing.T) {
 	}
 }
 
+func TestStoreNormalizesRoleContentTranscriptLines(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := filepath.Join(root, "provider.jsonl")
+	providerData := []byte(`{"role":"user","content":"hello from content"}
+{"role":"assistant","content":[{"type":"text","text":"hi from array"},{"type":"text","text":"second part"}]}
+`)
+	if err := os.WriteFile(providerTranscript, providerData, 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "role-content-transcript",
+		Status:         "ended",
+		TranscriptPath: providerTranscript,
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	events, err := store.ReadTranscript(sessions.ProviderCodex, "role-content-transcript")
+	if err != nil {
+		t.Fatalf("ReadTranscript() error = %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("ReadTranscript() returned %d events, want 2: %#v", len(events), events)
+	}
+	if events[0].Role != "user" || events[0].Text != "hello from content" {
+		t.Fatalf("first normalized event mismatch: %#v", events[0])
+	}
+	if events[1].Role != "assistant" || events[1].Text != "hi from array\nsecond part" {
+		t.Fatalf("second normalized event mismatch: %#v", events[1])
+	}
+}
+
 func TestStoreReadsTranscriptLinesLargerThanScannerDefault(t *testing.T) {
 	root := t.TempDir()
 	providerTranscript := filepath.Join(root, "large.jsonl")
