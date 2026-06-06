@@ -6,9 +6,11 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 )
 
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
@@ -105,7 +107,7 @@ func TestRender_BranchesModeShowsPullWhenAvailable(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected: 0,
-		Width:    120,
+		Width:    180,
 		Height:   10,
 		Mode:     2,
 		Branches: []gitquery.BranchRow{
@@ -134,6 +136,105 @@ func TestRender_LeftPaneShowsFetchVisibleWhenReposExist(t *testing.T) {
 	})
 	if !strings.Contains(view, "f: fetch visible") {
 		t.Fatalf("left-pane render should expose fetch-visible hint, got:\n%s", view)
+	}
+}
+
+func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   10,
+		Mode:     ModeSessions,
+		Sessions: []sessions.SessionRecord{{
+			Provider:     sessions.ProviderCodex,
+			SessionID:    "codex-session-1",
+			Status:       "ended",
+			RepoPath:     "/dev/wtui",
+			WorktreePath: "/dev/wtui-worktrees/sessions",
+			Branch:       "feature/headers",
+			Summary:      "Implement session capture",
+		}},
+		ActivePane:      1,
+		SessionSelected: 0,
+	})
+
+	for _, want := range []string{"[6] sessions", "Provider", "Branch", "Worktree", "Status", "Summary", "codex", "feature/headers", "sessions", "ended", "Implement session capture"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("sessions view missing %q:\n%s", want, view)
+		}
+	}
+
+	headerLine := lineContaining(view, "Provider")
+	rowLine := lineContaining(view, "feature/headers")
+	for _, pair := range [][2]string{
+		{"Provider", "codex"},
+		{"Branch", "feature/headers"},
+		{"Worktree", "sessions"},
+		{"Status", "ended"},
+		{"Summary", "Implement session capture"},
+	} {
+		headerColumn := strings.Index(headerLine, pair[0])
+		rowColumn := strings.Index(rowLine, pair[1])
+		if headerColumn != rowColumn {
+			t.Fatalf("%s header starts at column %d, row value %q starts at column %d:\n%s\n%s", pair[0], headerColumn, pair[1], rowColumn, headerLine, rowLine)
+		}
+	}
+}
+
+func lineContaining(view, needle string) string {
+	for _, line := range strings.Split(view, "\n") {
+		stripped := ansi.Strip(line)
+		if strings.Contains(stripped, needle) {
+			return stripped
+		}
+	}
+	return ""
+}
+
+func TestRender_SessionsModeEmptyMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message string
+	}{
+		{name: "empty", message: "No sessions"},
+		{name: "fetch failure", message: "Could not load sessions; see status bar"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:             []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+				Selected:          0,
+				Width:             120,
+				Height:            10,
+				Mode:              ModeSessions,
+				RightEmptyMessage: tc.message,
+			})
+			if !strings.Contains(view, tc.message) {
+				t.Fatalf("sessions empty view missing %q:\n%s", tc.message, view)
+			}
+		})
+	}
+}
+
+func TestRender_SessionsModeShowsTranscriptShortcut(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    120,
+		Height:   10,
+		Mode:     ModeSessions,
+		Sessions: []sessions.SessionRecord{{
+			Provider:  sessions.ProviderCodex,
+			SessionID: "codex-session-1",
+			Status:    "ended",
+			RepoPath:  "/dev/wtui",
+			Summary:   "Implement session capture",
+		}},
+		ActivePane:      1,
+		SessionSelected: 0,
+	})
+	if !strings.Contains(view, "enter: transcript") {
+		t.Fatalf("sessions view should expose transcript shortcut:\n%s", view)
 	}
 }
 

@@ -22,6 +22,7 @@ type Config struct {
 	Provider  ProviderConfig  `toml:"provider"`
 	Launch    LaunchConfig    `toml:"launch"`
 	Agent     AgentConfig     `toml:"agent"`
+	Sessions  SessionsConfig  `toml:"sessions"`
 	Bootstrap BootstrapConfig `toml:"bootstrap"`
 }
 
@@ -54,6 +55,12 @@ type LaunchConfig struct {
 // AgentConfig stores the user's preferred interactive coding agent.
 type AgentConfig struct {
 	Command string `toml:"command"`
+}
+
+// SessionsConfig controls agent-session capture storage.
+type SessionsConfig struct {
+	Root               string `toml:"root"`
+	CopyRawTranscripts bool   `toml:"copy_raw_transcripts"`
 }
 
 // BootstrapConfig configures optional scripts that run after worktree creation.
@@ -107,7 +114,7 @@ func Load(options ...Option) (Config, error) {
 			return cfg, nil
 		}
 	}
-	return Config{}, nil
+	return defaultConfig(), nil
 }
 
 // LoadFrom reads a config file from path. Missing files are allowed and return
@@ -122,7 +129,7 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, false, nil
+			return defaultConfig(), false, nil
 		}
 		return Config{}, false, fmt.Errorf("read config %s: %w", path, err)
 	}
@@ -135,7 +142,7 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 }
 
 func parseConfigData(path string, data []byte, opts loadOptions) (Config, error) {
-	var cfg Config
+	cfg := defaultConfig()
 	decoder := toml.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
@@ -161,11 +168,26 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		}
 	}
 
+	if cfg.Sessions.Root != "" {
+		root, err := expandHome(cfg.Sessions.Root, opts.homeDir)
+		if err != nil {
+			return Config{}, fmt.Errorf("expand sessions root in config %s: %w", path, err)
+		}
+		if !filepath.IsAbs(root) {
+			return Config{}, fmt.Errorf("parse config %s: sessions.root must be absolute or start with ~", path)
+		}
+		cfg.Sessions.Root = root
+	}
+
 	if err := normalizeBootstrapConfig(path, &cfg.Bootstrap, opts); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+func defaultConfig() Config {
+	return Config{}
 }
 
 func normalizeBootstrapConfig(path string, cfg *BootstrapConfig, opts loadOptions) error {

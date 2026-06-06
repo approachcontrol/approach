@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -448,16 +449,97 @@ type TerminalLaunchSpec struct {
 	Interactive bool
 }
 
+// AgentLaunchContext carries metadata wtui knows at launch time so provider
+// hooks can associate later session records with the selected repo/worktree.
+type AgentLaunchContext struct {
+	Command          string
+	LaunchID         string
+	RepoPath         string
+	WorktreePath     string
+	Branch           string
+	Commit           string
+	SessionStateRoot string
+}
+
 // AgentLaunch returns a safe, direct command for launching a supported coding
 // agent in path.
-func AgentLaunch(path, command string) (TerminalLaunchSpec, error) {
-	command = agent.Normalize(command)
+func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
+	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	cmd := exec.Command(command)
-	cmd.Dir = path
+	commit := ResolveWorktreeCommit(ctx.WorktreePath)
+	if commit == "" {
+		commit = ctx.Commit
+	}
+	args := agentLaunchArgs(command)
+	cmd := exec.Command(command, args...)
+	cmd.Dir = ctx.WorktreePath
+	cmd.Env = append(os.Environ(),
+		"WTUI_AGENT="+command,
+		"WTUI_LAUNCH_ID="+ctx.LaunchID,
+		"WTUI_REPO_PATH="+ctx.RepoPath,
+		"WTUI_WORKTREE_PATH="+ctx.WorktreePath,
+		"WTUI_BRANCH="+ctx.Branch,
+		"WTUI_COMMIT="+commit,
+		"WTUI_SESSION_STATE_ROOT="+ctx.SessionStateRoot,
+	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+// ResolveWorktreeCommit returns HEAD for path, or "" when path is not a git
+// worktree. Launching agents should not fail just because metadata is missing.
+func ResolveWorktreeCommit(path string) string {
+	if path == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", path, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func agentLaunchArgs(command string) []string {
+	switch command {
+	case "codex":
+		hookCommand := wtuiSessionHookCommand("codex")
+		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
+		return []string{"--config", hookConfig}
+	case "claude":
+		hookCommand := wtuiSessionHookCommand("claude")
+		settings := claudeSessionHookSettings(hookCommand)
+		return []string{"--settings", settings}
+	default:
+		return nil
+	}
+}
+
+func claudeSessionHookSettings(hookCommand string) string {
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"SessionEnd": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": hookCommand,
+						},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(settings)
+	return string(data)
+}
+
+func wtuiSessionHookCommand(provider string) string {
+	executable, err := os.Executable()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	return shellQuote(executable) + " session-hook --provider " + provider
 }
 
 // TerminalLaunch returns a command that opens or switches to a multiplexer

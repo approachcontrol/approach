@@ -23,6 +23,7 @@ const (
 	DiffCommit
 	DiffWorktree
 	DiffReflog
+	DiffSessionTranscript
 )
 
 type Outcome int

@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -151,6 +152,7 @@ type GitPullFailedMsg struct {
 type WorktreeCreatedMsg struct {
 	RepoPath     string
 	WorktreePath string
+	Branch       string
 	LaunchAgent  bool
 	BootstrapRan bool
 	Request      uint64
@@ -199,6 +201,20 @@ type ReflogResultMsg struct {
 	ListRequest uint64
 }
 
+type SessionResultMsg struct {
+	RepoPath    string
+	Sessions    []sessions.SessionRecord
+	ListRequest uint64
+}
+
+type SessionTranscriptResultMsg struct {
+	RepoPath    string
+	Provider    sessions.Provider
+	SessionID   string
+	DiffRequest uint64
+	Transcript  string
+}
+
 type ReflogDiffResultMsg struct {
 	RepoPath    string
 	Hash        string
@@ -224,7 +240,8 @@ type AgentSetFailedMsg struct {
 }
 
 type AgentResultMsg struct {
-	Err string
+	LaunchContext actions.AgentLaunchContext
+	Err           string
 }
 
 type DeleteFailedMsg struct {
@@ -251,6 +268,7 @@ const (
 	FetchStashDiff
 	FetchCommitDiff
 	FetchReflogDiff
+	FetchSessionTranscript
 )
 
 // FetchErrorMsg carries an error encountered while loading data for a pane,
@@ -270,6 +288,8 @@ type FetchErrorMsg struct {
 	StashDate    string
 	StashMessage string
 	Hash         string
+	Provider     sessions.Provider
+	SessionID    string
 }
 
 // ActionFailedMsg carries an error from a destructive action (drop/prune)
@@ -529,7 +549,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	if !msg.LaunchAgent {
 		return m, fetchCmd
 	}
-	m, launchCmd := m.launchAgentAtPath(msg.WorktreePath)
+	m, launchCmd := m.launchAgentAtPathWithBranch(msg.WorktreePath, &msg.Branch)
 	return m, tea.Batch(fetchCmd, launchCmd)
 }
 
@@ -833,6 +853,25 @@ func (m Model) handleReflogResult(msg ReflogResultMsg) Model {
 	return m
 }
 
+func (m Model) handleSessionResult(msg SessionResultMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeSessions, msg.ListRequest) {
+		return m
+	}
+	m = m.clearFetchListStatus(ui.ModeSessions)
+	m.sessions = m.sessions.SetItems(msg.Sessions)
+	m = m.clampSelectionsAfterFilter()
+	return m
+}
+
+func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		if record, ok := m.selectedSession(); ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID {
+			m.modal = m.modal.SetDiffForRequest(modal.DiffSessionTranscript, msg.DiffRequest, msg.Transcript)
+		}
+	}
+	return m
+}
+
 func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		if commit, ok := m.selectedCommit(); ok && commit.Hash == msg.Hash {
@@ -907,6 +946,12 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 		}
 		entry, ok := m.selectedReflog()
 		return ok && entry.Hash == msg.Hash
+	case FetchSessionTranscript:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		record, ok := m.selectedSession()
+		return ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID
 	default:
 		return false
 	}

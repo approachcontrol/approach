@@ -2,11 +2,13 @@ package model
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -59,6 +61,10 @@ func newReflogPane() pane.Pane[gitquery.ReflogEntry] {
 	}, fixedHeight[gitquery.ReflogEntry])
 }
 
+func newSessionPane() pane.Pane[sessions.SessionRecord] {
+	return pane.New(sessionSearchText, fixedHeight[sessions.SessionRecord])
+}
+
 func (m Model) activeSearchQuery() string {
 	if m.activePane == 0 {
 		return m.repos.Query()
@@ -78,6 +84,8 @@ func (m Model) activeItemPaneQuery() string {
 		return m.commits.Query()
 	case ui.ModeReflog:
 		return m.reflogs.Query()
+	case ui.ModeSessions:
+		return m.sessions.Query()
 	default:
 		return ""
 	}
@@ -94,6 +102,7 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	m.stashes = m.stashes.SetQueryPreserveIndex(query)
 	m.commits = m.commits.SetQueryPreserveIndex(query)
 	m.reflogs = m.reflogs.SetQueryPreserveIndex(query)
+	m.sessions = m.sessions.SetQueryPreserveIndex(query)
 
 	switch m.mode {
 	case ui.ModeWorktrees:
@@ -111,6 +120,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	case ui.ModeReflog:
 		m.reflogs = m.reflogs.SetQuery(query)
 		m = m.reflowReflogs()
+	case ui.ModeSessions:
+		m.sessions = m.sessions.SetQuery(query)
+		m = m.reflowSessions()
 	}
 	return m
 }
@@ -122,6 +134,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowStashes()
 	m = m.reflowCommits()
 	m = m.reflowReflogs()
+	m = m.reflowSessions()
 	return m
 }
 
@@ -169,8 +182,30 @@ func (m Model) filteredReflogs() []gitquery.ReflogEntry {
 	return reflogs
 }
 
+func (m Model) filteredSessions() []sessions.SessionRecord {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	sessions, _, _ := m.sessions.View()
+	return sessions
+}
+
 func branchSearchText(row gitquery.BranchRow) string {
 	parts := []string{row.Branch.Name, row.WorktreePath}
 	parts = append(parts, row.Branch.Unpushed...)
 	return strings.Join(parts, " ")
+}
+
+func sessionSearchText(record sessions.SessionRecord) string {
+	return strings.Join([]string{
+		string(record.Provider),
+		record.SessionID,
+		record.LaunchID,
+		record.Branch,
+		record.WorktreePath,
+		filepath.Base(record.WorktreePath),
+		record.Model,
+		record.Status,
+		record.Summary,
+	}, " ")
 }

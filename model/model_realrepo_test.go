@@ -39,6 +39,16 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func envValue(env []string, key string) string {
+	for _, entry := range env {
+		gotKey, value, ok := strings.Cut(entry, "=")
+		if ok && gotKey == key {
+			return value
+		}
+	}
+	return ""
+}
+
 func writeFile(t *testing.T, dir, name, contents string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o644); err != nil {
@@ -377,12 +387,14 @@ func TestModel_ReflogDiffPayloadAgainstRealRepo(t *testing.T) {
 
 func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
 	var launchedPath string
+	var launchedCommit string
 	m, dir := setupModelRepoWithOptions(t, model.Options{
 		AgentCommand: "codex",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			launchedPath = path
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchedPath = ctx.WorktreePath
+			launchedCommit = ctx.Commit
 			cmd := exec.Command("pwd")
-			cmd.Dir = path
+			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
 		},
 	})
@@ -400,16 +412,64 @@ func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
 	if launchedPath != dir {
 		t.Fatalf("expected launch from repo worktree %q, got %q", dir, launchedPath)
 	}
+	if want := gitOut(t, dir, "rev-parse", "HEAD"); launchedCommit != want {
+		t.Fatalf("expected launch commit %q, got %q", want, launchedCommit)
+	}
+}
+
+func TestModel_AgentLaunchFromBranchPaneIncludesCommit(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	var launchedEnvCommit string
+	m, dir := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			launch, err := actions.AgentLaunch(ctx)
+			if err != nil {
+				return actions.TerminalLaunchSpec{}, err
+			}
+			launchedEnvCommit = envValue(launch.Cmd.Env, "WTUI_COMMIT")
+			cmd := exec.Command("true")
+			cmd.Dir = ctx.WorktreePath
+			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
+		},
+	})
+
+	m = inRightPane(m)
+	m, branchCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if branchCmd == nil {
+		t.Fatal("expected branch fetch command")
+	}
+	m, _ = update(m, branchCmd())
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if msg := cmd(); msg.(model.AgentResultMsg).Err != "" {
+		t.Fatalf("expected successful agent launch, got %#v", msg)
+	}
+	if launched.WorktreePath != dir {
+		t.Fatalf("expected launch path %q, got %q", dir, launched.WorktreePath)
+	}
+	if want := gitOut(t, dir, "rev-parse", "HEAD"); launchedEnvCommit != want {
+		t.Fatalf("expected WTUI_COMMIT %q, got %q", want, launchedEnvCommit)
+	}
 }
 
 func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	var launchedPath string
+	var launchedEnvCommit string
 	m, dir := setupModelRepoWithOptions(t, model.Options{
 		AgentCommand: "claude",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			launchedPath = path
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchedPath = ctx.WorktreePath
+			launch, err := actions.AgentLaunch(ctx)
+			if err != nil {
+				return actions.TerminalLaunchSpec{}, err
+			}
+			launchedEnvCommit = envValue(launch.Cmd.Env, "WTUI_COMMIT")
 			cmd := exec.Command("pwd")
-			cmd.Dir = path
+			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
 		},
 	})
@@ -455,6 +515,44 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	want := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-worktrees", "agent-smoke")
 	if launchedPath != want {
 		t.Fatalf("expected launch from created worktree %q, got %q", want, launchedPath)
+	}
+	if wantCommit := gitOut(t, want, "rev-parse", "HEAD"); launchedEnvCommit != wantCommit {
+		t.Fatalf("expected WTUI_COMMIT %q, got %q", wantCommit, launchedEnvCommit)
+	}
+}
+
+func TestModel_CreateTagThenAgentLaunchUsesNoBranchMetadata(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m, dir := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "claude",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			cmd := exec.Command("true")
+			cmd.Dir = ctx.WorktreePath
+			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
+		},
+	})
+	mustGit(t, dir, "tag", "v1.0.0")
+
+	m = inRightPane(m)
+	m, _ = update(m, m.Init()())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v1.0.0")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected create worktree command")
+	}
+	created, ok := createCmd().(model.WorktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreatedMsg")
+	}
+
+	_, batchCmd := update(m, created)
+	if batchCmd == nil {
+		t.Fatal("expected create+launch batch command")
+	}
+	if launched.WorktreePath == "" || launched.Branch != "" {
+		t.Fatalf("expected tag worktree launch without branch metadata, got %#v", launched)
 	}
 }
 
@@ -647,11 +745,11 @@ func TestModel_CreateThenAgentLaunchWaitsForBootstrapHook(t *testing.T) {
 			hookRan = true
 			return nil
 		},
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			if !hookRan {
 				t.Fatal("agent launched before bootstrap hook completed")
 			}
-			launchedPath = path
+			launchedPath = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 		},
 	})
@@ -689,7 +787,7 @@ func TestModel_CreateThenAgentLaunchSkipsAgentWhenBootstrapFails(t *testing.T) {
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			return errors.New("setup failed")
 		},
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = true
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 		},

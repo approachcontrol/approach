@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 )
 
 // OverlayState represents what overlay (if any) is displayed.
@@ -21,6 +23,7 @@ const (
 	OverlayCommitDiff
 	OverlayWorktreeDiff
 	OverlayReflogDiff
+	OverlaySessionTranscript
 	OverlayWorktreeInput
 )
 
@@ -44,6 +47,7 @@ const (
 	ModeStashes
 	ModeHistory
 	ModeReflog
+	ModeSessions
 )
 
 const LeftPaneWidth = 30
@@ -149,6 +153,9 @@ type RenderParams struct {
 	Reflogs                  []gitquery.ReflogEntry
 	ReflogSelected           int
 	ReflogScroll             int
+	Sessions                 []sessions.SessionRecord
+	SessionSelected          int
+	SessionScroll            int
 	TransientError           string
 	TransientErrorFadeStep   int
 	SearchActive             bool
@@ -204,6 +211,7 @@ func Render(p RenderParams) string {
 	stashSelected := p.Mode == ModeStashes && p.StashSelected >= 0 && p.StashSelected < len(p.Stashes)
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
+	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	status := statusBarParams{
 		Width:                     p.Width,
 		Mode:                      p.Mode,
@@ -224,6 +232,7 @@ func Render(p RenderParams) string {
 		StashSelected:             stashSelected,
 		CommitSelected:            commitSelected,
 		ReflogSelected:            reflogSelected,
+		SessionSelected:           sessionSelected,
 		TransientError:            p.TransientError,
 		TransientErrorFadeStep:    p.TransientErrorFadeStep,
 		SearchActive:              p.SearchActive,
@@ -283,12 +292,14 @@ func Render(p RenderParams) string {
 	commitSel := p.CommitSelected
 	worktreeSel := p.WorktreeSelected
 	reflogSel := p.ReflogSelected
+	sessionSel := p.SessionSelected
 	if p.ActivePane == 0 {
 		branchSel = -1
 		stashSel = -1
 		commitSel = -1
 		worktreeSel = -1
 		reflogSel = -1
+		sessionSel = -1
 	}
 
 	var rightLines []string
@@ -303,6 +314,8 @@ func Render(p RenderParams) string {
 		rightLines = renderCommitPane(p.Commits, commitSel, p.CommitScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
+	case p.Mode == ModeSessions && len(p.Sessions) > 0:
+		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -343,6 +356,7 @@ func renderModeHeader(mode Mode, width int) string {
 		{ModeStashes, "stashes"},
 		{ModeHistory, "history"},
 		{ModeReflog, "reflog"},
+		{ModeSessions, "sessions"},
 	}
 
 	var parts []string
@@ -412,6 +426,7 @@ type statusBarParams struct {
 	StashSelected             bool
 	CommitSelected            bool
 	ReflogSelected            bool
+	SessionSelected           bool
 	TransientError            string
 	TransientErrorFadeStep    int
 	SearchActive              bool
@@ -668,6 +683,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				shortcutHint{Key: "enter", Label: "diff"},
 				shortcutHint{Key: "y", Label: "copy hash"},
 			)
+		}
+	case ModeSessions:
+		if sp.ActivePane == 1 && sp.SessionSelected {
+			actions = append(actions, shortcutHint{Key: "enter", Label: "transcript"})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -942,6 +961,8 @@ func modeShortcutTitle(mode Mode) string {
 		return "History"
 	case ModeReflog:
 		return "Reflog"
+	case ModeSessions:
+		return "Sessions"
 	default:
 		return "Items"
 	}
@@ -1139,6 +1160,70 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 	}
 
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	header := truncateToWidth(statusStyle.Render(formatSessionColumns("   ", "Provider", "Branch", "Worktree", "Status", "Summary")), width)
+	if height == 1 {
+		return []string{header}
+	}
+
+	var rows []string
+	for i, record := range records {
+		provider := string(record.Provider)
+		worktree := filepath.Base(record.WorktreePath)
+		if worktree == "." || worktree == string(filepath.Separator) {
+			worktree = ""
+		}
+		line := formatSessionColumns("   ",
+			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
+			branchStyle.Render(fitSessionColumn(record.Branch, sessionBranchWidth)),
+			stashDateStyle.Render(fitSessionColumn(worktree, sessionWorktreeWidth)),
+			statusStyle.Render(fitSessionColumn(record.Status, sessionStatusWidth)),
+			stashMsgStyle.Render(record.Summary),
+		)
+		if i == selected {
+			selectedLine := truncateToWidth(formatSessionColumns(" > ",
+				provider,
+				record.Branch,
+				worktree,
+				record.Status,
+				record.Summary,
+			), width)
+			line = stashSelStyle.Width(width).Render(selectedLine)
+		}
+		rows = append(rows, truncateToWidth(line, width))
+	}
+	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
+}
+
+const (
+	sessionProviderWidth = 8
+	sessionBranchWidth   = 24
+	sessionWorktreeWidth = 18
+	sessionStatusWidth   = 10
+)
+
+func formatSessionColumns(prefix, provider, branch, worktree, status, summary string) string {
+	return fmt.Sprintf("%s%s  %s  %s  %s  %s",
+		prefix,
+		fitSessionColumn(provider, sessionProviderWidth),
+		fitSessionColumn(branch, sessionBranchWidth),
+		fitSessionColumn(worktree, sessionWorktreeWidth),
+		fitSessionColumn(status, sessionStatusWidth),
+		summary,
+	)
+}
+
+func fitSessionColumn(value string, width int) string {
+	value = truncateToWidth(value, width)
+	if lipgloss.Width(value) >= width {
+		return value
+	}
+	return value + strings.Repeat(" ", width-lipgloss.Width(value))
 }
 
 func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, height int) []string {

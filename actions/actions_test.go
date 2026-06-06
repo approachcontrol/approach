@@ -1524,7 +1524,14 @@ func TestOpenVSCode_RunsWithoutPanic(t *testing.T) {
 func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
-			launch, err := actions.AgentLaunch("/repo/worktree", command)
+			launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:      command,
+				LaunchID:     "launch-1",
+				RepoPath:     "/repo",
+				WorktreePath: "/repo/worktree",
+				Branch:       "main",
+				Commit:       "abcdef",
+			})
 			if err != nil {
 				t.Fatalf("AgentLaunch returned error: %v", err)
 			}
@@ -1534,17 +1541,130 @@ func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
 			if !launch.Interactive {
 				t.Fatal("expected agent launch to be interactive")
 			}
-			if len(launch.Cmd.Args) != 1 || launch.Cmd.Args[0] != command {
-				t.Fatalf("expected direct command args [%q], got %#v", command, launch.Cmd.Args)
+			if len(launch.Cmd.Args) == 0 || launch.Cmd.Args[0] != command {
+				t.Fatalf("expected command args to start with %q, got %#v", command, launch.Cmd.Args)
 			}
 		})
 	}
 }
 
+func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_AGENT":              "codex",
+		"WTUI_LAUNCH_ID":          "launch-1",
+		"WTUI_REPO_PATH":          "/repo",
+		"WTUI_WORKTREE_PATH":      "/repo/worktree",
+		"WTUI_BRANCH":             "main",
+		"WTUI_COMMIT":             "abcdef",
+		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+		}
+	}
+}
+
+func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-1",
+		RepoPath:     repoPath,
+		WorktreePath: repoPath,
+		Branch:       "main",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	if got := envMap(launch.Cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
+		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
+	}
+}
+
+func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	args := strings.Join(launch.Cmd.Args, "\x00")
+	for _, want := range []string{
+		"--config",
+		"hooks.Stop",
+		"session-hook --provider codex",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("expected codex launch args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func TestAgentLaunchWiresClaudeSessionHook(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "claude",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	args := strings.Join(launch.Cmd.Args, "\x00")
+	for _, want := range []string{
+		"--settings",
+		"SessionEnd",
+		"session-hook --provider claude",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("expected claude launch args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func envMap(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
 func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
 	for _, command := range []string{"", "vim"} {
 		t.Run(command, func(t *testing.T) {
-			if _, err := actions.AgentLaunch("/repo/worktree", command); err == nil {
+			if _, err := actions.AgentLaunch(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"}); err == nil {
 				t.Fatal("expected AgentLaunch error")
 			}
 		})

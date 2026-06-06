@@ -18,7 +18,8 @@ are already implemented and should be treated as the baseline product:
 
 - Multi-repo scanning under `WORKTREE_ROOT` or `~/dev`, up to two levels deep,
   excluding sibling `*-worktrees` directories.
-- Five right-pane modes: worktrees, branches, stashes, history, and reflog.
+- Six right-pane modes: worktrees, branches, stashes, history, reflog, and
+  captured agent sessions.
 - Read-only default posture with explicit destructive mode (`D`) before delete,
   drop, or prune actions are exposed.
 - Worktree creation from an existing branch, tag, ref, or new branch name using
@@ -39,6 +40,8 @@ are already implemented and should be treated as the baseline product:
 - VS Code launching via `code`.
 - Coding-agent launches for Codex and Claude Code, including create-then-launch
   from the worktrees view.
+- Agent-session capture and browsing for Claude Code and Codex hook payloads,
+  with normalized transcript overlays and user-state storage outside repos.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.
@@ -106,7 +109,7 @@ Goal: add context that helps users decide which worktree needs attention.
 | CI status per branch/worktree | Pass/fail/running indicators would make the dashboard more actionable for active branches. | P2 |
 | GitHub/GitLab provider config | Needed for PR creation, PR detection, and CI lookup without hardcoding one provider. | P2 |
 | Worktree notes, labels, or tags | Useful once users have many parallel branches, especially for review or agent-driven work. | P3 |
-| AI-agent session awareness | Detect active coding-agent sessions in worktrees and show a lightweight status when reliable signals exist. | P3 |
+| Agent session follow-ups | Add resume/open-native-transcript actions and richer status when provider signals are reliable. | P3 |
 | Desktop notifications | Notify on long-running fetch/pull/batch completion only after the operation model is mature. | P3 |
 
 ### Phase 5: Release and Community Hygiene

@@ -35,6 +35,7 @@ type ReflogEntry struct {
 type Worktree struct {
 	Path         string
 	BranchName   string
+	Commit       string
 	Detached     bool
 	Stale        bool
 	IsMain       bool
@@ -98,6 +99,20 @@ func ListWorktrees(repoPath string) ([]Worktree, error) {
 	return defaultQuery().ListWorktrees(repoPath)
 }
 
+// CurrentBranch returns the checked-out branch for path, or an empty string
+// when the worktree is detached.
+func CurrentBranch(path string) (string, error) {
+	return defaultQuery().CurrentBranch(path)
+}
+
+func (q *Querier) CurrentBranch(path string) (string, error) {
+	out, err := q.git.Run(path, "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // ListWorktrees returns non-bare worktree checkouts for the given repo.
 // Bare roots are omitted, so a central bare repository can return zero rows.
 func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
@@ -114,6 +129,7 @@ func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 
 		w := Worktree{
 			Path:       wt.Path,
+			Commit:     wt.Commit,
 			Detached:   wt.Detached,
 			IsMain:     samePath(wt.Path, repoPath),
 			Locked:     wt.Locked,

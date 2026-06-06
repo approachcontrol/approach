@@ -1044,6 +1044,9 @@ func TestListWorktrees_ReturnsMainFirst(t *testing.T) {
 	if wts[0].Path != repo {
 		t.Errorf("main worktree path: expected %q, got %q", repo, wts[0].Path)
 	}
+	if wts[0].Commit == "" {
+		t.Fatal("main worktree commit should be populated")
+	}
 
 	// Second entry is the added worktree
 	if wts[1].IsMain {
@@ -1054,6 +1057,9 @@ func TestListWorktrees_ReturnsMainFirst(t *testing.T) {
 	}
 	if wts[1].Path != wtPath {
 		t.Errorf("expected path %q, got %q", wtPath, wts[1].Path)
+	}
+	if wts[1].Commit != wts[0].Commit {
+		t.Errorf("expected linked worktree commit %q, got %q", wts[0].Commit, wts[1].Commit)
 	}
 	if wts[1].Detached {
 		t.Error("named branch worktree should not be Detached")

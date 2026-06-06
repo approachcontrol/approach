@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -3184,9 +3186,9 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	var gotPath, gotCommand string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			gotPath = path
-			gotCommand = command
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			gotPath = ctx.WorktreePath
+			gotCommand = ctx.Command
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
@@ -3204,12 +3206,44 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	}
 }
 
+func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Commit: "abc123", IsMain: true},
+	}, ListRequest: m.ListRequest(ui.ModeWorktrees)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if got.Command != "codex" ||
+		got.RepoPath != "/dev/alpha" ||
+		got.WorktreePath != "/dev/alpha" ||
+		got.Branch != "main" ||
+		got.Commit != "abc123" ||
+		got.SessionStateRoot != "/state/wtui/sessions/v1" {
+		t.Fatalf("unexpected launch context: %#v", got)
+	}
+	if got.LaunchID == "" {
+		t.Fatalf("expected launch ID in context: %#v", got)
+	}
+}
+
 func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
 	var gotPath string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "claude",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			gotPath = path
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			gotPath = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
@@ -3284,7 +3318,7 @@ func TestModel_AKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{}, errors.New("agent unavailable")
 		},
 	})
@@ -3304,7 +3338,7 @@ func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("false")}, nil
 		},
 	})
@@ -3319,6 +3353,206 @@ func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 	m, _ = update(m, cmd())
 	if !strings.Contains(m.View(), "exit status") {
 		t.Fatal("expected agent process error in status bar")
+	}
+}
+
+func TestModel_AgentResultFinalizesLaunchedSession(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
+			got = ctx
+			return nil
+		},
+	})
+	ctx := actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		Branch:       "main",
+	}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx})
+	if got != ctx {
+		t.Fatalf("finalized context = %#v, want %#v", got, ctx)
+	}
+}
+
+func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
+			return errors.New("state unavailable")
+		},
+	})
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx})
+	if !strings.Contains(m.View(), "finalize session: state unavailable") {
+		t.Fatal("expected finalize error in status bar")
+	}
+}
+
+func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
+	var gotFilter sessions.SessionFilter
+	want := []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "main", Summary: "Implement sessions"},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			gotFilter = filter
+			return want, nil
+		},
+	})
+	m = inRightPane(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("mode = %d, want sessions", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("expected sessions fetch command")
+	}
+	if gotFilter.RepoPath != "" {
+		t.Fatalf("session lister ran before command execution: %#v", gotFilter)
+	}
+	msg, ok := cmd().(model.SessionResultMsg)
+	if !ok {
+		t.Fatalf("expected SessionResultMsg, got %T", msg)
+	}
+	m, _ = update(m, msg)
+
+	if gotFilter.RepoPath != "/dev/alpha" {
+		t.Fatalf("RepoPath filter = %q, want /dev/alpha", gotFilter.RepoPath)
+	}
+	got := m.Sessions()
+	if len(got) != 1 || got[0].SessionID != "codex-1" {
+		t.Fatalf("Sessions() = %#v, want %#v", got, want)
+	}
+}
+
+func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
+	var filters []sessions.SessionFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			filters = append(filters, filter)
+			return []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: filepath.Base(filter.RepoPath), RepoPath: filter.RepoPath}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	if cmd == nil {
+		t.Fatal("expected initial sessions fetch")
+	}
+	m, _ = update(m, cmd())
+	if got := m.Sessions(); len(got) != 1 || got[0].RepoPath != "/dev/alpha" {
+		t.Fatalf("initial Sessions() = %#v", got)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if cmd == nil {
+		t.Fatal("expected sessions refetch after repo change")
+	}
+	if got := m.Sessions(); len(got) != 0 {
+		t.Fatalf("expected sessions cleared before refetch, got %#v", got)
+	}
+	m, _ = update(m, cmd())
+	if got := m.Sessions(); len(got) != 1 || got[0].RepoPath != "/dev/bravo" {
+		t.Fatalf("refetched Sessions() = %#v", got)
+	}
+	if len(filters) != 2 || filters[0].RepoPath != "/dev/alpha" || filters[1].RepoPath != "/dev/bravo" {
+		t.Fatalf("session filters = %#v", filters)
+	}
+}
+
+func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
+	var gotProvider sessions.Provider
+	var gotSessionID string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
+			gotProvider = provider
+			gotSessionID = sessionID
+			return []sessions.TranscriptEvent{
+				{Role: "user", Kind: "message", Text: "Implement sessions"},
+				{Role: "assistant", Kind: "message", Text: "Done"},
+			}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlaySessionTranscript {
+		t.Fatalf("expected OverlaySessionTranscript, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected transcript fetch command")
+	}
+	msg, ok := cmd().(model.SessionTranscriptResultMsg)
+	if !ok {
+		t.Fatalf("expected SessionTranscriptResultMsg, got %T", msg)
+	}
+	m, _ = update(m, msg)
+
+	if gotProvider != sessions.ProviderCodex || gotSessionID != "codex-1" {
+		t.Fatalf("reader got provider=%q session=%q", gotProvider, gotSessionID)
+	}
+	if diff := m.OverlayDiff(); !strings.Contains(diff, "user: Implement sessions") || !strings.Contains(diff, "assistant: Done") {
+		t.Fatalf("unexpected transcript overlay text: %q", diff)
+	}
+}
+
+func TestModel_SessionsFilterMatchesSessionFields(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/wtui-worktrees/sessions", Branch: "main", Model: "gpt-5", Status: "ended", Summary: "Implement capture"},
+		{Provider: sessions.ProviderClaude, SessionID: "claude-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Branch: "docs", Model: "opus", Status: "last_seen", Summary: "Write docs"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range []rune("gpt ended capture") {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	got := m.Sessions()
+	if len(got) != 1 || got[0].SessionID != "codex-1" {
+		t.Fatalf("filtered sessions = %#v", got)
+	}
+}
+
+func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ReadTranscript: func(sessions.Provider, string) ([]sessions.TranscriptEvent, error) {
+			return nil, errors.New("missing transcript")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlaySessionTranscript {
+		t.Fatalf("expected transcript overlay, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected transcript fetch command")
+	}
+	m, _ = update(m, cmd())
+	if !strings.Contains(m.View(), "missing transcript") {
+		t.Fatalf("expected missing transcript status, got:\n%s", m.View())
+	}
+	if m.OverlayDiff() != "" {
+		t.Fatalf("expected blank transcript overlay on error, got %q", m.OverlayDiff())
 	}
 }
 
@@ -3371,23 +3605,46 @@ func TestModel_AgentWorktreeInputRequestsLaunch(t *testing.T) {
 }
 
 func TestModel_WorktreeCreatedWithLaunchRequestsAgent(t *testing.T) {
-	var gotPath string
+	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		LaunchAgent: func(path, command string) (actions.TerminalLaunchSpec, error) {
-			gotPath = path
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
-	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", LaunchAgent: true})
+	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feat", LaunchAgent: true})
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("expected mode worktrees after create, got %d", m.Mode())
 	}
 	if cmd == nil {
 		t.Fatal("expected batch command after create+launch")
 	}
-	if gotPath != "/dev/alpha-worktrees/feat" {
-		t.Fatalf("expected launch from created worktree, got %q", gotPath)
+	if got.WorktreePath != "/dev/alpha-worktrees/feat" || got.Branch != "feat" {
+		t.Fatalf("expected launch from created worktree on feat, got %#v", got)
+	}
+}
+
+func TestModel_WorktreeCreatedWithLaunchDoesNotReuseOldBranchForDetachedRef(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	_, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/v1.0.0", LaunchAgent: true})
+	if cmd == nil {
+		t.Fatal("expected batch command after create+launch")
+	}
+	if got.WorktreePath != "/dev/alpha-worktrees/v1.0.0" || got.Branch != "" {
+		t.Fatalf("expected detached launch without stale branch, got %#v", got)
 	}
 }
 
