@@ -162,7 +162,8 @@ func (s *Store) List(filter SessionFilter) ([]SessionRecord, error) {
 		}
 		var record SessionRecord
 		if err := json.Unmarshal(data, &record); err != nil {
-			return fmt.Errorf("parse session metadata %s: %w", path, err)
+			// Corrupt metadata should not make every other session unavailable.
+			return nil
 		}
 		if matchesFilter(record, filter) {
 			records = append(records, record)
@@ -204,8 +205,12 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 			continue
 		}
 		record.Status = "ended"
-		record.EndedAt = endedAt
-		record.LastSeenAt = endedAt
+		if record.EndedAt.IsZero() {
+			record.EndedAt = endedAt
+		}
+		if record.LastSeenAt.IsZero() || endedAt.After(record.LastSeenAt) {
+			record.LastSeenAt = endedAt
+		}
 		if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
 			return err
 		}
@@ -296,9 +301,6 @@ func (s *Store) writeTranscriptFiles(record SessionRecord) error {
 	if s.copyRawTranscripts {
 		if err := copyFile(record.TranscriptPath, filepath.Join(dir, "raw.jsonl")); err != nil {
 			return err
-		}
-		if _, err := input.Seek(0, io.SeekStart); err != nil {
-			return fmt.Errorf("rewind provider transcript: %w", err)
 		}
 	}
 
@@ -409,17 +411,6 @@ func readTranscriptEvents(input io.Reader) ([]TranscriptEvent, error) {
 }
 
 func parseTranscriptLine(line []byte) (TranscriptEvent, bool, error) {
-	var event TranscriptEvent
-	if err := json.Unmarshal(line, &event); err != nil {
-		return TranscriptEvent{}, false, err
-	}
-	if event.Text != "" {
-		if event.Kind == "" {
-			event.Kind = "message"
-		}
-		return event, true, nil
-	}
-
 	var raw map[string]any
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return TranscriptEvent{}, false, err
@@ -427,6 +418,7 @@ func parseTranscriptLine(line []byte) (TranscriptEvent, bool, error) {
 	role := firstString(raw, "role")
 	kind := firstString(raw, "kind", "type", "hook_event_name")
 	text := firstString(raw, "text", "content", "last_assistant_message", "summary")
+	timestamp := parseTranscriptTimestamp(firstString(raw, "timestamp"))
 	if message, ok := raw["message"].(map[string]any); ok {
 		if role == "" {
 			role = firstString(message, "role")
@@ -458,7 +450,18 @@ func parseTranscriptLine(line []byte) (TranscriptEvent, bool, error) {
 	if text == "" || role == "" {
 		return TranscriptEvent{}, false, nil
 	}
-	return TranscriptEvent{Role: role, Kind: kind, Text: text}, true, nil
+	return TranscriptEvent{Timestamp: timestamp, Role: role, Kind: kind, Text: text}, true, nil
+}
+
+func parseTranscriptTimestamp(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	timestamp, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return timestamp
 }
 
 func firstString(values map[string]any, keys ...string) string {

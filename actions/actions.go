@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -467,6 +468,10 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
+	commit := ResolveWorktreeCommit(ctx.WorktreePath)
+	if commit == "" {
+		commit = ctx.Commit
+	}
 	args := agentLaunchArgs(command)
 	cmd := exec.Command(command, args...)
 	cmd.Dir = ctx.WorktreePath
@@ -476,10 +481,23 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		"WTUI_REPO_PATH="+ctx.RepoPath,
 		"WTUI_WORKTREE_PATH="+ctx.WorktreePath,
 		"WTUI_BRANCH="+ctx.Branch,
-		"WTUI_COMMIT="+ctx.Commit,
+		"WTUI_COMMIT="+commit,
 		"WTUI_SESSION_STATE_ROOT="+ctx.SessionStateRoot,
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+// ResolveWorktreeCommit returns HEAD for path, or "" when path is not a git
+// worktree. Launching agents should not fail just because metadata is missing.
+func ResolveWorktreeCommit(path string) string {
+	if path == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", path, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func agentLaunchArgs(command string) []string {
@@ -490,11 +508,30 @@ func agentLaunchArgs(command string) []string {
 		return []string{"--config", hookConfig}
 	case "claude":
 		hookCommand := wtuiSessionHookCommand("claude")
-		settings := "{\"hooks\":{\"SessionEnd\":[{\"hooks\":[{\"type\":\"command\",\"command\":" + strconv.Quote(hookCommand) + "}]}]}}"
+		settings := claudeSessionHookSettings(hookCommand)
 		return []string{"--settings", settings}
 	default:
 		return nil
 	}
+}
+
+func claudeSessionHookSettings(hookCommand string) string {
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"SessionEnd": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": hookCommand,
+						},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(settings)
+	return string(data)
 }
 
 func wtuiSessionHookCommand(provider string) string {

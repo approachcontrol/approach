@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -166,7 +168,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 }
 
 func newLaunchID() string {
-	return fmt.Sprintf("wtui-%d", time.Now().UnixNano())
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Sprintf("wtui-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("wtui-%d-%s", time.Now().UnixNano(), hex.EncodeToString(suffix[:]))
 }
 
 func (m Model) Selected() int              { return m.repos.SelectedIndex() }

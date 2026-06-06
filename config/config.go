@@ -187,9 +187,7 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 }
 
 func defaultConfig() Config {
-	return Config{
-		Sessions: SessionsConfig{CopyRawTranscripts: true},
-	}
+	return Config{}
 }
 
 func normalizeBootstrapConfig(path string, cfg *BootstrapConfig, opts loadOptions) error {

@@ -35,6 +35,7 @@ type ReflogEntry struct {
 type Worktree struct {
 	Path         string
 	BranchName   string
+	Commit       string
 	Detached     bool
 	Stale        bool
 	IsMain       bool
@@ -128,6 +129,7 @@ func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 
 		w := Worktree{
 			Path:       wt.Path,
+			Commit:     wt.Commit,
 			Detached:   wt.Detached,
 			IsMain:     samePath(wt.Path, repoPath),
 			Locked:     wt.Locked,

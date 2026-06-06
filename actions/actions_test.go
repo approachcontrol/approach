@@ -1578,6 +1578,26 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
+	repoPath := setupRepo(t)
+	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-1",
+		RepoPath:     repoPath,
+		WorktreePath: repoPath,
+		Branch:       "main",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	if got := envMap(launch.Cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
+		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
+	}
+}
+
 func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
 	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
 		Command:          "codex",

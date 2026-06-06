@@ -197,7 +197,7 @@ command = "codex"
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
-copy_raw_transcripts = true
+copy_raw_transcripts = false
 
 [bootstrap]
 timeout_seconds = 120
@@ -241,16 +241,16 @@ wtui-launched Codex sessions can save normally.
 
 `session-hook` loads the normal wtui config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
-configured sessions root for one hook invocation. Set
-`copy_raw_transcripts = false` to skip preserving provider-native `raw.jsonl`
-copies while keeping normalized transcript events for the sessions view.
+configured sessions root for one hook invocation. Raw provider transcript copies
+are off by default; set `copy_raw_transcripts = true` to also preserve
+provider-native `raw.jsonl` alongside normalized transcript events.
 
 ## Development
 
 ```bash
 make build   # Build binary to bin/wtui
 make test    # Run all tests
-make run     # Build and run with the repo-local .config/wtui/config.toml
+make run     # Build and run with optional ignored repo-local .config/
 make tidy    # go mod tidy
 make clean   # Remove bin/
 ```

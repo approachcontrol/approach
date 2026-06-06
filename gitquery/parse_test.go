@@ -305,7 +305,7 @@ func TestParseBranchLine_NameOnly(t *testing.T) {
 }
 
 func TestParseWorktreeList_ParsesMultipleWorktrees(t *testing.T) {
-	input := "worktree /home/user/project\nbranch refs/heads/main\n\nworktree /home/user/project-feature\nbranch refs/heads/feature\n\n"
+	input := "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\nworktree /home/user/project-feature\nHEAD def456\nbranch refs/heads/feature\n\n"
 
 	infos := gitquery.ParseWorktreeList(input)
 
@@ -318,6 +318,9 @@ func TestParseWorktreeList_ParsesMultipleWorktrees(t *testing.T) {
 	if infos[0].Branch != "main" {
 		t.Errorf("expected Branch %q, got %q", "main", infos[0].Branch)
 	}
+	if infos[0].Commit != "abc123" {
+		t.Errorf("expected Commit %q, got %q", "abc123", infos[0].Commit)
+	}
 	if infos[0].IsBare || infos[0].Detached {
 		t.Error("expected IsBare=false, Detached=false")
 	}
@@ -326,6 +329,9 @@ func TestParseWorktreeList_ParsesMultipleWorktrees(t *testing.T) {
 	}
 	if infos[1].Branch != "feature" {
 		t.Errorf("expected Branch %q, got %q", "feature", infos[1].Branch)
+	}
+	if infos[1].Commit != "def456" {
+		t.Errorf("expected Commit %q, got %q", "def456", infos[1].Commit)
 	}
 }
 

@@ -112,6 +112,37 @@ func TestStoreUpsertUpdatesExistingSession(t *testing.T) {
 	}
 }
 
+func TestStoreListSkipsCorruptMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "good-session",
+		RepoPath:  "/repo",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	badDir := filepath.Join(root, "sessions", "codex", "bad")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "meta.json"), []byte("{bad json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].SessionID != "good-session" {
+		t.Fatalf("List() = %#v, want only good-session", records)
+	}
+}
+
 func TestStoreMarksLaunchEnded(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -153,6 +184,58 @@ func TestStoreMarksLaunchEnded(t *testing.T) {
 	got := records[0]
 	if got.Status != "ended" || !got.EndedAt.Equal(endedAt) || !got.LastSeenAt.Equal(endedAt) {
 		t.Fatalf("launch was not ended: %#v", got)
+	}
+}
+
+func TestStoreMarkLaunchEndedPreservesProviderEndedAt(t *testing.T) {
+	root := t.TempDir()
+	providerEndedAt := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	for _, finalizeEndedAt := range []time.Time{
+		providerEndedAt.Add(5 * time.Second),
+		providerEndedAt.Add(-5 * time.Second),
+	} {
+		sessionID := "claude-" + finalizeEndedAt.Format("150405")
+		if err := store.Upsert(sessions.SessionRecord{
+			Provider:   sessions.ProviderClaude,
+			SessionID:  sessionID,
+			LaunchID:   sessionID,
+			Status:     "ended",
+			EndedAt:    providerEndedAt,
+			LastSeenAt: providerEndedAt,
+		}); err != nil {
+			t.Fatalf("Upsert() error = %v", err)
+		}
+
+		if err := store.MarkLaunchEnded(sessionID, finalizeEndedAt); err != nil {
+			t.Fatalf("MarkLaunchEnded() error = %v", err)
+		}
+
+		records, err := store.List(sessions.SessionFilter{})
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		var got sessions.SessionRecord
+		for _, record := range records {
+			if record.SessionID == sessionID {
+				got = record
+				break
+			}
+		}
+		if !got.EndedAt.Equal(providerEndedAt) {
+			t.Fatalf("EndedAt = %s, want provider time %s", got.EndedAt, providerEndedAt)
+		}
+		wantLastSeen := providerEndedAt
+		if finalizeEndedAt.After(wantLastSeen) {
+			wantLastSeen = finalizeEndedAt
+		}
+		if !got.LastSeenAt.Equal(wantLastSeen) {
+			t.Fatalf("LastSeenAt = %s, want %s", got.LastSeenAt, wantLastSeen)
+		}
 	}
 }
 

@@ -3218,8 +3218,8 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
-		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
-	}})
+		{Path: "/dev/alpha", BranchName: "main", Commit: "abc123", IsMain: true},
+	}, ListRequest: m.ListRequest(ui.ModeWorktrees)})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
@@ -3229,6 +3229,7 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 		got.RepoPath != "/dev/alpha" ||
 		got.WorktreePath != "/dev/alpha" ||
 		got.Branch != "main" ||
+		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" {
 		t.Fatalf("unexpected launch context: %#v", got)
 	}

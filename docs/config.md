@@ -56,7 +56,7 @@ command = "codex"
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
-copy_raw_transcripts = true
+copy_raw_transcripts = false
 
 [bootstrap]
 timeout_seconds = 120
@@ -138,7 +138,7 @@ stored under a hashed session directory, with the raw provider session ID kept i
 | Key | Type | Description |
 |-----|------|-------------|
 | `root` | string | Optional absolute state root for session files. Supports `~` expansion. |
-| `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `true`. |
+| `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `false`. |
 
 When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or
 `~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset.
@@ -197,8 +197,8 @@ wtui session-hook --provider codex --state-root /tmp/wtui-sessions-test
 `--state-root` overrides `[sessions].root`, and `WTUI_SESSION_STATE_ROOT`
 overrides the configured root when `--state-root` is omitted. The
 `copy_raw_transcripts` setting controls whether provider-native transcript data
-is copied to `raw.jsonl`; normalized transcript events are still written for the
-sessions view.
+is copied to `raw.jsonl`; it is off by default, and normalized transcript events
+are still written for the sessions view.
 
 Codex may ask you to review and trust the injected hook with `/hooks` before it
 runs it. After trust is recorded for the unchanged hook command, later

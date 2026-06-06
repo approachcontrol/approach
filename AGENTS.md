@@ -32,5 +32,5 @@ gofmt -l .          # formatting check used by CI
 - Branch lists hide non-root worktree branches; the root branch stays pinned at the top.
 - `WORKTREE_ROOT` overrides `[scan].root`, which falls back to `~/dev`; `TERMINAL` overrides the terminal launched by `t` outside tmux/Zellij.
 - `[scan].root` and `[sessions].root` support `~` expansion; `[sessions].root` must resolve to an absolute path. Parsed editor/terminal/provider/launch config fields are foundation only until their behavior is wired in.
-- Agent session transcripts may contain secrets; wtui stores them under user state (`$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1`) with restrictive permissions, not inside repositories. `copy_raw_transcripts = false` disables raw provider transcript copies while keeping normalized transcript data.
+- Agent session transcripts may contain secrets; wtui stores them under user state (`$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1`) with restrictive permissions, not inside repositories. Raw provider transcript copies are disabled by default; `copy_raw_transcripts = true` opts into preserving raw provider JSONL alongside normalized transcript data.
 - CI expects `gofmt`, `make test`, and `make build` to pass.

@@ -145,13 +145,28 @@ script = ".wtui/bootstrap"
 	}
 }
 
-func TestLoadFrom_DefaultsSessionsCopyRawTranscripts(t *testing.T) {
+func TestLoadFrom_DefaultsSessionsCopyRawTranscriptsOff(t *testing.T) {
 	cfg, err := config.LoadFrom(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatalf("LoadFrom returned error: %v", err)
 	}
+	if cfg.Sessions.CopyRawTranscripts {
+		t.Fatal("expected sessions copy_raw_transcripts to default false")
+	}
+}
+
+func TestLoadFrom_ParsesSessionsCopyRawTranscriptsOptIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[sessions]\ncopy_raw_transcripts = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
 	if !cfg.Sessions.CopyRawTranscripts {
-		t.Fatal("expected sessions copy_raw_transcripts to default true")
+		t.Fatal("expected explicit copy_raw_transcripts true to parse")
 	}
 }
 

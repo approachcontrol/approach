@@ -110,6 +110,7 @@ func ParseNumstat(text string) (int, int) {
 // WorktreeInfo holds data parsed from one block of git worktree list --porcelain output.
 type WorktreeInfo struct {
 	Path       string
+	Commit     string
 	Branch     string
 	IsBare     bool
 	Detached   bool
@@ -149,6 +150,8 @@ func parseOneWorktreeBlock(block []string) WorktreeInfo {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
 			wt.Path = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "HEAD "):
+			wt.Commit = strings.TrimPrefix(line, "HEAD ")
 		case strings.HasPrefix(line, "branch refs/heads/"):
 			wt.Branch = strings.TrimPrefix(line, "branch refs/heads/")
 		case line == "bare":

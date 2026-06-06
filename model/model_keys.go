@@ -648,9 +648,11 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 	repoPath, _ := m.currentRepoPath()
 	branch := ""
+	commit := ""
 	if m.mode == ui.ModeWorktrees {
 		if wt, ok := m.selectedWorktree(); ok {
 			branch = wt.BranchName
+			commit = wt.Commit
 		}
 	}
 	if m.mode == ui.ModeBranches {
@@ -664,6 +666,7 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 		RepoPath:         repoPath,
 		WorktreePath:     path,
 		Branch:           branch,
+		Commit:           commit,
 		SessionStateRoot: m.sessionStateRoot,
 	}
 }
