@@ -84,7 +84,7 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 		ActivePane:   1,
 		PlanSelected: 0,
 	})
-	if !strings.Contains(view, "enter: plan") {
+	if !strings.Contains(shortcutPaneText(view), "enter  plan") {
 		t.Fatalf("plans view should expose plan shortcut:\n%s", view)
 	}
 }
