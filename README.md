@@ -61,6 +61,7 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Select previous repo |
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
+| `A` | Choose and persist the coding agent (`codex` or `claude`) |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to right pane |
 | `q`/`esc` | Quit |
@@ -77,6 +78,9 @@ filter matches, or a load failure with details in the status bar.
 | `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
 | `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
+| `N` | Create a new worktree and launch the selected coding agent |
+| `A` | Choose and persist the coding agent (`codex` or `claude`) |
+| `a` | Launch the selected coding agent in the selected worktree |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -101,7 +105,16 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list. Press `P` to create a review worktree from a GitHub PR number or URL; wtui fetches the PR head into `pr-<number>` and checks it out under the same sibling worktree directory. Press `f` to `git fetch --prune` and `F` to `git pull --ff-only` for the selected worktree. Locked worktrees cannot be deleted or pruned; press `u` to unlock one.
+Press `A` to choose `codex` or `claude`; wtui persists the choice to config.
+Press `a` to launch the selected agent in the current non-stale worktree, or
+`N` to create a worktree and launch the agent there immediately. Press `n` to
+create a worktree without launching an agent. Enter an existing branch, tag, or
+new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory
+and refreshes the list. Press `P` to create a review worktree from a GitHub PR
+number or URL; wtui fetches the PR head into `pr-<number>` and checks it out
+under the same sibling worktree directory. Press `f` to `git fetch --prune` and
+`F` to `git pull --ff-only` for the selected worktree. Locked worktrees cannot
+be deleted or pruned; press `u` to unlock one.
 
 ### Branches view (mode 2)
 
@@ -115,7 +128,15 @@ Status indicators stack on each branch:
 - `●` purple: no upstream or upstream gone
 - `merged` cyan: branch is fully merged into the cleanup branch (`main` or `master`)
 
-Branches ahead of upstream show up to 5 unpushed commit messages, with overflow count. Press `n` to create a new branch from the selected branch, without checking it out or creating a worktree. When the root branch is dirty, `enter` opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij session and `c` opens VSCode at the worktree path (root branch only). `f` runs `git fetch --prune`, and `F` runs `git pull --ff-only` for branches that have a checked-out worktree. `d` deletes non-worktree branches, with a force-retry prompt on failure. Deletion requires destructive mode to be enabled first (`D`).
+Branches ahead of upstream show up to 5 unpushed commit messages, with overflow
+count. Press `n` to create a new branch from the selected branch, without
+checking it out or creating a worktree. When the root branch is dirty, `enter`
+opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij
+session, `c` opens VSCode at the worktree path, and `a` launches the selected
+coding agent for checked-out branch rows only. `f` runs `git fetch --prune`,
+and `F` runs `git pull --ff-only` for branches that have a checked-out
+worktree. `d` deletes non-worktree branches, with a force-retry prompt on
+failure. Deletion requires destructive mode to be enabled first (`D`).
 
 ### Stashes view (mode 3)
 
@@ -144,11 +165,14 @@ Example:
 [scan]
 root = "~/projects"
 max_depth = 2
+
+[agent]
+command = "codex"
 ```
 
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. See
 [docs/config.md](docs/config.md) for the full config reference, including parsed
-foundation fields for editor, terminal, provider, and launch settings.
+foundation fields for editor, terminal, provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|

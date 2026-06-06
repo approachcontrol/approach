@@ -149,7 +149,7 @@ func (m Model) gitTargetPath(forPull bool) (string, string, bool) {
 	}
 }
 
-func (m Model) createWorktree(input string) tea.Cmd {
+func (m Model) createWorktree(input string, launchAgent bool) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
@@ -157,9 +157,9 @@ func (m Model) createWorktree(input string) tea.Cmd {
 	return func() tea.Msg {
 		worktreePath, err := actions.CreateWorktree(repoPath, input)
 		if err != nil {
-			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error()}
+			return WorktreeCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), LaunchAgent: launchAgent}
 		}
-		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath}
+		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, LaunchAgent: launchAgent}
 	}
 }
 

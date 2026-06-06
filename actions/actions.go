@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/brian-bell/wtui/agent"
 )
 
 type commandSpec struct {
@@ -222,12 +224,24 @@ func OpenVSCode(path string) error {
 	return exec.Command("code", path).Run()
 }
 
-// TerminalLaunchSpec describes how wtui should open a shell for a worktree.
+// TerminalLaunchSpec describes how wtui should open an external process for a worktree.
 // Interactive commands should be run with Bubble Tea's ExecProcess so the TUI
-// releases the current terminal until the multiplexer exits.
+// releases the current terminal until the process exits.
 type TerminalLaunchSpec struct {
 	Cmd         *exec.Cmd
 	Interactive bool
+}
+
+// AgentLaunch returns a safe, direct command for launching a supported coding
+// agent in path.
+func AgentLaunch(path, command string) (TerminalLaunchSpec, error) {
+	command = agent.Normalize(command)
+	if err := agent.Validate(command); err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	cmd := exec.Command(command)
+	cmd.Dir = path
+	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }
 
 // TerminalLaunch returns a command that opens or switches to a multiplexer
