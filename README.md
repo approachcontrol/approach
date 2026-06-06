@@ -76,6 +76,7 @@ filter matches, or a load failure with details in the status bar.
 | `←`/`h`/`→`/`l` | Cycle through modes |
 | `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry) |
 | `n` | Create a new worktree from a branch, tag, or new branch name |
+| `P` | Create a review worktree from a GitHub PR number or URL |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -100,7 +101,7 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list. Press `f` to `git fetch --prune` and `F` to `git pull --ff-only` for the selected worktree. Locked worktrees cannot be deleted or pruned; press `u` to unlock one.
+Press `n` to create a worktree. Enter an existing branch, tag, or new branch name; wtui creates it under a sibling `<repo>-worktrees/` directory and refreshes the list. Press `P` to create a review worktree from a GitHub PR number or URL; wtui fetches the PR head into `pr-<number>` and checks it out under the same sibling worktree directory. Press `f` to `git fetch --prune` and `F` to `git pull --ff-only` for the selected worktree. Locked worktrees cannot be deleted or pruned; press `u` to unlock one.
 
 ### Branches view (mode 2)
 

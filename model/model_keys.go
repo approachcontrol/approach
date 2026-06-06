@@ -186,6 +186,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewWorktree()
 		}
+	case "P":
+		if m.mode == ui.ModeWorktrees {
+			return m.handleNewPullRequestWorktree()
+		}
 	case "d":
 		return m.handleDelete()
 	case "p":
@@ -297,11 +301,29 @@ func (m Model) handleNewWorktree() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	m.modal = modal.OpenInput(
+		ui.PRWorktreePrompt,
+		"",
+		func(input string) error { return validatePullRequestWorktreeInput(repoPath, input) },
+		func(input string) tea.Cmd { return m.createPullRequestWorktree(input) },
+	)
+	return m, nil
+}
+
 func validateWorktreeInput(input string) error {
 	if input == "" {
 		return fmt.Errorf("Enter a branch, tag, or new branch name")
 	}
 	return nil
+}
+
+func validatePullRequestWorktreeInput(repoPath, input string) error {
+	return actions.ValidatePullRequestWorktreeInput(repoPath, input)
 }
 
 func (m Model) handleUnlock() (tea.Model, tea.Cmd) {

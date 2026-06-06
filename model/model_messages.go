@@ -121,10 +121,18 @@ type WorktreeCreatedMsg struct {
 	WorktreePath string
 }
 
+type WorktreeCreateKind int
+
+const (
+	WorktreeCreateGeneric WorktreeCreateKind = iota
+	WorktreeCreatePullRequest
+)
+
 type WorktreeCreateFailedMsg struct {
 	RepoPath string
 	Input    string
 	Err      string
+	Kind     WorktreeCreateKind
 }
 
 type ReflogResultMsg struct {
@@ -362,11 +370,19 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 		if msg.Err == "" {
 			errText = "Unable to create worktree"
 		}
+		prompt := "New worktree"
+		validate := validateWorktreeInput
+		submit := func(input string) tea.Cmd { return m.createWorktree(input) }
+		if msg.Kind == WorktreeCreatePullRequest {
+			prompt = ui.PRWorktreePrompt
+			validate = func(input string) error { return validatePullRequestWorktreeInput(msg.RepoPath, input) }
+			submit = func(input string) tea.Cmd { return m.createPullRequestWorktree(input) }
+		}
 		m.modal = modal.OpenInput(
-			"New worktree",
+			prompt,
 			msg.Input,
-			validateWorktreeInput,
-			func(input string) tea.Cmd { return m.createWorktree(input) },
+			validate,
+			submit,
 		).SetInputError(errText)
 	}
 	return m

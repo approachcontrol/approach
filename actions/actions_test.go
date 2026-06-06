@@ -118,6 +118,25 @@ func setupRemoteRepo(t *testing.T) (localPath, upstreamPath, branch string) {
 	return localPath, upstreamPath, branch
 }
 
+func configureGitHubOrigin(t *testing.T, localPath, owner, repo string) {
+	t.Helper()
+	originPath := filepath.Join(filepath.Dir(localPath), "origin.git")
+	githubURL := "https://github.com/" + owner + "/" + repo + ".git"
+	configureOriginRewrite(t, localPath, githubURL, originPath)
+}
+
+func configureOriginRewrite(t *testing.T, localPath, remoteURL, originPath string) {
+	t.Helper()
+	mustRun(t, localPath, "git", "remote", "set-url", "origin", remoteURL)
+	mustRun(t, localPath, "git", "config", "url."+originPath+".insteadOf", remoteURL)
+}
+
+func configureCustomGitHubOrigin(t *testing.T, localPath, remoteURL string) {
+	t.Helper()
+	originPath := filepath.Join(filepath.Dir(localPath), "origin.git")
+	configureOriginRewrite(t, localPath, remoteURL, originPath)
+}
+
 func TestFetch(t *testing.T) {
 	localPath, upstreamPath, branch := setupRemoteRepo(t)
 	oldRemote := runOutput(t, localPath, "git", "rev-parse", "origin/"+branch)
@@ -475,6 +494,236 @@ func TestCreateWorktree_FromTag(t *testing.T) {
 	out, _ := exec.Command("git", "-C", worktreePath, "branch", "--show-current").Output()
 	if strings.TrimSpace(string(out)) != "" {
 		t.Fatalf("expected detached HEAD for tag worktree, got branch %q", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestCreatePullRequestWorktree_FromNumber(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "pr change")
+	wantHead := runOutput(t, upstreamPath, "git", "rev-parse", "HEAD")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	worktreePath, err := actions.CreatePullRequestWorktree(localPath, "123")
+	if err != nil {
+		t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(localPath), "local-worktrees", "pr-123")
+	if worktreePath != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, worktreePath)
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("expected worktree directory to exist: %v", err)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+		t.Fatalf("expected branch pr-123, got %q", got)
+	}
+	if got := runOutput(t, worktreePath, "git", "rev-parse", "HEAD"); got != wantHead {
+		t.Fatalf("expected worktree HEAD %s, got %s", wantHead, got)
+	}
+}
+
+func TestCreatePullRequestWorktree_FromGitHubURL(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	configureGitHubOrigin(t, localPath, "acme", "project")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "pr url change")
+	wantHead := runOutput(t, upstreamPath, "git", "rev-parse", "HEAD")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	worktreePath, err := actions.CreatePullRequestWorktree(localPath, "https://github.com/acme/project/pull/123")
+	if err != nil {
+		t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+	}
+
+	if got := filepath.Base(worktreePath); got != "pr-123" {
+		t.Fatalf("expected worktree leaf pr-123, got %q", got)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+		t.Fatalf("expected branch pr-123, got %q", got)
+	}
+	if got := runOutput(t, worktreePath, "git", "rev-parse", "HEAD"); got != wantHead {
+		t.Fatalf("expected worktree HEAD %s, got %s", wantHead, got)
+	}
+}
+
+func TestCreatePullRequestWorktree_FromGitHubURLSubpage(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	configureGitHubOrigin(t, localPath, "acme", "project")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "pr files change")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	worktreePath, err := actions.CreatePullRequestWorktree(localPath, "https://github.com/acme/project/pull/123/files")
+	if err != nil {
+		t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+		t.Fatalf("expected branch pr-123, got %q", got)
+	}
+}
+
+func TestCreatePullRequestWorktree_AcceptsHashPrefixedNumber(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "hash pr change")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	worktreePath, err := actions.CreatePullRequestWorktree(localPath, "#123")
+	if err != nil {
+		t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+		t.Fatalf("expected branch pr-123, got %q", got)
+	}
+}
+
+func TestCreatePullRequestWorktree_AcceptsSchemeLessGitHubURL(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	configureGitHubOrigin(t, localPath, "acme", "project")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "schemeless pr change")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	worktreePath, err := actions.CreatePullRequestWorktree(localPath, "github.com/acme/project/pull/123")
+	if err != nil {
+		t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+	}
+	if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+		t.Fatalf("expected branch pr-123, got %q", got)
+	}
+}
+
+func TestCreatePullRequestWorktree_GitHubURLMustMatchOrigin(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	configureGitHubOrigin(t, localPath, "acme", "project")
+	before := runOutput(t, localPath, "git", "rev-parse", "HEAD")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "wrong repo pr")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	_, err := actions.CreatePullRequestWorktree(localPath, "https://github.com/other/project/pull/123")
+	if err == nil {
+		t.Fatal("expected mismatched GitHub URL to fail")
+	}
+	if !strings.Contains(err.Error(), "does not match origin") {
+		t.Fatalf("expected origin mismatch error, got %v", err)
+	}
+	if got := runOutput(t, localPath, "git", "rev-parse", "--verify", "HEAD"); got != before {
+		t.Fatalf("expected no git mutation before fetch, got HEAD %s want %s", got, before)
+	}
+}
+
+func TestCreatePullRequestWorktree_GitHubOriginURLShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		remoteURL string
+		prURL     string
+	}{
+		{
+			name:      "https trailing slash",
+			remoteURL: "https://github.com/acme/project.git/",
+			prURL:     "https://github.com/acme/project/pull/123",
+		},
+		{
+			name:      "ssh URL",
+			remoteURL: "ssh://git@github.com/acme/project.git",
+			prURL:     "https://github.com/acme/project/pull/123",
+		},
+		{
+			name:      "scp style",
+			remoteURL: "git@github.com:acme/project.git",
+			prURL:     "https://github.com/acme/project/pull/123",
+		},
+		{
+			name:      "case insensitive",
+			remoteURL: "https://github.com/Acme/Project.git",
+			prURL:     "https://github.com/acme/project/pull/123",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			localPath, upstreamPath, _ := setupRemoteRepo(t)
+			configureCustomGitHubOrigin(t, localPath, tc.remoteURL)
+			mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "origin shape pr")
+			mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+			worktreePath, err := actions.CreatePullRequestWorktree(localPath, tc.prURL)
+			if err != nil {
+				t.Fatalf("CreatePullRequestWorktree returned error: %v", err)
+			}
+			if got := runOutput(t, worktreePath, "git", "branch", "--show-current"); got != "pr-123" {
+				t.Fatalf("expected branch pr-123, got %q", got)
+			}
+		})
+	}
+}
+
+func TestCreatePullRequestWorktree_ExistingReviewBranchFailsBeforeFetch(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	mustRun(t, localPath, "git", "branch", "pr-123")
+	before := runOutput(t, localPath, "git", "rev-parse", "pr-123")
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "new pr head")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+
+	_, err := actions.CreatePullRequestWorktree(localPath, "123")
+	if err == nil {
+		t.Fatal("expected existing review branch to fail")
+	}
+	if !strings.Contains(err.Error(), "branch pr-123 already exists") {
+		t.Fatalf("expected existing branch error, got %v", err)
+	}
+	if got := runOutput(t, localPath, "git", "rev-parse", "pr-123"); got != before {
+		t.Fatalf("expected existing branch not to move, got %s want %s", got, before)
+	}
+}
+
+func TestCreatePullRequestWorktree_CleansFetchedBranchWhenWorktreeAddFails(t *testing.T) {
+	localPath, upstreamPath, _ := setupRemoteRepo(t)
+	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "cleanup pr branch")
+	mustRun(t, upstreamPath, "git", "push", "origin", "HEAD:refs/pull/123/head")
+	worktreeParent := filepath.Join(filepath.Dir(localPath), "local-worktrees")
+	if err := os.MkdirAll(worktreeParent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(worktreeParent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(worktreeParent, 0o755)
+	})
+
+	_, err := actions.CreatePullRequestWorktree(localPath, "123")
+	if err == nil {
+		t.Fatal("expected worktree add to fail")
+	}
+	if out := runOutput(t, localPath, "git", "branch", "--list", "pr-123"); out != "" {
+		t.Fatalf("expected fetched review branch to be cleaned up, got %q", out)
+	}
+}
+
+func TestCreatePullRequestWorktree_InvalidInputFailsBeforeGit(t *testing.T) {
+	repoPath := setupRepo(t)
+	tests := []string{
+		"",
+		"  ",
+		"--upload-pack=/tmp/nope",
+		"0",
+		"abc",
+		"https://gitlab.com/acme/project/-/merge_requests/123",
+		"https://github.com/acme/project/pull/",
+		"https://github.com/acme/project/pull/abc",
+	}
+
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			worktreePath, err := actions.CreatePullRequestWorktree(repoPath, input)
+			if err == nil {
+				t.Fatal("expected error for invalid PR input")
+			}
+			if worktreePath != "" {
+				t.Fatalf("expected no worktree path, got %q", worktreePath)
+			}
+			if strings.Contains(err.Error(), "exit status") {
+				t.Fatalf("expected validation error without exit status, got %q", err.Error())
+			}
+		})
 	}
 }
 
