@@ -3377,6 +3377,20 @@ func TestModel_AgentResultFinalizesLaunchedSession(t *testing.T) {
 	}
 }
 
+func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
+			return errors.New("state unavailable")
+		},
+	})
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx})
+	if !strings.Contains(m.View(), "finalize session: state unavailable") {
+		t.Fatal("expected finalize error in status bar")
+	}
+}
+
 func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
 	var gotFilter sessions.SessionFilter
 	want := []sessions.SessionRecord{
@@ -3590,23 +3604,46 @@ func TestModel_AgentWorktreeInputRequestsLaunch(t *testing.T) {
 }
 
 func TestModel_WorktreeCreatedWithLaunchRequestsAgent(t *testing.T) {
-	var gotPath string
+	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			gotPath = ctx.WorktreePath
+			got = ctx
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
-	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", LaunchAgent: true})
+	m, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feat", LaunchAgent: true})
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("expected mode worktrees after create, got %d", m.Mode())
 	}
 	if cmd == nil {
 		t.Fatal("expected batch command after create+launch")
 	}
-	if gotPath != "/dev/alpha-worktrees/feat" {
-		t.Fatalf("expected launch from created worktree, got %q", gotPath)
+	if got.WorktreePath != "/dev/alpha-worktrees/feat" || got.Branch != "feat" {
+		t.Fatalf("expected launch from created worktree on feat, got %#v", got)
+	}
+}
+
+func TestModel_WorktreeCreatedWithLaunchDoesNotReuseOldBranchForDetachedRef(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+	}})
+
+	_, cmd := update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/v1.0.0", LaunchAgent: true})
+	if cmd == nil {
+		t.Fatal("expected batch command after create+launch")
+	}
+	if got.WorktreePath != "/dev/alpha-worktrees/v1.0.0" || got.Branch != "" {
+		t.Fatalf("expected detached launch without stale branch, got %#v", got)
 	}
 }
 

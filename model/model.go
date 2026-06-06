@@ -518,11 +518,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
 	case AgentResultMsg:
+		resultErr := msg.Err
 		if msg.LaunchContext.LaunchID != "" {
-			_ = m.finalizeAgentSession(msg.LaunchContext)
+			if err := m.finalizeAgentSession(msg.LaunchContext); err != nil {
+				if resultErr != "" {
+					resultErr = fmt.Sprintf("%s; finalize session: %v", resultErr, err)
+				} else {
+					resultErr = fmt.Sprintf("finalize session: %v", err)
+				}
+			}
 		}
-		if msg.Err != "" {
-			m = m.setStatus(statusOther, msg.Err)
+		if resultErr != "" {
+			m = m.setStatus(statusOther, resultErr)
 		}
 		return m, nil
 	case DeleteFailedMsg:

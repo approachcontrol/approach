@@ -355,9 +355,10 @@ func (m Model) moveWorktree(oldPath, input string) tea.Cmd {
 }
 
 func (m Model) finishWorktreeCreate(repoPath, worktreePath, ref string, kind actions.WorktreeCreateKind, launchAgent bool, request uint64) tea.Msg {
+	branch := createdWorktreeBranch(worktreePath, ref, kind)
 	hook, ok := m.bootstrapHookForRepo(repoPath)
 	if !ok {
-		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, LaunchAgent: launchAgent, Request: request}
+		return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, Branch: branch, LaunchAgent: launchAgent, Request: request}
 	}
 	ctx := actions.BootstrapContext{
 		RepoPath:     repoPath,
@@ -368,7 +369,17 @@ func (m Model) finishWorktreeCreate(repoPath, worktreePath, ref string, kind act
 	if err := m.runBootstrapHook(ctx, hook); err != nil {
 		return WorktreeBootstrapFailedMsg{RepoPath: repoPath, WorktreePath: worktreePath, Err: err.Error(), LaunchAgent: launchAgent, Request: request}
 	}
-	return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, LaunchAgent: launchAgent, BootstrapRan: true, Request: request}
+	return WorktreeCreatedMsg{RepoPath: repoPath, WorktreePath: worktreePath, Branch: branch, LaunchAgent: launchAgent, BootstrapRan: true, Request: request}
+}
+
+func createdWorktreeBranch(worktreePath, ref string, kind actions.WorktreeCreateKind) string {
+	if branch, err := gitquery.CurrentBranch(worktreePath); err == nil {
+		return branch
+	}
+	if kind == actions.WorktreeCreatePullRequest {
+		return "pr-" + ref
+	}
+	return ""
 }
 
 func (m Model) fetchWorktrees(request uint64) tea.Cmd {

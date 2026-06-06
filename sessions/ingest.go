@@ -20,17 +20,24 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	if err := json.NewDecoder(input).Decode(&payload); err != nil {
 		return SessionRecord{}, fmt.Errorf("parse hook payload: %w", err)
 	}
+	now := time.Now().UTC()
 	record := SessionRecord{
 		Provider:       provider,
 		SessionID:      payload.SessionID,
-		Status:         statusForProvider(provider),
+		Status:         statusForPayload(provider, payload),
 		StartedAt:      payload.StartedAt,
 		EndedAt:        payload.EndedAt,
 		CWD:            payload.CWD,
 		Model:          payload.Model,
-		Summary:        payload.Summary,
+		Summary:        summaryForPayload(payload),
 		TranscriptPath: payload.TranscriptPath,
 		CaptureSource:  "hook",
+	}
+	if record.EndedAt.IsZero() && provider == ProviderClaude {
+		record.EndedAt = now
+	}
+	if record.EndedAt.IsZero() && record.Status == "ended" {
+		record.EndedAt = now
 	}
 	if !payload.Timestamp.IsZero() {
 		record.LastSeenAt = payload.Timestamp
@@ -38,20 +45,21 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	if record.LastSeenAt.IsZero() && !payload.EndedAt.IsZero() {
 		record.LastSeenAt = payload.EndedAt
 	}
+	if record.LastSeenAt.IsZero() {
+		record.LastSeenAt = now
+	}
 	applyEnvMetadata(&record, opts.Env)
 	resolveGitMetadata(&record)
 	stateRoot := opts.StateRoot
 	if stateRoot == "" {
 		stateRoot = opts.Env["WTUI_SESSION_STATE_ROOT"]
 	}
-	if stateRoot != "" {
-		store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts})
-		if err != nil {
-			return SessionRecord{}, err
-		}
-		if err := store.Upsert(record); err != nil {
-			return SessionRecord{}, err
-		}
+	store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts})
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	if err := store.Upsert(record); err != nil {
+		return SessionRecord{}, err
 	}
 	return record, nil
 }
@@ -65,13 +73,32 @@ type hookPayload struct {
 	Timestamp      time.Time `json:"timestamp"`
 	StartedAt      time.Time `json:"started_at"`
 	EndedAt        time.Time `json:"ended_at"`
+	HookEventName  string    `json:"hook_event_name"`
+	Reason         string    `json:"reason"`
+	LastAssistant  string    `json:"last_assistant_message"`
 }
 
-func statusForProvider(provider Provider) string {
+func statusForPayload(provider Provider, payload hookPayload) string {
 	if provider == ProviderClaude {
 		return "ended"
 	}
+	if provider == ProviderCodex && payload.HookEventName == "Stop" {
+		return "ended"
+	}
 	return "last_seen"
+}
+
+func summaryForPayload(payload hookPayload) string {
+	if payload.Summary != "" {
+		return payload.Summary
+	}
+	if payload.LastAssistant != "" {
+		return payload.LastAssistant
+	}
+	if payload.Reason != "" {
+		return "Session ended: " + payload.Reason
+	}
+	return ""
 }
 
 func applyEnvMetadata(record *SessionRecord, env map[string]string) {

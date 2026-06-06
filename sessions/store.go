@@ -3,16 +3,20 @@ package sessions
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
 const schemaVersion = 1
+const maxTranscriptLineBytes = 16 * 1024 * 1024
 
 const (
 	dirPerm  os.FileMode = 0o700
@@ -80,8 +84,17 @@ func NewStore(opts StoreOptions) (*Store, error) {
 			return nil, err
 		}
 	}
+	if !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("session store root must be absolute: %s", root)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "sessions"), dirPerm); err != nil {
 		return nil, fmt.Errorf("create session store: %w", err)
+	}
+	if err := os.Chmod(root, dirPerm); err != nil {
+		return nil, fmt.Errorf("secure session root: %w", err)
+	}
+	if err := os.Chmod(filepath.Join(root, "sessions"), dirPerm); err != nil {
+		return nil, fmt.Errorf("secure sessions directory: %w", err)
 	}
 	return &Store{root: root, copyRawTranscripts: opts.CopyRawTranscripts}, nil
 }
@@ -98,15 +111,30 @@ func DefaultRoot() (string, error) {
 }
 
 func (s *Store) Upsert(record SessionRecord) error {
-	if record.Provider == "" || record.SessionID == "" {
-		return fmt.Errorf("session provider and session ID are required")
+	if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
+		return err
 	}
 	if record.SchemaVersion == 0 {
 		record.SchemaVersion = schemaVersion
 	}
+	if err := s.writeMetadata(record); err != nil {
+		return err
+	}
+	if record.TranscriptPath != "" {
+		if err := s.writeTranscriptFiles(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) writeMetadata(record SessionRecord) error {
 	dir := s.sessionDir(record.Provider, record.SessionID)
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return fmt.Errorf("create session directory: %w", err)
+	}
+	if err := os.Chmod(dir, dirPerm); err != nil {
+		return fmt.Errorf("secure session directory: %w", err)
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -114,11 +142,6 @@ func (s *Store) Upsert(record SessionRecord) error {
 	}
 	if err := writeFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
 		return fmt.Errorf("write session metadata: %w", err)
-	}
-	if record.TranscriptPath != "" {
-		if err := s.writeTranscriptFiles(record); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -156,6 +179,9 @@ func (s *Store) List(filter SessionFilter) ([]SessionRecord, error) {
 }
 
 func (s *Store) ReadTranscript(provider Provider, sessionID string) ([]TranscriptEvent, error) {
+	if err := validateRecordKey(provider, sessionID); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(s.sessionDir(provider, sessionID), "transcript.jsonl")
 	file, err := os.Open(path)
 	if err != nil {
@@ -180,7 +206,10 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 		record.Status = "ended"
 		record.EndedAt = endedAt
 		record.LastSeenAt = endedAt
-		if err := s.Upsert(record); err != nil {
+		if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
+			return err
+		}
+		if err := s.writeMetadata(record); err != nil {
 			return err
 		}
 	}
@@ -192,7 +221,42 @@ func (s *Store) Root() string {
 }
 
 func (s *Store) sessionDir(provider Provider, sessionID string) string {
-	return filepath.Join(s.root, "sessions", string(provider), sessionID)
+	return filepath.Join(s.root, "sessions", providerPathPart(provider), safeSessionDirName(sessionID))
+}
+
+func safeSessionDirName(sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return hex.EncodeToString(sum[:])
+}
+
+func validateRecordKey(provider Provider, sessionID string) error {
+	if provider == "" || sessionID == "" {
+		return fmt.Errorf("session provider and session ID are required")
+	}
+	if !validProvider(provider) {
+		return fmt.Errorf("unsupported session provider %q", provider)
+	}
+	return nil
+}
+
+func validProvider(provider Provider) bool {
+	switch provider {
+	case ProviderClaude, ProviderCodex:
+		return true
+	default:
+		return false
+	}
+}
+
+func providerPathPart(provider Provider) string {
+	switch provider {
+	case ProviderClaude:
+		return string(ProviderClaude)
+	case ProviderCodex:
+		return string(ProviderCodex)
+	default:
+		return "_invalid"
+	}
 }
 
 func matchesFilter(record SessionRecord, filter SessionFilter) bool {
@@ -312,17 +376,106 @@ func normalizeTranscript(input io.Reader) ([]TranscriptEvent, error) {
 func readTranscriptEvents(input io.Reader) ([]TranscriptEvent, error) {
 	var events []TranscriptEvent
 	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLineBytes)
 	for scanner.Scan() {
-		var event TranscriptEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		event, ok, err := parseTranscriptLine(scanner.Bytes())
+		if err != nil {
 			return nil, err
 		}
-		events = append(events, event)
+		if ok {
+			events = append(events, event)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return events, nil
+}
+
+func parseTranscriptLine(line []byte) (TranscriptEvent, bool, error) {
+	var event TranscriptEvent
+	if err := json.Unmarshal(line, &event); err != nil {
+		return TranscriptEvent{}, false, err
+	}
+	if event.Text != "" || event.Role != "" || event.Kind != "" {
+		if event.Kind == "" {
+			event.Kind = "message"
+		}
+		return event, true, nil
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return TranscriptEvent{}, false, err
+	}
+	role := firstString(raw, "role")
+	kind := firstString(raw, "kind", "type", "hook_event_name")
+	text := firstString(raw, "text", "content", "last_assistant_message", "summary")
+	if message, ok := raw["message"].(map[string]any); ok {
+		if role == "" {
+			role = firstString(message, "role")
+		}
+		if text == "" {
+			text = textFromContent(message["content"])
+		}
+	}
+	if text == "" {
+		text = textFromContent(raw["content"])
+	}
+	if role == "" {
+		switch kind {
+		case "assistant", "assistant_message":
+			role = "assistant"
+		case "user", "user_message":
+			role = "user"
+		case "system":
+			role = "system"
+		}
+	}
+	switch kind {
+	case "assistant", "assistant_message", "user", "user_message", "system":
+		kind = "message"
+	}
+	if kind == "" {
+		kind = "message"
+	}
+	if text == "" || role == "" {
+		return TranscriptEvent{}, false, nil
+	}
+	return TranscriptEvent{Role: role, Kind: kind, Text: text}, true, nil
+}
+
+func firstString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func textFromContent(value any) string {
+	switch content := value.(type) {
+	case string:
+		return content
+	case []any:
+		parts := make([]string, 0, len(content))
+		for _, item := range content {
+			switch item := item.(type) {
+			case string:
+				if item != "" {
+					parts = append(parts, item)
+				}
+			case map[string]any:
+				if text := firstString(item, "text", "content"); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
 }
 
 func visibleEventKind(kind string) bool {

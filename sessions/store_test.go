@@ -115,20 +115,28 @@ func TestStoreUpsertUpdatesExistingSession(t *testing.T) {
 func TestStoreMarksLaunchEnded(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
+	transcriptPath := filepath.Join(root, "codex.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(`{"role":"user","kind":"message","text":"hello"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
 	endedAt := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 	if err := store.Upsert(sessions.SessionRecord{
-		Provider:   sessions.ProviderCodex,
-		SessionID:  "codex-1",
-		LaunchID:   "launch-1",
-		Status:     "last_seen",
-		RepoPath:   repoPath,
-		LastSeenAt: endedAt.Add(-time.Minute),
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "codex-1",
+		LaunchID:       "launch-1",
+		Status:         "last_seen",
+		RepoPath:       repoPath,
+		LastSeenAt:     endedAt.Add(-time.Minute),
+		TranscriptPath: transcriptPath,
 	}); err != nil {
 		t.Fatalf("Upsert() error = %v", err)
+	}
+	if err := os.Remove(transcriptPath); err != nil {
+		t.Fatalf("remove provider transcript: %v", err)
 	}
 
 	if err := store.MarkLaunchEnded("launch-1", endedAt); err != nil {
@@ -181,9 +189,19 @@ func TestNewStoreDefaultsRootFromXDGStateHome(t *testing.T) {
 		t.Fatalf("Upsert() error = %v", err)
 	}
 
-	metaPath := filepath.Join(stateHome, "wtui", "sessions", "v1", "sessions", "codex", "default-root", "meta.json")
+	metaPath := singleSessionFile(t, filepath.Join(stateHome, "wtui", "sessions", "v1"), sessions.ProviderCodex, "meta.json")
 	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf("expected default-root metadata at %s: %v", metaPath, err)
+	}
+}
+
+func TestNewStoreRejectsRelativeRoot(t *testing.T) {
+	_, err := sessions.NewStore(sessions.StoreOptions{Root: ".wtui-sessions"})
+	if err == nil {
+		t.Fatal("NewStore() error = nil, want relative root error")
+	}
+	if !strings.Contains(err.Error(), "session store root must be absolute") {
+		t.Fatalf("NewStore() error = %q", err)
 	}
 }
 
@@ -212,7 +230,7 @@ func TestStoreCopiesRawTranscriptAndReadsNormalizedEvents(t *testing.T) {
 		t.Fatalf("Upsert() error = %v", err)
 	}
 
-	rawPath := filepath.Join(root, "sessions", "codex", "with-transcript", "raw.jsonl")
+	rawPath := singleSessionFile(t, root, sessions.ProviderCodex, "raw.jsonl")
 	raw, err := os.ReadFile(rawPath)
 	if err != nil {
 		t.Fatalf("read copied raw transcript: %v", err)
@@ -234,4 +252,126 @@ func TestStoreCopiesRawTranscriptAndReadsNormalizedEvents(t *testing.T) {
 	if events[1].Role != "assistant" || events[1].Kind != "message" || events[1].Text != "Done" {
 		t.Fatalf("second event mismatch: %#v", events[1])
 	}
+}
+
+func TestStoreSessionIDCannotEscapeStateRoot(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "../escape",
+		Status:    "ended",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("session ID escaped root, stat err = %v", err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(root, "sessions", "codex", "*", "meta.json")); err != nil || len(matches) != 1 {
+		t.Fatalf("expected one hashed session metadata file, matches=%#v err=%v", matches, err)
+	}
+}
+
+func TestStoreRejectsUnsupportedProviderAndCannotEscapeStateRoot(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	err = store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.Provider("../escape"),
+		SessionID: "session-1",
+		Status:    "ended",
+	})
+	if err == nil {
+		t.Fatal("Upsert() error = nil, want unsupported provider error")
+	}
+	if !strings.Contains(err.Error(), "unsupported session provider") {
+		t.Fatalf("Upsert() error = %q", err)
+	}
+	if _, err := store.ReadTranscript(sessions.Provider("../escape"), "session-1"); err == nil {
+		t.Fatal("ReadTranscript() error = nil, want unsupported provider error")
+	}
+	if _, err := os.Stat(filepath.Join(root, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("provider escaped root, stat err = %v", err)
+	}
+}
+
+func TestStoreNormalizesProviderNativeTranscriptLines(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := filepath.Join(root, "provider.jsonl")
+	providerData := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","message":{"role":"assistant","content":"hi there"}}
+{"type":"system","content":"hidden"}
+`)
+	if err := os.WriteFile(providerTranscript, providerData, 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderClaude,
+		SessionID:      "native-transcript",
+		Status:         "ended",
+		TranscriptPath: providerTranscript,
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	events, err := store.ReadTranscript(sessions.ProviderClaude, "native-transcript")
+	if err != nil {
+		t.Fatalf("ReadTranscript() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("ReadTranscript() returned %d events, want 3: %#v", len(events), events)
+	}
+	if events[0].Role != "user" || events[0].Text != "hello" || events[1].Role != "assistant" || events[1].Text != "hi there" {
+		t.Fatalf("unexpected normalized events: %#v", events)
+	}
+}
+
+func TestStoreReadsTranscriptLinesLargerThanScannerDefault(t *testing.T) {
+	root := t.TempDir()
+	providerTranscript := filepath.Join(root, "large.jsonl")
+	largeText := strings.Repeat("x", 70*1024)
+	if err := os.WriteFile(providerTranscript, []byte(`{"role":"assistant","kind":"message","text":`+quoteJSON(largeText)+`}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "large-transcript",
+		Status:         "ended",
+		TranscriptPath: providerTranscript,
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	events, err := store.ReadTranscript(sessions.ProviderCodex, "large-transcript")
+	if err != nil {
+		t.Fatalf("ReadTranscript() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Text != largeText {
+		t.Fatalf("large transcript event mismatch: len=%d", len(events))
+	}
+}
+
+func singleSessionFile(t *testing.T, root string, provider sessions.Provider, name string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(root, "sessions", string(provider), "*", name))
+	if err != nil {
+		t.Fatalf("glob session file: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("glob returned %d matches, want 1: %#v", len(matches), matches)
+	}
+	return matches[0]
 }

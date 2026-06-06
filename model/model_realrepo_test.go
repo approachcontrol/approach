@@ -458,6 +458,41 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	}
 }
 
+func TestModel_CreateTagThenAgentLaunchUsesNoBranchMetadata(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m, dir := setupModelRepoWithOptions(t, model.Options{
+		AgentCommand: "claude",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			cmd := exec.Command("true")
+			cmd.Dir = ctx.WorktreePath
+			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
+		},
+	})
+	mustGit(t, dir, "tag", "v1.0.0")
+
+	m = inRightPane(m)
+	m, _ = update(m, m.Init()())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v1.0.0")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected create worktree command")
+	}
+	created, ok := createCmd().(model.WorktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("expected WorktreeCreatedMsg")
+	}
+
+	_, batchCmd := update(m, created)
+	if batchCmd == nil {
+		t.Fatal("expected create+launch batch command")
+	}
+	if launched.WorktreePath == "" || launched.Branch != "" {
+		t.Fatalf("expected tag worktree launch without branch metadata, got %#v", launched)
+	}
+}
+
 func TestModel_CreateWorktreeRunsBootstrapHookAgainstRealRepo(t *testing.T) {
 	var gotCtx actions.BootstrapContext
 	var gotHook actions.BootstrapHook

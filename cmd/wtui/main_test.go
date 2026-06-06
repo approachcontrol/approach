@@ -162,8 +162,7 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 
 	err := run([]string{"wtui", "session-hook", "--provider", "claude", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
-			t.Fatal("loadConfig should not run for session-hook")
-			return config.Config{}, nil
+			return config.Config{Sessions: config.SessionsConfig{CopyRawTranscripts: true}}, nil
 		},
 		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
 			t.Fatal("scan should not run for session-hook")
@@ -175,7 +174,7 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 
-	metaPath := filepath.Join(root, "sessions", "claude", "claude-session-1", "meta.json")
+	metaPath := singleSessionFile(t, root, "claude", "meta.json")
 	meta, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("read metadata: %v", err)
@@ -189,7 +188,8 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 
 func TestRunSessionHookRejectsMalformedJSON(t *testing.T) {
 	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", t.TempDir()}, runDeps{
-		stdin: strings.NewReader(`{"session_id":`),
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		stdin:      strings.NewReader(`{"session_id":`),
 	})
 	if err == nil {
 		t.Fatal("expected malformed JSON error")
@@ -209,6 +209,68 @@ func TestRunSessionHookRejectsUnsupportedProvider(t *testing.T) {
 	if !strings.Contains(err.Error(), "unsupported session provider") {
 		t.Fatalf("expected unsupported provider error, got %q", err)
 	}
+}
+
+func TestRunSessionHookHonorsCopyRawTranscriptConfig(t *testing.T) {
+	root := t.TempDir()
+	transcriptPath := filepath.Join(root, "codex.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(`{"role":"user","kind":"message","text":"secret"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Sessions: config.SessionsConfig{CopyRawTranscripts: false}}, nil
+		},
+		stdin: strings.NewReader(`{
+			"session_id": "codex-session-1",
+			"cwd": "/repo/worktree",
+			"transcript_path": ` + quoteJSON(transcriptPath) + `
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(root, "sessions", "codex", "*", "raw.jsonl")); err != nil || len(matches) != 0 {
+		t.Fatalf("expected no copied raw transcript, matches=%#v err=%v", matches, err)
+	}
+}
+
+func TestRunSessionHookEnvStateRootOverridesConfig(t *testing.T) {
+	configRoot := t.TempDir()
+	envRoot := t.TempDir()
+	err := run([]string{"wtui", "session-hook", "--provider", "codex"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Sessions: config.SessionsConfig{Root: configRoot}}, nil
+		},
+		getenv: func(key string) string {
+			if key == "WTUI_SESSION_STATE_ROOT" {
+				return envRoot
+			}
+			return ""
+		},
+		stdin: strings.NewReader(`{"session_id":"codex-env-root","cwd":"/repo/worktree"}`),
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(envRoot, "sessions", "codex", "*", "meta.json")); err != nil || len(matches) != 1 {
+		t.Fatalf("expected metadata under env root, matches=%#v err=%v", matches, err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(configRoot, "sessions", "codex", "*", "meta.json")); err != nil || len(matches) != 0 {
+		t.Fatalf("expected no metadata under config root, matches=%#v err=%v", matches, err)
+	}
+}
+
+func singleSessionFile(t *testing.T, root, provider, name string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(root, "sessions", provider, "*", name))
+	if err != nil {
+		t.Fatalf("glob session file: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("glob returned %d matches, want 1: %#v", len(matches), matches)
+	}
+	return matches[0]
 }
 
 func quoteJSON(value string) string {

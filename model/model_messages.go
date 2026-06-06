@@ -152,6 +152,7 @@ type GitPullFailedMsg struct {
 type WorktreeCreatedMsg struct {
 	RepoPath     string
 	WorktreePath string
+	Branch       string
 	LaunchAgent  bool
 	BootstrapRan bool
 	Request      uint64
@@ -548,7 +549,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	if !msg.LaunchAgent {
 		return m, fetchCmd
 	}
-	m, launchCmd := m.launchAgentAtPath(msg.WorktreePath)
+	m, launchCmd := m.launchAgentAtPathWithBranch(msg.WorktreePath, &msg.Branch)
 	return m, tea.Batch(fetchCmd, launchCmd)
 }
 

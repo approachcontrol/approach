@@ -28,6 +28,8 @@ exist:
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
+Session roots must resolve to absolute paths so captured transcripts stay out of
+repositories.
 `WORKTREE_ROOT` is passed through as provided by the environment.
 
 ## Example
@@ -133,7 +135,7 @@ transcripts are stored outside repositories by default.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `root` | string | Optional state root for session files. Supports `~` expansion. |
+| `root` | string | Optional absolute state root for session files. Supports `~` expansion. |
 | `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `true`. |
 
 When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or

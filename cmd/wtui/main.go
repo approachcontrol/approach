@@ -115,9 +115,20 @@ func runSessionHook(args []string, deps runDeps) error {
 	default:
 		return fmt.Errorf("unsupported session provider %q", *providerFlag)
 	}
-	_, err := sessions.IngestHook(provider, deps.stdin, sessions.IngestOptions{
-		StateRoot:          *stateRoot,
-		CopyRawTranscripts: true,
+	cfg, err := deps.loadConfig()
+	if err != nil {
+		return fmt.Errorf("error loading config: %w", err)
+	}
+	root := *stateRoot
+	if root == "" {
+		root = deps.getenv("WTUI_SESSION_STATE_ROOT")
+	}
+	if root == "" {
+		root = cfg.Sessions.Root
+	}
+	_, err = sessions.IngestHook(provider, deps.stdin, sessions.IngestOptions{
+		StateRoot:          root,
+		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
 		Env: map[string]string{
 			"WTUI_LAUNCH_ID":          deps.getenv("WTUI_LAUNCH_ID"),
 			"WTUI_REPO_PATH":          deps.getenv("WTUI_REPO_PATH"),

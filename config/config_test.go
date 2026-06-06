@@ -155,6 +155,21 @@ func TestLoadFrom_DefaultsSessionsCopyRawTranscripts(t *testing.T) {
 	}
 }
 
+func TestLoadFromRejectsRelativeSessionsRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[sessions]\nroot = \".wtui-sessions\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected relative sessions root error")
+	}
+	if !strings.Contains(err.Error(), "sessions.root must be absolute") {
+		t.Fatalf("expected sessions.root absolute error, got %q", err)
+	}
+}
+
 func TestLoadFrom_RejectsUnknownBootstrapFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("[bootstrap]\ntimeout = 120\n"), 0o644); err != nil {

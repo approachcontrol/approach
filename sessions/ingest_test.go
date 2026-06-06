@@ -13,6 +13,7 @@ import (
 )
 
 func TestIngestHookResolvesGitMetadataFromCWD(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repoPath := t.TempDir()
 	runGit(t, repoPath, "init")
 	runGit(t, repoPath, "config", "user.email", "test@example.com")
@@ -97,6 +98,61 @@ func TestIngestHookCreatesEndedClaudeRecordFromSessionEnd(t *testing.T) {
 		!record.EndedAt.Equal(wantEndedAt) ||
 		!record.LastSeenAt.Equal(wantEndedAt) {
 		t.Fatalf("Claude record mismatch: %#v", record)
+	}
+}
+
+func TestIngestHookPersistsToDefaultRootWhenNoStateRootProvided(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	record, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "codex-default-root",
+		"cwd": "/tmp",
+		"hook_event_name": "Stop",
+		"last_assistant_message": "Captured without explicit state root"
+	}`)), sessions.IngestOptions{})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.Summary != "Captured without explicit state root" {
+		t.Fatalf("Summary = %q", record.Summary)
+	}
+	if record.Status != "ended" || record.EndedAt.IsZero() {
+		t.Fatalf("expected Codex Stop to be ended, got %#v", record)
+	}
+	if record.LastSeenAt.IsZero() {
+		t.Fatal("expected LastSeenAt fallback")
+	}
+
+	store, err := sessions.NewStore(sessions.StoreOptions{})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	records, err := store.List(sessions.SessionFilter{Provider: sessions.ProviderCodex})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].SessionID != "codex-default-root" {
+		t.Fatalf("default-root records = %#v", records)
+	}
+}
+
+func TestIngestHookFallsBackClaudeSessionEndTimesAndSummary(t *testing.T) {
+	root := t.TempDir()
+	record, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+		"session_id": "claude-end",
+		"cwd": "/tmp",
+		"hook_event_name": "SessionEnd",
+		"reason": "other"
+	}`)), sessions.IngestOptions{StateRoot: root})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.Status != "ended" || record.EndedAt.IsZero() || record.LastSeenAt.IsZero() {
+		t.Fatalf("expected ended Claude fallback times, got %#v", record)
+	}
+	if record.Summary != "Session ended: other" {
+		t.Fatalf("Summary = %q", record.Summary)
 	}
 }
 

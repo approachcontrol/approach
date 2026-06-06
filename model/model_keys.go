@@ -612,6 +612,18 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
 	ctx := m.agentLaunchContext(path)
+	return m.launchAgentWithContext(ctx)
+}
+
+func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, tea.Cmd) {
+	ctx := m.agentLaunchContext(path)
+	if branch != nil {
+		ctx.Branch = *branch
+	}
+	return m.launchAgentWithContext(ctx)
+}
+
+func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())

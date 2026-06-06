@@ -173,6 +173,9 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		if err != nil {
 			return Config{}, fmt.Errorf("expand sessions root in config %s: %w", path, err)
 		}
+		if !filepath.IsAbs(root) {
+			return Config{}, fmt.Errorf("parse config %s: sessions.root must be absolute or start with ~", path)
+		}
 		cfg.Sessions.Root = root
 	}
 
