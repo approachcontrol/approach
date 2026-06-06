@@ -23,7 +23,7 @@ clear.
 - [x] P1 - Branch creation from branches pane: complement worktree creation and make branch-first workflows smoother.
 - [ ] P2 - Worktree move/rename: wrap `git worktree move` for users who need to reorganize generated paths.
 - [ ] P2 - Bare repo support: detect bare repositories and support worktree creation/listing correctly for central bare repo workflows.
-- [ ] P2 - Bootstrap hooks: support an optional per-repo setup script after worktree creation for env files, dependency links, or setup commands.
+- [x] P2 - Bootstrap hooks: support an optional per-repo setup script after worktree creation for env files, dependency links, or setup commands.
 
 ## Phase 3: Multi-Repo Operations
 

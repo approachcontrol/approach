@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/internal/version"
 	"github.com/brian-bell/wtui/scanner"
@@ -140,5 +142,49 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 	}
 	if got.Agent.Command != "codex" {
 		t.Fatalf("expected agent config passed to program, got %q", got.Agent.Command)
+	}
+}
+
+func TestBootstrapHookResolverMatchesConfiguredRepoPath(t *testing.T) {
+	cfg := config.Config{
+		Bootstrap: config.BootstrapConfig{
+			TimeoutSeconds: 120,
+			Hooks: []config.BootstrapHookConfig{
+				{RepoPath: filepath.Clean("/dev/wtui/"), Script: ".wtui/bootstrap"},
+				{RepoPath: "/dev/client-api", Script: "/bin/bootstrap-client-api", TimeoutSeconds: 300},
+			},
+		},
+	}
+	resolve := bootstrapHookResolver(cfg)
+
+	hook, ok := resolve("/dev/wtui")
+	if !ok {
+		t.Fatal("expected hook for configured repo")
+	}
+	if hook != (actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 120}) {
+		t.Fatalf("unexpected hook: %#v", hook)
+	}
+
+	hook, ok = resolve("/dev/client-api")
+	if !ok {
+		t.Fatal("expected hook for second configured repo")
+	}
+	if hook.TimeoutSeconds != 300 {
+		t.Fatalf("expected per-hook timeout override 300, got %d", hook.TimeoutSeconds)
+	}
+}
+
+func TestBootstrapHookResolverDoesNotMatchDifferentRepoPath(t *testing.T) {
+	resolve := bootstrapHookResolver(config.Config{
+		Bootstrap: config.BootstrapConfig{
+			TimeoutSeconds: 120,
+			Hooks: []config.BootstrapHookConfig{
+				{RepoPath: "/dev/wtui", Script: ".wtui/bootstrap"},
+			},
+		},
+	})
+
+	if _, ok := resolve("/dev/wtui-other"); ok {
+		t.Fatal("expected non-matching repo to have no hook")
 	}
 }

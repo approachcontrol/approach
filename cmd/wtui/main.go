@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/internal/version"
 	"github.com/brian-bell/wtui/model"
@@ -92,11 +94,34 @@ func fillRunDeps(deps runDeps) runDeps {
 
 func startProgram(repos []scanner.Repo, cfg config.Config) error {
 	p := tea.NewProgram(model.NewWithOptions(repos, model.Options{
-		AgentCommand: cfg.Agent.Command,
+		AgentCommand:         cfg.Agent.Command,
+		BootstrapHookForRepo: bootstrapHookResolver(cfg),
+		RunBootstrapHook:     actions.RunBootstrapHook,
 		SaveAgentCommand: func(command string) error {
 			return config.SaveAgentCommand(command)
 		},
 	}), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
+}
+
+func bootstrapHookResolver(cfg config.Config) func(string) (actions.BootstrapHook, bool) {
+	hooks := make(map[string]actions.BootstrapHook, len(cfg.Bootstrap.Hooks))
+	for _, hook := range cfg.Bootstrap.Hooks {
+		timeout := hook.TimeoutSeconds
+		if timeout == 0 {
+			timeout = cfg.Bootstrap.TimeoutSeconds
+		}
+		if timeout == 0 {
+			timeout = 120
+		}
+		hooks[filepath.Clean(hook.RepoPath)] = actions.BootstrapHook{
+			Script:         hook.Script,
+			TimeoutSeconds: timeout,
+		}
+	}
+	return func(repoPath string) (actions.BootstrapHook, bool) {
+		hook, ok := hooks[filepath.Clean(repoPath)]
+		return hook, ok
+	}
 }

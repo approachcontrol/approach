@@ -24,6 +24,7 @@ exist:
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
 | Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` supports `~` and `~/...` expansion. `WORKTREE_ROOT` is passed
 through as provided by the environment.
@@ -49,6 +50,18 @@ prefer_multiplexer = true
 
 [agent]
 command = "codex"
+
+[bootstrap]
+timeout_seconds = 120
+
+[[bootstrap.hooks]]
+repo_path = "~/dev/wtui"
+script = ".wtui/bootstrap"
+
+[[bootstrap.hooks]]
+repo_path = "~/dev/client-api"
+script = "~/bin/bootstrap-client-api"
+timeout_seconds = 300
 ```
 
 ## Sections
@@ -107,3 +120,32 @@ updates this value immediately, creating the config file if needed.
 | Key | Type | Description |
 |-----|------|-------------|
 | `command` | string | Supported values: `codex` or `claude`. |
+
+### `[bootstrap]`
+
+Configures optional per-repo scripts that run after wtui successfully creates a
+worktree with `n`, `P`, or `N`. Hooks are opt-in and are matched by configured
+repo path. wtui does not auto-discover scripts from scanned repositories.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `timeout_seconds` | integer | Default hook timeout. Omitted or `0` means `120`; negative values fail startup. |
+
+Add one `[[bootstrap.hooks]]` entry per repo:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `repo_path` | string | Required repo path to match. Supports `~` expansion. |
+| `script` | string | Required script path. Relative paths resolve from the newly created worktree; `~` paths are expanded. |
+| `timeout_seconds` | integer | Optional per-hook timeout override; negative values fail startup. |
+
+Bootstrap scripts execute directly, not through a shell. The script file must
+exist, be a regular file, and be executable. wtui sets the script working
+directory to the new worktree and appends these environment variables:
+`WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_WORKTREE_REF`, and
+`WTUI_WORKTREE_CREATE_KIND`.
+
+If a hook fails, wtui keeps the created worktree and branch, refreshes the
+worktree list, and shows the hook error in the status bar. For `N`, a hook
+failure prevents automatic agent launch; the agent can still be launched
+manually afterward.

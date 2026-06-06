@@ -132,6 +132,8 @@ type WorktreeCreatedMsg struct {
 	RepoPath     string
 	WorktreePath string
 	LaunchAgent  bool
+	BootstrapRan bool
+	Request      uint64
 }
 
 type WorktreeCreateKind int
@@ -147,6 +149,15 @@ type WorktreeCreateFailedMsg struct {
 	Err         string
 	Kind        WorktreeCreateKind
 	LaunchAgent bool
+	Request     uint64
+}
+
+type WorktreeBootstrapFailedMsg struct {
+	RepoPath     string
+	WorktreePath string
+	Err          string
+	LaunchAgent  bool
+	Request      uint64
 }
 
 type ReflogResultMsg struct {
@@ -383,9 +394,10 @@ func (m Model) handleGitPullFailed(msg GitPullFailedMsg) Model {
 }
 
 func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentWorktreeCreateRequest(msg.Request) {
 		return m, nil
 	}
+	m = m.clearWorktreeCreateRequest(msg.Request)
 	m.mode = ui.ModeWorktrees
 	m.worktrees = m.worktrees.ResetSelection()
 	m, fetchCmd := m.startFetchWorktrees()
@@ -396,8 +408,26 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	return m, tea.Batch(fetchCmd, launchCmd)
 }
 
+func (m Model) handleWorktreeBootstrapFailed(msg WorktreeBootstrapFailedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentWorktreeCreateRequest(msg.Request) {
+		return m, nil
+	}
+	m = m.clearWorktreeCreateRequest(msg.Request)
+	errText := msg.Err
+	if errText == "" {
+		errText = "bootstrap hook failed"
+	} else {
+		errText = "bootstrap hook failed: " + errText
+	}
+	m.mode = ui.ModeWorktrees
+	m.worktrees = m.worktrees.ResetSelection()
+	m = m.setStatus(statusGitMutation, errText)
+	return m.startFetchWorktrees()
+}
+
 func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+	if m.isCurrentRepo(msg.RepoPath) && m.isCurrentWorktreeCreateRequest(msg.Request) {
+		m = m.clearWorktreeCreateRequest(msg.Request)
 		errText := msg.Err
 		if msg.Err == "" {
 			errText = "Unable to create worktree"
@@ -405,12 +435,12 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 		prompt := "New worktree"
 		placeholder := ui.WorktreeInputPlaceholder
 		validate := validateWorktreeInput
-		submit := func(input string) tea.Cmd { return m.createWorktree(input, msg.LaunchAgent) }
+		submit := func(input string) tea.Cmd { return m.createWorktree(input, msg.LaunchAgent, 0) }
 		if msg.Kind == WorktreeCreatePullRequest {
 			prompt = ui.PRWorktreePrompt
 			placeholder = ui.PRWorktreeInputPlaceholder
 			validate = func(input string) error { return validatePullRequestWorktreeInput(msg.RepoPath, input) }
-			submit = func(input string) tea.Cmd { return m.createPullRequestWorktree(input) }
+			submit = func(input string) tea.Cmd { return m.createPullRequestWorktree(input, 0) }
 		} else if msg.LaunchAgent {
 			prompt = "Create worktree and launch agent from"
 		}
