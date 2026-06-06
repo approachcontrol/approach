@@ -163,6 +163,45 @@ func (m Model) createWorktree(input string) tea.Cmd {
 	}
 }
 
+func (m Model) createBranch(input string) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return m.createBranchCommand(repoPath, input, m.selectedBranchStartPoint())
+}
+
+func (m Model) createBranchFromStartPoint(input, startPoint string) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return m.createBranchCommand(repoPath, input, startPoint)
+}
+
+func (m Model) createBranchCommand(repoPath, input, startPoint string) tea.Cmd {
+	return func() tea.Msg {
+		if err := actions.CreateBranch(repoPath, input, startPoint); err != nil {
+			return BranchCreateFailedMsg{RepoPath: repoPath, Input: input, Err: err.Error(), StartPoint: startPoint}
+		}
+		return BranchCreatedMsg{RepoPath: repoPath, Name: input}
+	}
+}
+
+func (m Model) selectedBranchStartPoint() string {
+	if m.mode != ui.ModeBranches {
+		return ""
+	}
+	row, ok := m.selectedRow()
+	if !ok || row.Branch.Name == "(detached)" {
+		return ""
+	}
+	if row.Branch.FullRef != "" {
+		return row.Branch.FullRef
+	}
+	return "refs/heads/" + row.Branch.Name
+}
+
 func (m Model) fetchWorktrees(request uint64) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {

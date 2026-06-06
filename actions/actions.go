@@ -110,6 +110,25 @@ func CreateWorktree(repoPath, ref string) (string, error) {
 	return worktreePath, nil
 }
 
+// CreateBranch creates a new branch without checking it out. When startPoint is
+// empty, git creates the branch at HEAD.
+func CreateBranch(repoPath, name, startPoint string) error {
+	name = strings.TrimSpace(name)
+	startPoint = strings.TrimSpace(startPoint)
+	if name == "" {
+		return fmt.Errorf("branch name cannot be empty")
+	}
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("branch name cannot start with -: %q", name)
+	}
+
+	args := []string{"branch", "--", name}
+	if startPoint != "" {
+		args = append(args, startPoint)
+	}
+	return runGit(repoPath, args...)
+}
+
 // DefaultWorktreePath returns the conventional sibling path used for new
 // worktrees: <repo>-worktrees/<branch-or-tag>.
 func DefaultWorktreePath(repoPath, ref string) string {

@@ -186,6 +186,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewWorktree()
 		}
+		if m.mode == ui.ModeBranches {
+			return m.handleNewBranch()
+		}
 	case "d":
 		return m.handleDelete()
 	case "p":
@@ -297,9 +300,29 @@ func (m Model) handleNewWorktree() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleNewBranch() (tea.Model, tea.Cmd) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
+	m.modal = modal.OpenInput(
+		ui.BranchPrompt,
+		"",
+		validateBranchInput,
+		func(input string) tea.Cmd { return m.createBranch(input) },
+	)
+	return m, nil
+}
+
 func validateWorktreeInput(input string) error {
 	if input == "" {
 		return fmt.Errorf("Enter a branch, tag, or new branch name")
+	}
+	return nil
+}
+
+func validateBranchInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("Enter a branch name")
 	}
 	return nil
 }

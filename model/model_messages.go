@@ -46,6 +46,18 @@ type BranchDeletedMsg struct {
 	RepoPath string
 }
 
+type BranchCreatedMsg struct {
+	RepoPath string
+	Name     string
+}
+
+type BranchCreateFailedMsg struct {
+	RepoPath   string
+	Input      string
+	Err        string
+	StartPoint string
+}
+
 type StashDroppedMsg struct {
 	RepoPath string
 }
@@ -397,6 +409,13 @@ func (m Model) handleBranchResult(msg BranchResultMsg) Model {
 		}
 	}
 	m.rows = m.rows.SetItems(filtered)
+	if m.pendingBranchSelection != "" {
+		pendingRef := "refs/heads/" + m.pendingBranchSelection
+		m.rows = m.rows.SelectFunc(func(row gitquery.BranchRow) bool {
+			return row.Branch.Name == m.pendingBranchSelection || row.Branch.FullRef == pendingRef
+		})
+		m.pendingBranchSelection = ""
+	}
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
@@ -453,6 +472,32 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 		return m.startFetchBranches()
 	}
 	return m, nil
+}
+
+func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) {
+		m.mode = ui.ModeBranches
+		m.rows = m.rows.SetQuery("")
+		m.pendingBranchSelection = msg.Name
+		return m.startFetchBranches()
+	}
+	return m, nil
+}
+
+func (m Model) handleBranchCreateFailed(msg BranchCreateFailedMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		errText := msg.Err
+		if msg.Err == "" {
+			errText = "Unable to create branch"
+		}
+		m.modal = modal.OpenInput(
+			ui.BranchPrompt,
+			msg.Input,
+			validateBranchInput,
+			func(input string) tea.Cmd { return m.createBranchFromStartPoint(input, msg.StartPoint) },
+		).SetInputError(errText)
+	}
+	return m
 }
 
 func (m Model) handleDeleteFailed(msg DeleteFailedMsg) Model {

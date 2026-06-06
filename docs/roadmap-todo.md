@@ -19,7 +19,7 @@ Goal: round out lifecycle operations while keeping the destructive boundary
 clear.
 
 - [ ] P1 - PR-based worktree creation: enter a PR number or URL, fetch the head branch, and create a worktree for review.
-- [ ] P1 - Branch creation from branches pane: complement worktree creation and make branch-first workflows smoother.
+- [x] P1 - Branch creation from branches pane: complement worktree creation and make branch-first workflows smoother.
 - [ ] P1 - Coding-agent launch actions: launch Codex or Claude Code from a selected worktree or worktree branch, optionally after creating a new worktree or branch.
 - [ ] P2 - Worktree move/rename: wrap `git worktree move` for users who need to reorganize generated paths.
 - [ ] P2 - Bare repo support: detect bare repositories and support worktree creation/listing correctly for central bare repo workflows.

@@ -157,6 +157,59 @@ func TestModel_BranchDiffPayloadAgainstRealRepo(t *testing.T) {
 	}
 }
 
+func TestModel_CreateBranchFromSelectedBranchAgainstRealRepo(t *testing.T) {
+	m, dir := setupModelRepo(t)
+	initial := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	mustGit(t, dir, "checkout", "-b", "base")
+	writeFile(t, dir, "base.txt", "base\n")
+	mustGit(t, dir, "add", "base.txt")
+	mustGit(t, dir, "commit", "-m", "base commit")
+	baseHead := gitOut(t, dir, "rev-parse", "base")
+	mustGit(t, dir, "checkout", initial)
+	mustGit(t, dir, "tag", "base", initial)
+
+	m = inRightPane(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if cmd == nil {
+		t.Fatal("expected branches fetch cmd")
+	}
+	m, _ = update(m, cmd())
+	baseIndex := -1
+	for i, row := range m.Rows() {
+		if row.Branch.Name == "base" || row.Branch.Name == "heads/base" {
+			baseIndex = i
+			break
+		}
+	}
+	if baseIndex == -1 {
+		t.Fatalf("expected base branch in rows: %+v", m.Rows())
+	}
+	for i := 0; i < baseIndex; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feature/from-base")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected create branch cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(model.BranchCreatedMsg); !ok {
+		t.Fatalf("expected BranchCreatedMsg, got %T", msg)
+	}
+	got := gitOut(t, dir, "rev-parse", "feature/from-base")
+	if got != baseHead {
+		t.Fatalf("expected feature/from-base at base %s, got %s", baseHead, got)
+	}
+	if current := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); current != initial {
+		t.Fatalf("expected current branch to remain %s, got %s", initial, current)
+	}
+	if m.Mode() != ui.ModeBranches {
+		t.Fatalf("expected mode branches, got %d", m.Mode())
+	}
+}
+
 func TestModel_StashDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, dir := setupModelRepo(t)
 	writeFile(t, dir, "README.md", "hello\nstashed\n")
