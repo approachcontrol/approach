@@ -63,6 +63,7 @@ filter matches, or a load failure with details in the status bar.
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent (`codex` or `claude`) |
 | `D` | Toggle destructive mode |
+| `f` | Fetch all currently visible repos with `--prune` |
 | `tab` | Switch focus to right pane |
 | `q`/`esc` | Quit |
 
@@ -95,6 +96,10 @@ filter matches, or a load failure with details in the status bar.
 | `q`/`esc` | Close overlay or quit |
 
 The right pane header shows the active mode. Press `1`–`5` or use arrow keys to switch between worktrees, branches, stashes, history, and reflog.
+
+When the left repo pane is focused, press `f` to run `git fetch --prune` for
+the currently visible repos. Repo filtering limits the batch to the filtered
+list captured when the key is pressed.
 
 ### Worktrees view (mode 1)
 

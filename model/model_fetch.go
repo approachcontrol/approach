@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -11,6 +12,8 @@ import (
 )
 
 // --- Fetch commands ---
+
+const visibleRepoFetchFailureNameLimit = 3
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	switch m.mode {
@@ -103,12 +106,69 @@ func (m Model) startFetchReflog() (Model, tea.Cmd) {
 	return m, m.fetchReflog(request)
 }
 
+func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
+	repos := m.filteredRepos()
+	if len(repos) == 0 {
+		m.visibleRepoFetch = visibleRepoFetchState{}
+		m = m.setStatus(statusGitMutation, "No visible repos to fetch")
+		return m, nil
+	}
+
+	m.visibleRepoFetchSeq++
+	request := m.visibleRepoFetchSeq
+	capturedPaths := make(map[string]struct{}, len(repos))
+	cmds := make([]tea.Cmd, 0, len(repos))
+	for _, repo := range repos {
+		repo := repo
+		capturedPaths[repo.Path] = struct{}{}
+		cmds = append(cmds, func() tea.Msg {
+			errText := ""
+			if err := m.fetchRepo(repo.Path); err != nil {
+				errText = fmt.Sprintf("fetch failed: %v", err)
+			}
+			return VisibleRepoFetchResultMsg{
+				Request:     request,
+				RepoPath:    repo.Path,
+				DisplayName: repo.DisplayName,
+				Err:         errText,
+			}
+		})
+	}
+	m.visibleRepoFetch = visibleRepoFetchState{
+		Request:       request,
+		Total:         len(repos),
+		CapturedPaths: capturedPaths,
+	}
+	return m, tea.Batch(cmds...)
+}
+
 func (m Model) canFetch() bool {
 	if m.activePane != 1 {
 		return false
 	}
 	_, _, ok := m.fetchTargetPath()
 	return ok
+}
+
+func (m Model) canFetchVisibleRepos() bool {
+	return m.activePane == 0 && len(m.filteredRepos()) > 0
+}
+
+func (m Model) visibleRepoFetchProgressText() string {
+	return fmt.Sprintf("Fetching %d/%d visible repos...", m.visibleRepoFetch.Completed, m.visibleRepoFetch.Total)
+}
+
+func (m Model) visibleRepoFetchFinalStatusText() string {
+	total := m.visibleRepoFetch.Total
+	if m.visibleRepoFetch.FailureCount == 0 {
+		return fmt.Sprintf("Fetched %d visible repos", total)
+	}
+	failed := strings.Join(m.visibleRepoFetch.FailureNames, ", ")
+	remaining := m.visibleRepoFetch.FailureCount - len(m.visibleRepoFetch.FailureNames)
+	if remaining > 0 {
+		failed = fmt.Sprintf("%s +%d more", failed, remaining)
+	}
+	return fmt.Sprintf("Fetched %d/%d visible repos; failed: %s", m.visibleRepoFetch.Successes, total, failed)
 }
 
 func (m Model) canPull() bool {

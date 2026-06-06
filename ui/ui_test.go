@@ -122,6 +122,48 @@ func TestRender_BranchesModeShowsPullWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestRender_LeftPaneShowsFetchVisibleWhenReposExist(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                 []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:              0,
+		Width:                 120,
+		Height:                10,
+		Mode:                  1,
+		ActivePane:            0,
+		FetchVisibleAvailable: true,
+	})
+	if !strings.Contains(view, "f: fetch visible") {
+		t.Fatalf("left-pane render should expose fetch-visible hint, got:\n%s", view)
+	}
+}
+
+func TestRender_LeftPaneShortcutPaneShowsFetchVisibleWhenReposExist(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                 []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:              0,
+		Width:                 120,
+		Height:                24,
+		Mode:                  1,
+		ActivePane:            0,
+		FetchVisibleAvailable: true,
+	})
+	if !strings.Contains(view, "f: fetch visible") {
+		t.Fatalf("left-pane shortcut pane should expose fetch-visible hint, got:\n%s", view)
+	}
+}
+
+func TestRender_LeftPaneHidesFetchVisibleWhenNoReposVisible(t *testing.T) {
+	view := Render(RenderParams{
+		Width:      120,
+		Height:     10,
+		Mode:       1,
+		ActivePane: 0,
+	})
+	if strings.Contains(view, "f: fetch visible") {
+		t.Fatalf("empty left-pane render should hide fetch-visible hint, got:\n%s", view)
+	}
+}
+
 func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
 	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
 	if !strings.Contains(bar, "n: new worktree") {

@@ -121,6 +121,13 @@ type GitFetchFailedMsg struct {
 	Err      string
 }
 
+type VisibleRepoFetchResultMsg struct {
+	Request     uint64
+	RepoPath    string
+	DisplayName string
+	Err         string
+}
+
 type GitPulledMsg struct {
 	RepoPath string
 }
@@ -323,6 +330,13 @@ func (m Model) clearAnyStatus() Model {
 	return m
 }
 
+func (m Model) visibleStatusText() string {
+	if m.visibleRepoFetch.Request != 0 {
+		return m.visibleRepoFetchProgressText()
+	}
+	return m.status.Text
+}
+
 func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeWorktrees, msg.ListRequest) {
 		return m
@@ -406,6 +420,38 @@ func (m Model) handleGitFetchFailed(msg GitFetchFailedMsg) Model {
 		m = m.setStatus(statusGitMutation, msg.Err)
 	}
 	return m
+}
+
+func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Request == 0 || msg.Request != m.visibleRepoFetch.Request {
+		return m, nil
+	}
+	if msg.Err == "" {
+		m.visibleRepoFetch.Successes++
+	} else {
+		m.visibleRepoFetch.FailureCount++
+		if len(m.visibleRepoFetch.FailureNames) < visibleRepoFetchFailureNameLimit {
+			name := msg.DisplayName
+			if name == "" {
+				name = msg.RepoPath
+			}
+			m.visibleRepoFetch.FailureNames = append(m.visibleRepoFetch.FailureNames, name)
+		}
+	}
+	m.visibleRepoFetch.Completed++
+	if m.visibleRepoFetch.Completed < m.visibleRepoFetch.Total {
+		return m, nil
+	}
+
+	currentPath, currentOK := m.currentRepoPath()
+	_, shouldRefresh := m.visibleRepoFetch.CapturedPaths[currentPath]
+	finalStatus := m.visibleRepoFetchFinalStatusText()
+	m.visibleRepoFetch = visibleRepoFetchState{}
+	m = m.setStatus(statusGitMutation, finalStatus)
+	if currentOK && shouldRefresh {
+		return m.startFetchForMode()
+	}
+	return m, nil
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {

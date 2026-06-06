@@ -34,10 +34,13 @@ type Model struct {
 	activePane               int // 0=left (repos), 1=right (content)
 	destructive              bool
 	status                   statusError
+	visibleRepoFetchSeq      uint64
+	visibleRepoFetch         visibleRepoFetchState
 	searchActive             bool
 	pendingBranchSelection   string
 	pendingWorktreeSelection string
 	agentCommand             string
+	fetchRepo                func(string) error
 	saveAgent                func(string) error
 	launchAgent              func(string, string) (actions.TerminalLaunchSpec, error)
 	bootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
@@ -60,10 +63,21 @@ type statusError struct {
 	Mode      ui.Mode
 }
 
+type visibleRepoFetchState struct {
+	Request       uint64
+	Total         int
+	Completed     int
+	Successes     int
+	FailureNames  []string
+	FailureCount  int
+	CapturedPaths map[string]struct{}
+}
+
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
 	AgentCommand         string
+	FetchRepo            func(string) error
 	SaveAgentCommand     func(string) error
 	LaunchAgent          func(string, string) (actions.TerminalLaunchSpec, error)
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
@@ -80,6 +94,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgent := opts.SaveAgentCommand
 	if saveAgent == nil {
 		saveAgent = func(string) error { return nil }
+	}
+	fetchRepo := opts.FetchRepo
+	if fetchRepo == nil {
+		fetchRepo = actions.Fetch
 	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
@@ -102,6 +120,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reflogs:              newReflogPane(),
 		mode:                 ui.ModeWorktrees,
 		agentCommand:         agent.Normalize(opts.AgentCommand),
+		fetchRepo:            fetchRepo,
 		saveAgent:            saveAgent,
 		launchAgent:          launchAgent,
 		bootstrapHookForRepo: bootstrapHookForRepo,
@@ -146,7 +165,7 @@ func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
 func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
-func (m Model) TransientError() string          { return m.status.Text }
+func (m Model) TransientError() string          { return m.visibleStatusText() }
 func (m Model) SearchActive() bool              { return m.searchActive }
 func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
@@ -207,13 +226,14 @@ func (m Model) View() string {
 		Reflogs:                  reflogs,
 		ReflogSelected:           reflogSelected,
 		ReflogScroll:             reflogScroll,
-		TransientError:           m.status.Text,
+		TransientError:           m.visibleStatusText(),
 		SearchActive:             m.searchActive,
 		RepoSearch:               m.repos.Query(),
 		ItemSearch:               m.activeItemPaneQuery(),
 		RepoEmptyMessage:         repoEmptyMessage,
 		RightEmptyMessage:        rightEmptyMessage,
 		FetchAvailable:           m.canFetch(),
+		FetchVisibleAvailable:    m.canFetchVisibleRepos(),
 		PullAvailable:            m.canPull(),
 		WorktreeMoveAvailable:    m.canMoveWorktree(),
 		AgentAvailable:           m.canLaunchAgent(),
@@ -392,6 +412,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGitFetched(msg)
 	case GitFetchFailedMsg:
 		return m.handleGitFetchFailed(msg), nil
+	case VisibleRepoFetchResultMsg:
+		return m.handleVisibleRepoFetchResult(msg)
 	case GitPulledMsg:
 		return m.handleGitPulled(msg)
 	case GitPullFailedMsg:

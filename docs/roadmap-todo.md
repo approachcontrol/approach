@@ -30,7 +30,7 @@ clear.
 Goal: make wtui more than a per-repo switcher while preserving safety and
 clarity.
 
-- [ ] P1 - Fetch all visible repos: extend the current fetch action across filtered repos with clear progress and failure reporting.
+- [x] P1 - Fetch all visible repos: extend the current fetch action across filtered repos with clear progress and failure reporting.
 - [ ] P1 - Prune stale worktrees across visible repos: require destructive mode and a confirmation summary.
 - [ ] P2 - Batch selection: enable scoped multi-repo actions without applying commands to the whole workspace accidentally.
 - [ ] P2 - Merged branch cleanup queue: group safe cleanup candidates across repos using the existing merged-branch indicators.

@@ -156,6 +156,7 @@ type RenderParams struct {
 	RepoEmptyMessage         string
 	RightEmptyMessage        string
 	FetchAvailable           bool
+	FetchVisibleAvailable    bool
 	PullAvailable            bool
 	WorktreeMoveAvailable    bool
 	AgentAvailable           bool
@@ -227,6 +228,7 @@ func Render(p RenderParams) string {
 		RepoSearch:                p.RepoSearch,
 		ItemSearch:                p.ItemSearch,
 		FetchAvailable:            p.FetchAvailable,
+		FetchVisibleAvailable:     p.FetchVisibleAvailable,
 		PullAvailable:             p.PullAvailable,
 		AgentAvailable:            p.AgentAvailable,
 		NewAgent:                  p.NewAgentAvailable,
@@ -413,6 +415,7 @@ type statusBarParams struct {
 	RepoSearch                string
 	ItemSearch                string
 	FetchAvailable            bool
+	FetchVisibleAvailable     bool
 	PullAvailable             bool
 	AgentAvailable            bool
 	NewAgent                  bool
@@ -566,6 +569,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 
 	var actions []shortcutHint
+	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
+		actions = append(actions, shortcutHint{Key: "f", Label: "fetch visible"})
+	}
 	switch sp.Mode {
 	case ModeWorktrees:
 		if sp.ActivePane == 1 && sp.RepoSelected && !sp.StaleSelected {
