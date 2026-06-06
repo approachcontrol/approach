@@ -16,6 +16,7 @@ import (
 
 const visibleRepoFetchFailureNameLimit = 3
 const visibleRepoFetchStatusTTL = 3 * time.Second
+const visibleRepoFetchFadeStepDuration = 1 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	switch m.mode {
@@ -176,6 +177,12 @@ func (m Model) visibleRepoFetchFinalStatusText() string {
 func expireVisibleRepoFetchStatus(request uint64, text string) tea.Cmd {
 	return tea.Tick(visibleRepoFetchStatusTTL, func(time.Time) tea.Msg {
 		return VisibleRepoFetchStatusExpiredMsg{Request: request, Text: text}
+	})
+}
+
+func fadeVisibleRepoFetchStatus(request uint64, text string, step int) tea.Cmd {
+	return tea.Tick(time.Duration(step)*visibleRepoFetchFadeStepDuration, func(time.Time) tea.Msg {
+		return VisibleRepoFetchStatusFadeMsg{Request: request, Text: text, Step: step}
 	})
 }
 

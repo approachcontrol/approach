@@ -150,6 +150,7 @@ type RenderParams struct {
 	ReflogSelected           int
 	ReflogScroll             int
 	TransientError           string
+	TransientErrorFadeStep   int
 	SearchActive             bool
 	RepoSearch               string
 	ItemSearch               string
@@ -224,6 +225,7 @@ func Render(p RenderParams) string {
 		CommitSelected:            commitSelected,
 		ReflogSelected:            reflogSelected,
 		TransientError:            p.TransientError,
+		TransientErrorFadeStep:    p.TransientErrorFadeStep,
 		SearchActive:              p.SearchActive,
 		RepoSearch:                p.RepoSearch,
 		ItemSearch:                p.ItemSearch,
@@ -411,6 +413,7 @@ type statusBarParams struct {
 	CommitSelected            bool
 	ReflogSelected            bool
 	TransientError            string
+	TransientErrorFadeStep    int
 	SearchActive              bool
 	RepoSearch                string
 	ItemSearch                string
@@ -472,7 +475,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	itemSearch := sp.ItemSearch
 
 	if transientError != "" {
-		return statusStyle.Width(width).Render("  " + dirtyRedStyle.Render(transientError))
+		return statusStyle.Width(width).Render("  " + transientStatusStyle(sp.TransientErrorFadeStep).Render(transientError))
 	}
 
 	label := "items"
@@ -715,6 +718,17 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 		return renderFooterLegend(legend)
 	}
 	return "  " + renderFooterHintList(sections)
+}
+
+func transientStatusStyle(fadeStep int) lipgloss.Style {
+	switch fadeStep {
+	case 1:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	case 2:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	default:
+		return dirtyRedStyle
+	}
 }
 
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
@@ -1177,19 +1191,20 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 
 func renderOverlay(p RenderParams) string {
 	statusBar := renderStatusBarWithState(statusBarParams{
-		Width:          p.Width,
-		Mode:           p.Mode,
-		Overlay:        p.Overlay,
-		ActivePane:     p.ActivePane,
-		Destructive:    p.Destructive,
-		TransientError: p.TransientError,
-		SearchActive:   p.SearchActive,
-		RepoSearch:     p.RepoSearch,
-		ItemSearch:     p.ItemSearch,
-		FetchAvailable: p.FetchAvailable,
-		PullAvailable:  p.PullAvailable,
-		AgentAvailable: p.AgentAvailable,
-		NewAgent:       p.NewAgentAvailable,
+		Width:                  p.Width,
+		Mode:                   p.Mode,
+		Overlay:                p.Overlay,
+		ActivePane:             p.ActivePane,
+		Destructive:            p.Destructive,
+		TransientError:         p.TransientError,
+		TransientErrorFadeStep: p.TransientErrorFadeStep,
+		SearchActive:           p.SearchActive,
+		RepoSearch:             p.RepoSearch,
+		ItemSearch:             p.ItemSearch,
+		FetchAvailable:         p.FetchAvailable,
+		PullAvailable:          p.PullAvailable,
+		AgentAvailable:         p.AgentAvailable,
+		NewAgent:               p.NewAgentAvailable,
 	})
 	contentHeight := p.Height - 1
 

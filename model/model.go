@@ -62,6 +62,7 @@ type statusError struct {
 	Source    statusSource
 	FetchKind FetchKind
 	Mode      ui.Mode
+	FadeStep  int
 }
 
 type visibleRepoFetchState struct {
@@ -167,6 +168,7 @@ func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
 func (m Model) Destructive() bool               { return m.destructive }
 func (m Model) TransientError() string          { return m.visibleStatusText() }
+func (m Model) TransientErrorFadeStep() int     { return m.visibleStatusFadeStep() }
 func (m Model) SearchActive() bool              { return m.searchActive }
 func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
@@ -228,6 +230,7 @@ func (m Model) View() string {
 		ReflogSelected:           reflogSelected,
 		ReflogScroll:             reflogScroll,
 		TransientError:           m.visibleStatusText(),
+		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
 		SearchActive:             m.searchActive,
 		RepoSearch:               m.repos.Query(),
 		ItemSearch:               m.activeItemPaneQuery(),
@@ -415,6 +418,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGitFetchFailed(msg), nil
 	case VisibleRepoFetchResultMsg:
 		return m.handleVisibleRepoFetchResult(msg)
+	case VisibleRepoFetchStatusFadeMsg:
+		return m.handleVisibleRepoFetchStatusFade(msg), nil
 	case VisibleRepoFetchStatusExpiredMsg:
 		return m.handleVisibleRepoFetchStatusExpired(msg), nil
 	case GitPulledMsg:

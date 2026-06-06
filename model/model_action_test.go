@@ -796,6 +796,50 @@ func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
 	}
 }
 
+func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	if m.TransientErrorFadeStep() != 0 {
+		t.Fatalf("expected fresh status to start unfaded, got step %d", m.TransientErrorFadeStep())
+	}
+
+	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 1})
+	if m.TransientErrorFadeStep() != 1 {
+		t.Fatalf("expected fade step 1, got %d", m.TransientErrorFadeStep())
+	}
+	if !strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("fade should keep status visible, got:\n%s", m.View())
+	}
+
+	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 2})
+	if m.TransientErrorFadeStep() != 2 {
+		t.Fatalf("expected fade step 2, got %d", m.TransientErrorFadeStep())
+	}
+}
+
+func TestModel_VisibleRepoFetchFinalStatusStillClearsOnKeypress(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	for _, msg := range runBatchCmd(t, cmd) {
+		m, _ = update(m, msg)
+	}
+	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 1})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if strings.Contains(m.View(), "Fetched 3 visible repos") {
+		t.Fatalf("expected keypress to clear faded status immediately, got:\n%s", m.View())
+	}
+}
+
 func TestModel_VisibleRepoFetchStatusExpiryDoesNotClearNewerStatus(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },

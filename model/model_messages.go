@@ -128,6 +128,12 @@ type VisibleRepoFetchResultMsg struct {
 	Err         string
 }
 
+type VisibleRepoFetchStatusFadeMsg struct {
+	Request uint64
+	Text    string
+	Step    int
+}
+
 type VisibleRepoFetchStatusExpiredMsg struct {
 	Request uint64
 	Text    string
@@ -342,6 +348,13 @@ func (m Model) visibleStatusText() string {
 	return m.status.Text
 }
 
+func (m Model) visibleStatusFadeStep() int {
+	if m.visibleRepoFetch.Request != 0 {
+		return 0
+	}
+	return m.status.FadeStep
+}
+
 func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeWorktrees, msg.ListRequest) {
 		return m
@@ -455,13 +468,27 @@ func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.
 	m.visibleRepoFetchStatusSeq++
 	statusRequest := m.visibleRepoFetchStatusSeq
 	m = m.setStatus(statusGitMutation, finalStatus)
-	expireCmd := expireVisibleRepoFetchStatus(statusRequest, finalStatus)
+	statusCmds := []tea.Cmd{
+		fadeVisibleRepoFetchStatus(statusRequest, finalStatus, 1),
+		fadeVisibleRepoFetchStatus(statusRequest, finalStatus, 2),
+		expireVisibleRepoFetchStatus(statusRequest, finalStatus),
+	}
 	if currentOK && shouldRefresh {
 		var fetchCmd tea.Cmd
 		m, fetchCmd = m.startFetchForMode()
-		return m, tea.Batch(fetchCmd, expireCmd)
+		statusCmds = append([]tea.Cmd{fetchCmd}, statusCmds...)
 	}
-	return m, expireCmd
+	return m, tea.Batch(statusCmds...)
+}
+
+func (m Model) handleVisibleRepoFetchStatusFade(msg VisibleRepoFetchStatusFadeMsg) Model {
+	if msg.Request == 0 || msg.Request != m.visibleRepoFetchStatusSeq {
+		return m
+	}
+	if m.status.Source == statusGitMutation && m.status.Text == msg.Text {
+		m.status.FadeStep = msg.Step
+	}
+	return m
 }
 
 func (m Model) handleVisibleRepoFetchStatusExpired(msg VisibleRepoFetchStatusExpiredMsg) Model {
