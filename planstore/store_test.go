@@ -1,0 +1,145 @@
+package planstore_test
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/brian-bell/wtui/planstore"
+)
+
+func TestStoreListSkipsCorruptAndNonDirEntries(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{PlanID: "good", Title: "Good", Markdown: "b", Status: "draft"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	// A plan dir with corrupt metadata must not hide other plans.
+	badDir := filepath.Join(root, "plans", "bad")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "meta.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A stray non-directory entry under plans/ must be ignored.
+	if err := os.WriteFile(filepath.Join(root, "plans", "stray.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := store.List(planstore.PlanFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].PlanID != "good" {
+		t.Fatalf("List() = %#v, want only good", records)
+	}
+}
+
+func TestStoreSavesAndListsPlansByRepoPath(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo", "feature")
+
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	planID, err := store.Save(planstore.PlanRecord{
+		PlanID:       "plan-tracer",
+		Title:        "Persist plans",
+		Summary:      "Add saved plans",
+		Markdown:     "# Persist plans\n\nDo the thing.\n",
+		Status:       "draft",
+		Source:       "manual",
+		Provider:     "claude",
+		LaunchID:     "launch-1",
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		Branch:       "feature/plans",
+		Commit:       "abcdef123456",
+	})
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if planID != "plan-tracer" {
+		t.Fatalf("Save() returned id %q, want plan-tracer", planID)
+	}
+
+	records, err := store.List(planstore.PlanFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List() returned %d records, want 1: %#v", len(records), records)
+	}
+
+	got := records[0]
+	if got.PlanID != "plan-tracer" ||
+		got.Title != "Persist plans" ||
+		got.Summary != "Add saved plans" ||
+		got.Markdown != "# Persist plans\n\nDo the thing.\n" ||
+		got.Status != "draft" ||
+		got.Source != "manual" ||
+		got.Provider != "claude" ||
+		got.LaunchID != "launch-1" ||
+		got.RepoPath != repoPath ||
+		got.WorktreePath != worktreePath ||
+		got.Branch != "feature/plans" ||
+		got.Commit != "abcdef123456" {
+		t.Fatalf("record did not round-trip: %#v", got)
+	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("expected created/updated timestamps to be set: %#v", got)
+	}
+}
+
+func TestStoreListSortsByUpdatedAtDescending(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	older := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:    "older",
+		Title:     "Older",
+		Markdown:  "old",
+		Status:    "draft",
+		RepoPath:  repoPath,
+		UpdatedAt: older,
+		CreatedAt: older,
+	}); err != nil {
+		t.Fatalf("Save(older) error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:    "newer",
+		Title:     "Newer",
+		Markdown:  "new",
+		Status:    "draft",
+		RepoPath:  repoPath,
+		UpdatedAt: newer,
+		CreatedAt: newer,
+	}); err != nil {
+		t.Fatalf("Save(newer) error = %v", err)
+	}
+
+	records, err := store.List(planstore.PlanFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("List() returned %d records, want 2", len(records))
+	}
+	if records[0].PlanID != "newer" || records[1].PlanID != "older" {
+		t.Fatalf("List() not sorted by updated_at desc: %#v", records)
+	}
+}
