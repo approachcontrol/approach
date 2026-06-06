@@ -425,9 +425,7 @@ func parsePullRequestInput(input string) (pullRequestInput, error) {
 	if strings.HasPrefix(input, "-") {
 		return pullRequestInput{}, fmt.Errorf("PR number or URL cannot start with -: %q", input)
 	}
-	if strings.HasPrefix(input, "#") {
-		input = strings.TrimPrefix(input, "#")
-	}
+	input = strings.TrimPrefix(input, "#")
 	if number, ok := parsePositiveInt(input); ok {
 		return pullRequestInput{Number: number}, nil
 	}

@@ -379,14 +379,14 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 
 func validateWorktreeInput(input string) error {
 	if input == "" {
-		return fmt.Errorf("Enter a branch, tag, or new branch name")
+		return fmt.Errorf("enter a branch, tag, or new branch name")
 	}
 	return nil
 }
 
 func validateBranchInput(input string) error {
 	if input == "" {
-		return fmt.Errorf("Enter a branch name")
+		return fmt.Errorf("enter a branch name")
 	}
 	return nil
 }

@@ -144,13 +144,6 @@ func (q *Querier) ListWorktrees(repoPath string) ([]Worktree, error) {
 // readDirtyStatus inspects a worktree path and reports how many files are
 // changed along with the number of lines added and deleted relative to HEAD.
 // A path with no changes yields zero counts and a nil error.
-func readDirtyStatus(path string) (files, added, deleted int, err error) {
-	return defaultQuery().readDirtyStatus(path)
-}
-
-// readDirtyStatus inspects a worktree path and reports how many files are
-// changed along with the number of lines added and deleted relative to HEAD.
-// A path with no changes yields zero counts and a nil error.
 func (q *Querier) readDirtyStatus(path string) (files, added, deleted int, err error) {
 	statusOut, err := q.git.Run(path, "status", "--porcelain")
 	if err != nil {
@@ -168,10 +161,6 @@ func (q *Querier) readDirtyStatus(path string) (files, added, deleted int, err e
 	}
 	added, deleted = ParseNumstat(diffOut)
 	return files, added, deleted, nil
-}
-
-func populateWorktreeDirtyStatus(wt *Worktree) {
-	defaultQuery().populateWorktreeDirtyStatus(wt)
 }
 
 func (q *Querier) populateWorktreeDirtyStatus(wt *Worktree) {
@@ -365,11 +354,6 @@ func (q *Querier) BranchDiff(worktreePath string) (string, error) {
 }
 
 // branchWorktreeMap returns a map of branch name -> worktree paths and detached worktree paths.
-func branchWorktreeMap(repoPath string) (map[string][]string, []string, error) {
-	return defaultQuery().branchWorktreeMap(repoPath)
-}
-
-// branchWorktreeMap returns a map of branch name -> worktree paths and detached worktree paths.
 func (q *Querier) branchWorktreeMap(repoPath string) (map[string][]string, []string, error) {
 	out, err := q.git.Run(repoPath, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -393,10 +377,6 @@ func (q *Querier) branchWorktreeMap(repoPath string) (map[string][]string, []str
 	return m, detachedPaths, nil
 }
 
-func branchAheadBehind(repoPath, branchName, upstream string) (int, int, error) {
-	return defaultQuery().branchAheadBehind(repoPath, branchName, upstream)
-}
-
 func (q *Querier) branchAheadBehind(repoPath, branchName, upstream string) (int, int, error) {
 	out, err := q.git.Run(repoPath, "rev-list", "--count", "--left-right", branchName+"..."+upstream)
 	if err != nil {
@@ -404,10 +384,6 @@ func (q *Querier) branchAheadBehind(repoPath, branchName, upstream string) (int,
 	}
 	ahead, behind := ParseAheadBehind(out)
 	return ahead, behind, nil
-}
-
-func rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
-	return defaultQuery().rootWorktreeBranch(repoPath, wtMap)
 }
 
 func (q *Querier) rootWorktreeBranch(repoPath string, wtMap map[string][]string) string {
@@ -419,10 +395,6 @@ func (q *Querier) rootWorktreeBranch(repoPath string, wtMap map[string][]string)
 		}
 	}
 	return strings.TrimSpace(q.maybeGitCmd(repoPath, "branch", "--show-current"))
-}
-
-func defaultCleanupBranch(repoPath string, branchLines []string, fallback string) string {
-	return defaultQuery().defaultCleanupBranch(repoPath, branchLines, fallback)
 }
 
 func (q *Querier) defaultCleanupBranch(repoPath string, branchLines []string, fallback string) string {
@@ -451,16 +423,8 @@ func (q *Querier) defaultCleanupBranch(repoPath string, branchLines []string, fa
 	return ""
 }
 
-func branchMergedInto(repoPath, branchName, cleanupBranch string) bool {
-	return defaultQuery().branchMergedInto(repoPath, branchName, cleanupBranch)
-}
-
 func (q *Querier) branchMergedInto(repoPath, branchName, cleanupBranch string) bool {
 	return q.git.Ok(repoPath, "merge-base", "--is-ancestor", branchName, cleanupBranch) == nil
-}
-
-func unpushedCommits(repoPath, branchName, upstream string) []string {
-	return defaultQuery().unpushedCommits(repoPath, branchName, upstream)
 }
 
 func (q *Querier) unpushedCommits(repoPath, branchName, upstream string) []string {
@@ -469,10 +433,6 @@ func (q *Querier) unpushedCommits(repoPath, branchName, upstream string) []strin
 		return nil
 	}
 	return splitLines(out)
-}
-
-func populateDirtyStatus(b *Branch, paths []string) {
-	defaultQuery().populateDirtyStatus(b, paths)
 }
 
 func (q *Querier) populateDirtyStatus(b *Branch, paths []string) {
@@ -506,10 +466,6 @@ func firstWorktreePath(paths []string) string {
 		return ""
 	}
 	return paths[0]
-}
-
-func maybeGitCmd(dir string, args ...string) string {
-	return defaultQuery().maybeGitCmd(dir, args...)
 }
 
 func (q *Querier) maybeGitCmd(dir string, args ...string) string {
