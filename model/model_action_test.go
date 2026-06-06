@@ -2087,6 +2087,26 @@ func TestModel_BranchCreatedSelectsNewBranchByFullRef(t *testing.T) {
 	}
 }
 
+func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
+	m := model.New(testRepos())
+	m = inBranchesMode(m)
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})  // left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, model.BranchResultMsg{
+		RepoPath: "/dev/bravo",
+		Branches: []gitquery.Branch{
+			{Name: "main"},
+			{Name: "feature/one"},
+		},
+	})
+
+	if m.BranchSelected() != 0 {
+		t.Fatalf("expected repo switch to clear pending branch selection, got index %d", m.BranchSelected())
+	}
+}
+
 // --- Confirmation dialog + delete ---
 
 // enableDestructive presses Shift+D to enter destructive mode.

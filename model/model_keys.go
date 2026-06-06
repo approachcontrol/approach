@@ -601,6 +601,7 @@ func (m Model) resetModeCursors() Model {
 }
 
 func (m Model) resetRightPaneCursors() Model {
+	m.pendingBranchSelection = ""
 	m.rows = m.rows.SetItems(nil).ResetSelection()
 	m.stashes = m.stashes.SetItems(nil).ResetSelection()
 	m.worktrees = m.worktrees.SetItems(nil).ResetSelection()
