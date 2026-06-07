@@ -1,6 +1,8 @@
 package planstore_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +56,73 @@ func TestStoreRejectsInvalidPlanID(t *testing.T) {
 		if _, err := store.Save(planstore.PlanRecord{PlanID: id, Title: "T", Markdown: "b", Status: "draft"}); err == nil {
 			t.Fatalf("Save() with plan id %q: error = nil, want rejection", id)
 		}
+	}
+}
+
+func TestStoreRejectsInvalidPlanIDOnReadAndPhaseUpdate(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	escapedDir := filepath.Join(root, "outside")
+	if err := os.MkdirAll(escapedDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{"schema_version":1,"plan_id":"../outside","title":"Escaped","status":"draft"}`
+	if err := os.WriteFile(filepath.Join(escapedDir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile(meta) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(escapedDir, "plan.md"), []byte("secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile(plan) error = %v", err)
+	}
+
+	if got, err := store.ReadPlan("../outside"); err == nil {
+		t.Fatalf("ReadPlan() with escaped id returned %q, want error", got)
+	} else if !strings.Contains(err.Error(), "invalid plan id") {
+		t.Fatalf("ReadPlan() error = %q, want invalid plan id", err)
+	}
+
+	err = store.SetPhase("../outside", planstore.PlanPhase{PhaseID: "p1", Title: "Escaped phase", Status: "pending", Order: 1})
+	if err == nil {
+		t.Fatal("SetPhase() with escaped id: error = nil, want rejection")
+	}
+	if !strings.Contains(err.Error(), "invalid plan id") {
+		t.Fatalf("SetPhase() error = %q, want invalid plan id", err)
+	}
+	data, err := os.ReadFile(filepath.Join(escapedDir, "meta.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(meta) error = %v", err)
+	}
+	if strings.Contains(string(data), "Escaped phase") {
+		t.Fatalf("SetPhase() updated escaped metadata: %s", data)
+	}
+}
+
+func TestStoreRejectsMismatchedMetadataPlanIDOnPhaseUpdate(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	dir := filepath.Join(root, "plans", "safe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{"schema_version":1,"plan_id":"../outside","title":"Corrupt","status":"draft"}`
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile(meta) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("body"), 0o600); err != nil {
+		t.Fatalf("WriteFile(plan) error = %v", err)
+	}
+
+	err = store.SetPhase("safe", planstore.PlanPhase{PhaseID: "p1", Title: "Phase", Status: "pending", Order: 1})
+	if err == nil {
+		t.Fatal("SetPhase() with mismatched metadata plan id: error = nil, want rejection")
+	}
+	if _, err := os.Stat(filepath.Join(root, "outside")); !os.IsNotExist(err) {
+		t.Fatalf("SetPhase() created escaped directory, stat err = %v", err)
 	}
 }
 

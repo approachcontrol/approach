@@ -179,8 +179,8 @@ func (s *Store) Save(record PlanRecord) (string, error) {
 			return "", err
 		}
 		record.PlanID = generated
-	} else if !planIDPattern.MatchString(record.PlanID) || record.PlanID == "." || record.PlanID == ".." {
-		return "", fmt.Errorf("invalid plan id %q", record.PlanID)
+	} else if err := validatePlanID(record.PlanID); err != nil {
+		return "", err
 	}
 
 	now := s.now()
@@ -208,6 +208,9 @@ func (s *Store) Save(record PlanRecord) (string, error) {
 // SetPhase creates or updates a single ordered phase on an existing plan. The
 // phase is matched by PhaseID; phases are kept sorted by Order.
 func (s *Store) SetPhase(planID string, phase PlanPhase) error {
+	if err := validatePlanID(planID); err != nil {
+		return err
+	}
 	if phase.Status == "" {
 		phase.Status = "pending"
 	}
@@ -246,6 +249,9 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 
 // ReadPlan returns the Markdown body for a plan.
 func (s *Store) ReadPlan(planID string) (string, error) {
+	if err := validatePlanID(planID); err != nil {
+		return "", err
+	}
 	dir := s.planDir(planID)
 	markdown, err := os.ReadFile(filepath.Join(dir, "plan.md"))
 	if err != nil {
@@ -334,6 +340,9 @@ func preferString(incoming, existing string) string {
 }
 
 func (s *Store) write(record PlanRecord) error {
+	if err := validatePlanID(record.PlanID); err != nil {
+		return err
+	}
 	dir := s.planDir(record.PlanID)
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return fmt.Errorf("create plan directory: %w", err)
@@ -390,6 +399,9 @@ func (s *Store) List(filter PlanFilter) ([]PlanRecord, error) {
 }
 
 func (s *Store) readRecord(planID string) (PlanRecord, bool) {
+	if err := validatePlanID(planID); err != nil {
+		return PlanRecord{}, false
+	}
 	dir := s.planDir(planID)
 	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
 	if err != nil {
@@ -398,6 +410,9 @@ func (s *Store) readRecord(planID string) (PlanRecord, bool) {
 	var record PlanRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		// Corrupt metadata should not hide every other plan.
+		return PlanRecord{}, false
+	}
+	if record.PlanID != planID {
 		return PlanRecord{}, false
 	}
 	markdown, err := os.ReadFile(filepath.Join(dir, "plan.md"))
@@ -409,6 +424,13 @@ func (s *Store) readRecord(planID string) (PlanRecord, bool) {
 
 func (s *Store) planDir(planID string) string {
 	return filepath.Join(s.root, "plans", planID)
+}
+
+func validatePlanID(planID string) error {
+	if !planIDPattern.MatchString(planID) || planID == "." || planID == ".." {
+		return fmt.Errorf("invalid plan id %q", planID)
+	}
+	return nil
 }
 
 func matchesFilter(record PlanRecord, filter PlanFilter) bool {
