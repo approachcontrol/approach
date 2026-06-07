@@ -1086,6 +1086,7 @@ printf "%s
 %s
 %s
 " "$WTUI_REPO_PATH" "$WTUI_WORKTREE_PATH" "$WTUI_WORKTREE_REF" "$WTUI_WORKTREE_CREATE_KIND" > env.txt
+env | awk -F= '/^WTUI_REPO_PATH=|^WTUI_WORKTREE_PATH=|^WTUI_WORKTREE_REF=|^WTUI_WORKTREE_CREATE_KIND=/ { count[$1]++ } END { for (key in count) print key "=" count[key] }' | sort > env-counts.txt
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1118,6 +1119,19 @@ printf "%s
 	want := strings.Join([]string{repoPath, worktreePath, "feature/one", "generic"}, "\n")
 	if strings.TrimSpace(string(env)) != want {
 		t.Fatalf("unexpected hook env:\n%s", env)
+	}
+	counts, err := os.ReadFile(filepath.Join(worktreePath, "env-counts.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCounts := strings.Join([]string{
+		"WTUI_REPO_PATH=1",
+		"WTUI_WORKTREE_CREATE_KIND=1",
+		"WTUI_WORKTREE_PATH=1",
+		"WTUI_WORKTREE_REF=1",
+	}, "\n")
+	if strings.TrimSpace(string(counts)) != wantCounts {
+		t.Fatalf("unexpected hook env counts:\n%s", counts)
 	}
 }
 
@@ -1588,6 +1602,7 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 }
 
 func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
+	t.Setenv("CUSTOM_KEEP", "still-here")
 	for _, key := range []string{
 		"WTUI_AGENT",
 		"WTUI_LAUNCH_ID",
@@ -1628,6 +1643,9 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		if got != want || count != 1 {
 			t.Fatalf("%s appears %d time(s) with value %q, want exactly one %q in env %#v", key, count, got, want, launch.Cmd.Env)
 		}
+	}
+	if got := envMap(launch.Cmd.Env)["CUSTOM_KEEP"]; got != "still-here" {
+		t.Fatalf("CUSTOM_KEEP = %q, want unrelated env preserved in %#v", got, launch.Cmd.Env)
 	}
 }
 

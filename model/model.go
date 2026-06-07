@@ -778,11 +778,7 @@ func (m Model) reflowReflogs() Model {
 }
 
 func (m Model) reflowSessions() Model {
-	contentHeight := m.height - ui.SessionContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 16
-	}
-	m.sessions = m.sessions.Reflow(contentHeight, m.contentWidth())
+	m.sessions = m.sessions.Reflow(m.sessionContentHeight(), m.contentWidth())
 	return m
 }
 

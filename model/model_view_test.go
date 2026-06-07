@@ -135,7 +135,7 @@ func TestModel_ViewKeepsSelectedSessionVisibleBelowTableHeader(t *testing.T) {
 	}
 }
 
-func TestModel_ViewKeepsSelectedPlanVisibleBelowTableHeader(t *testing.T) {
+func TestModel_ViewKeepsExpandedSelectedPlanVisibleBelowTableHeader(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8})
 	m = inRightPane(m)
@@ -143,15 +143,21 @@ func TestModel_ViewKeepsSelectedPlanVisibleBelowTableHeader(t *testing.T) {
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-0", RepoPath: "/dev/alpha", Branch: "plan-row-0", Status: "draft", Title: "Plan zero"},
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Branch: "plan-row-1", Status: "draft", Title: "Plan one"},
-		{PlanID: "plan-2", RepoPath: "/dev/alpha", Branch: "plan-row-2", Status: "draft", Title: "Plan two"},
+		{PlanID: "plan-2", RepoPath: "/dev/alpha", Branch: "plan-row-2", Status: "draft", Title: "Plan two", Phases: []planstore.PlanPhase{
+			{PhaseID: "p1", Title: "Bottom phase", Status: "phase-mark", Order: 1},
+		}},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
 	if !strings.Contains(view, "plan-row-2") {
 		t.Fatalf("selected plan should be visible below table header:\n%s", view)
+	}
+	if !strings.Contains(view, "phase-mark") {
+		t.Fatalf("expanded phase row should be visible below table header:\n%s", view)
 	}
 	if strings.Contains(view, "plan-row-0") {
 		t.Fatalf("first plan row should have scrolled off:\n%s", view)
