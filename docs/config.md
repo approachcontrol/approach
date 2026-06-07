@@ -187,8 +187,10 @@ The plan state root is resolved as: `--state-root` > `WTUI_PLAN_STATE_ROOT` >
 `wtui plan` commands may load config to resolve the root but never scan repos or
 start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
 `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and
-`WTUI_COMMIT`. wtui does not infer git metadata in v1. The repo
-`wtui-plan-persist` skill instructs agents on when and how to save plans.
+`WTUI_COMMIT`. wtui does not infer git metadata in v1. The
+`wtui-plan-persist` skill instructs agents on when and how to save plans; its
+canonical source lives in `agent-skills/wtui-plan-persist/` for symlinking into
+user-level Codex/Claude skill directories.
 
 ### `[bootstrap]`
 
