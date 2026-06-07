@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -23,6 +24,7 @@ const (
 
 const maxSlugLength = 48
 const maxIDCollisionAttempts = 1000
+const defaultLockTimeout = 5 * time.Second
 
 var flowIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
@@ -54,14 +56,16 @@ const (
 
 // Store reads and writes flow records under an artifact root.
 type Store struct {
-	root string
-	now  func() time.Time
+	root        string
+	now         func() time.Time
+	lockTimeout time.Duration
 }
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
-	Root string
-	Now  func() time.Time
+	Root        string
+	Now         func() time.Time
+	LockTimeout time.Duration
 }
 
 // FlowPhase is one phase in the persisted Flow pipeline.
@@ -135,6 +139,16 @@ type FlowFilter struct {
 	RepoPath string
 }
 
+// PhaseUpdate describes one persisted phase status update.
+type PhaseUpdate struct {
+	FlowID  string
+	PhaseID string
+	Status  string
+	Outcome string
+	Notes   string
+	Summary string
+}
+
 // NewStore creates a Store rooted at an absolute artifact root.
 func NewStore(opts StoreOptions) (*Store, error) {
 	root := opts.Root
@@ -161,7 +175,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Store{root: root, now: now}, nil
+	lockTimeout := opts.LockTimeout
+	if lockTimeout <= 0 {
+		lockTimeout = defaultLockTimeout
+	}
+	return &Store{root: root, now: now, lockTimeout: lockTimeout}, nil
 }
 
 // DefaultRoot returns the default artifact root, matching sessions and plans.
@@ -236,6 +254,104 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 	return record, nil
 }
 
+// SetPhase validates and persists one phase update on an existing flow.
+func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	if _, err := os.Stat(s.flowDir(update.FlowID)); os.IsNotExist(err) {
+		return FlowRecord{}, fmt.Errorf("flow %q not found", update.FlowID)
+	} else if err != nil {
+		return FlowRecord{}, fmt.Errorf("stat flow %q: %w", update.FlowID, err)
+	}
+	release, err := s.acquireFlowLock(update.FlowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	defer release()
+	record, ok := s.readRecord(update.FlowID)
+	if !ok {
+		return FlowRecord{}, fmt.Errorf("flow %q not found", update.FlowID)
+	}
+	phaseIndex := -1
+	for i, phase := range record.Phases {
+		if phase.PhaseID == update.PhaseID {
+			phaseIndex = i
+			break
+		}
+	}
+	if phaseIndex < 0 {
+		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+	}
+
+	now := s.now()
+	phase := record.Phases[phaseIndex]
+	if err := validatePhaseUpdate(phase, update); err != nil {
+		return FlowRecord{}, err
+	}
+	phase.Status = update.Status
+	if update.Outcome != "" {
+		phase.Outcome = update.Outcome
+	}
+	if update.Notes != "" {
+		phase.Notes = update.Notes
+	}
+	if update.Summary != "" {
+		phase.Summary = update.Summary
+	}
+	phase.UpdatedAt = now
+	record.Phases[phaseIndex] = phase
+	record.UpdatedAt = now
+	record = refreshPhaseReadiness(record, now)
+	record.Status = DeriveStatus(record)
+	if err := s.write(record); err != nil {
+		return FlowRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *Store) acquireFlowLock(flowID string) (func(), error) {
+	lockPath := filepath.Join(s.flowDir(flowID), ".update.lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, filePerm)
+	if err != nil {
+		return nil, fmt.Errorf("open flow lock: %w", err)
+	}
+	deadline := time.Now().Add(s.lockTimeout)
+	for {
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			if err := file.Truncate(0); err != nil {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+				return nil, fmt.Errorf("truncate flow lock: %w", err)
+			}
+			if _, err := file.Seek(0, 0); err != nil {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+				return nil, fmt.Errorf("seek flow lock: %w", err)
+			}
+			if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+				return nil, fmt.Errorf("write flow lock: %w", err)
+			}
+			return func() {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+			}, nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			_ = file.Close()
+			return nil, fmt.Errorf("acquire flow lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			_ = file.Close()
+			return nil, fmt.Errorf("timed out waiting for flow lock %q", flowID)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // List returns records matching filter, sorted by UpdatedAt descending.
 func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
 	root := filepath.Join(s.root, "flows")
@@ -263,6 +379,76 @@ func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
 		return records[i].UpdatedAt.After(records[j].UpdatedAt)
 	})
 	return records, nil
+}
+
+func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
+	if strings.TrimSpace(update.Status) == "" {
+		return fmt.Errorf("phase status is required")
+	}
+	switch update.Status {
+	case PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseBlocked, PhaseSkipped:
+	case PhaseReady:
+		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
+	default:
+		return fmt.Errorf("invalid phase status %q", update.Status)
+	}
+	if update.Status == PhaseSkipped && strings.TrimSpace(update.Notes) == "" {
+		return fmt.Errorf("skipped phase requires notes")
+	}
+	if current.Status == update.Status {
+		return nil
+	}
+	switch current.Status {
+	case PhaseReady:
+		switch update.Status {
+		case PhaseRunning, PhaseCompleted, PhaseNeedsAttention, PhaseBlocked, PhaseSkipped:
+			return nil
+		}
+	case PhaseRunning:
+		switch update.Status {
+		case PhaseCompleted, PhaseNeedsAttention, PhaseBlocked, PhaseSkipped:
+			return nil
+		}
+	case PhaseNeedsAttention, PhaseBlocked:
+		switch update.Status {
+		case PhaseRunning, PhaseSkipped:
+			if update.Status == PhaseRunning && strings.TrimSpace(update.Notes) == "" {
+				return fmt.Errorf("restarting %s phase requires notes", current.Status)
+			}
+			return nil
+		}
+	case PhaseCompleted, PhaseSkipped:
+		if update.Status == PhaseRunning {
+			return nil
+		}
+	case PhasePending:
+		if update.Status == PhaseSkipped {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid phase transition %s -> %s", current.Status, update.Status)
+}
+
+func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
+	predecessorsSatisfied := true
+	for i := range record.Phases {
+		phase := record.Phases[i]
+		if phase.Status == PhasePending || phase.Status == PhaseReady {
+			nextStatus := PhasePending
+			if predecessorsSatisfied {
+				nextStatus = PhaseReady
+			}
+			if phase.Status != nextStatus {
+				phase.Status = nextStatus
+				phase.UpdatedAt = now
+				record.Phases[i] = phase
+			}
+		}
+		if phase.Status != PhaseCompleted && phase.Status != PhaseSkipped {
+			predecessorsSatisfied = false
+		}
+	}
+	return record
 }
 
 // DeriveStatus computes the flow-level status from phase and merge state.

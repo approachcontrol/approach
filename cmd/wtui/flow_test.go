@@ -109,6 +109,165 @@ func TestRunFlowReadPrintsJSONRecord(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name     string
+		status   string
+		notes    string
+		wantFlow string
+	}{
+		{name: "running", status: flowstore.PhaseRunning, wantFlow: flowstore.StatusInProgress},
+		{name: "completed", status: flowstore.PhaseCompleted, wantFlow: flowstore.StatusInProgress},
+		{name: "needs attention", status: flowstore.PhaseNeedsAttention, wantFlow: flowstore.StatusNeedsAttention},
+		{name: "blocked", status: flowstore.PhaseBlocked, wantFlow: flowstore.StatusBlocked},
+		{name: "skipped", status: flowstore.PhaseSkipped, notes: "Existing plan is approved.", wantFlow: flowstore.StatusInProgress},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := filepath.Join(root, "repo-"+tc.name)
+			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+			args := []string{
+				"wtui", "flow", "phase", "set",
+				"--flow-id", created.FlowID,
+				"--phase-id", "plan",
+				"--status", tc.status,
+				"--summary", "Phase updated.",
+				"--state-root", root,
+			}
+			if tc.notes != "" {
+				args = append(args, "--notes", tc.notes)
+			}
+			var stdout bytes.Buffer
+			err := run(args, noScanDeps(t, runDeps{stdout: &stdout}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			var updated flowstore.FlowRecord
+			if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+				t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+			}
+			if updated.Phases[0].Status != tc.status || updated.Phases[0].Summary != "Phase updated." {
+				t.Fatalf("updated phase = %#v", updated.Phases[0])
+			}
+			if tc.notes != "" && updated.Phases[0].Notes != tc.notes {
+				t.Fatalf("phase notes = %q, want %q", updated.Phases[0].Notes, tc.notes)
+			}
+			if updated.Status != tc.wantFlow {
+				t.Fatalf("flow status = %q, want %q", updated.Status, tc.wantFlow)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Restart Blocked", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	err := run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseBlocked,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+	if err != nil {
+		t.Fatalf("set blocked returned error: %v", err)
+	}
+
+	err = run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseRunning,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+	if err == nil || !strings.Contains(err.Error(), "restarting blocked phase requires notes") {
+		t.Fatalf("restart without notes error = %v, want notes requirement", err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseRunning,
+		"--notes", "Unblocked after user confirmed scope.",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("restart with notes returned error: %v", err)
+	}
+	var updated flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if updated.Phases[0].Status != flowstore.PhaseRunning {
+		t.Fatalf("phase status = %q, want running", updated.Phases[0].Status)
+	}
+	if updated.Phases[0].Notes != "Unblocked after user confirmed scope." {
+		t.Fatalf("phase notes = %q", updated.Phases[0].Notes)
+	}
+}
+
+func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Reject Status", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	for _, tc := range []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{name: "ready", status: flowstore.PhaseReady, want: "cannot set phase status to ready"},
+		{name: "bogus", status: "done", want: "unsupported agent-facing phase status"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run([]string{
+				"wtui", "flow", "phase", "set",
+				"--flow-id", created.FlowID,
+				"--phase-id", "plan",
+				"--status", tc.status,
+				"--state-root", root,
+			}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseSetRejectsSkippedWithoutNotes(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Reject Skip", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	err := run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseSkipped,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+	if err == nil || !strings.Contains(err.Error(), "skipped phase requires notes") {
+		t.Fatalf("run error = %v, want skipped notes error", err)
+	}
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Phases[0].Status != flowstore.PhaseReady {
+		t.Fatalf("phase status after rejected skip = %q, want ready", read.Phases[0].Status)
+	}
+}
+
 func TestRunFlowCreateStateRootPrecedence(t *testing.T) {
 	flowRoot := t.TempDir()
 	planRoot := t.TempDir()

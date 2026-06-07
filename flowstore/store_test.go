@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -227,6 +229,408 @@ func TestStoreListFiltersSortsAndSkipsBadRecords(t *testing.T) {
 	}
 	if records[0].FlowID != newer.FlowID || records[1].FlowID != older.FlowID {
 		t.Fatalf("List() order = %#v, want updated_at desc", records)
+	}
+}
+
+func TestStoreSetPhasePersistsUpdateAndDerivesStatus(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	times := []time.Time{
+		time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 1, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 2, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 3, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 4, 0, time.UTC),
+	}
+	i := 0
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now: func() time.Time {
+			tm := times[i]
+			i++
+			return tm
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Phase updates",
+		Instructions: "exercise phase set",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	running, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(running) error = %v", err)
+	}
+	if running.Status != flowstore.StatusInProgress {
+		t.Fatalf("running flow status = %q, want in_progress", running.Status)
+	}
+	if running.Phases[0].Status != flowstore.PhaseRunning || running.Phases[0].UpdatedAt != times[2] {
+		t.Fatalf("running phase = %#v, want running at %s", running.Phases[0], times[2])
+	}
+
+	completed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Plan saved and reviewed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(completed) error = %v", err)
+	}
+	if completed.Status != flowstore.StatusInProgress {
+		t.Fatalf("completed first phase flow status = %q, want in_progress", completed.Status)
+	}
+	if completed.UpdatedAt != times[3] {
+		t.Fatalf("flow UpdatedAt = %s, want %s", completed.UpdatedAt, times[3])
+	}
+	if completed.Phases[0].Status != flowstore.PhaseCompleted || completed.Phases[0].Summary != "Plan saved and reviewed." {
+		t.Fatalf("completed phase = %#v", completed.Phases[0])
+	}
+	if completed.Phases[1].Status != flowstore.PhaseReady {
+		t.Fatalf("next phase status = %q, want ready", completed.Phases[1].Status)
+	}
+
+	repeated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseCompleted,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(repeated completed) error = %v", err)
+	}
+	if repeated.Phases[0].Summary != "Plan saved and reviewed." {
+		t.Fatalf("repeated update should preserve summary, got %#v", repeated.Phases[0])
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Status != completed.Status || read.Phases[0].Status != flowstore.PhaseCompleted || read.Phases[1].Status != flowstore.PhaseReady {
+		t.Fatalf("persisted record = %#v, want completed plan and ready next phase", read)
+	}
+}
+
+func TestStoreSetPhaseRejectsInvalidTransitions(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Validate transitions",
+		Instructions: "reject invalid updates",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		update flowstore.PhaseUpdate
+		want   string
+	}{
+		{
+			name:   "invalid status",
+			update: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: "done"},
+			want:   "invalid phase status",
+		},
+		{
+			name:   "force ready",
+			update: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseReady},
+			want:   "cannot set phase status to ready",
+		},
+		{
+			name:   "pending to completed",
+			update: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseCompleted},
+			want:   "invalid phase transition",
+		},
+		{
+			name:   "skipped without notes",
+			update: flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseSkipped},
+			want:   "skipped phase requires notes",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := store.SetPhase(tc.update)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SetPhase() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreSetPhaseAllowsSkippedWithNotesAndIdempotentUpdates(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Skip and repeat",
+		Instructions: "exercise idempotency",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	skipped, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseSkipped,
+		Notes:   "Existing plan already approved.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(skipped) error = %v", err)
+	}
+	if skipped.Phases[0].Status != flowstore.PhaseSkipped || skipped.Phases[0].Notes != "Existing plan already approved." {
+		t.Fatalf("skipped phase = %#v", skipped.Phases[0])
+	}
+	if skipped.Phases[1].Status != flowstore.PhaseReady {
+		t.Fatalf("next phase status = %q, want ready", skipped.Phases[1].Status)
+	}
+
+	repeated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseSkipped,
+		Notes:   "Existing plan already approved.",
+		Summary: "No new plan needed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(repeated skipped) error = %v", err)
+	}
+	if len(repeated.Phases) != len(record.Phases) {
+		t.Fatalf("phase count = %d, want %d", len(repeated.Phases), len(record.Phases))
+	}
+	if repeated.Phases[0].Summary != "No new plan needed." || repeated.Phases[1].Status != flowstore.PhaseReady {
+		t.Fatalf("repeated update record = %#v", repeated)
+	}
+
+	pendingSkipped, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseSkipped,
+		Notes:   "Implementation is covered by the existing branch.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(pending skipped) error = %v", err)
+	}
+	if pendingSkipped.Phases[2].Status != flowstore.PhaseSkipped || pendingSkipped.Phases[2].Notes != "Implementation is covered by the existing branch." {
+		t.Fatalf("pending skipped phase = %#v", pendingSkipped.Phases[2])
+	}
+}
+
+func TestStoreSetPhaseReportsLockTimeout(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:        root,
+		LockTimeout: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Lock timeout",
+		Instructions: "hold the update lock",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	lockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open lock file: %v", err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("flock lock file: %v", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	if _, err := lockFile.WriteString("held\n"); err != nil {
+		t.Fatalf("write lock file: %v", err)
+	}
+
+	_, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for flow lock") {
+		t.Fatalf("SetPhase() error = %v, want lock timeout", err)
+	}
+}
+
+func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Stale lock",
+		Instructions: "recover phase updates",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	lockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
+	if err := os.WriteFile(lockPath, []byte("not a live lock\n"), 0o600); err != nil {
+		t.Fatalf("write lock file: %v", err)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+	if updated.Phases[0].Status != flowstore.PhaseRunning {
+		t.Fatalf("phase status = %q, want running", updated.Phases[0].Status)
+	}
+	lockData, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock file: %v", err)
+	}
+	if !strings.Contains(string(lockData), "\n") || strings.Contains(string(lockData), "not a live lock") {
+		t.Fatalf("lock marker was not refreshed: %q", lockData)
+	}
+}
+
+func TestStoreSetPhaseConcurrentUpdatesDoNotOverwriteEachOther(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "concurrent-flow",
+		Title:        "Concurrent updates",
+		Instructions: "preserve both mutations",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Kind: "plan", Status: flowstore.PhaseRunning, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Kind: "implementation", Status: flowstore.PhaseRunning, Order: 2, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err := store.SetPhase(flowstore.PhaseUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: "plan",
+			Status:  flowstore.PhaseCompleted,
+			Summary: "Plan complete.",
+		})
+		errs <- err
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := store.SetPhase(flowstore.PhaseUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: "implementation",
+			Status:  flowstore.PhaseBlocked,
+			Notes:   "Needs human input.",
+		})
+		errs <- err
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("SetPhase() error = %v", err)
+		}
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Phases[0].Status != flowstore.PhaseCompleted || read.Phases[0].Summary != "Plan complete." {
+		t.Fatalf("plan phase after concurrent updates = %#v", read.Phases[0])
+	}
+	if read.Phases[1].Status != flowstore.PhaseBlocked || read.Phases[1].Notes != "Needs human input." {
+		t.Fatalf("implementation phase after concurrent updates = %#v", read.Phases[1])
+	}
+	if read.Status != flowstore.StatusBlocked {
+		t.Fatalf("flow status = %q, want blocked", read.Status)
+	}
+}
+
+func TestStoreSetPhaseChildPhasesGateDownstreamReadiness(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "child-gate-flow",
+		Title:        "Child gate",
+		Instructions: "child phases gate downstream",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation-followup", ParentPhaseID: "implementation", Title: "Follow-up", Status: flowstore.PhasePending, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhasePending, Order: 3, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	}
+	if updated.Phases[1].Status != flowstore.PhaseReady {
+		t.Fatalf("child phase status = %q, want ready", updated.Phases[1].Status)
+	}
+	if updated.Phases[2].Status != flowstore.PhasePending {
+		t.Fatalf("downstream phase status = %q, want pending while child is not done", updated.Phases[2].Status)
+	}
+
+	updated, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation-followup",
+		Status:  flowstore.PhaseCompleted,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(child completed) error = %v", err)
+	}
+	if updated.Phases[2].Status != flowstore.PhaseReady {
+		t.Fatalf("downstream phase status = %q, want ready after child completion", updated.Phases[2].Status)
 	}
 }
 

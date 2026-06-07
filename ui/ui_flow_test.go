@@ -40,6 +40,61 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{
+			{
+				FlowID: "blocked-flow",
+				Title:  "Blocked implementation",
+				Status: flowstore.StatusBlocked,
+				Branch: "flow/blocked",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+					{PhaseID: "implementation", Status: flowstore.PhaseBlocked},
+				},
+			},
+			{
+				FlowID: "attention-flow",
+				Title:  "Needs review input",
+				Status: flowstore.StatusNeedsAttention,
+				Branch: "flow/needs-attention",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+					{PhaseID: "review-loop", Status: flowstore.PhaseNeedsAttention},
+				},
+			},
+			{
+				FlowID: "completed-flow",
+				Title:  "Completed flow",
+				Status: flowstore.StatusCompleted,
+				Branch: "flow/completed",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Status: flowstore.PhaseCompleted},
+					{PhaseID: "review-loop", Status: flowstore.PhaseSkipped},
+				},
+			},
+		},
+		ActivePane:   1,
+		FlowSelected: 0,
+	})
+
+	for _, want := range []string{
+		"blocked", "flow/blocked", "Blocked implementation",
+		"needs_attention", "flow/needs-attention", "Needs review input",
+		"completed", "flow/completed", "Completed flow",
+		"1/2", "2/2",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("updated flows view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestFlowPhaseProgressShowsDashWhenNoPhases(t *testing.T) {
 	got := flowPhaseProgress(flowstore.FlowRecord{})
 	if got != "-" {
