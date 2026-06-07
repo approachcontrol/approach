@@ -203,6 +203,10 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 		record.FlowID = id
 	} else if err := validateFlowID(record.FlowID); err != nil {
 		return FlowRecord{}, err
+	} else if _, err := os.Stat(s.flowDir(record.FlowID)); err == nil {
+		return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
+	} else if !os.IsNotExist(err) {
+		return FlowRecord{}, fmt.Errorf("check flow id collision: %w", err)
 	}
 
 	now := s.now()
@@ -266,8 +270,11 @@ func DeriveStatus(record FlowRecord) string {
 	if record.Status == StatusAbandoned {
 		return StatusAbandoned
 	}
-	if record.Merge.Status == MergeMerged {
+	switch record.Merge.Status {
+	case MergeMerged:
 		return StatusMerged
+	case MergeBlocked:
+		return StatusBlocked
 	}
 	for _, phase := range record.Phases {
 		if phase.Status == PhaseBlocked {

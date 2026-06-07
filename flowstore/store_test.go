@@ -126,6 +126,43 @@ func TestStoreCreateAllocatesCollisionSuffix(t *testing.T) {
 	}
 }
 
+func TestStoreCreateRejectsDuplicateSuppliedFlowID(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	first, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-flow",
+		Title:        "First",
+		Instructions: "keep this",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create(first) error = %v", err)
+	}
+
+	_, err = store.Create(flowstore.FlowRecord{
+		FlowID:       first.FlowID,
+		Title:        "Second",
+		Instructions: "do not overwrite",
+		RepoPath:     repoPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("Create(duplicate) error = %v, want already exists", err)
+	}
+
+	read, err := store.Read(first.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Title != "First" || read.Instructions != "keep this" {
+		t.Fatalf("duplicate Create() overwrote record: %#v", read)
+	}
+}
+
 func TestStoreListFiltersSortsAndSkipsBadRecords(t *testing.T) {
 	root := t.TempDir()
 	alpha := filepath.Join(root, "alpha")
@@ -235,6 +272,12 @@ func TestStoreDerivesFlowStatusFromPhasesAndMerge(t *testing.T) {
 	merged.Merge.Status = flowstore.MergeMerged
 	if got := flowstore.DeriveStatus(merged); got != flowstore.StatusMerged {
 		t.Fatalf("DeriveStatus(merged) = %q, want merged", got)
+	}
+
+	mergeBlocked := completed
+	mergeBlocked.Merge.Status = flowstore.MergeBlocked
+	if got := flowstore.DeriveStatus(mergeBlocked); got != flowstore.StatusBlocked {
+		t.Fatalf("DeriveStatus(blocked merge) = %q, want blocked", got)
 	}
 
 	abandoned := merged
