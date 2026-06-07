@@ -54,7 +54,8 @@ type LaunchConfig struct {
 
 // AgentConfig stores the user's preferred interactive coding agent.
 type AgentConfig struct {
-	Command string `toml:"command"`
+	Command    string `toml:"command"`
+	PlanPrompt string `toml:"plan_prompt"`
 }
 
 // SessionsConfig controls agent-session capture storage.

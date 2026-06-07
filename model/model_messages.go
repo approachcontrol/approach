@@ -259,6 +259,10 @@ type AgentResultMsg struct {
 	Err           string
 }
 
+type PlanLaunchRequestedMsg struct {
+	LaunchContext actions.AgentLaunchContext
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)

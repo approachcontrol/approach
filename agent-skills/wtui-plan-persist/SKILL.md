@@ -46,10 +46,13 @@ only when you supply them, and otherwise preserves the stored values plus
 `created_at` and recorded phases. So a body-only revise keeps the existing
 status; pass `--status` whenever the lifecycle changes.
 
-When wtui launched the agent it exports `WTUI_AGENT`, `WTUI_LAUNCH_ID`,
+When wtui launched a CLI agent it exports `WTUI_AGENT`, `WTUI_LAUNCH_ID`,
 `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`; the CLI
 fills omitted metadata from those automatically, so you usually only need
-`--title` (and `--plan-id` for edits).
+`--title` (and `--plan-id` for edits). `codex-app` launches are different because
+wtui opens a macOS deep link and `WTUI_*` is not inherited. In that case, use the
+metadata block in the launch prompt: pass the listed `--state-root` to `wtui plan`
+commands or export the listed vars before running them.
 
 ## How to record phases
 

@@ -124,7 +124,104 @@ func TestModel_PlanListErrorShowsStatus(t *testing.T) {
 	}
 }
 
-func TestModel_IKeyLaunchesAgentFromSelectedPlan(t *testing.T) {
+func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
+	var launched bool
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanMarkdownPath: func(planID string) (string, error) {
+			if planID != "plan-1" {
+				t.Fatalf("resolver planID = %q, want plan-1", planID)
+			}
+			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
+		PlanID:       "plan-1",
+		Title:        "Implement plans",
+		Status:       "approved",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/plans",
+		Branch:       "feature/plans",
+		Commit:       "abc123",
+	}}, ListRequest: m.ListRequest(ui.ModePlans)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	if launched {
+		t.Fatal("opening launch instructions must not launch the agent")
+	}
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected launch instructions input overlay, got %d", m.Overlay())
+	}
+	if !strings.Contains(m.View(), "Launch instructions") {
+		t.Fatalf("expected launch instructions prompt in view:\n%s", m.View())
+	}
+	prompt := strings.ToLower(m.WorktreeInput())
+	for _, want := range []string{"implement plans", "plan-1", "/state/wtui/sessions/v1/plans/plan-1/plan.md", "read the plan file", "begin implementation"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("initial prompt missing %q: %q", want, m.WorktreeInput())
+		}
+	}
+}
+
+func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:       "codex",
+		PlanPromptTemplate: "Do {title} ({plan_id}) from {plan_path} in {repo_path} at {worktree_path}; keep {unknown}",
+		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
+		PlanID:       "plan-1",
+		Title:        "Implement plans",
+		Status:       "approved",
+		RepoPath:     "/dev/plan-repo",
+		WorktreePath: "/dev/plan-worktree",
+	}}, ListRequest: m.ListRequest(ui.ModePlans)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	want := "Do Implement plans (plan-1) from /state/plans/plan-1/plan.md in /dev/plan-repo at /dev/plan-worktree; keep {unknown}"
+	if m.WorktreeInput() != want {
+		t.Fatalf("launch instructions = %q, want %q", m.WorktreeInput(), want)
+	}
+}
+
+func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:       "codex",
+		PlanPromptTemplate: "   ",
+		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModePlans)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	want := `Implement the saved wtui plan "Implement plans" (ID: plan-1) at /state/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
+	if m.WorktreeInput() != want {
+		t.Fatalf("default launch instructions = %q, want %q", m.WorktreeInput(), want)
+	}
+}
+
+func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
@@ -148,28 +245,94 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlan(t *testing.T) {
 		Status:       "approved",
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/plans",
+		Branch:       "feature/plans",
+		Commit:       "abc123",
 	}}, ListRequest: m.ListRequest(ui.ModePlans)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Custom launch instructions")})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	if got.Command != "" {
+		t.Fatalf("submit command should defer launch until handled, got %#v", got)
+	}
+	m, launchCmd := update(m, cmd())
+	if launchCmd == nil {
 		t.Fatal("expected agent launch command")
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected launch instructions overlay closed, got %d", m.Overlay())
 	}
 	if got.Command != "codex" ||
 		got.RepoPath != "/dev/alpha" ||
 		got.WorktreePath != "/dev/alpha-worktrees/plans" ||
+		got.Branch != "feature/plans" ||
+		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
+		got.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		got.InitialPrompt != "Custom launch instructions" {
 		t.Fatalf("unexpected launch context: %#v", got)
 	}
 	if got.LaunchID == "" {
 		t.Fatalf("expected launch ID in context: %#v", got)
 	}
-	prompt := strings.ToLower(got.InitialPrompt)
-	for _, want := range []string{"implement plans", "plan-1", "/state/wtui/sessions/v1/plans/plan-1/plan.md", "read the plan file", "begin implementation"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("initial prompt missing %q: %q", want, got.InitialPrompt)
-		}
+}
+
+func TestModel_PlanLaunchInstructionsEscCancels(t *testing.T) {
+	var launched bool
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModePlans)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd cancelling launch instructions, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected overlay closed, got %d", m.Overlay())
+	}
+	if launched {
+		t.Fatal("cancelled launch instructions must not launch agent")
+	}
+}
+
+func TestModel_PlanLaunchInstructionsRejectsBlankSubmit(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModePlans)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for blank launch instructions, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected input overlay to remain, got %d", m.Overlay())
+	}
+	if m.WorktreeInputErr() != "enter launch instructions" {
+		t.Fatalf("expected launch instructions error, got %q", m.WorktreeInputErr())
 	}
 }
 
@@ -207,16 +370,34 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 	if gotPhase := m.SelectedPlanPhaseID(); gotPhase != "p2" {
 		t.Fatalf("selected phase = %q, want p2", gotPhase)
 	}
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	if got.Command != "" {
+		t.Fatalf("opening launch instructions should defer launch, got %#v", got)
+	}
+	prompt := strings.ToLower(m.WorktreeInput())
+	for _, want := range []string{"implement only", "selected phase", "p2", "cli subcommands", "pending", "read the plan file"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("phase prompt missing %q: %q", want, m.WorktreeInput())
+		}
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	_, launchCmd := update(m, cmd())
+	if launchCmd == nil {
 		t.Fatal("expected agent launch command")
 	}
 	if got.PlanPhaseID != "p2" || got.PlanPhaseTitle != "CLI subcommands" || got.PlanPhaseStatus != "pending" {
 		t.Fatalf("unexpected phase launch context: %#v", got)
 	}
-	prompt := strings.ToLower(got.InitialPrompt)
+	launchPrompt := strings.ToLower(got.InitialPrompt)
 	for _, want := range []string{"implement only", "selected phase", "p2", "cli subcommands", "pending", "read the plan file"} {
-		if !strings.Contains(prompt, want) {
+		if !strings.Contains(launchPrompt, want) {
 			t.Fatalf("phase prompt missing %q: %q", want, got.InitialPrompt)
 		}
 	}
@@ -285,8 +466,16 @@ func TestModel_IKeyLaunchPathFallsBackFromPlanRepoToSelectedRepo(t *testing.T) {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
 			m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{tc.plan}, ListRequest: m.ListRequest(ui.ModePlans)})
 
-			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			if cmd != nil {
+				t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+			}
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 			if cmd == nil {
+				t.Fatal("expected submit command")
+			}
+			_, launchCmd := update(m, cmd())
+			if launchCmd == nil {
 				t.Fatal("expected launch command")
 			}
 			if got.RepoPath != tc.wantRepo || got.WorktreePath != tc.wantPath {
@@ -352,7 +541,15 @@ func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	if cmd != nil {
-		t.Fatalf("expected nil cmd on launch error, got %T", cmd)
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	m, launchCmd := update(m, cmd())
+	if launchCmd != nil {
+		t.Fatalf("expected nil cmd on launch error, got %T", launchCmd)
 	}
 	if !strings.Contains(m.View(), "agent unavailable") {
 		t.Fatal("expected launch error in status")

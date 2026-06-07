@@ -42,6 +42,7 @@ prefer_multiplexer = true
 
 [agent]
 command = "codex"
+plan_prompt = "Implement {title} from {plan_path}"
 
 [sessions]
 root = "~/state/wtui/sessions"
@@ -90,6 +91,9 @@ timeout_seconds = 300
 	}
 	if cfg.Agent.Command != "codex" {
 		t.Fatalf("expected agent command codex, got %q", cfg.Agent.Command)
+	}
+	if cfg.Agent.PlanPrompt != "Implement {title} from {plan_path}" {
+		t.Fatalf("expected agent plan prompt to parse, got %q", cfg.Agent.PlanPrompt)
 	}
 	if cfg.Sessions.Root != filepath.Join(home, "state", "wtui", "sessions") {
 		t.Fatalf("expected expanded sessions root, got %q", cfg.Sessions.Root)

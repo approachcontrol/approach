@@ -52,6 +52,7 @@ type Model struct {
 	pendingBranchSelection    string
 	pendingWorktreeSelection  string
 	agentCommand              string
+	planPromptTemplate        string
 	fetchRepo                 func(string) error
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
@@ -98,6 +99,7 @@ type visibleRepoFetchState struct {
 // simple for tests.
 type Options struct {
 	AgentCommand         string
+	PlanPromptTemplate   string
 	FetchRepo            func(string) error
 	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
@@ -182,6 +184,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		plans:                newPlanPane(),
 		mode:                 ui.ModeWorktrees,
 		agentCommand:         agent.Normalize(opts.AgentCommand),
+		planPromptTemplate:   opts.PlanPromptTemplate,
 		fetchRepo:            fetchRepo,
 		listSessions:         listSessions,
 		readTranscript:       readTranscript,
@@ -595,6 +598,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentSet(msg), nil
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
+	case PlanLaunchRequestedMsg:
+		return m.launchAgentWithContext(msg.LaunchContext)
 	case AgentResultMsg:
 		resultErr := msg.Err
 		if msg.LaunchContext.LaunchID != "" {

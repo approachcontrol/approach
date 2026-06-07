@@ -61,7 +61,7 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Select previous repo |
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
-| `A` | Choose and persist the coding agent (`codex` or `claude`) |
+| `A` | Choose and persist the coding agent (`codex`, `codex-app`, or `claude`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `tab` | Switch focus to right pane |
@@ -190,7 +190,9 @@ Browse saved agent plans for the selected repo. Rows show status, branch, phase
 progress (`completed/total`), the updated date, and the title. Use `/` to filter
 plans by title, summary, status, branch, worktree basename, provider, session
 ID, launch ID, and phase titles/statuses. Press `enter` to open the plan
-Markdown in a plain-text overlay.
+Markdown in a plain-text overlay. Press `i` to edit the launch instructions for
+the selected plan, then `enter` to launch the selected agent or `esc` to cancel;
+blank instructions are rejected.
 
 Plans are persisted explicitly by agents through the `wtui plan` CLI rather than
 captured from hooks. Plans share the agent-artifact root with sessions: they are
@@ -218,15 +220,17 @@ wtui plan read --plan-id "$PLAN_ID"          # prints Markdown only
 
 The plan state root is resolved with this precedence: `--state-root` >
 `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` > `[sessions].root` > the user
-state default. Agents launched by wtui get `WTUI_PLAN_STATE_ROOT` and
+state default. CLI-launched agents get `WTUI_PLAN_STATE_ROOT` and
 `WTUI_SESSION_STATE_ROOT` set to the same resolved root. Omitted metadata is
 filled from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
-`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`. The `wtui-plan-persist`
-skill instructs agents on when and how to save plans. Its canonical source
-lives in `agent-skills/wtui-plan-persist/`, which is intentionally outside
-Codex and Claude's repo auto-discovery directories so it can be symlinked into
-user-level skill dirs for use across repos. v1 has no TUI plan editing or
-deletion.
+`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`. `codex-app` launches use
+macOS `open`, so they do not inherit `WTUI_*`; wtui includes equivalent metadata
+in the launch prompt, and agents should pass the listed `--state-root` when
+running `wtui plan` commands. The `wtui-plan-persist` skill instructs agents on
+when and how to save plans. Its canonical source lives in
+`agent-skills/wtui-plan-persist/`, which is intentionally outside Codex and
+Claude's repo auto-discovery directories so it can be symlinked into user-level
+skill dirs for use across repos. v1 has no TUI plan editing or deletion.
 
 ## Configuration
 
@@ -246,6 +250,7 @@ max_depth = 2
 
 [agent]
 command = "codex"
+plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
@@ -259,10 +264,11 @@ repo_path = "~/projects/wtui"
 script = ".wtui/bootstrap"
 ```
 
-`WORKTREE_ROOT` overrides `[scan].root` when both are set. See
-[docs/config.md](docs/config.md) for the full config reference, including
-sessions storage, bootstrap hook settings, and parsed foundation fields for
-editor, terminal, provider, launch, and agent settings.
+`WORKTREE_ROOT` overrides `[scan].root` when both are set. `[agent].plan_prompt`
+customizes the editable instructions shown before launching an agent from the
+plans pane. See [docs/config.md](docs/config.md) for the full config reference,
+including sessions storage, bootstrap hook settings, and parsed foundation
+fields for editor, terminal, provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
@@ -273,10 +279,12 @@ editor, terminal, provider, launch, and agent settings.
 
 ### Agent session hooks
 
-Agents launched from wtui with `a`, `N`, or session resume `r` are wired
+CLI agents launched from wtui with `a`, `N`, or session resume `r` are wired
 automatically: wtui passes Claude Code or Codex a session-end hook that calls
 the current wtui binary, and it includes `WTUI_*` metadata so hook records can
-be associated with the repo, worktree, branch, and launch.
+be associated with the repo, worktree, branch, and launch. `codex-app` opens via
+macOS deep link instead; wtui scrubs inherited `WTUI_*` from `open` and includes
+launch metadata in the prompt when a prompt is provided.
 
 For manual agent sessions that are not launched by wtui, configure Claude Code
 or Codex hooks to call wtui:

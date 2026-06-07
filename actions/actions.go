@@ -570,6 +570,7 @@ func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
 func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	if ctx.LaunchID == "" &&
 		ctx.RepoPath == "" &&
+		ctx.WorktreePath == "" &&
 		ctx.Branch == "" &&
 		ctx.Commit == "" &&
 		ctx.SessionStateRoot == "" &&

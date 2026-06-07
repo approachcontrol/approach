@@ -127,7 +127,10 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 	var got config.Config
 	err := run([]string{"wtui"}, runDeps{
 		loadConfig: func() (config.Config, error) {
-			return config.Config{Agent: config.AgentConfig{Command: "codex"}}, nil
+			return config.Config{Agent: config.AgentConfig{
+				Command:    "codex",
+				PlanPrompt: "Implement {title}",
+			}}, nil
 		},
 		getenv: func(string) string { return "" },
 		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
@@ -143,6 +146,9 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 	}
 	if got.Agent.Command != "codex" {
 		t.Fatalf("expected agent config passed to program, got %q", got.Agent.Command)
+	}
+	if got.Agent.PlanPrompt != "Implement {title}" {
+		t.Fatalf("expected agent plan prompt passed to program, got %q", got.Agent.PlanPrompt)
 	}
 }
 

@@ -31,6 +31,7 @@ const (
 )
 
 const BranchPrompt = "New branch"
+const LaunchInstructionsPrompt = "Launch instructions"
 const WorktreeMovePrompt = "Move worktree to"
 const PRWorktreePrompt = "PR worktree"
 const WorktreeInputPlaceholder = "branch, tag, or new branch name"
@@ -63,6 +64,12 @@ const ShortcutPaneWidth = 28
 const (
 	shortcutKeyColumnWidth = 6
 	shortcutOverflowMarker = "..."
+)
+
+const (
+	launchInstructionsMaxWidth = 72
+	launchInstructionsMinWidth = 32
+	launchInstructionsMaxLines = 6
 )
 
 // MinContentPaneWidth keeps the primary item pane useful before the shortcut
@@ -247,6 +254,7 @@ func Render(p RenderParams) string {
 		Width:                     p.Width,
 		Mode:                      p.Mode,
 		Overlay:                   p.Overlay,
+		WorktreeInputPrompt:       p.WorktreeInputPrompt,
 		ActivePane:                p.ActivePane,
 		Destructive:               p.Destructive,
 		RepoSelected:              repoPath != "",
@@ -464,6 +472,7 @@ type statusBarParams struct {
 	Width                     int
 	Mode                      Mode
 	Overlay                   OverlayState
+	WorktreeInputPrompt       string
 	ActivePane                int
 	Destructive               bool
 	RepoSelected              bool
@@ -562,6 +571,9 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	case overlay == OverlayConfirm:
 		return statusStyle.Width(width).Render("  y: confirm  n/esc: cancel")
 	case overlay == OverlayWorktreeInput:
+		if sp.WorktreeInputPrompt == LaunchInstructionsPrompt {
+			return statusStyle.Width(width).Render("  enter: launch  esc: cancel  backspace: delete")
+		}
 		return statusStyle.Width(width).Render("  enter: create/set  esc: cancel  backspace: delete")
 	case overlay != OverlayNone:
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
@@ -1537,6 +1549,7 @@ func renderOverlay(p RenderParams) string {
 		Width:                  p.Width,
 		Mode:                   p.Mode,
 		Overlay:                p.Overlay,
+		WorktreeInputPrompt:    p.WorktreeInputPrompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
 		TransientError:         p.TransientError,
@@ -1627,6 +1640,10 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 }
 
 func renderWorktreeInputDialog(promptText, placeholder, input, errText string, width, height int) []string {
+	if promptText == LaunchInstructionsPrompt {
+		return renderLaunchInstructionsDialog(promptText, placeholder, input, errText, width, height)
+	}
+
 	lines := make([]string, height)
 	mid := height / 2
 	if mid >= len(lines) {
@@ -1654,6 +1671,159 @@ func renderWorktreeInputDialog(promptText, placeholder, input, errText string, w
 
 	if errText != "" && mid+1 < len(lines) {
 		lines[mid+1] = centeredLine(dirtyRedStyle.Render(errText), width)
+	}
+	return lines
+}
+
+func renderLaunchInstructionsDialog(promptText, placeholder, input, errText string, width, height int) []string {
+	lines := make([]string, height)
+	if width <= 0 || height <= 0 {
+		return lines
+	}
+	if placeholder == "" {
+		placeholder = "launch instructions"
+	}
+
+	panelWidth := width - 4
+	if panelWidth > launchInstructionsMaxWidth {
+		panelWidth = launchInstructionsMaxWidth
+	}
+	if panelWidth < launchInstructionsMinWidth {
+		panelWidth = width
+	}
+	if panelWidth < 4 {
+		panelWidth = width
+	}
+	contentWidth := panelWidth - 4 // border plus one-space left/right padding
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	value := input
+	placeholderVisible := false
+	if value == "" {
+		value = placeholder
+		placeholderVisible = true
+	}
+	wrapWidth := contentWidth - lipgloss.Width("█")
+	if wrapWidth < 1 {
+		wrapWidth = 1
+	}
+	bodyLines := wrapPlainText(value, wrapWidth)
+	if len(bodyLines) > launchInstructionsMaxLines {
+		bodyLines = compactLaunchInstructionLines(bodyLines, launchInstructionsMaxLines)
+	}
+
+	content := []string{activeModeStyle.Render(promptText), ""}
+	for i, line := range bodyLines {
+		if placeholderVisible {
+			line = placeholderStyle.Render(line)
+		}
+		if i == len(bodyLines)-1 {
+			line += activeModeStyle.Render("█")
+		}
+		content = append(content, line)
+	}
+	if errText != "" {
+		content = append(content, "")
+		for _, line := range wrapPlainText(errText, contentWidth) {
+			content = append(content, dirtyRedStyle.Render(line))
+		}
+	}
+
+	for i, line := range content {
+		content[i] = " " + fitSessionColumn(line, contentWidth) + " "
+	}
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Width(contentWidth + 2).
+		Render(strings.Join(content, "\n"))
+	panelLines := strings.Split(panel, "\n")
+	top := (height - len(panelLines)) / 2
+	if top < 0 {
+		top = 0
+	}
+	for i, line := range panelLines {
+		row := top + i
+		if row >= len(lines) {
+			break
+		}
+		lines[row] = centeredLine(line, width)
+	}
+	return lines
+}
+
+func compactLaunchInstructionLines(lines []string, maxLines int) []string {
+	if maxLines <= 0 || len(lines) <= maxLines {
+		return lines
+	}
+	if maxLines == 1 {
+		return []string{shortcutOverflowMarker}
+	}
+	if maxLines == 2 {
+		return []string{lines[0], shortcutOverflowMarker}
+	}
+	headCount := (maxLines - 1) / 2
+	tailCount := maxLines - headCount - 1
+	compact := make([]string, 0, maxLines)
+	compact = append(compact, lines[:headCount]...)
+	compact = append(compact, shortcutOverflowMarker)
+	compact = append(compact, lines[len(lines)-tailCount:]...)
+	return compact
+}
+
+func wrapPlainText(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{""}
+	}
+	if s == "" {
+		return []string{""}
+	}
+
+	var lines []string
+	for _, paragraph := range strings.Split(s, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+
+		current := ""
+		for _, word := range words {
+			for word != "" {
+				if current == "" {
+					if lipgloss.Width(word) <= maxWidth {
+						current = word
+						word = ""
+						continue
+					}
+					head, rest := splitAtWidth(word, maxWidth)
+					if head == "" {
+						runes := []rune(word)
+						head = string(runes[:1])
+						rest = string(runes[1:])
+					}
+					lines = append(lines, head)
+					word = rest
+					continue
+				}
+				candidate := current + " " + word
+				if lipgloss.Width(candidate) <= maxWidth {
+					current = candidate
+					word = ""
+					continue
+				}
+				lines = append(lines, current)
+				current = ""
+			}
+		}
+		if current != "" {
+			lines = append(lines, current)
+		}
+	}
+	if len(lines) == 0 {
+		return []string{""}
 	}
 	return lines
 }
