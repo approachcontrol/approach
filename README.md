@@ -91,6 +91,8 @@ filter matches, or a load failure with details in the status bar.
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
 | `y` | Copy hash to clipboard (history/reflog view) |
+| `r` | Resume selected agent session (sessions view) |
+| `s` | Copy selected agent session ID (sessions view) |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close overlay or quit |
@@ -168,7 +170,9 @@ Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the 
 Browse captured Claude Code and Codex sessions associated with the selected
 repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
 filter sessions by provider, session ID, launch ID, branch, worktree, model,
-status, or summary. Press `enter` to open the normalized transcript overlay.
+status, or summary. Press `enter` to open the normalized transcript overlay,
+`r` to resume the selected provider session, or `s` to copy the raw provider
+session ID.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
@@ -176,6 +180,9 @@ Session data is stored under the user state directory by default:
 may contain secrets or private prompts; wtui keeps them outside repositories and
 uses restrictive file permissions for created session files. Provider session IDs
 are stored in hashed directory names instead of raw path components.
+When resuming a session, wtui runs the provider resume command from the recorded
+session `cwd` when present, falling back to the captured worktree path, while
+preserving the stored worktree metadata for subsequent hooks.
 
 ### Plans view (mode 7)
 
@@ -266,10 +273,10 @@ editor, terminal, provider, launch, and agent settings.
 
 ### Agent session hooks
 
-Agents launched from wtui with `a` or `N` are wired automatically: wtui passes
-Claude Code or Codex a session-end hook that calls the current wtui binary, and
-it includes `WTUI_*` metadata so hook records can be associated with the repo,
-worktree, branch, and launch.
+Agents launched from wtui with `a`, `N`, or session resume `r` are wired
+automatically: wtui passes Claude Code or Codex a session-end hook that calls
+the current wtui binary, and it includes `WTUI_*` metadata so hook records can
+be associated with the repo, worktree, branch, and launch.
 
 For manual agent sessions that are not launched by wtui, configure Claude Code
 or Codex hooks to call wtui:
