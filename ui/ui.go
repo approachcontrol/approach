@@ -556,7 +556,8 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	title := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render(modeShortcutTitle(sp.Mode))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
-	if !compact {
+	tight := height <= 7
+	if !compact && !tight {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
 	sectionCount := 0
@@ -567,7 +568,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 			continue
 		}
 		if !compact {
-			if sectionCount > 0 {
+			if sectionCount > 0 && !tight {
 				lines = append(lines, strings.Repeat(" ", width))
 			}
 			lines = append(lines, truncateToWidth(" "+shortcutGroupStyle.Render(section.Title), width))
@@ -618,10 +619,6 @@ func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
 				continue
 			case hint.Key == "t" && next.Key == "c":
 				grouped = append(grouped, shortcutHint{Key: "t/c", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
-				i++
-				continue
-			case hint.Key == "s" && next.Key == "y":
-				grouped = append(grouped, shortcutHint{Key: "s/y", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
 				i++
 				continue
 			}

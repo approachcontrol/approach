@@ -370,7 +370,7 @@ func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  transcript", "r      resume", "s/y    summary / copy id"} {
+	for _, want := range []string{"enter  transcript", "r      resume", "s      summary", "y      copy id"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("sessions view should expose selected session shortcut %q:\n%s", want, pane)
 		}
@@ -397,7 +397,7 @@ func TestRender_SessionsModeHidesSessionActionsWithoutSelection(t *testing.T) {
 		SessionSelected: -1,
 	})
 	pane := shortcutPaneText(view)
-	for _, hidden := range []string{"enter  transcript", "r      resume", "s/y    summary / copy id", "s      summary", "y      copy id", "s      copy id"} {
+	for _, hidden := range []string{"enter  transcript", "r      resume", "s      summary", "y      copy id", "s      copy id"} {
 		if strings.Contains(pane, hidden) {
 			t.Fatalf("sessions view should hide %q without selected session:\n%s", hidden, pane)
 		}
@@ -927,7 +927,7 @@ func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  transcript", "r      resume", "s/y    summary / copy id", shortcutOverflowMarker} {
+	for _, want := range []string{"enter  transcript", "r      resume", "s      summary", "y      copy id", shortcutOverflowMarker} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("short session shortcut pane should keep selected session action %q, got:\n%s", want, pane)
 		}
