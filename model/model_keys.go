@@ -240,9 +240,12 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleCopyPlanPath()
 		}
+		if m.mode == ui.ModeSessions {
+			return m.handleCopySessionID()
+		}
 		return m.handleCopyHash()
 	case "s":
-		return m.handleCopySessionID()
+		return m.handleShowSessionSummary()
 	case "r":
 		return m.handleResumeSession()
 	case "i":

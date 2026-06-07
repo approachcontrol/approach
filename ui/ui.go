@@ -620,6 +620,10 @@ func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
 				grouped = append(grouped, shortcutHint{Key: "t/c", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
 				i++
 				continue
+			case hint.Key == "s" && next.Key == "y":
+				grouped = append(grouped, shortcutHint{Key: "s/y", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
+				i++
+				continue
 			}
 		}
 		grouped = append(grouped, hint)
@@ -750,7 +754,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions,
 				shortcutHint{Key: "enter", Label: "transcript"},
 				shortcutHint{Key: "r", Label: "resume"},
-				shortcutHint{Key: "s", Label: "copy id"},
+				shortcutHint{Key: "s", Label: "summary"},
+				shortcutHint{Key: "y", Label: "copy id"},
 			)
 		}
 	case ModePlans:
@@ -1277,12 +1282,13 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		if worktree == "." || worktree == string(filepath.Separator) {
 			worktree = ""
 		}
+		summaryFirst, summaryRest, hasSummaryRest := sessionSummaryDisplayLines(record.Summary)
 		line := formatSessionColumns("   ",
 			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
 			branchStyle.Render(fitSessionColumn(record.Branch, sessionBranchWidth)),
 			stashDateStyle.Render(fitSessionColumn(worktree, sessionWorktreeWidth)),
 			statusStyle.Render(fitSessionColumn(record.Status, sessionStatusWidth)),
-			stashMsgStyle.Render(record.Summary),
+			stashMsgStyle.Render(summaryFirst),
 		)
 		if i == selected {
 			selectedLine := truncateToWidth(formatSessionColumns(" > ",
@@ -1290,13 +1296,40 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 				record.Branch,
 				worktree,
 				record.Status,
-				record.Summary,
+				summaryFirst,
 			), width)
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
 		rows = append(rows, truncateToWidth(line, width))
+		if hasSummaryRest {
+			continuation := truncateToWidth(formatSessionColumns("   ", "", "", "", "", stashMsgStyle.Render(summaryRest)), width)
+			if i == selected {
+				continuation = stashSelStyle.Width(width).Render(truncateToWidth(formatSessionColumns("   ", "", "", "", "", summaryRest), width))
+			}
+			rows = append(rows, continuation)
+		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
+}
+
+// SessionLineCount returns the capped number of visual lines a session row
+// occupies in the sessions table.
+func SessionLineCount(summary string) int {
+	if _, _, hasRest := sessionSummaryDisplayLines(summary); hasRest {
+		return 2
+	}
+	return 1
+}
+
+func sessionSummaryDisplayLines(summary string) (string, string, bool) {
+	first, rest, ok := strings.Cut(summary, "\n")
+	first = strings.TrimSuffix(first, "\r")
+	if !ok {
+		return first, "", false
+	}
+	next, _, _ := strings.Cut(rest, "\n")
+	next = strings.TrimSuffix(next, "\r")
+	return first, next, true
 }
 
 const (

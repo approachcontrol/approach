@@ -3521,7 +3521,63 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 	}
 }
 
-func TestModel_SKeyCopiesSelectedSessionID(t *testing.T) {
+func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "first line\nsecond line\nthird line"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd != nil {
+		t.Fatalf("expected summary overlay to open without command, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayPlanText {
+		t.Fatalf("expected text overlay for session summary, got %d", m.Overlay())
+	}
+	if got := m.OverlayText(); got != "first line\nsecond line\nthird line" {
+		t.Fatalf("summary overlay text = %q", got)
+	}
+}
+
+func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd != nil {
+		t.Fatalf("expected summary overlay to open without command, got %T", cmd)
+	}
+	if got := m.OverlayText(); got != "No summary" {
+		t.Fatalf("empty summary overlay text = %q", got)
+	}
+}
+
+func TestModel_SKeySessionSummaryNoOpsOutsideSessionSelection(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = inRightPane(m)
+
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
+		t.Fatalf("expected s outside sessions to no-op, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay outside sessions, got %d", m.Overlay())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
+		t.Fatalf("expected s with no selected session to no-op, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay without selected session, got %d", m.Overlay())
+	}
+}
+
+func TestModel_YKeyCopiesSelectedSessionID(t *testing.T) {
 	var copied []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
@@ -3535,7 +3591,7 @@ func TestModel_SKeyCopiesSelectedSessionID(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "raw-codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Fatal("expected copy session id command")
 	}
@@ -3549,7 +3605,7 @@ func TestModel_SKeyCopiesSelectedSessionID(t *testing.T) {
 	}
 }
 
-func TestModel_SKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
+func TestModel_YKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
 	var copied []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
@@ -3559,19 +3615,19 @@ func TestModel_SKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
 	})
 	m = inRightPane(m)
 
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
-		t.Fatalf("expected s outside sessions to no-op, got %T", cmd)
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+		t.Fatalf("expected y outside copyable modes to no-op, got %T", cmd)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
-		t.Fatalf("expected s with no selected session to no-op, got %T", cmd)
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+		t.Fatalf("expected y with no selected session to no-op, got %T", cmd)
 	}
 	if len(copied) != 0 {
 		t.Fatalf("expected no clipboard calls, got %#v", copied)
 	}
 }
 
-func TestModel_SKeySessionCopyErrorShowsStatus(t *testing.T) {
+func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		CopyToClipboard: func(string) error {
 			return errors.New("clipboard unavailable")
@@ -3583,13 +3639,36 @@ func TestModel_SKeySessionCopyErrorShowsStatus(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Fatal("expected copy command")
 	}
 	m, _ = update(m, cmd())
 	if !strings.Contains(m.View(), "clipboard unavailable") {
 		t.Fatal("expected clipboard error in status bar")
+	}
+}
+
+func TestModel_SessionScrollAccountsForTwoLineSummaries(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "one", Summary: "one first\none second"},
+		{Provider: sessions.ProviderCodex, SessionID: "codex-2", RepoPath: "/dev/alpha", Branch: "two", Summary: "two first\ntwo second"},
+		{Provider: sessions.ProviderCodex, SessionID: "codex-3", RepoPath: "/dev/alpha", Branch: "three", Summary: "three only"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view := m.View()
+	if !strings.Contains(view, "> codex     three") {
+		t.Fatalf("expected selected third session to stay visible:\n%s", view)
+	}
+	if strings.Contains(view, "one first") {
+		t.Fatalf("expected first two-line session to scroll offscreen:\n%s", view)
 	}
 }
 

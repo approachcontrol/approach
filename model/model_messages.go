@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -1078,4 +1079,20 @@ func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
 		}
 		return ClipboardResultMsg{}
 	}
+}
+
+func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeSessions {
+		return m, nil
+	}
+	record, ok := m.selectedSession()
+	if !ok {
+		return m, nil
+	}
+	summary := record.Summary
+	if strings.TrimSpace(summary) == "" {
+		summary = "No summary"
+	}
+	m.modal = modal.OpenText(summary)
+	return m, nil
 }
