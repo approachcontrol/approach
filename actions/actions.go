@@ -468,6 +468,9 @@ type AgentLaunchContext struct {
 	ResumeSessionID  string
 	PlanID           string
 	PlanPath         string
+	PlanPhaseID      string
+	PlanPhaseTitle   string
+	PlanPhaseStatus  string
 	// InitialPrompt is appended as the trailing positional prompt argument.
 	InitialPrompt string
 }
@@ -503,6 +506,9 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		envVar{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
 		envVar{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		envVar{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+		envVar{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		envVar{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		envVar{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }

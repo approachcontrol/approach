@@ -1628,6 +1628,32 @@ func TestAgentLaunchCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchAddsPlanPhaseEnvironment(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:         "codex",
+		WorktreePath:    "/repo/worktree",
+		PlanID:          "plan-1",
+		PlanPath:        "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPhaseID:     "p2",
+		PlanPhaseTitle:  "CLI subcommands",
+		PlanPhaseStatus: "pending",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_PLAN_PHASE_ID":     "p2",
+		"WTUI_PLAN_PHASE_TITLE":  "CLI subcommands",
+		"WTUI_PLAN_PHASE_STATUS": "pending",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+		}
+	}
+}
+
 func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 	t.Setenv("CUSTOM_KEEP", "still-here")
 	for _, key := range []string{
@@ -1641,6 +1667,9 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT",
 		"WTUI_PLAN_ID",
 		"WTUI_PLAN_PATH",
+		"WTUI_PLAN_PHASE_ID",
+		"WTUI_PLAN_PHASE_TITLE",
+		"WTUI_PLAN_PHASE_STATUS",
 	} {
 		t.Setenv(key, "inherited-"+key)
 	}
@@ -1655,6 +1684,9 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		PlanID:           "plan-2",
 		PlanPath:         "/state/wtui/sessions/v1/plans/plan-2/plan.md",
+		PlanPhaseID:      "p2",
+		PlanPhaseTitle:   "Launch environment",
+		PlanPhaseStatus:  "in_progress",
 	})
 	if err != nil {
 		t.Fatalf("AgentLaunch returned error: %v", err)
@@ -1671,6 +1703,9 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
 		"WTUI_PLAN_ID":            "plan-2",
 		"WTUI_PLAN_PATH":          "/state/wtui/sessions/v1/plans/plan-2/plan.md",
+		"WTUI_PLAN_PHASE_ID":      "p2",
+		"WTUI_PLAN_PHASE_TITLE":   "Launch environment",
+		"WTUI_PLAN_PHASE_STATUS":  "in_progress",
 	} {
 		got, count := envEntryValue(launch.Cmd.Env, key)
 		if got != want || count != 1 {

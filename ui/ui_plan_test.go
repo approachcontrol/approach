@@ -95,6 +95,64 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 	}
 }
 
+func TestRender_PlansModeShowsPhaseShortcutWhenPhaseSelected(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    120,
+		Height:   14,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{{
+			PlanID: "plan-1",
+			Title:  "Persist plans",
+			Status: "draft",
+			Phases: []planstore.PlanPhase{
+				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
+			},
+		}},
+		ActivePane:          1,
+		PlanSelected:        0,
+		ExpandedPlanID:      "plan-1",
+		SelectedPlanPhaseID: "p1",
+	})
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "i      implement phase") {
+		t.Fatalf("selected phase shortcut should expose phase implementation:\n%s", view)
+	}
+	if strings.Contains(pane, "i      implement\n") {
+		t.Fatalf("selected phase shortcut should not expose whole-plan implementation:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeIgnoresStaleSelectedPhaseForShortcut(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    120,
+		Height:   14,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{{
+			PlanID: "plan-1",
+			Title:  "Persist plans",
+			Status: "draft",
+			Phases: []planstore.PlanPhase{
+				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
+			},
+		}},
+		ActivePane:          1,
+		PlanSelected:        0,
+		ExpandedPlanID:      "plan-1",
+		SelectedPlanPhaseID: "missing",
+	})
+	pane := shortcutPaneText(view)
+	if strings.Contains(pane, "i      implement phase") {
+		t.Fatalf("stale phase selection should not expose phase implementation:\n%s", view)
+	}
+	if !strings.Contains(pane, "i      implement") {
+		t.Fatalf("stale phase selection should fall back to whole-plan implementation:\n%s", view)
+	}
+}
+
 func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
@@ -151,6 +209,65 @@ func TestRender_PlansModeShowsExpandedPhasesForSelectedPlanOnly(t *testing.T) {
 	}
 	if strings.Contains(view, "Other phase") || strings.Contains(view, "blocked") {
 		t.Fatalf("only the selected expanded plan should show phase rows:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeHighlightsSelectedPhaseRow(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{{
+			PlanID: "plan-1",
+			Title:  "Persist plans",
+			Status: "in_progress",
+			Phases: []planstore.PlanPhase{
+				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
+				{PhaseID: "p2", Title: "CLI", Status: "pending", Order: 2},
+			},
+		}},
+		ActivePane:          1,
+		PlanSelected:        0,
+		ExpandedPlanID:      "plan-1",
+		SelectedPlanPhaseID: "p2",
+	})
+
+	if !strings.Contains(view, "> pending") || !strings.Contains(view, "CLI") {
+		t.Fatalf("selected phase row should be highlighted:\n%s", view)
+	}
+	if strings.Contains(view, "> in_progress") {
+		t.Fatalf("plan row should not be highlighted while a phase is selected:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeIgnoresStaleSelectedPhaseForHighlight(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{{
+			PlanID: "plan-1",
+			Title:  "Persist plans",
+			Status: "in_progress",
+			Phases: []planstore.PlanPhase{
+				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
+			},
+		}},
+		ActivePane:          1,
+		PlanSelected:        0,
+		ExpandedPlanID:      "plan-1",
+		SelectedPlanPhaseID: "missing",
+	})
+
+	if strings.Contains(view, "> completed") {
+		t.Fatalf("stale phase selection should not highlight phase rows:\n%s", view)
+	}
+	if !strings.Contains(view, "> in_progress") {
+		t.Fatalf("stale phase selection should leave plan row highlighted:\n%s", view)
 	}
 }
 
