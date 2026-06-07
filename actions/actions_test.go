@@ -1579,6 +1579,85 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanID:           "plan-1",
+		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		InitialPrompt:    "Read the plan and begin implementation.",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	if env["WTUI_PLAN_ID"] != "plan-1" {
+		t.Fatalf("WTUI_PLAN_ID = %q, want plan-1", env["WTUI_PLAN_ID"])
+	}
+	if env["WTUI_PLAN_PATH"] != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
+		t.Fatalf("WTUI_PLAN_PATH = %q", env["WTUI_PLAN_PATH"])
+	}
+	if got := launch.Cmd.Args[len(launch.Cmd.Args)-1]; got != "Read the plan and begin implementation." {
+		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, launch.Cmd.Args)
+	}
+}
+
+func TestAgentLaunchClaudeAddsPromptAsFinalArg(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:       "claude",
+		LaunchID:      "launch-1",
+		RepoPath:      "/repo",
+		WorktreePath:  "/repo/worktree",
+		PlanID:        "plan-1",
+		PlanPath:      "/state/plans/plan-1/plan.md",
+		InitialPrompt: "Read the plan and begin implementation.",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	if env["WTUI_PLAN_ID"] != "plan-1" || env["WTUI_PLAN_PATH"] != "/state/plans/plan-1/plan.md" {
+		t.Fatalf("plan env not exported: %#v", env)
+	}
+	if got := launch.Cmd.Args[len(launch.Cmd.Args)-1]; got != "Read the plan and begin implementation." {
+		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, launch.Cmd.Args)
+	}
+}
+
+func TestAgentLaunchEmptyPromptLeavesProviderArgsUnchanged(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			withoutPlan, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:      command,
+				LaunchID:     "launch-1",
+				RepoPath:     "/repo",
+				WorktreePath: "/repo/worktree",
+			})
+			if err != nil {
+				t.Fatalf("AgentLaunch without prompt returned error: %v", err)
+			}
+			withEmptyPrompt, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:       command,
+				LaunchID:      "launch-1",
+				RepoPath:      "/repo",
+				WorktreePath:  "/repo/worktree",
+				InitialPrompt: "",
+			})
+			if err != nil {
+				t.Fatalf("AgentLaunch with empty prompt returned error: %v", err)
+			}
+			if strings.Join(withEmptyPrompt.Cmd.Args, "\x00") != strings.Join(withoutPlan.Cmd.Args, "\x00") {
+				t.Fatalf("empty prompt changed args:\nwithout=%#v\nwith=%#v", withoutPlan.Cmd.Args, withEmptyPrompt.Cmd.Args)
+			}
+		})
+	}
+}
+
 func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))

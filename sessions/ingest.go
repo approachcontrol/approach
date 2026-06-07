@@ -112,6 +112,12 @@ func applyEnvMetadata(record *SessionRecord, env map[string]string) {
 	if record.WorktreePath == "" {
 		record.WorktreePath = env["WTUI_WORKTREE_PATH"]
 	}
+	if record.PlanID == "" {
+		record.PlanID = env["WTUI_PLAN_ID"]
+	}
+	if record.PlanPath == "" {
+		record.PlanPath = env["WTUI_PLAN_PATH"]
+	}
 	if record.Branch == "" {
 		record.Branch = env["WTUI_BRANCH"]
 	}

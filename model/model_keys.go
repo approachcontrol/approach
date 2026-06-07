@@ -9,6 +9,7 @@ import (
 	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -236,11 +237,18 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.startFetchPlans()
 		}
 	case "y":
+		if m.mode == ui.ModePlans {
+			return m.handleCopyPlanPath()
+		}
 		return m.handleCopyHash()
 	case "s":
 		return m.handleCopySessionID()
 	case "r":
 		return m.handleResumeSession()
+	case "i":
+		if m.mode == ui.ModePlans {
+			return m.handleImplementPlan()
+		}
 	case "tab":
 		m.activePane = 0
 	case "enter":
@@ -683,6 +691,55 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		ResumeSessionID:  record.SessionID,
 	}
 	return m.launchAgentWithContext(ctx)
+}
+
+func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
+	plan, ok := m.selectedPlan()
+	if !ok {
+		return m, nil
+	}
+	if m.agentCommand == "" {
+		m = m.setStatus(statusOther, "Press A to choose codex or claude before launching an agent")
+		return m, nil
+	}
+	planPath, err := m.planMarkdownPath(plan.PlanID)
+	if err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	repoPath, _ := m.currentRepoPath()
+	if plan.RepoPath != "" {
+		repoPath = plan.RepoPath
+	}
+	launchPath := plan.WorktreePath
+	if launchPath == "" {
+		launchPath = plan.RepoPath
+	}
+	if launchPath == "" {
+		launchPath = repoPath
+	}
+	if launchPath == "" {
+		return m, nil
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:          m.agentCommand,
+		LaunchID:         newLaunchID(),
+		RepoPath:         repoPath,
+		WorktreePath:     launchPath,
+		SessionStateRoot: m.sessionStateRoot,
+		PlanID:           plan.PlanID,
+		PlanPath:         planPath,
+		InitialPrompt:    implementationPrompt(plan, planPath),
+	}
+	return m.launchAgentWithContext(ctx)
+}
+
+func implementationPrompt(plan planstore.PlanRecord, planPath string) string {
+	title := plan.Title
+	if title == "" {
+		title = "(untitled)"
+	}
+	return fmt.Sprintf("Implement the saved wtui plan %q (ID: %s) at %s. Read the plan file, then begin implementation.", title, plan.PlanID, planPath)
 }
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
