@@ -267,6 +267,14 @@ The flow state root is resolved with this precedence: `--state-root` >
 `WTUI_FLOW_STATE_ROOT`, `WTUI_PLAN_STATE_ROOT`, or `WTUI_SESSION_STATE_ROOT`
 relocates the shared artifact root for sessions, plans, and flows.
 
+Flow-launched agents should use the canonical `wtui-flow` skill source at
+`agent-skills/wtui-flow/`. Install or symlink it beside
+`agent-skills/wtui-plan-persist/` in the user-level skill directory for your
+agent, such as `~/.codex/skills/wtui-flow` for Codex or the equivalent Claude
+skills directory. The skill activates when `WTUI_FLOW_ID` and
+`WTUI_FLOW_PHASE_ID` are present, reads the active flow before updates, and uses
+the implemented `wtui flow` and `wtui plan` commands for persistence.
+
 ## Configuration
 
 wtui reads an optional TOML config file before scanning repositories:
