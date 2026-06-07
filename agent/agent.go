@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	CommandCodex  = "codex"
-	CommandClaude = "claude"
+	CommandCodex    = "codex"
+	CommandCodexApp = "codex-app"
+	CommandClaude   = "claude"
 )
 
 func Normalize(command string) string {
@@ -16,7 +17,7 @@ func Normalize(command string) string {
 
 func Supported(command string) bool {
 	switch Normalize(command) {
-	case CommandCodex, CommandClaude:
+	case CommandCodex, CommandCodexApp, CommandClaude:
 		return true
 	default:
 		return false
@@ -28,7 +29,7 @@ func Validate(command string) error {
 		return fmt.Errorf("agent is not set")
 	}
 	if !Supported(command) {
-		return fmt.Errorf("unsupported agent %q; choose codex or claude", command)
+		return fmt.Errorf("unsupported agent %q; choose codex, codex-app, or claude", command)
 	}
 	return nil
 }
