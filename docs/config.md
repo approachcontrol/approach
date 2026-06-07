@@ -25,8 +25,10 @@ exist:
 | Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
-| Sessions root | `WTUI_SESSION_STATE_ROOT` for hooks | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
+| TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
+| Session hook root | `--state-root` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
+| Flow state root | `--state-root` > `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/flows/...`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
@@ -148,10 +150,11 @@ When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or
 `~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset.
 Relative roots other than `~`/`~/...` fail config parsing.
 
-`[sessions].root` doubles as the **agent-artifact root**: saved plans are stored
-under `<root>/plans/<plan-id>/` (alongside `<root>/sessions/...`). There is no
-separate plans config in v1. **Moving or cleaning the sessions root therefore
-also moves or removes saved plans.**
+`[sessions].root` doubles as the **agent-artifact root**: sessions, saved plans,
+and Flow records are stored under `<root>/sessions/...`,
+`<root>/plans/<plan-id>/`, and `<root>/flows/<flow-id>/`. There is no separate
+plans or flows config in v1. **Moving or cleaning the sessions root therefore
+also moves or removes saved plans and Flow records.**
 
 ## Saved Plans
 
@@ -190,13 +193,56 @@ The plan state root is resolved as: `--state-root` > `WTUI_PLAN_STATE_ROOT` >
 `wtui plan` commands may load config to resolve the root but never scan repos or
 start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
 `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and
-`WTUI_COMMIT`. `codex-app` launches do not inherit `WTUI_*` because wtui opens a
-macOS deep link; use the metadata block in the launch prompt to pass
-`--state-root` or export the listed vars before running `wtui plan`. wtui does
-not infer git metadata in v1. The `wtui-plan-persist` skill instructs agents on
-when and how to save plans; its canonical source lives in
+`WTUI_COMMIT`; for new plans, and for updates that provide a repo or worktree
+location, wtui also resolves best-effort repo, worktree, branch, and commit
+metadata from git. `codex-app` launches do not inherit `WTUI_*` because wtui
+opens a macOS deep link; use the metadata block in the launch prompt to pass
+`--state-root` or export the listed vars before running `wtui plan`. The
+`wtui-plan-persist` skill instructs agents on when and how to save plans; its
+canonical source lives in
 `agent-skills/wtui-plan-persist/` for symlinking into user-level Codex/Claude
 skill directories.
+
+## Flows
+
+Flow records are task-centric workflow records created explicitly through
+`wtui flow`. Each record is stored as
+`<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
+(`0700` directories, `0600` files) and atomic writes. They appear in the TUI
+flows pane (mode `8`), which is browse/filter only in v1.
+
+```bash
+# Create a flow. --repo-path must be absolute, instructions are required, and
+# --json is required in v1.
+wtui flow create --title "Ship saved plans" \
+    --instructions "Plan, implement, review, open a PR, and merge." \
+    --repo-path "$REPO" [--worktree-path PATH] [--branch BRANCH] \
+    [--base-ref REF] [--commit HASH] [--state-root PATH] --json
+
+# You may also read instructions from a file.
+wtui flow create --title "Ship saved plans" \
+    --instructions-file ./instructions.md --repo-path "$REPO" --json
+
+wtui flow list [--repo-path PATH] [--state-root PATH] --json
+wtui flow read --flow-id ID [--state-root PATH]
+```
+
+Flow IDs use the same safe single-path-segment shape as plans:
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use
+`YYYYMMDDTHHMMSSZ-<title-slug>` with a numeric suffix on collision. New flows
+start with a default phase graph: plan, plan review, implementation, review
+loop, PR creation, autoreview, and merge.
+
+Flow statuses are derived from phase and merge state. Flow statuses include
+`pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
+and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
+`needs_attention`, `completed`, `blocked`, and `skipped`.
+
+The flow state root is resolved as: `--state-root` >
+`WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
+`[sessions].root` > the user state default. In TUI startup,
+`WTUI_FLOW_STATE_ROOT` has highest precedence for the shared artifact root; if
+it is set, the TUI reads sessions, plans, and flows from that root.
 
 ### `[bootstrap]`
 

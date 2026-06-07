@@ -74,14 +74,14 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4`/`5`/`6`/`7` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans |
+| `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry), session transcript, or plan |
+| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry), session transcript, or expand/collapse plan phases |
 | `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view) |
-| `A` | Choose and persist the coding agent (`codex` or `claude`) |
+| `A` | Choose and persist the coding agent (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
@@ -90,16 +90,18 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
-| `y` | Copy hash to clipboard (history/reflog view) or selected agent session ID (sessions view) |
+| `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), or plan Markdown path (plans view) |
 | `r` | Resume selected agent session (sessions view) |
 | `s` | Show selected agent session summary (sessions view) |
+| `o` | Open selected plan Markdown in a plain-text overlay (plans view) |
+| `i` | Edit launch instructions and launch the selected plan or selected plan phase (plans view) |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close overlay or quit |
 
-The right pane header shows the active mode. Press `1`–`7` or use arrow keys to
+The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
 switch between worktrees, branches, stashes, history, reflog, sessions, and
-plans.
+plans, and flows.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
@@ -115,7 +117,7 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `A` to choose `codex` or `claude`; wtui persists the choice to config.
+Press `A` to choose `codex`, `codex-app`, or `claude`; wtui persists the choice to config.
 Press `a` to launch the selected agent in the current non-stale worktree, or
 `N` to create a worktree and launch the agent there immediately. Press `n` to
 create a worktree without launching an agent. Enter an existing branch, tag, or
@@ -189,10 +191,11 @@ preserving the stored worktree metadata for subsequent hooks.
 Browse saved agent plans for the selected repo. Rows show status, branch, phase
 progress (`completed/total`), the updated date, and the title. Use `/` to filter
 plans by title, summary, status, branch, worktree basename, provider, session
-ID, launch ID, and phase titles/statuses. Press `enter` to open the plan
-Markdown in a plain-text overlay. Press `i` to edit the launch instructions for
-the selected plan, then `enter` to launch the selected agent or `esc` to cancel;
-blank instructions are rejected.
+ID, launch ID, and phase titles/statuses. Press `enter` to expand or collapse
+the selected plan's phase rows, `o` to open the plan Markdown in a plain-text
+overlay, and `y` to copy the plan Markdown path. Press `i` to edit launch
+instructions for the selected plan or selected phase, then `enter` to launch
+the selected agent or `esc` to cancel; blank instructions are rejected.
 
 Plans are persisted explicitly by agents through the `wtui plan` CLI rather than
 captured from hooks. Plans share the agent-artifact root with sessions: they are
@@ -200,7 +203,8 @@ stored under `<sessions root>/plans/<plan-id>/` (`meta.json` plus `plan.md`),
 that is `$XDG_STATE_HOME/wtui/sessions/v1/plans/...` or
 `~/.local/state/wtui/sessions/v1/plans/...` by default. **Because plans live
 beside sessions, moving or cleaning the sessions root (including via
-`WTUI_PLAN_STATE_ROOT`) also moves or removes your saved plans.**
+`WTUI_PLAN_STATE_ROOT` or the TUI-level `WTUI_FLOW_STATE_ROOT`) also moves or
+removes your saved plans.**
 
 Agents persist plans with the `wtui plan` subcommands (these load config to
 resolve the artifact root but never scan repositories or start the TUI):
@@ -222,8 +226,10 @@ The plan state root is resolved with this precedence: `--state-root` >
 `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` > `[sessions].root` > the user
 state default. CLI-launched agents get `WTUI_PLAN_STATE_ROOT` and
 `WTUI_SESSION_STATE_ROOT` set to the same resolved root. Omitted metadata is
-filled from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
-`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`. `codex-app` launches use
+filled first from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
+`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`; for new plans, and for
+updates that provide a repo or worktree location, wtui also resolves best-effort
+repo, worktree, branch, and commit metadata from git. `codex-app` launches use
 macOS `open`, so they do not inherit `WTUI_*`; wtui includes equivalent metadata
 in the launch prompt, and agents should pass the listed `--state-root` when
 running `wtui plan` commands. The `wtui-plan-persist` skill instructs agents on
@@ -231,6 +237,35 @@ when and how to save plans. Its canonical source lives in
 `agent-skills/wtui-plan-persist/`, which is intentionally outside Codex and
 Claude's repo auto-discovery directories so it can be symlinked into user-level
 skill dirs for use across repos. v1 has no TUI plan editing or deletion.
+
+### Flows view (mode 8)
+
+Browse persisted Flow records for the selected repo. Rows show status, branch
+or worktree basename, phase progress (`completed/total`, counting skipped phases
+as done), PR number or label, updated date, and title. Use `/` to filter by
+title, instructions, status, branch, worktree basename, plan metadata, PR
+metadata, phase titles/statuses/summaries, and linked session metadata.
+
+Flows are task-centric workflow records stored beside sessions and plans under
+`<sessions root>/flows/<flow-id>/meta.json`. The TUI is browse/filter only in
+v1; create/read/list records with the `wtui flow` CLI:
+
+```bash
+# Create a flow; --repo-path must be absolute and --json is required in v1.
+wtui flow create --title "Ship saved plans" \
+  --instructions "Plan, implement, review, open a PR, and merge." \
+  --repo-path "$REPO" --json
+
+# List or read flows.
+wtui flow list --repo-path "$REPO" --json
+wtui flow read --flow-id "$FLOW_ID"
+```
+
+The flow state root is resolved with this precedence: `--state-root` >
+`WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
+`[sessions].root` > the user state default. In TUI startup,
+`WTUI_FLOW_STATE_ROOT`, `WTUI_PLAN_STATE_ROOT`, or `WTUI_SESSION_STATE_ROOT`
+relocates the shared artifact root for sessions, plans, and flows.
 
 ## Configuration
 
@@ -275,7 +310,8 @@ fields for editor, terminal, provider, launch, and agent settings.
 | `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos; depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 | `WTUI_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by wtui |
-| `WTUI_PLAN_STATE_ROOT` | `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `wtui plan`; set automatically for agents launched by wtui. In the TUI it relocates the whole artifact root, moving both sessions and plans |
+| `WTUI_PLAN_STATE_ROOT` | `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `wtui plan`; set automatically for agents launched by wtui. In the TUI it relocates the whole artifact root, moving sessions, plans, and flows |
+| `WTUI_FLOW_STATE_ROOT` | `WTUI_PLAN_STATE_ROOT`, `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Flow artifact root for `wtui flow`. In the TUI it has highest precedence for the shared sessions/plans/flows artifact root |
 
 ### Agent session hooks
 
