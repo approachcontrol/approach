@@ -104,6 +104,10 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		return m.reflowRepos()
 	}
 
+	selectedPlanID := ""
+	if m.mode == ui.ModePlans {
+		selectedPlanID = m.selectedPlanID()
+	}
 	m.worktrees = m.worktrees.SetQueryPreserveIndex(query)
 	m.rows = m.rows.SetQueryPreserveIndex(query)
 	m.stashes = m.stashes.SetQueryPreserveIndex(query)
@@ -134,6 +138,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	case ui.ModePlans:
 		m.plans = m.plans.SetQuery(query)
 		m = m.reflowPlans()
+		if selectedPlanID != "" && m.selectedPlanID() != selectedPlanID {
+			m.expandedPlanID = ""
+		}
 	}
 	return m
 }

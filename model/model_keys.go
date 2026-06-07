@@ -310,7 +310,11 @@ func (m Model) moveCursor(delta int) Model {
 	case ui.ModeSessions:
 		m.sessions = m.sessions.Move(delta, h, w)
 	case ui.ModePlans:
+		before := m.selectedPlanID()
 		m.plans = m.plans.Move(delta, h, w)
+		if after := m.selectedPlanID(); before != "" && after != before {
+			m.expandedPlanID = ""
+		}
 	}
 	return m
 }
@@ -347,8 +351,14 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, m.fetchSessionTranscript()
 	}
 	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
-		m = m.openPlanText()
-		return m, m.fetchPlanText()
+		if planID := m.selectedPlanID(); planID != "" {
+			if m.expandedPlanID == planID {
+				m.expandedPlanID = ""
+			} else {
+				m.expandedPlanID = planID
+			}
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -856,6 +866,7 @@ func (m Model) resetModeCursors() Model {
 	m.reflogs = m.reflogs.ResetSelection()
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
+	m.expandedPlanID = ""
 	return m
 }
 
@@ -869,6 +880,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.reflogs = m.reflogs.SetItems(nil).ResetSelection()
 	m.sessions = m.sessions.SetItems(nil).ResetSelection()
 	m.plans = m.plans.SetItems(nil).ResetSelection()
+	m.expandedPlanID = ""
 	return m
 }
 

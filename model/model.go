@@ -34,6 +34,7 @@ type Model struct {
 	reflogs                   pane.Pane[gitquery.ReflogEntry]
 	sessions                  pane.Pane[sessions.SessionRecord]
 	plans                     pane.Pane[planstore.PlanRecord]
+	expandedPlanID            string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	listRequestSeq            uint64
@@ -307,6 +308,7 @@ func (m Model) View() string {
 		Plans:                    plans,
 		PlanSelected:             planSelected,
 		PlanScroll:               planScroll,
+		ExpandedPlanID:           m.expandedPlanID,
 		OverlayText:              modalView.Text,
 		TransientError:           m.visibleStatusText(),
 		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
@@ -649,6 +651,14 @@ func (m Model) selectedPlan() (planstore.PlanRecord, bool) {
 		return planstore.PlanRecord{}, false
 	}
 	return m.plans.Selected()
+}
+
+func (m Model) selectedPlanID() string {
+	record, ok := m.selectedPlan()
+	if !ok {
+		return ""
+	}
+	return record.PlanID
 }
 
 func (m Model) isSelectedBranchDirtyWorktree() bool {
