@@ -214,9 +214,12 @@ The plan state root is resolved with this precedence: `--state-root` >
 state default. Agents launched by wtui get `WTUI_PLAN_STATE_ROOT` and
 `WTUI_SESSION_STATE_ROOT` set to the same resolved root. Omitted metadata is
 filled from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
-`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`. The repo `wtui-plan-persist`
-skill (`.agents/skills/`) instructs agents on when and how to save plans. v1 has
-no TUI plan editing or deletion.
+`WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`. The `wtui-plan-persist`
+skill instructs agents on when and how to save plans. Its canonical source
+lives in `agent-skills/wtui-plan-persist/`, which is intentionally outside
+Codex and Claude's repo auto-discovery directories so it can be symlinked into
+user-level skill dirs for use across repos. v1 has no TUI plan editing or
+deletion.
 
 ## Configuration
 
