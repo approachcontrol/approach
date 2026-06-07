@@ -544,10 +544,71 @@ func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
 	}
 
 	values := []string{"path=" + codexAppQueryEscape(path)}
-	if ctx.InitialPrompt != "" {
-		values = append(values, "prompt="+codexAppQueryEscape(ctx.InitialPrompt))
+	if prompt := codexAppLaunchPrompt(ctx); prompt != "" {
+		values = append(values, "prompt="+codexAppQueryEscape(prompt))
 	}
 	return "codex://threads/new?" + strings.Join(values, "&"), nil
+}
+
+func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
+	if ctx.InitialPrompt == "" {
+		return ""
+	}
+	metadata := codexAppLaunchMetadata(ctx)
+	if metadata == "" {
+		return ctx.InitialPrompt
+	}
+	return ctx.InitialPrompt + "\n\n" + metadata
+}
+
+func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
+	if ctx.LaunchID == "" &&
+		ctx.RepoPath == "" &&
+		ctx.Branch == "" &&
+		ctx.Commit == "" &&
+		ctx.SessionStateRoot == "" &&
+		ctx.PlanID == "" &&
+		ctx.PlanPath == "" {
+		return ""
+	}
+
+	items := []envVar{
+		{key: "WTUI_AGENT", value: agent.CommandCodexApp},
+		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
+		{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
+		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
+		{key: "WTUI_BRANCH", value: ctx.Branch},
+		{key: "WTUI_COMMIT", value: ctx.Commit},
+		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
+		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+	}
+
+	var kept []envVar
+	for _, item := range items {
+		if item.value != "" {
+			kept = append(kept, item)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("wtui launch metadata (Codex App launches do not inherit WTUI_* environment from macOS open):")
+	for _, item := range kept {
+		b.WriteString("\n- ")
+		b.WriteString(item.key)
+		b.WriteString("=")
+		b.WriteString(shellQuote(item.value))
+	}
+	if ctx.SessionStateRoot != "" {
+		b.WriteString("\nWhen running wtui plan commands for this launch, pass `--state-root ")
+		b.WriteString(shellQuote(ctx.SessionStateRoot))
+		b.WriteString("` or export WTUI_PLAN_STATE_ROOT/WTUI_SESSION_STATE_ROOT with that value.")
+	}
+	return b.String()
 }
 
 func codexAppQueryEscape(value string) string {

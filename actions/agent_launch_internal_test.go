@@ -75,6 +75,48 @@ func TestCodexAppLaunchUsesWorkingDirForNewThreadPath(t *testing.T) {
 	}
 }
 
+func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
+	t.Setenv("WTUI_PLAN_STATE_ROOT", "/inherited/state")
+	launch, err := agentLaunch(AgentLaunchContext{
+		Command:          "codex-app",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/work'tree$(bad)",
+		Branch:           "feature/$(echo pwned)",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanID:           "plan-1",
+		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		InitialPrompt:    "Read the plan and begin implementation.",
+	}, "darwin")
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	assertNoWTUIEnv(t, launch.Cmd.Environ())
+
+	gotURL, err := url.Parse(launch.Cmd.Args[1])
+	if err != nil {
+		t.Fatalf("parse launch URL: %v", err)
+	}
+	prompt := gotURL.Query().Get("prompt")
+	for _, want := range []string{
+		"Read the plan and begin implementation.",
+		"WTUI_LAUNCH_ID=" + shellQuote("launch-1"),
+		"WTUI_REPO_PATH=" + shellQuote("/repo"),
+		"WTUI_WORKTREE_PATH=" + shellQuote("/repo/work'tree$(bad)"),
+		"WTUI_BRANCH=" + shellQuote("feature/$(echo pwned)"),
+		"WTUI_SESSION_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
+		"WTUI_PLAN_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
+		"WTUI_PLAN_ID=" + shellQuote("plan-1"),
+		"WTUI_PLAN_PATH=" + shellQuote("/state/wtui/sessions/v1/plans/plan-1/plan.md"),
+		"--state-root " + shellQuote("/state/wtui/sessions/v1"),
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestCodexAppLaunchOpensResumeDeepLink(t *testing.T) {
 	t.Setenv("WTUI_SESSION_STATE_ROOT", "/inherited/state")
 	launch, err := agentLaunch(AgentLaunchContext{
