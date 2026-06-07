@@ -43,10 +43,10 @@ Goal: add context that helps users decide which worktree needs attention.
 - [ ] P2 - CI status per branch/worktree: show pass, fail, and running indicators for active branches.
 - [ ] P2 - GitHub/GitLab provider config: support PR creation, PR detection, and CI lookup without hardcoding one provider.
 - [ ] P3 - Worktree notes, labels, or tags: help users manage many parallel branches, especially for review or agent-driven work.
-- [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, and show normalized transcripts in mode 6.
+- [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, show normalized transcripts in mode 6, resume selected sessions, and copy raw provider session IDs.
 - [x] P3 - Saved plans (skill-first v1): persist agent plans via the `wtui plan` CLI and the `wtui-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with a plain-text overlay and per-phase progress.
 - [ ] P3 - Plans follow-ups: optional Claude Code `plan-hook` adapter (`ExitPlanMode` PreToolUse/PostToolUse), automatic phase extraction, and TUI editing/deletion (see plan appendix).
-- [ ] P3 - Agent session follow-ups: add resume/open-native-transcript actions and richer status when provider signals are reliable.
+- [ ] P3 - Agent session follow-ups: add open-native-transcript actions and richer status when provider signals are reliable.
 - [ ] P3 - Desktop notifications: notify on long-running fetch, pull, or batch completion after the operation model is mature.
 
 ## Phase 5: Release and Community Hygiene

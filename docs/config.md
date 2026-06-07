@@ -223,10 +223,10 @@ manually afterward.
 
 ## Agent Session Hooks
 
-Agents launched from wtui with `a` or `N` are wired automatically. wtui passes
-Claude Code or Codex a session-end hook that calls the current wtui binary, and
-it appends the environment metadata listed below so the hook can associate the
-session with the selected repo and worktree.
+Agents launched from wtui with `a`, `N`, or session resume `r` are wired
+automatically. wtui passes Claude Code or Codex a session-end hook that calls
+the current wtui binary, and it appends the environment metadata listed below so
+the hook can associate the session with the selected repo and worktree.
 
 wtui can also ingest hook payloads from manual provider configuration:
 
@@ -290,10 +290,15 @@ Codex hook example:
 }
 ```
 
-When wtui launches an agent with `a` or `N`, it appends these environment
+When wtui launches or resumes an agent session, it appends these environment
 variables:
 `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
 `WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
+
+Session resume uses the stored provider session ID. Codex resumes with
+`codex ... resume <session-id>` and Claude Code resumes with
+`claude ... --resume <session-id>`, while preserving the same wtui hook and
+metadata environment wiring as fresh launches.
 
 For Codex hook payloads with `hook_event_name = "Stop"`, wtui records the
 session as ended. Claude hook ingestion also records ended sessions, using the

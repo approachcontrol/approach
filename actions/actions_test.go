@@ -1599,6 +1599,26 @@ func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchResolvesMissingCommitFromWorkingDir(t *testing.T) {
+	repoPath := setupRepo(t)
+	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
+
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:         "codex",
+		LaunchID:        "launch-1",
+		RepoPath:        repoPath,
+		WorkingDir:      repoPath,
+		ResumeSessionID: "codex-session-1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	if got := envMap(launch.Cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
+		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
+	}
+}
+
 func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
 	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
 		Command:          "codex",
@@ -1621,6 +1641,55 @@ func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
 	} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("expected codex launch args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func TestAgentLaunchBuildsCodexResumeCommand(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ResumeSessionID:  "codex-session-1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	if launch.Cmd.Dir != "/repo/worktree" {
+		t.Fatalf("command dir = %q, want /repo/worktree", launch.Cmd.Dir)
+	}
+	if !launch.Interactive {
+		t.Fatal("expected resume launch to be interactive")
+	}
+	args := launch.Cmd.Args
+	if len(args) != 5 {
+		t.Fatalf("args = %#v, want command plus --config hook, resume, and id", args)
+	}
+	if args[0] != "codex" || args[1] != "--config" || args[3] != "resume" || args[4] != "codex-session-1" {
+		t.Fatalf("unexpected codex resume args: %#v", args)
+	}
+	if !strings.Contains(args[2], "session-hook --provider codex") {
+		t.Fatalf("expected codex hook config in args, got %#v", args)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_AGENT":              "codex",
+		"WTUI_LAUNCH_ID":          "launch-1",
+		"WTUI_REPO_PATH":          "/repo",
+		"WTUI_WORKTREE_PATH":      "/repo/worktree",
+		"WTUI_BRANCH":             "main",
+		"WTUI_COMMIT":             "abcdef",
+		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
 		}
 	}
 }
@@ -1651,6 +1720,57 @@ func TestAgentLaunchWiresClaudeSessionHook(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchBuildsClaudeResumeCommand(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "claude",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "docs",
+		Commit:           "123456",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ResumeSessionID:  "claude-session-1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	args := launch.Cmd.Args
+	if len(args) != 5 {
+		t.Fatalf("args = %#v, want command plus --settings hook, --resume, and id", args)
+	}
+	if args[0] != "claude" || args[1] != "--settings" || args[3] != "--resume" || args[4] != "claude-session-1" {
+		t.Fatalf("unexpected claude resume args: %#v", args)
+	}
+	if !strings.Contains(args[2], "session-hook --provider claude") {
+		t.Fatalf("expected claude hook settings in args, got %#v", args)
+	}
+}
+
+func TestAgentLaunchResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		WorkingDir:       "/repo/worktree/subdir",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ResumeSessionID:  "codex-session-1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	if launch.Cmd.Dir != "/repo/worktree/subdir" {
+		t.Fatalf("command dir = %q, want /repo/worktree/subdir", launch.Cmd.Dir)
+	}
+	if got := envMap(launch.Cmd.Env)["WTUI_WORKTREE_PATH"]; got != "/repo/worktree" {
+		t.Fatalf("WTUI_WORKTREE_PATH = %q, want /repo/worktree", got)
+	}
+}
+
 func envMap(env []string) map[string]string {
 	out := make(map[string]string, len(env))
 	for _, entry := range env {
@@ -1667,6 +1787,20 @@ func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			if _, err := actions.AgentLaunch(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"}); err == nil {
 				t.Fatal("expected AgentLaunch error")
+			}
+		})
+	}
+}
+
+func TestAgentLaunchResumeRejectsMissingOrUnsupportedCommand(t *testing.T) {
+	for _, command := range []string{"", "vim"} {
+		t.Run(command, func(t *testing.T) {
+			if _, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:         command,
+				WorktreePath:    "/repo/worktree",
+				ResumeSessionID: "session-1",
+			}); err == nil {
+				t.Fatal("expected AgentLaunch resume error")
 			}
 		})
 	}

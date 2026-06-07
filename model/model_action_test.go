@@ -1463,10 +1463,23 @@ func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 }
 
 func TestModel_YKeyCopiesHashInHistoryMode(t *testing.T) {
-	m := modelInHistoryWithCommits()
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Error("expected non-nil cmd for y key in mode 3")
+	}
+	m, _ = update(m, cmd())
+	if len(copied) != 1 || copied[0] != "abc1234" {
+		t.Fatalf("copied = %#v, want selected commit hash", copied)
 	}
 }
 
@@ -3505,6 +3518,205 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 	}
 	if diff := m.OverlayDiff(); !strings.Contains(diff, "user: Implement sessions") || !strings.Contains(diff, "assistant: Done") {
 		t.Fatalf("unexpected transcript overlay text: %q", diff)
+	}
+}
+
+func TestModel_SKeyCopiesSelectedSessionID(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "raw-codex-session-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd == nil {
+		t.Fatal("expected copy session id command")
+	}
+	m, _ = update(m, cmd())
+
+	if len(copied) != 1 || copied[0] != "raw-codex-session-1" {
+		t.Fatalf("copied = %#v, want raw session id", copied)
+	}
+	if strings.Contains(m.View(), "raw-codex-session-1") {
+		t.Fatal("session id copy should not render copied id as an error")
+	}
+}
+
+func TestModel_SKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = inRightPane(m)
+
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
+		t.Fatalf("expected s outside sessions to no-op, got %T", cmd)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
+		t.Fatalf("expected s with no selected session to no-op, got %T", cmd)
+	}
+	if len(copied) != 0 {
+		t.Fatalf("expected no clipboard calls, got %#v", copied)
+	}
+}
+
+func TestModel_SKeySessionCopyErrorShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(string) error {
+			return errors.New("clipboard unavailable")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd == nil {
+		t.Fatal("expected copy command")
+	}
+	m, _ = update(m, cmd())
+	if !strings.Contains(m.View(), "clipboard unavailable") {
+		t.Fatal("expected clipboard error in status bar")
+	}
+}
+
+func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{
+			Provider:     sessions.ProviderClaude,
+			SessionID:    "claude-session-1",
+			LaunchID:     "old-launch",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/feat",
+			CWD:          "/dev/alpha-worktrees/feat/subdir",
+			Branch:       "feat",
+			Commit:       "abc123",
+		},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected session resume command")
+	}
+	msg, ok := cmd().(model.AgentResultMsg)
+	if !ok {
+		t.Fatalf("expected AgentResultMsg from resume command, got %T", msg)
+	}
+	if msg.Err != "" {
+		t.Fatalf("expected successful resume command, got %q", msg.Err)
+	}
+	if msg.LaunchContext != got {
+		t.Fatalf("AgentResultMsg context = %#v, want launched context %#v", msg.LaunchContext, got)
+	}
+
+	if got.Command != "claude" ||
+		got.ResumeSessionID != "claude-session-1" ||
+		got.RepoPath != "/dev/alpha" ||
+		got.WorktreePath != "/dev/alpha-worktrees/feat" ||
+		got.WorkingDir != "/dev/alpha-worktrees/feat/subdir" ||
+		got.Branch != "feat" ||
+		got.Commit != "abc123" ||
+		got.SessionStateRoot != "/state/wtui/sessions/v1" {
+		t.Fatalf("unexpected resume launch context: %#v", got)
+	}
+	if got.LaunchID == "" || got.LaunchID == "old-launch" {
+		t.Fatalf("expected fresh launch id, got %#v", got)
+	}
+}
+
+func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", CWD: "/dev/alpha/subdir"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected session resume command")
+	}
+	_ = cmd()
+
+	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" {
+		t.Fatalf("unexpected cwd fallback resume context: %#v", got)
+	}
+}
+
+func TestModel_RKeySessionResumeNoOpsOutsideSessionSelection(t *testing.T) {
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			called = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
+		t.Fatalf("expected r outside sessions to no-op, got %T", cmd)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
+		t.Fatalf("expected r with no selected session to no-op, got %T", cmd)
+	}
+	if called {
+		t.Fatal("expected no launcher calls")
+	}
+}
+
+func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			called = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("expected no command for missing resume path, got %T", cmd)
+	}
+	if called {
+		t.Fatal("expected missing path not to call launcher")
+	}
+	if !strings.Contains(m.View(), "Session has no worktree path or cwd") {
+		t.Fatal("expected missing resume path status")
 	}
 }
 

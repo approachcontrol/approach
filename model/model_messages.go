@@ -1037,7 +1037,24 @@ func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, func() tea.Msg {
-		if err := actions.CopyToClipboard(hash); err != nil {
+		if err := m.copyToClipboard(hash); err != nil {
+			return ClipboardResultMsg{Err: err.Error()}
+		}
+		return ClipboardResultMsg{}
+	}
+}
+
+func (m Model) handleCopySessionID() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeSessions {
+		return m, nil
+	}
+	record, ok := m.selectedSession()
+	if !ok {
+		return m, nil
+	}
+	sessionID := record.SessionID
+	return m, func() tea.Msg {
+		if err := m.copyToClipboard(sessionID); err != nil {
 			return ClipboardResultMsg{Err: err.Error()}
 		}
 		return ClipboardResultMsg{}

@@ -734,7 +734,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		}
 	case ModeSessions:
 		if sp.ActivePane == 1 && sp.SessionSelected {
-			actions = append(actions, shortcutHint{Key: "enter", Label: "transcript"})
+			actions = append(actions,
+				shortcutHint{Key: "enter", Label: "transcript"},
+				shortcutHint{Key: "r", Label: "resume"},
+				shortcutHint{Key: "s", Label: "copy id"},
+			)
 		}
 	case ModePlans:
 		if sp.ActivePane == 1 && sp.PlanSelected {

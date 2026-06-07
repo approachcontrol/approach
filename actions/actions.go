@@ -456,9 +456,11 @@ type AgentLaunchContext struct {
 	LaunchID         string
 	RepoPath         string
 	WorktreePath     string
+	WorkingDir       string
 	Branch           string
 	Commit           string
 	SessionStateRoot string
+	ResumeSessionID  string
 }
 
 // AgentLaunch returns a safe, direct command for launching a supported coding
@@ -468,13 +470,16 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	commit := ResolveWorktreeCommit(ctx.WorktreePath)
+	args := agentLaunchArgs(command, ctx.ResumeSessionID)
+	cmd := exec.Command(command, args...)
+	cmd.Dir = ctx.WorktreePath
+	if ctx.WorkingDir != "" {
+		cmd.Dir = ctx.WorkingDir
+	}
+	commit := ResolveWorktreeCommit(cmd.Dir)
 	if commit == "" {
 		commit = ctx.Commit
 	}
-	args := agentLaunchArgs(command)
-	cmd := exec.Command(command, args...)
-	cmd.Dir = ctx.WorktreePath
 	cmd.Env = append(os.Environ(),
 		"WTUI_AGENT="+command,
 		"WTUI_LAUNCH_ID="+ctx.LaunchID,
@@ -501,16 +506,24 @@ func ResolveWorktreeCommit(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func agentLaunchArgs(command string) []string {
+func agentLaunchArgs(command, resumeSessionID string) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
 		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
-		return []string{"--config", hookConfig}
+		args := []string{"--config", hookConfig}
+		if resumeSessionID != "" {
+			args = append(args, "resume", resumeSessionID)
+		}
+		return args
 	case "claude":
 		hookCommand := wtuiSessionHookCommand("claude")
 		settings := claudeSessionHookSettings(hookCommand)
-		return []string{"--settings", settings}
+		args := []string{"--settings", settings}
+		if resumeSessionID != "" {
+			args = append(args, "--resume", resumeSessionID)
+		}
+		return args
 	default:
 		return nil
 	}
