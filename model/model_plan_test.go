@@ -267,6 +267,26 @@ func TestModel_IKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(nil, model.Options{
+		AgentCommand:     "codex",
+		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{Plans: []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved"},
+	}, ListRequest: m.ListRequest(ui.ModePlans)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for missing launch path, got %T", cmd)
+	}
+	if !strings.Contains(m.View(), "Cannot determine launch path for this plan") {
+		t.Fatal("expected missing launch path status")
+	}
+}
+
 func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",

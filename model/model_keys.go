@@ -694,8 +694,12 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
+	repoPath, repoOK := m.currentRepoPath()
 	plan, ok := m.selectedPlan()
 	if !ok {
+		if !repoOK {
+			m = m.setStatus(statusOther, "Cannot determine launch path for this plan")
+		}
 		return m, nil
 	}
 	if m.agentCommand == "" {
@@ -707,7 +711,6 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, err.Error())
 		return m, nil
 	}
-	repoPath, _ := m.currentRepoPath()
 	if plan.RepoPath != "" {
 		repoPath = plan.RepoPath
 	}
@@ -719,6 +722,7 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		launchPath = repoPath
 	}
 	if launchPath == "" {
+		m = m.setStatus(statusOther, "Cannot determine launch path for this plan")
 		return m, nil
 	}
 	ctx := actions.AgentLaunchContext{

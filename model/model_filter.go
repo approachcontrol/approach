@@ -260,7 +260,6 @@ func sessionSearchText(record sessions.SessionRecord) string {
 		filepath.Base(record.WorktreePath),
 		record.PlanID,
 		record.PlanPath,
-		filepath.Base(record.PlanPath),
 		record.Model,
 		record.Status,
 		record.Summary,

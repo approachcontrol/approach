@@ -468,7 +468,8 @@ type AgentLaunchContext struct {
 	ResumeSessionID  string
 	PlanID           string
 	PlanPath         string
-	InitialPrompt    string
+	// InitialPrompt is appended as the trailing positional prompt argument.
+	InitialPrompt string
 }
 
 // AgentLaunch returns a safe, direct command for launching a supported coding
