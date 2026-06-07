@@ -244,6 +244,15 @@ The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` has highest precedence for the shared artifact root; if
 it is set, the TUI reads sessions, plans, and flows from that root.
 
+The canonical provider-agnostic Flow skill lives at
+`agent-skills/wtui-flow/`, beside `agent-skills/wtui-plan-persist/`. Install or
+symlink `wtui-flow` into the user-level skill directory for supported agents
+such as Codex or Claude; for Codex, a typical target is
+`~/.codex/skills/wtui-flow`. The skill activates when `WTUI_FLOW_ID` and
+`WTUI_FLOW_PHASE_ID` are present, reads the active flow with
+`wtui flow read --flow-id "$WTUI_FLOW_ID"`, and documents the implemented
+`wtui flow` / `wtui plan` commands for phase persistence.
+
 ### `[bootstrap]`
 
 Configures optional per-repo scripts that run after wtui successfully creates a
