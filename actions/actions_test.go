@@ -1064,6 +1064,14 @@ func TestRunBootstrapHook_RunsExecutableScriptInWorktree(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "repo")
 	worktreePath := filepath.Join(dir, "worktree")
+	for _, key := range []string{
+		"WTUI_REPO_PATH",
+		"WTUI_WORKTREE_PATH",
+		"WTUI_WORKTREE_REF",
+		"WTUI_WORKTREE_CREATE_KIND",
+	} {
+		t.Setenv(key, "inherited-"+key)
+	}
 	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1078,6 +1086,7 @@ printf "%s
 %s
 %s
 " "$WTUI_REPO_PATH" "$WTUI_WORKTREE_PATH" "$WTUI_WORKTREE_REF" "$WTUI_WORKTREE_CREATE_KIND" > env.txt
+env | awk -F= '/^WTUI_REPO_PATH=|^WTUI_WORKTREE_PATH=|^WTUI_WORKTREE_REF=|^WTUI_WORKTREE_CREATE_KIND=/ { count[$1]++ } END { for (key in count) print key "=" count[key] }' | sort > env-counts.txt
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1110,6 +1119,19 @@ printf "%s
 	want := strings.Join([]string{repoPath, worktreePath, "feature/one", "generic"}, "\n")
 	if strings.TrimSpace(string(env)) != want {
 		t.Fatalf("unexpected hook env:\n%s", env)
+	}
+	counts, err := os.ReadFile(filepath.Join(worktreePath, "env-counts.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCounts := strings.Join([]string{
+		"WTUI_REPO_PATH=1",
+		"WTUI_WORKTREE_CREATE_KIND=1",
+		"WTUI_WORKTREE_PATH=1",
+		"WTUI_WORKTREE_REF=1",
+	}, "\n")
+	if strings.TrimSpace(string(counts)) != wantCounts {
+		t.Fatalf("unexpected hook env counts:\n%s", counts)
 	}
 }
 
@@ -1579,6 +1601,54 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
+	t.Setenv("CUSTOM_KEEP", "still-here")
+	for _, key := range []string{
+		"WTUI_AGENT",
+		"WTUI_LAUNCH_ID",
+		"WTUI_REPO_PATH",
+		"WTUI_WORKTREE_PATH",
+		"WTUI_BRANCH",
+		"WTUI_COMMIT",
+		"WTUI_SESSION_STATE_ROOT",
+		"WTUI_PLAN_STATE_ROOT",
+	} {
+		t.Setenv(key, "inherited-"+key)
+	}
+
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-2",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "ctx-commit",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	for key, want := range map[string]string{
+		"WTUI_AGENT":              "codex",
+		"WTUI_LAUNCH_ID":          "launch-2",
+		"WTUI_REPO_PATH":          "/repo",
+		"WTUI_WORKTREE_PATH":      "/repo/worktree",
+		"WTUI_BRANCH":             "main",
+		"WTUI_COMMIT":             "ctx-commit",
+		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
+	} {
+		got, count := envEntryValue(launch.Cmd.Env, key)
+		if got != want || count != 1 {
+			t.Fatalf("%s appears %d time(s) with value %q, want exactly one %q in env %#v", key, count, got, want, launch.Cmd.Env)
+		}
+	}
+	if got := envMap(launch.Cmd.Env)["CUSTOM_KEEP"]; got != "still-here" {
+		t.Fatalf("CUSTOM_KEEP = %q, want unrelated env preserved in %#v", got, launch.Cmd.Env)
+	}
+}
+
 func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
@@ -1780,6 +1850,19 @@ func envMap(env []string) map[string]string {
 		}
 	}
 	return out
+}
+
+func envEntryValue(env []string, wantKey string) (string, int) {
+	var value string
+	var count int
+	for _, entry := range env {
+		key, entryValue, ok := strings.Cut(entry, "=")
+		if ok && key == wantKey {
+			value = entryValue
+			count++
+		}
+	}
+	return value, count
 }
 
 func TestAgentLaunch_RejectsMissingOrUnsupportedCommand(t *testing.T) {

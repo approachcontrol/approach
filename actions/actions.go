@@ -25,6 +25,11 @@ type commandSpec struct {
 	args []string
 }
 
+type envVar struct {
+	key   string
+	value string
+}
+
 type lookPathFunc func(string) (string, error)
 type getenvFunc func(string) string
 
@@ -212,11 +217,11 @@ func RunBootstrapHook(ctx BootstrapContext, hook BootstrapHook) error {
 
 	cmd := exec.CommandContext(commandCtx, scriptPath)
 	cmd.Dir = ctx.WorktreePath
-	cmd.Env = append(os.Environ(),
-		"WTUI_REPO_PATH="+ctx.RepoPath,
-		"WTUI_WORKTREE_PATH="+ctx.WorktreePath,
-		"WTUI_WORKTREE_REF="+ctx.Ref,
-		"WTUI_WORKTREE_CREATE_KIND="+ctx.Kind.String(),
+	cmd.Env = envWithOverrides(
+		envVar{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
+		envVar{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
+		envVar{key: "WTUI_WORKTREE_REF", value: ctx.Ref},
+		envVar{key: "WTUI_WORKTREE_CREATE_KIND", value: ctx.Kind.String()},
 	)
 	output := newTailBuffer(4096)
 	cmd.Stdout = output
@@ -480,17 +485,39 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 	if commit == "" {
 		commit = ctx.Commit
 	}
-	cmd.Env = append(os.Environ(),
-		"WTUI_AGENT="+command,
-		"WTUI_LAUNCH_ID="+ctx.LaunchID,
-		"WTUI_REPO_PATH="+ctx.RepoPath,
-		"WTUI_WORKTREE_PATH="+ctx.WorktreePath,
-		"WTUI_BRANCH="+ctx.Branch,
-		"WTUI_COMMIT="+commit,
-		"WTUI_SESSION_STATE_ROOT="+ctx.SessionStateRoot,
-		"WTUI_PLAN_STATE_ROOT="+ctx.SessionStateRoot,
+	cmd.Env = envWithOverrides(
+		envVar{key: "WTUI_AGENT", value: command},
+		envVar{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
+		envVar{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
+		envVar{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
+		envVar{key: "WTUI_BRANCH", value: ctx.Branch},
+		envVar{key: "WTUI_COMMIT", value: commit},
+		envVar{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
+		envVar{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+func envWithOverrides(overrides ...envVar) []string {
+	overrideKeys := make(map[string]struct{}, len(overrides))
+	for _, item := range overrides {
+		overrideKeys[item.key] = struct{}{}
+	}
+
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, found := overrideKeys[key]; found {
+				continue
+			}
+		}
+		env = append(env, entry)
+	}
+	for _, item := range overrides {
+		env = append(env, item.key+"="+item.value)
+	}
+	return env
 }
 
 // ResolveWorktreeCommit returns HEAD for path, or "" when path is not a git
