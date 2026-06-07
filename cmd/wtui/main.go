@@ -29,6 +29,7 @@ func main() {
 type runDeps struct {
 	loadConfig   func() (config.Config, error)
 	getenv       func(string) string
+	getwd        func() (string, error)
 	scan         func(scanner.ScanOptions) ([]scanner.Repo, error)
 	startProgram func([]scanner.Repo, config.Config) error
 	stdin        io.Reader
@@ -89,6 +90,9 @@ func fillRunDeps(deps runDeps) runDeps {
 	}
 	if deps.getenv == nil {
 		deps.getenv = os.Getenv
+	}
+	if deps.getwd == nil {
+		deps.getwd = os.Getwd
 	}
 	if deps.scan == nil {
 		deps.scan = scanner.Scan
