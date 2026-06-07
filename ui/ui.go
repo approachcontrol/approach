@@ -37,7 +37,7 @@ const WorktreeInputPlaceholder = "branch, tag, or new branch name"
 const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
-const AgentInputPlaceholder = "codex or claude"
+const AgentInputPlaceholder = "codex, codex-app, or claude"
 
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,

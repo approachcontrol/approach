@@ -1625,6 +1625,32 @@ func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 	}
 }
 
+func TestAgentCommandAddsPlanPhaseEnvironment(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:         "codex",
+		WorktreePath:    "/repo/worktree",
+		PlanID:          "plan-1",
+		PlanPath:        "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPhaseID:     "p2",
+		PlanPhaseTitle:  "CLI subcommands",
+		PlanPhaseStatus: "pending",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	env := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_PLAN_PHASE_ID":     "p2",
+		"WTUI_PLAN_PHASE_TITLE":  "CLI subcommands",
+		"WTUI_PLAN_PHASE_STATUS": "pending",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
+		}
+	}
+}
+
 func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 	t.Setenv("CUSTOM_KEEP", "still-here")
 	for _, key := range []string{

@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -424,7 +425,7 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
 	m.modal = modal.OpenInput(
-		"Set agent (codex or claude)",
+		"Set agent ("+ui.AgentInputPlaceholder+")",
 		ui.AgentInputPlaceholder,
 		m.agentCommand,
 		validateAgentInput,
@@ -451,7 +452,7 @@ func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if launchAgent && m.agentCommand == "" {
-		m = m.setStatus(statusOther, "Press A to choose codex or claude before launching an agent")
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
 		return m, nil
 	}
 	prompt := "Create worktree from"
@@ -666,7 +667,7 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.agentCommand == "" {
-		m = m.setStatus(statusOther, "Press A to choose codex or claude before launching an agent")
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
 		return m, nil
 	}
 	return m.launchAgentAtPath(path)
@@ -680,16 +681,20 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	command := string(record.Provider)
+	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
+		command = agent.CommandCodexApp
+	}
 	workingDir := record.CWD
 	if workingDir == "" {
 		workingDir = record.WorktreePath
 	}
-	if workingDir == "" {
+	if workingDir == "" && command != agent.CommandCodexApp {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
 		return m, nil
 	}
 	ctx := actions.AgentLaunchContext{
-		Command:          string(record.Provider),
+		Command:          command,
 		LaunchID:         newLaunchID(),
 		RepoPath:         record.RepoPath,
 		WorktreePath:     record.WorktreePath,
@@ -712,7 +717,7 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.agentCommand == "" {
-		m = m.setStatus(statusOther, "Press A to choose codex or claude before launching an agent")
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
 		return m, nil
 	}
 	planPath, err := m.planMarkdownPath(plan.PlanID)

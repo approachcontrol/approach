@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/brian-bell/wtui/scanner"
@@ -29,6 +30,73 @@ func makeBareRepo(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(filepath.Join(path, "config"), []byte("[core]\n\tbare = true\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = hermeticGitEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, output)
+	}
+}
+
+func hermeticGitEnv() []string {
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "GIT_CONFIG_") || strings.HasPrefix(entry, "GIT_TEMPLATE_DIR=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env,
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+}
+
+func makeCommittedGitRepo(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, path, "init")
+	runGit(t, path, "symbolic-ref", "HEAD", "refs/heads/main")
+	if err := os.WriteFile(filepath.Join(path, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, path, "add", "README.md")
+	runGit(t, path,
+		"-c", "user.name=Test",
+		"-c", "user.email=test@example.invalid",
+		"-c", "commit.gpgsign=false",
+		"-c", "core.hooksPath="+t.TempDir(),
+		"commit", "-m", "initial",
+	)
+}
+
+func addLinkedWorktree(t *testing.T, repoDir, worktreeDir, branch string) {
+	t.Helper()
+	runGit(t, repoDir, "branch", branch)
+	runGit(t, repoDir, "worktree", "add", worktreeDir, branch)
+}
+
+func assertOnlyRepo(t *testing.T, repos []scanner.Repo, want scanner.Repo) {
+	t.Helper()
+	if len(repos) != 1 {
+		t.Fatalf("expected only repo %+v, got %+v", want, repos)
+	}
+	if repos[0].Path != want.Path {
+		t.Fatalf("expected Path %q, got %q", want.Path, repos[0].Path)
+	}
+	if repos[0].DisplayName != want.DisplayName {
+		t.Fatalf("expected DisplayName %q, got %q", want.DisplayName, repos[0].DisplayName)
+	}
+	if repos[0].IsBare != want.IsBare {
+		t.Fatalf("expected IsBare %t, got %t", want.IsBare, repos[0].IsBare)
 	}
 }
 
@@ -257,4 +325,249 @@ func TestScan_GitFileWorktreeDiscovered(t *testing.T) {
 	if repos[0].IsBare {
 		t.Error("expected git-file worktree IsBare=false")
 	}
+}
+
+func TestScan_ExcludesTopLevelLinkedWorktreeCheckout(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "wtui")
+	worktreeDir := filepath.Join(root, "wtui-bootstrap-hooks")
+
+	makeCommittedGitRepo(t, repoDir)
+	addLinkedWorktree(t, repoDir, worktreeDir, "bootstrap-hooks")
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root, MaxDepth: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "wtui", IsBare: false})
+}
+
+func TestScan_ExcludesLinkedWorktreeCheckoutWithRelativeRoot(t *testing.T) {
+	parent := t.TempDir()
+	rootName := "scan-root"
+	root := filepath.Join(parent, rootName)
+	repoDir := filepath.Join(root, "wtui")
+	worktreeDir := filepath.Join(root, "wtui-bootstrap-hooks")
+
+	makeCommittedGitRepo(t, repoDir)
+	addLinkedWorktree(t, repoDir, worktreeDir, "bootstrap-hooks")
+
+	t.Chdir(parent)
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: rootName, MaxDepth: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: filepath.Join(rootName, "wtui"), DisplayName: "wtui", IsBare: false})
+}
+
+func TestScan_ExcludesNestedLinkedWorktreeCheckout(t *testing.T) {
+	root := t.TempDir()
+	orgDir := filepath.Join(root, "org")
+	repoDir := filepath.Join(orgDir, "wtui")
+	worktreeDir := filepath.Join(orgDir, "wtui-bootstrap-hooks")
+
+	makeCommittedGitRepo(t, repoDir)
+	addLinkedWorktree(t, repoDir, worktreeDir, "bootstrap-hooks")
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "org/wtui", IsBare: false})
+}
+
+func TestScan_GitFileNonWorktreeRepoDiscovered(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "separate")
+	gitDir := filepath.Join(root, "external-git-dir")
+
+	runGit(t, root, "init", "--separate-git-dir", gitDir, repoDir)
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "separate", IsBare: false})
+}
+
+func TestScan_WorktreesShapedGitFileNonWorktreeRepoDiscovered(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "odd-shape")
+	adminDir := filepath.Join(root, "external", "worktrees", "odd-shape")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(adminDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: ../external/worktrees/odd-shape\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "gitdir"), []byte(filepath.Join(repoDir, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../not-the-owner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "odd-shape", IsBare: false})
+}
+
+func TestScan_WorktreesShapedGitFileWithoutCommonGitDirDiscovered(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "odd-shape")
+	adminDir := filepath.Join(root, "external", "worktrees", "odd-shape")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(adminDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: ../external/worktrees/odd-shape\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "gitdir"), []byte(filepath.Join(repoDir, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "odd-shape", IsBare: false})
+}
+
+func TestScan_WorktreesShapedGitFileInvalidCommonHeadDiscovered(t *testing.T) {
+	root := t.TempDir()
+	commonDir := filepath.Join(t.TempDir(), "external")
+	adminDir := filepath.Join(commonDir, "worktrees", "odd-shape")
+	repoDir := filepath.Join(root, "odd-shape")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "refs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(adminDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "HEAD"), []byte("not a ref\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "config"), []byte("[core]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: "+adminDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "gitdir"), []byte(filepath.Join(repoDir, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "odd-shape", IsBare: false})
+}
+
+func TestScan_WorktreesShapedGitFileSHA256DetachedCommonHeadExcluded(t *testing.T) {
+	root := t.TempDir()
+	commonDir := filepath.Join(t.TempDir(), "external")
+	adminDir := filepath.Join(commonDir, "worktrees", "sha256-worktree")
+	repoDir := filepath.Join(root, "sha256-worktree")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "refs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(adminDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "HEAD"), []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "config"), []byte("[core]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: "+adminDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "gitdir"), []byte(filepath.Join(repoDir, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("expected linked SHA-256 worktree to be excluded, got %+v", repos)
+	}
+}
+
+func TestScan_WorktreesShapedGitFileWrongAdminGitdirDiscovered(t *testing.T) {
+	root := t.TempDir()
+	commonDir := filepath.Join(t.TempDir(), "external")
+	adminDir := filepath.Join(commonDir, "worktrees", "odd-shape")
+	repoDir := filepath.Join(root, "odd-shape")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBareRepo(t, commonDir)
+	if err := os.MkdirAll(adminDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: "+adminDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "gitdir"), []byte(filepath.Join(root, "other", ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "odd-shape", IsBare: false})
+}
+
+func TestScan_MalformedGitFileRepoDiscovered(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "malformed")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("not gitdir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "malformed", IsBare: false})
 }

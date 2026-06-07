@@ -189,9 +189,7 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
-	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
+	m = plansInRightPane(t, m, []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
 		Status:       "approved",
@@ -201,7 +199,7 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 			{PhaseID: "p1", Title: "Store tracer bullet", Status: "completed", Order: 1},
 			{PhaseID: "p2", Title: "CLI subcommands", Status: "pending", Order: 2},
 		},
-	}}, ListRequest: m.ListRequest(ui.ModePlans)})
+	}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})

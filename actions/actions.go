@@ -475,7 +475,7 @@ type AgentLaunchContext struct {
 	PlanPhaseID      string
 	PlanPhaseTitle   string
 	PlanPhaseStatus  string
-	// InitialPrompt is appended as the trailing positional prompt argument.
+	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
 
@@ -489,6 +489,14 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 }
 
 func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
+	command := agent.Normalize(ctx.Command)
+	if err := agent.Validate(command); err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	if command == agent.CommandCodexApp {
+		return codexAppLaunch(ctx, goos)
+	}
+
 	cmd, _, err := agentCommandSpec(ctx)
 	if err != nil {
 		return TerminalLaunchSpec{}, err
@@ -506,16 +514,16 @@ func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPat
 	if err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	command, err := newTerminalCommand(cmd.Dir, cmd.Env, argv, agentSessionName(sessionSource, ctx.LaunchID))
+	termCommand, err := newTerminalCommand(cmd.Dir, cmd.Env, argv, agentSessionName(sessionSource, ctx.LaunchID))
 	if err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	launch, err := terminalLaunch(cmd.Dir, goos, getenv, lookPath, command)
+	launch, err := terminalLaunch(cmd.Dir, goos, getenv, lookPath, termCommand)
 	if err != nil {
-		command.cleanup()
+		termCommand.cleanup()
 		return TerminalLaunchSpec{}, err
 	}
-	launch.Cleanup = command.cleanup
+	launch.Cleanup = termCommand.cleanup
 	return launch, nil
 }
 
@@ -578,6 +586,9 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if err := agent.Validate(command); err != nil {
 		return nil, nil, err
 	}
+	if command == agent.CommandCodexApp {
+		return nil, nil, fmt.Errorf("codex-app launches are URL-based; use AgentLaunch")
+	}
 	args := agentLaunchArgs(command, ctx.ResumeSessionID)
 	if ctx.InitialPrompt != "" {
 		args = append(args, ctx.InitialPrompt)
@@ -608,6 +619,125 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	}
 	cmd.Env = envWithOverrides(overrides...)
 	return cmd, overrides, nil
+}
+
+func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
+	if goos != "darwin" {
+		return TerminalLaunchSpec{}, fmt.Errorf("codex-app launch is only supported on macOS")
+	}
+	launchURL, err := codexAppLaunchURL(ctx)
+	if err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	cmd := exec.Command("open", launchURL)
+	cmd.Env = envWithoutPrefix("WTUI_")
+	return TerminalLaunchSpec{Cmd: cmd}, nil
+}
+
+func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
+	if ctx.ResumeSessionID != "" {
+		return "codex://threads/" + url.PathEscape(ctx.ResumeSessionID), nil
+	}
+
+	path := ctx.WorkingDir
+	if path == "" {
+		path = ctx.WorktreePath
+	}
+	if path == "" {
+		return "", fmt.Errorf("codex-app launch requires a worktree path or working directory")
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("codex-app launch path must be absolute: %s", path)
+	}
+
+	values := []string{"path=" + codexAppQueryEscape(path)}
+	if prompt := codexAppLaunchPrompt(ctx); prompt != "" {
+		values = append(values, "prompt="+codexAppQueryEscape(prompt))
+	}
+	return "codex://threads/new?" + strings.Join(values, "&"), nil
+}
+
+func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
+	if ctx.InitialPrompt == "" {
+		return ""
+	}
+	metadata := codexAppLaunchMetadata(ctx)
+	if metadata == "" {
+		return ctx.InitialPrompt
+	}
+	return ctx.InitialPrompt + "\n\n" + metadata
+}
+
+func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
+	if ctx.LaunchID == "" &&
+		ctx.RepoPath == "" &&
+		ctx.Branch == "" &&
+		ctx.Commit == "" &&
+		ctx.SessionStateRoot == "" &&
+		ctx.PlanID == "" &&
+		ctx.PlanPath == "" &&
+		ctx.PlanPhaseID == "" &&
+		ctx.PlanPhaseTitle == "" &&
+		ctx.PlanPhaseStatus == "" {
+		return ""
+	}
+
+	items := []envVar{
+		{key: "WTUI_AGENT", value: agent.CommandCodexApp},
+		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
+		{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
+		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
+		{key: "WTUI_BRANCH", value: ctx.Branch},
+		{key: "WTUI_COMMIT", value: ctx.Commit},
+		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
+		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
+	}
+
+	var kept []envVar
+	for _, item := range items {
+		if item.value != "" {
+			kept = append(kept, item)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("wtui launch metadata (Codex App launches do not inherit WTUI_* environment from macOS open):")
+	for _, item := range kept {
+		b.WriteString("\n- ")
+		b.WriteString(item.key)
+		b.WriteString("=")
+		b.WriteString(shellQuote(item.value))
+	}
+	if ctx.SessionStateRoot != "" {
+		b.WriteString("\nWhen running wtui plan commands for this launch, pass `--state-root ")
+		b.WriteString(shellQuote(ctx.SessionStateRoot))
+		b.WriteString("` or export WTUI_PLAN_STATE_ROOT/WTUI_SESSION_STATE_ROOT with that value.")
+	}
+	return b.String()
+}
+
+func codexAppQueryEscape(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
+}
+
+func envWithoutPrefix(prefix string) []string {
+	env := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(key, prefix) {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env
 }
 
 func envWithOverrides(overrides ...envVar) []string {
