@@ -63,9 +63,7 @@ func newReflogPane() pane.Pane[gitquery.ReflogEntry] {
 }
 
 func newSessionPane() pane.Pane[sessions.SessionRecord] {
-	return pane.New(sessionSearchText, func(record sessions.SessionRecord, _ int) int {
-		return ui.SessionLineCount(record.Summary)
-	})
+	return pane.New(sessionSearchText, fixedHeight[sessions.SessionRecord])
 }
 
 func newPlanPane() pane.Pane[planstore.PlanRecord] {

@@ -181,7 +181,7 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
-func TestRender_SessionsModeTruncatesSummaryToOneDownwardContinuation(t *testing.T) {
+func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 	params := RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
@@ -203,7 +203,7 @@ func TestRender_SessionsModeTruncatesSummaryToOneDownwardContinuation(t *testing
 				Status:    "ended",
 				RepoPath:  "/dev/wtui",
 				Branch:    "selected",
-				Summary:   "selected first line",
+				Summary:   "selected first line\n\nselected third line",
 			},
 			{
 				Provider:  sessions.ProviderClaude,
@@ -219,67 +219,54 @@ func TestRender_SessionsModeTruncatesSummaryToOneDownwardContinuation(t *testing
 	}
 
 	baseline := strippedLines(Render(params))
-	params.Sessions[1].Summary = "selected first line\nselected second line\nselected third line"
 	view := Render(params)
 	lines := strippedLines(view)
 
 	baselineAbove := lineIndexContaining(baseline, "above summary")
 	above := lineIndexContaining(lines, "above summary")
 	row := lineIndexContaining(lines, "selected first line")
-	continuation := lineIndexContaining(lines, "selected second line")
 	below := lineIndexContaining(lines, "below summary")
 
 	if above != baselineAbove {
-		t.Fatalf("summary continuation should not force preceding content up, above row index=%d baseline=%d:\n%s", above, baselineAbove, view)
+		t.Fatalf("summary should not force preceding content up, above row index=%d baseline=%d:\n%s", above, baselineAbove, view)
 	}
-	if row < 0 || continuation != row+1 {
-		t.Fatalf("summary continuation should render directly below selected row, row=%d continuation=%d:\n%s", row, continuation, view)
+	if row < 0 || below != row+1 {
+		t.Fatalf("summary should occupy only the selected row, row=%d below=%d:\n%s", row, below, view)
 	}
-	if below != continuation+1 {
-		t.Fatalf("rows after the expanded summary should move down after the continuation, below=%d continuation=%d:\n%s", below, continuation, view)
-	}
-	if strings.Contains(ansi.Strip(view), "selected third line") {
-		t.Fatalf("sessions view should omit summary text after one continuation line:\n%s", view)
+	if !strings.Contains(lines[row], "selected first line selected third line") {
+		t.Fatalf("summary whitespace should collapse onto one display row:\n%s", view)
 	}
 }
 
-func TestRender_SessionsModeCountsBlankSummaryContinuation(t *testing.T) {
-	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
-		Selected: 0,
-		Width:    180,
-		Height:   12,
-		Mode:     ModeSessions,
-		Sessions: []sessions.SessionRecord{
-			{
-				Provider:  sessions.ProviderCodex,
-				SessionID: "codex-selected",
-				Status:    "ended",
-				RepoPath:  "/dev/wtui",
-				Branch:    "selected",
-				Summary:   "selected first line\n\nselected third line",
-			},
-			{
-				Provider:  sessions.ProviderClaude,
-				SessionID: "claude-below",
-				Status:    "ended",
-				RepoPath:  "/dev/wtui",
-				Branch:    "below",
-				Summary:   "below summary",
-			},
-		},
-		ActivePane:      1,
-		SessionSelected: 0,
-	})
-	lines := strippedLines(view)
-	row := lineIndexContaining(lines, "selected first line")
-	below := lineIndexContaining(lines, "below summary")
-
-	if row < 0 || below != row+2 {
-		t.Fatalf("blank second summary line should still reserve one downward continuation row, row=%d below=%d:\n%s", row, below, view)
+func TestRender_SessionsModeTruncatesSummaryToPaneWidth(t *testing.T) {
+	const rightContentWidth = 58
+	lines := renderSessionPane([]sessions.SessionRecord{{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "codex-selected",
+		Status:    "ended",
+		RepoPath:  "/dev/wtui",
+		Branch:    "selected",
+		Summary:   "selected first line " + strings.Repeat("very long summary ", 20),
+	}}, 0, 0, rightContentWidth, 4)
+	row := ""
+	for _, line := range lines {
+		stripped := ansi.Strip(line)
+		if strings.Contains(stripped, "selected") {
+			row = stripped
+			break
+		}
 	}
-	if strings.Contains(ansi.Strip(view), "selected third line") {
-		t.Fatalf("sessions view should omit summary text after one continuation line:\n%s", view)
+
+	if row == "" {
+		t.Fatalf("expected session row in view:\n%s", strings.Join(lines, "\n"))
+	}
+	if lipgloss.Width(row) > rightContentWidth {
+		t.Fatalf("session row width = %d, want <= %d:\n%s", lipgloss.Width(row), rightContentWidth, strings.Join(lines, "\n"))
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "very long summary very long summary very long summary very long summary") {
+			t.Fatalf("summary should be truncated to pane width, got overlong visible text:\n%s", strings.Join(lines, "\n"))
+		}
 	}
 }
 

@@ -3649,7 +3649,7 @@ func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 	}
 }
 
-func TestModel_SessionScrollAccountsForTwoLineSummaries(t *testing.T) {
+func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3})
@@ -3668,7 +3668,10 @@ func TestModel_SessionScrollAccountsForTwoLineSummaries(t *testing.T) {
 		t.Fatalf("expected selected third session to stay visible:\n%s", view)
 	}
 	if strings.Contains(view, "one first") {
-		t.Fatalf("expected first two-line session to scroll offscreen:\n%s", view)
+		t.Fatalf("expected first session row to scroll offscreen:\n%s", view)
+	}
+	if !strings.Contains(view, "two first two second") {
+		t.Fatalf("expected multiline summaries to collapse whitespace within one row:\n%s", view)
 	}
 }
 
