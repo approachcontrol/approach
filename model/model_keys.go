@@ -1011,7 +1011,15 @@ func (m Model) rightContentHeight() int {
 }
 
 func (m Model) planContentHeight() int {
-	height := m.rightContentHeight() - 1
+	height := m.height - ui.PlanContentOverhead
+	if height <= 0 {
+		return 1
+	}
+	return height
+}
+
+func (m Model) sessionContentHeight() int {
+	height := m.height - ui.SessionContentOverhead
 	if height <= 0 {
 		return 1
 	}
@@ -1024,6 +1032,8 @@ func (m Model) contentHeightForMode() int {
 		return m.worktreeContentHeight()
 	case ui.ModeStashes:
 		return m.stashContentHeight()
+	case ui.ModeSessions:
+		return m.sessionContentHeight()
 	case ui.ModePlans:
 		return m.planContentHeight()
 	default:

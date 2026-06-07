@@ -89,6 +89,18 @@ const WorktreeContentOverhead = BranchContentOverhead
 // right-pane chrome: status bar + borders + mode header).
 const StashContentOverhead = BranchContentOverhead
 
+// TableHeaderRows is the number of rows consumed by table headers inside
+// table-style right panes.
+const TableHeaderRows = 1
+
+// SessionContentOverhead is the number of rows consumed before session data
+// rows can render: right-pane chrome plus the sessions table header.
+const SessionContentOverhead = BranchContentOverhead + TableHeaderRows
+
+// PlanContentOverhead is the number of rows consumed before plan data rows can
+// render: right-pane chrome plus the plans table header.
+const PlanContentOverhead = BranchContentOverhead + TableHeaderRows
+
 // StashPrefixWidth is the visible width consumed by the stash line prefix:
 // indent/cursor (3) + date (10) + separator (2).
 const StashPrefixWidth = 15
@@ -1253,7 +1265,8 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		return nil
 	}
 	header := truncateToWidth(statusStyle.Render(formatSessionColumns("   ", "Provider", "Branch", "Worktree", "Status", "Summary")), width)
-	if height == 1 {
+	rowHeight := height - TableHeaderRows
+	if rowHeight <= 0 {
 		return []string{header}
 	}
 
@@ -1283,7 +1296,7 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
-	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
+	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
 const (
@@ -1324,7 +1337,8 @@ func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, hei
 		return nil
 	}
 	header := truncateToWidth(statusStyle.Render(formatPlanColumns("   ", "Status", "Branch", "Phase", "Updated", "Title")), width)
-	if height == 1 {
+	rowHeight := height - TableHeaderRows
+	if rowHeight <= 0 {
 		return []string{header}
 	}
 
@@ -1354,7 +1368,7 @@ func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, hei
 			rows = append(rows, renderPlanPhaseRows(record, width)...)
 		}
 	}
-	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
+	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
 func renderPlanPhaseRows(record planstore.PlanRecord, width int) []string {
