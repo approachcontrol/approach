@@ -909,6 +909,9 @@ func (m Model) reflowSessions() Model {
 
 func (m Model) reflowPlans() Model {
 	m.plans = m.plans.Reflow(m.planContentHeight(), m.contentWidth())
+	if m.selectedPlanPhaseID != "" {
+		return m.ensureSelectedPlanPhaseVisible()
+	}
 	return m
 }
 

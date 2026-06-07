@@ -220,6 +220,46 @@ func TestModel_ExpandedSinglePlanScrollsWithinManyPhases(t *testing.T) {
 	}
 }
 
+func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
+	m := model.New(testRepos())
+	m = plansInRightPaneAtSize(t, m, []planstore.PlanRecord{{
+		PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Plan 1", Status: "draft",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "p1", Title: "Phase 1", Status: "completed", Order: 1},
+			{PhaseID: "p2", Title: "Phase 2", Status: "completed", Order: 2},
+			{PhaseID: "p3", Title: "Phase 3", Status: "pending", Order: 3},
+			{PhaseID: "p4", Title: "Phase 4", Status: "pending", Order: 4},
+			{PhaseID: "p5", Title: "Phase 5", Status: "pending", Order: 5},
+		},
+	}}, 140, ui.BranchContentOverhead+4)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 5; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := m.SelectedPlanPhaseID(); got != "p5" {
+		t.Fatalf("selected phase = %q, want p5", got)
+	}
+	if got := m.PlanScroll(); got != 3 {
+		t.Fatalf("expected selected phase scroll before reflow to be 3, got %d", got)
+	}
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: ui.BranchContentOverhead + 4})
+	if got := m.SelectedPlanPhaseID(); got != "p5" {
+		t.Fatalf("selected phase after reflow = %q, want p5", got)
+	}
+	if got := m.PlanScroll(); got != 3 {
+		t.Fatalf("expected reflow to keep selected phase visible at scroll 3, got %d", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Phase 5") {
+		t.Fatalf("selected phase should remain visible after reflow:\n%s", view)
+	}
+	if strings.Contains(view, "Plan 1") {
+		t.Fatalf("reflow should not snap back to the plan row while a phase is selected:\n%s", view)
+	}
+}
+
 func TestModel_TallExpandedPlanAtViewportBottomShowsFirstPhases(t *testing.T) {
 	m := model.New(testRepos())
 	records := []planstore.PlanRecord{
