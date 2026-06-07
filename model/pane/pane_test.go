@@ -195,6 +195,23 @@ func TestPaneVariableHeightScrollUsesVisualLines(t *testing.T) {
 	}
 }
 
+func TestPaneScrollByAndSetItemHeightClampToVisualBounds(t *testing.T) {
+	items := []testItem{{name: "expanded", lines: 1}}
+	p := fixedTestPane(items)
+	p = p.SetItemHeight(func(testItem, int) int {
+		return 4
+	})
+
+	p = p.ScrollBy(2, 3, 80)
+	_, selected, scroll := p.View()
+	if selected != 0 {
+		t.Fatalf("expected selection unchanged, got %d", selected)
+	}
+	if scroll != 1 {
+		t.Fatalf("expected scroll clamped to total lines minus viewport, got %d", scroll)
+	}
+}
+
 func TestPaneReflowClampsScrollAfterViewportShrink(t *testing.T) {
 	items := []testItem{
 		{name: "one", lines: 2},

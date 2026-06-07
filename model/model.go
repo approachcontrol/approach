@@ -34,6 +34,7 @@ type Model struct {
 	reflogs                   pane.Pane[gitquery.ReflogEntry]
 	sessions                  pane.Pane[sessions.SessionRecord]
 	plans                     pane.Pane[planstore.PlanRecord]
+	expandedPlanID            string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	listRequestSeq            uint64
@@ -314,6 +315,7 @@ func (m Model) View() string {
 		Plans:                    plans,
 		PlanSelected:             planSelected,
 		PlanScroll:               planScroll,
+		ExpandedPlanID:           m.expandedPlanID,
 		OverlayText:              modalView.Text,
 		TransientError:           m.visibleStatusText(),
 		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
@@ -658,6 +660,81 @@ func (m Model) selectedPlan() (planstore.PlanRecord, bool) {
 	return m.plans.Selected()
 }
 
+func (m Model) selectedPlanID() string {
+	record, ok := m.selectedPlan()
+	if !ok {
+		return ""
+	}
+	return record.PlanID
+}
+
+func (m Model) setExpandedPlanID(planID string) Model {
+	m.expandedPlanID = planID
+	m.plans = m.plans.SetItemHeight(planItemHeight(planID))
+	m = m.reflowPlans()
+	if planID == "" {
+		return m
+	}
+	return m.reflowExpandedPlan()
+}
+
+func (m Model) canScrollExpandedPlan(delta, viewHeight int) bool {
+	if m.expandedPlanID == "" || m.selectedPlanID() != m.expandedPlanID {
+		return false
+	}
+	if viewHeight <= 0 {
+		viewHeight = 1
+	}
+	plans := m.filteredPlans()
+	selected := m.PlanSelected()
+	if selected < 0 || selected >= len(plans) {
+		return false
+	}
+
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += planVisualHeight(plans[i], m.expandedPlanID)
+	}
+	height := planVisualHeight(plans[selected], m.expandedPlanID)
+	scroll := m.PlanScroll()
+	if delta > 0 {
+		return line+height > scroll+viewHeight
+	}
+	if delta < 0 {
+		return scroll > line
+	}
+	return false
+}
+
+func (m Model) reflowExpandedPlan() Model {
+	plans := m.filteredPlans()
+	selected := m.PlanSelected()
+	if selected < 0 || selected >= len(plans) {
+		return m
+	}
+
+	viewHeight := m.planContentHeight()
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += planVisualHeight(plans[i], m.expandedPlanID)
+	}
+	height := planVisualHeight(plans[selected], m.expandedPlanID)
+	scroll := m.PlanScroll()
+	target := scroll
+	if scroll > line {
+		target = line
+	}
+	if height <= viewHeight && line+height > target+viewHeight {
+		target = line + height - viewHeight
+	} else if height > viewHeight && line+1 >= target+viewHeight {
+		target = line
+	}
+	if target != scroll {
+		m.plans = m.plans.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+	}
+	return m
+}
+
 func (m Model) isSelectedBranchDirtyWorktree() bool {
 	row, ok := m.selectedRow()
 	return ok && row.Branch.Dirty && row.Branch.IsWorktree
@@ -710,11 +787,7 @@ func (m Model) reflowSessions() Model {
 }
 
 func (m Model) reflowPlans() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 16
-	}
-	m.plans = m.plans.Reflow(contentHeight, m.contentWidth())
+	m.plans = m.plans.Reflow(m.planContentHeight(), m.contentWidth())
 	return m
 }
 

@@ -63,6 +63,18 @@ func (p Pane[T]) Move(delta, viewHeight, viewWidth int) Pane[T] {
 	return p.Reflow(viewHeight, viewWidth)
 }
 
+// ScrollBy adjusts the visual-line scroll offset without changing selection.
+func (p Pane[T]) ScrollBy(delta, viewHeight, viewWidth int) Pane[T] {
+	p.scroll += delta
+	return p.clampScroll(viewHeight, viewWidth)
+}
+
+// SetItemHeight replaces the visual height function used for scrolling.
+func (p Pane[T]) SetItemHeight(height ItemHeight[T]) Pane[T] {
+	p.height = height
+	return p
+}
+
 // SelectFunc selects the first filtered item matching pred.
 func (p Pane[T]) SelectFunc(pred func(T) bool) Pane[T] {
 	for i, item := range p.filtered {

@@ -84,8 +84,100 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 		ActivePane:   1,
 		PlanSelected: 0,
 	})
-	if !strings.Contains(shortcutPaneText(view), "enter  plan") {
-		t.Fatalf("plans view should expose plan shortcut:\n%s", view)
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "enter  phases") || !strings.Contains(pane, "o      open") {
+		t.Fatalf("plans view should expose phases shortcut:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeShowsExpandedPhasesForSelectedPlanOnly(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{
+			{
+				PlanID: "plan-1",
+				Title:  "Persist plans",
+				Status: "in_progress",
+				Phases: []planstore.PlanPhase{
+					{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
+					{PhaseID: "p2", Title: "CLI", Status: "pending", Order: 2},
+				},
+			},
+			{
+				PlanID: "plan-2",
+				Title:  "Other plan",
+				Status: "draft",
+				Phases: []planstore.PlanPhase{
+					{PhaseID: "p3", Title: "Other phase", Status: "blocked", Order: 1},
+				},
+			},
+		},
+		ActivePane:     1,
+		PlanSelected:   0,
+		ExpandedPlanID: "plan-1",
+	})
+
+	for _, want := range []string{"Store", "completed", "CLI", "pending"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expanded plan view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Other phase") || strings.Contains(view, "blocked") {
+		t.Fatalf("only the selected expanded plan should show phase rows:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeKeepsExpandedPhasesWhenRightPaneInactive(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{{
+			PlanID: "plan-1",
+			Title:  "Persist plans",
+			Status: "in_progress",
+			Phases: []planstore.PlanPhase{
+				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
+			},
+		}},
+		ActivePane:     0,
+		PlanSelected:   0,
+		ExpandedPlanID: "plan-1",
+	})
+
+	if !strings.Contains(view, "Store") || !strings.Contains(view, "completed") {
+		t.Fatalf("expanded phases should stay visible when focus leaves plans pane:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeShowsNoPhasesOnlyWhenExpanded(t *testing.T) {
+	params := RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    140,
+		Height:   10,
+		Mode:     ModePlans,
+		Plans: []planstore.PlanRecord{{
+			PlanID: "plan-1",
+			Title:  "Persist plans",
+			Status: "draft",
+		}},
+		ActivePane:   1,
+		PlanSelected: 0,
+	}
+
+	if view := Render(params); strings.Contains(view, "No phases") {
+		t.Fatalf("collapsed plan should not show no-phases fallback:\n%s", view)
+	}
+	params.ExpandedPlanID = "plan-1"
+	if view := Render(params); !strings.Contains(view, "No phases") {
+		t.Fatalf("expanded plan without phases should show fallback:\n%s", view)
 	}
 }
 

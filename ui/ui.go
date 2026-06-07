@@ -169,6 +169,7 @@ type RenderParams struct {
 	Plans                    []planstore.PlanRecord
 	PlanSelected             int
 	PlanScroll               int
+	ExpandedPlanID           string
 	OverlayText              string
 	TransientError           string
 	TransientErrorFadeStep   int
@@ -334,7 +335,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
-		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -742,7 +743,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		}
 	case ModePlans:
 		if sp.ActivePane == 1 && sp.PlanSelected {
-			actions = append(actions, shortcutHint{Key: "enter", Label: "plan"})
+			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+			actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1313,7 +1315,7 @@ const (
 	planUpdatedWidth = 10
 )
 
-func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, height int) []string {
+func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, height int, expandedPlanID string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1344,8 +1346,29 @@ func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, hei
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
 		rows = append(rows, truncateToWidth(line, width))
+		if record.PlanID == expandedPlanID {
+			rows = append(rows, renderPlanPhaseRows(record, width)...)
+		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
+}
+
+func renderPlanPhaseRows(record planstore.PlanRecord, width int) []string {
+	if len(record.Phases) == 0 {
+		return []string{truncateToWidth("      No phases", width)}
+	}
+	rows := make([]string, 0, len(record.Phases))
+	for _, phase := range record.Phases {
+		line := formatPlanColumns("      ",
+			statusStyle.Render(fitSessionColumn(phase.Status, planStatusWidth)),
+			"",
+			"",
+			"",
+			stashMsgStyle.Render(phase.Title),
+		)
+		rows = append(rows, truncateToWidth(line, width))
+	}
+	return rows
 }
 
 func formatPlanColumns(prefix, status, branch, phase, updated, title string) string {
