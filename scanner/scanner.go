@@ -233,7 +233,7 @@ func looksLikeGitHEAD(head string) bool {
 	if strings.HasPrefix(head, "ref: refs/") {
 		return true
 	}
-	if len(head) != 40 {
+	if len(head) != 40 && len(head) != 64 {
 		return false
 	}
 	for _, r := range head {

@@ -484,6 +484,48 @@ func TestScan_WorktreesShapedGitFileInvalidCommonHeadDiscovered(t *testing.T) {
 	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "odd-shape", IsBare: false})
 }
 
+func TestScan_WorktreesShapedGitFileSHA256DetachedCommonHeadExcluded(t *testing.T) {
+	root := t.TempDir()
+	commonDir := filepath.Join(t.TempDir(), "external")
+	adminDir := filepath.Join(commonDir, "worktrees", "sha256-worktree")
+	repoDir := filepath.Join(root, "sha256-worktree")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "refs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(adminDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "HEAD"), []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "config"), []byte("[core]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git"), []byte("gitdir: "+adminDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "gitdir"), []byte(filepath.Join(repoDir, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("expected linked SHA-256 worktree to be excluded, got %+v", repos)
+	}
+}
+
 func TestScan_WorktreesShapedGitFileWrongAdminGitdirDiscovered(t *testing.T) {
 	root := t.TempDir()
 	commonDir := filepath.Join(t.TempDir(), "external")
