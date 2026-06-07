@@ -521,6 +521,28 @@ func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
 	}
 }
 
+func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    120,
+		Height:                   12,
+		Mode:                     ModePlans,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      LaunchInstructionsPrompt,
+		WorktreeInputPlaceholder: "launch instructions",
+		WorktreeInput:            "Implement the selected plan",
+	})
+	status := strings.Split(view, "\n")[11]
+	for _, hint := range []string{"enter: launch", "esc: cancel", "backspace: delete"} {
+		if !strings.Contains(status, hint) {
+			t.Errorf("expected hint %q in launch overlay bar %q", hint, status)
+		}
+	}
+	if strings.Contains(status, "enter: create") {
+		t.Fatalf("launch instructions status should not show create hint: %q", status)
+	}
+}
+
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
 	for _, pair := range [][2]string{
@@ -1947,6 +1969,83 @@ func TestRender_AgentInputDialogUsesExplicitPlaceholder(t *testing.T) {
 	}
 	if !strings.Contains(view, AgentInputPlaceholder) {
 		t.Error("agent input dialog should show caller-provided placeholder")
+	}
+}
+
+func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
+	longInput := `Implement the saved wtui plan "Persist custom launch instructions" at /state/wtui/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    120,
+		Height:                   24,
+		Mode:                     ModePlans,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      LaunchInstructionsPrompt,
+		WorktreeInputPlaceholder: "launch instructions",
+		WorktreeInput:            longInput,
+	})
+
+	if !strings.Contains(view, LaunchInstructionsPrompt) {
+		t.Fatalf("launch instructions dialog should show prompt:\n%s", view)
+	}
+	if strings.Contains(view, longInput) {
+		t.Fatalf("launch instructions should wrap instead of rendering on one line:\n%s", view)
+	}
+	for _, want := range []string{"Implement the saved wtui plan", "Read the plan file", "then begin"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("wrapped launch instructions missing %q:\n%s", want, view)
+		}
+	}
+
+	lines := strings.Split(view, "\n")
+	for i, line := range lines[:len(lines)-1] {
+		trimmed := strings.TrimLeft(ansi.Strip(line), " ")
+		if trimmed == "" {
+			continue
+		}
+		if got := lipgloss.Width(trimmed); got > launchInstructionsMaxWidth {
+			t.Fatalf("modal line %d width = %d, want <= %d: %q", i, got, launchInstructionsMaxWidth, trimmed)
+		}
+	}
+}
+
+func TestRender_LaunchInstructionsInputDialogMarksOverflow(t *testing.T) {
+	longInput := strings.Join([]string{
+		"Start with the saved wtui plan title and repository path.",
+		"Keep this middle instruction one.",
+		"Keep this middle instruction two.",
+		"Keep this middle instruction three.",
+		"Keep this middle instruction four.",
+		"Finish by launching the selected agent with the edited instructions.",
+	}, " ")
+	view := Render(RenderParams{
+		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:                    52,
+		Height:                   20,
+		Mode:                     ModePlans,
+		Overlay:                  OverlayWorktreeInput,
+		WorktreeInputPrompt:      LaunchInstructionsPrompt,
+		WorktreeInputPlaceholder: "launch instructions",
+		WorktreeInput:            longInput,
+	})
+
+	for _, want := range []string{"Start with the saved", shortcutOverflowMarker, "Finish by launching"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("overflowed launch instructions missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "middle instruction three") {
+		t.Fatalf("overflowed launch instructions should compact middle content:\n%s", view)
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines[:len(lines)-1] {
+		trimmed := strings.TrimLeft(ansi.Strip(line), " ")
+		if trimmed == "" {
+			continue
+		}
+		if got := lipgloss.Width(trimmed); got > 52 {
+			t.Fatalf("modal line %d width = %d, want <= terminal width: %q", i, got, trimmed)
+		}
 	}
 }
 

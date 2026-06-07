@@ -24,6 +24,7 @@ exist:
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
 | Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Sessions root | `WTUI_SESSION_STATE_ROOT` for hooks | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
 | Plan state root | `--state-root` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
@@ -54,6 +55,7 @@ prefer_multiplexer = true
 
 [agent]
 command = "codex"
+plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
@@ -127,7 +129,8 @@ updates this value immediately, creating the config file if needed.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | string | Supported values: `codex` or `claude`. |
+| `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
+| `plan_prompt` | string | Optional one-line template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
 ### `[sessions]`
 
@@ -187,10 +190,13 @@ The plan state root is resolved as: `--state-root` > `WTUI_PLAN_STATE_ROOT` >
 `wtui plan` commands may load config to resolve the root but never scan repos or
 start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
 `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and
-`WTUI_COMMIT`. wtui does not infer git metadata in v1. The
-`wtui-plan-persist` skill instructs agents on when and how to save plans; its
-canonical source lives in `agent-skills/wtui-plan-persist/` for symlinking into
-user-level Codex/Claude skill directories.
+`WTUI_COMMIT`. `codex-app` launches do not inherit `WTUI_*` because wtui opens a
+macOS deep link; use the metadata block in the launch prompt to pass
+`--state-root` or export the listed vars before running `wtui plan`. wtui does
+not infer git metadata in v1. The `wtui-plan-persist` skill instructs agents on
+when and how to save plans; its canonical source lives in
+`agent-skills/wtui-plan-persist/` for symlinking into user-level Codex/Claude
+skill directories.
 
 ### `[bootstrap]`
 
@@ -290,10 +296,13 @@ Codex hook example:
 }
 ```
 
-When wtui launches or resumes an agent session, it appends these environment
+When wtui launches or resumes a CLI agent session, it appends these environment
 variables:
 `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
 `WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
+`codex-app` launches are the exception: wtui opens a macOS deep link, scrubs
+inherited `WTUI_*` from `open`, and includes launch metadata in the prompt when a
+prompt is provided.
 
 Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with

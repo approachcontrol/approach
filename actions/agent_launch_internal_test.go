@@ -430,8 +430,28 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 		t.Fatalf("expected open command to have no working dir, got %q", launch.Cmd.Dir)
 	}
 	assertNoWTUIEnv(t, launch.Cmd.Environ())
-	if !reflect.DeepEqual(launch.Cmd.Args, []string{"open", "codex://threads/new?path=%2Frepo%2Fwork%20tree%2Bplus&prompt=Read%20the%20plan%20%26%20begin%20%2B%20ship."}) {
+	if !reflect.DeepEqual(launch.Cmd.Args[:1], []string{"open"}) {
 		t.Fatalf("unexpected codex-app args: %#v", launch.Cmd.Args)
+	}
+	gotURL, err := url.Parse(launch.Cmd.Args[1])
+	if err != nil {
+		t.Fatalf("parse launch URL: %v", err)
+	}
+	if got := gotURL.Query().Get("path"); got != "/repo/work tree+plus" {
+		t.Fatalf("path query = %q, want worktree path", got)
+	}
+	prompt := gotURL.Query().Get("prompt")
+	for _, want := range []string{
+		"Read the plan & begin + ship.",
+		"WTUI_AGENT=" + shellQuote("codex-app"),
+		"WTUI_WORKTREE_PATH=" + shellQuote("/repo/work tree+plus"),
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "inherited-launch") {
+		t.Fatalf("prompt leaked inherited WTUI_LAUNCH_ID:\n%s", prompt)
 	}
 }
 

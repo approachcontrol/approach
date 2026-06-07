@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -708,22 +709,41 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
+	ctx, ok, next := m.planLaunchContext()
+	if !ok {
+		return next, nil
+	}
+	m = next
+	m.modal = modal.OpenInput(
+		ui.LaunchInstructionsPrompt,
+		"launch instructions",
+		ctx.InitialPrompt,
+		validatePlanLaunchInput,
+		func(input string) tea.Cmd {
+			ctx.InitialPrompt = input
+			return func() tea.Msg { return PlanLaunchRequestedMsg{LaunchContext: ctx} }
+		},
+	)
+	return m, nil
+}
+
+func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 	repoPath, repoOK := m.currentRepoPath()
 	plan, ok := m.selectedPlan()
 	if !ok {
 		if !repoOK {
 			m = m.setStatus(statusOther, "Cannot determine launch path for this plan")
 		}
-		return m, nil
+		return actions.AgentLaunchContext{}, false, m
 	}
 	if m.agentCommand == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
-		return m, nil
+		return actions.AgentLaunchContext{}, false, m
 	}
 	planPath, err := m.planMarkdownPath(plan.PlanID)
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
-		return m, nil
+		return actions.AgentLaunchContext{}, false, m
 	}
 	if plan.RepoPath != "" {
 		repoPath = plan.RepoPath
@@ -737,17 +757,19 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 	}
 	if launchPath == "" {
 		m = m.setStatus(statusOther, "Cannot determine launch path for this plan")
-		return m, nil
+		return actions.AgentLaunchContext{}, false, m
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          m.agentCommand,
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     launchPath,
+		Branch:           plan.Branch,
+		Commit:           plan.Commit,
 		SessionStateRoot: m.sessionStateRoot,
 		PlanID:           plan.PlanID,
 		PlanPath:         planPath,
-		InitialPrompt:    implementationPrompt(plan, planPath),
+		InitialPrompt:    m.implementationPrompt(plan, planPath, repoPath, launchPath),
 	}
 	if phase, ok := m.selectedPlanPhase(); ok {
 		ctx.PlanPhaseID = phase.PhaseID
@@ -755,10 +777,36 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		ctx.PlanPhaseStatus = phase.Status
 		ctx.InitialPrompt = implementationPromptForPhase(plan, planPath, phase)
 	}
-	return m.launchAgentWithContext(ctx)
+	return ctx, true, m
 }
 
-func implementationPrompt(plan planstore.PlanRecord, planPath string) string {
+func validatePlanLaunchInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("enter launch instructions")
+	}
+	return nil
+}
+
+func (m Model) implementationPrompt(plan planstore.PlanRecord, planPath, repoPath, worktreePath string) string {
+	template := m.planPromptTemplate
+	if strings.TrimSpace(template) == "" {
+		return defaultImplementationPrompt(plan, planPath)
+	}
+	title := plan.Title
+	if title == "" {
+		title = "(untitled)"
+	}
+	replacer := strings.NewReplacer(
+		"{title}", title,
+		"{plan_id}", plan.PlanID,
+		"{plan_path}", planPath,
+		"{repo_path}", repoPath,
+		"{worktree_path}", worktreePath,
+	)
+	return replacer.Replace(template)
+}
+
+func defaultImplementationPrompt(plan planstore.PlanRecord, planPath string) string {
 	title := plan.Title
 	if title == "" {
 		title = "(untitled)"

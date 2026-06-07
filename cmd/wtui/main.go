@@ -171,12 +171,13 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 		return err
 	}
 	p := tea.NewProgram(model.NewWithOptions(repos, model.Options{
-		AgentCommand:     cfg.Agent.Command,
-		SessionStateRoot: sessionStore.Root(),
-		ListSessions:     sessionStore.List,
-		ReadTranscript:   sessionStore.ReadTranscript,
-		ListPlans:        planStore.List,
-		ReadPlan:         planStore.ReadPlan,
+		AgentCommand:       cfg.Agent.Command,
+		PlanPromptTemplate: cfg.Agent.PlanPrompt,
+		SessionStateRoot:   sessionStore.Root(),
+		ListSessions:       sessionStore.List,
+		ReadTranscript:     sessionStore.ReadTranscript,
+		ListPlans:          planStore.List,
+		ReadPlan:           planStore.ReadPlan,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			return sessionStore.MarkLaunchEnded(ctx.LaunchID, time.Now().UTC())
 		},
