@@ -424,11 +424,11 @@ func TestModel_AgentLaunchFromBranchPaneIncludesCommit(t *testing.T) {
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = ctx
-			launch, err := actions.AgentLaunch(ctx)
+			built, err := actions.AgentCommand(ctx)
 			if err != nil {
 				return actions.TerminalLaunchSpec{}, err
 			}
-			launchedEnvCommit = envValue(launch.Cmd.Env, "WTUI_COMMIT")
+			launchedEnvCommit = envValue(built.Env, "WTUI_COMMIT")
 			cmd := exec.Command("true")
 			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
@@ -463,11 +463,11 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 		AgentCommand: "claude",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launchedPath = ctx.WorktreePath
-			launch, err := actions.AgentLaunch(ctx)
+			built, err := actions.AgentCommand(ctx)
 			if err != nil {
 				return actions.TerminalLaunchSpec{}, err
 			}
-			launchedEnvCommit = envValue(launch.Cmd.Env, "WTUI_COMMIT")
+			launchedEnvCommit = envValue(built.Env, "WTUI_COMMIT")
 			cmd := exec.Command("pwd")
 			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil

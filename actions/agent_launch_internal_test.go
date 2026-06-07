@@ -2,8 +2,272 @@ package actions
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
+
+func planAgentContext() AgentLaunchContext {
+	return AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "main",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanID:           "plan-1",
+		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		InitialPrompt:    "Read the plan and begin implementation.",
+	}
+}
+
+func TestAgentLaunch_InsideTmuxRunsAgentInSession(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
+	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("inside-tmux agent launch should be detached (non-interactive)")
+	}
+	joined := strings.Join(launch.Cmd.Args, "\x00")
+	if !strings.HasPrefix(joined, "sh\x00-c\x00") {
+		t.Fatalf("expected sh -c tmux script, got %#v", launch.Cmd.Args)
+	}
+	// The agent command, plan environment, and prompt must survive the hop
+	// into the tmux session.
+	for _, want := range []string{
+		"codex",
+		"--config",
+		"session-hook --provider codex",
+		"WTUI_PLAN_ID=plan-1",
+		"WTUI_PLAN_PATH=/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"Read the plan and begin implementation.",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected tmux agent launch to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func TestAgentLaunch_InsideZellijRunsAgentInSession(t *testing.T) {
+	env := fakeGetenv(map[string]string{"ZELLIJ": "0"})
+	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("zellij"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("inside-zellij agent launch should be detached (non-interactive)")
+	}
+	args := launch.Cmd.Args
+	if len(args) < 6 || args[0] != "zellij" || args[1] != "run" || args[2] != "--cwd" || args[3] != "/repo/worktree" {
+		t.Fatalf("unexpected zellij run args: %#v", args)
+	}
+	joined := strings.Join(args, "\x00")
+	for _, want := range []string{"codex", "WTUI_PLAN_ID=plan-1", "Read the plan and begin implementation."} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected zellij agent launch to contain %q, got %#v", want, args)
+		}
+	}
+}
+
+func TestAgentLaunch_DarwinExternalTerminalRunsAgent(t *testing.T) {
+	launch, err := agentLaunch(planAgentContext(), "darwin", fakeGetenv(nil), fakeLookPath("osascript", "open"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("darwin external Terminal agent launch should be detached")
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
+	}
+	joined := strings.Join(launch.Cmd.Args, "\x00")
+	for _, want := range []string{"cd '/repo/worktree'", "codex", "Read the plan and begin implementation."} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected osascript agent command to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func TestAgentLaunch_TerminalEnvRunsAgentWithDashE(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
+	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("alacritty"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("TERMINAL agent launch should be detached")
+	}
+	args := launch.Cmd.Args
+	if args[0] != "alacritty" {
+		t.Fatalf("expected alacritty transport, got %#v", args)
+	}
+	joined := strings.Join(args, "\x00")
+	if !strings.Contains(joined, "-e\x00sh\x00-c\x00") {
+		t.Fatalf("expected -e sh -c invocation, got %#v", args)
+	}
+	if !strings.Contains(joined, "codex") {
+		t.Fatalf("expected agent command in TERMINAL launch, got %#v", args)
+	}
+	if launch.Cmd.Dir != "/repo/worktree" {
+		t.Fatalf("expected launch dir /repo/worktree, got %q", launch.Cmd.Dir)
+	}
+}
+
+func TestAgentLaunch_TerminalEnvDarwinUnsupportedReturnsError(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "MacTerminalApp"})
+	_, err := agentLaunch(planAgentContext(), "darwin", env, fakeLookPath("open"))
+	if err == nil {
+		t.Fatal("expected error when a GUI-only TERMINAL cannot run an agent command")
+	}
+}
+
+func TestAgentLaunch_ShellFallbackIsInteractive(t *testing.T) {
+	shell := tempExecutableShell(t)
+	env := fakeGetenv(map[string]string{"SHELL": shell})
+	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath())
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if !launch.Interactive {
+		t.Fatal("shell fallback agent launch should be interactive (hands over the TTY)")
+	}
+	joined := strings.Join(launch.Cmd.Args, "\x00")
+	if !strings.Contains(joined, "codex") {
+		t.Fatalf("expected agent command in shell fallback, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestAgentLaunch_WorkingDirControlsCommandDirKeepsWorktreeMetadata(t *testing.T) {
+	ctx := planAgentContext()
+	ctx.WorkingDir = "/repo/worktree/subdir"
+	ctx.ResumeSessionID = "codex-session-1"
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
+	launch, err := agentLaunch(ctx, "linux", env, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	joined := strings.Join(launch.Cmd.Args, "\x00")
+	if !strings.Contains(joined, "cd '/repo/worktree/subdir'") {
+		t.Fatalf("expected command to run in working dir, got %#v", launch.Cmd.Args)
+	}
+	if !strings.Contains(joined, "WTUI_WORKTREE_PATH=/repo/worktree") {
+		t.Fatalf("expected worktree metadata preserved, got %#v", launch.Cmd.Args)
+	}
+	if !strings.Contains(joined, "'resume' 'codex-session-1'") {
+		t.Fatalf("expected shell-quoted resume args adjacent, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalCommand_ShellCommandResistsInjection(t *testing.T) {
+	// Execution-based proof of quoting. The payloads use $(...) command
+	// substitution (not trailing `;`/`&&`, which `exec` would swallow) and
+	// contain no single quotes (so they cannot accidentally self-quote): if any
+	// untrusted value escaped its quotes, the substitution runs during shell
+	// expansion and creates a marker file. If quoting is removed (e.g.
+	// shellQuote becomes the identity function) this test fails — verified by
+	// mutation testing. With correct quoting, only the legitimate command runs.
+	tmp := t.TempDir()
+	tc := &terminalCommand{
+		dir: tmp,
+		env: []envVar{
+			// Attempts to break out of the `env KEY=VAL` token.
+			{key: "WTUI_BRANCH", value: `x$(touch pwned_env)`},
+		},
+		// argv[0] is the legitimate command; the trailing arg attempts injection.
+		argv: []string{"touch", "ran", `$(touch pwned_arg)`},
+	}
+
+	cmd := exec.Command("sh", "-c", tc.shellCommand())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rendered command failed: %v\noutput: %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "ran")); err != nil {
+		t.Fatalf("legitimate command did not run: %v", err)
+	}
+	for _, marker := range []string{"pwned_env", "pwned_arg"} {
+		if _, err := os.Stat(filepath.Join(tmp, marker)); err == nil {
+			t.Fatalf("injection succeeded: %q was created (quoting failed)", marker)
+		}
+	}
+}
+
+func TestAgentLaunch_OsascriptEscapesShellCommand(t *testing.T) {
+	ctx := planAgentContext()
+	// Adversarial prompt that tries to break out of the AppleScript string. It
+	// contains no single quotes, so correct shellQuote wraps it verbatim in
+	// single quotes; the assertion below checks for that exact single-quoted
+	// token (a fixed literal, NOT recomputed via shellQuote) so the test fails
+	// if quoting is removed.
+	const prompt = `"; do shell script "touch /tmp/PWNED"; echo "`
+	ctx.InitialPrompt = prompt
+	launch, err := agentLaunch(ctx, "darwin", fakeGetenv(nil), fakeLookPath("osascript", "open"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
+	}
+
+	const prefix = `tell application "Terminal" to do script `
+	var doScript string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) {
+			doScript = strings.TrimPrefix(arg, prefix)
+		}
+	}
+	if doScript == "" {
+		t.Fatalf("no do-script argument found in %#v", launch.Cmd.Args)
+	}
+	// Must be a well-formed quoted string: if %q escaping of the prompt's quotes
+	// broke, Unquote fails.
+	inner, err := strconv.Unquote(doScript)
+	if err != nil {
+		t.Fatalf("do-script payload is not a valid quoted string (escaping broke): %q", doScript)
+	}
+	// The decoded shell command must carry the prompt inside literal single
+	// quotes. Fixed expectation, not recomputed via shellQuote.
+	if !strings.Contains(inner, `'`+prompt+`'`) {
+		t.Fatalf("expected prompt single-quoted inside the shell command, got %q", inner)
+	}
+}
+
+func TestAgentLaunch_SessionNameIsUniquePerLaunchAndDistinctFromTerminal(t *testing.T) {
+	ctx := planAgentContext()
+	ctx.LaunchID = "launch-aaa"
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/s"})
+
+	first, err := agentLaunch(ctx, "linux", env, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	ctx.LaunchID = "launch-bbb"
+	second, err := agentLaunch(ctx, "linux", env, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+
+	// The session name is the 5th arg (sh -c <script> wtui <session> <cmd>).
+	firstSession := first.Cmd.Args[4]
+	secondSession := second.Cmd.Args[4]
+	if firstSession == secondSession {
+		t.Fatalf("expected distinct session names per launch, both = %q", firstSession)
+	}
+	// It must differ from the plain `t` terminal session for the same worktree,
+	// so launching an agent never collides with a shell session opened by `t`.
+	if termSession := WorktreeSessionName(ctx.WorktreePath); firstSession == termSession {
+		t.Fatalf("agent session %q must not equal the `t` terminal session %q", firstSession, termSession)
+	}
+	// It should still be rooted at the recognizable worktree session name.
+	if !strings.HasPrefix(firstSession, WorktreeSessionName(ctx.WorktreePath)) {
+		t.Fatalf("expected agent session rooted at worktree name, got %q", firstSession)
+	}
+}
 
 func TestClaudeSessionHookSettingsEncodesJSONString(t *testing.T) {
 	hookCommand := "/tmp/wtui\a\v session-hook --provider claude"

@@ -257,6 +257,11 @@ type AgentSetFailedMsg struct {
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
+	// Detached reports that the agent was launched into an external
+	// terminal/multiplexer session that keeps running after the launch command
+	// returns. Detached launches must not finalize the captured session here;
+	// provider hooks remain the source of truth for completed session metadata.
+	Detached bool
 }
 
 type DeleteFailedMsg struct {

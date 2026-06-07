@@ -594,7 +594,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentSetFailed(msg), nil
 	case AgentResultMsg:
 		resultErr := msg.Err
-		if msg.LaunchContext.LaunchID != "" {
+		// Detached launches only start the agent in an external
+		// terminal/multiplexer session and return while it keeps running, so the
+		// captured session must not be finalized here; provider hooks own that.
+		if !msg.Detached && msg.LaunchContext.LaunchID != "" {
 			if err := m.finalizeAgentSession(msg.LaunchContext); err != nil {
 				if resultErr != "" {
 					resultErr = fmt.Sprintf("%s; finalize session: %v", resultErr, err)
@@ -605,6 +608,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if resultErr != "" {
 			m = m.setStatus(statusOther, resultErr)
+		} else if msg.Detached {
+			m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
 		}
 		return m, nil
 	case DeleteFailedMsg:

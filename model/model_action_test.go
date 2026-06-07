@@ -3405,6 +3405,65 @@ func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
 	}
 }
 
+func TestModel_DetachedAgentResultDoesNotFinalize(t *testing.T) {
+	finalized := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
+			finalized = true
+			return nil
+		},
+	})
+	ctx := actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		Branch:       "main",
+	}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true})
+	if finalized {
+		t.Fatal("detached launch must not finalize the captured session; provider hooks own that")
+	}
+}
+
+func TestModel_DetachedAgentResultShowsLaunchedStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true})
+	view := m.View()
+	if !strings.Contains(view, "Launched codex") {
+		t.Fatalf("expected detached launch status mentioning the agent, got view:\n%s", view)
+	}
+	if strings.Contains(view, "complete") || strings.Contains(view, "finished") {
+		t.Fatalf("detached launch status should not imply the agent finished, got view:\n%s", view)
+	}
+}
+
+func TestModel_DetachedAgentResultErrorTakesPrecedence(t *testing.T) {
+	finalized := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
+			finalized = true
+			return nil
+		},
+	})
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true, Err: "exit status 1"})
+	if finalized {
+		t.Fatal("detached launch must not finalize even on error")
+	}
+	view := m.View()
+	if !strings.Contains(view, "exit status 1") {
+		t.Fatalf("expected detached launch error in status bar, got view:\n%s", view)
+	}
+	if strings.Contains(view, "Launched codex") {
+		t.Fatalf("error should take precedence over the launched-status message, got view:\n%s", view)
+	}
+}
+
 func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
 	var gotFilter sessions.SessionFilter
 	want := []sessions.SessionRecord{

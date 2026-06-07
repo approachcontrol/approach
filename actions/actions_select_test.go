@@ -109,7 +109,7 @@ func TestTerminalLaunch_UsesMultiplexerBeforeTerminal(t *testing.T) {
 		"TMUX":     "/tmp/tmux.sock",
 		"TERMINAL": "alacritty",
 	})
-	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("tmux", "alacritty"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("tmux", "alacritty"), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestTerminalLaunch_UsesMultiplexerBeforeTerminal(t *testing.T) {
 
 func TestTerminalLaunch_UsesZellijWhenActive(t *testing.T) {
 	env := fakeGetenv(map[string]string{"ZELLIJ": "0"})
-	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("zellij"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("zellij"), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestTerminalLaunch_UsesZellijWhenActive(t *testing.T) {
 
 func TestTerminalLaunch_HonorsTerminal(t *testing.T) {
 	env := fakeGetenv(map[string]string{"TERMINAL": "wezterm start"})
-	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("wezterm"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("wezterm"), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestTerminalLaunch_HonorsTerminal(t *testing.T) {
 }
 
 func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
-	launch, err := terminalLaunch("/repo", "darwin", fakeGetenv(nil), fakeLookPath("open"))
+	launch, err := terminalLaunch("/repo", "darwin", fakeGetenv(nil), fakeLookPath("open"), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
 
 func TestTerminalLaunch_DarwinFallsBackToOpenAppWhenTerminalMissing(t *testing.T) {
 	env := fakeGetenv(map[string]string{"TERMINAL": "wezterm start"})
-	launch, err := terminalLaunch("/repo", "darwin", env, fakeLookPath("open"))
+	launch, err := terminalLaunch("/repo", "darwin", env, fakeLookPath("open"), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestTerminalLaunch_DarwinFallsBackToOpenAppWhenTerminalMissing(t *testing.T
 func TestTerminalLaunch_LinuxUsesShellFallbackEvenWhenXDGOpenExists(t *testing.T) {
 	shell := tempExecutableShell(t)
 	env := fakeGetenv(map[string]string{"SHELL": shell})
-	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("xdg-open"))
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath("xdg-open"), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestTerminalLaunch_LinuxUsesShellFallbackEvenWhenXDGOpenExists(t *testing.T
 func TestTerminalLaunch_LinuxUsesShellFallback(t *testing.T) {
 	shell := tempExecutableShell(t)
 	env := fakeGetenv(map[string]string{"SHELL": shell})
-	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath())
+	launch, err := terminalLaunch("/repo", "linux", env, fakeLookPath(), nil)
 	if err != nil {
 		t.Fatalf("terminalLaunch returned error: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestTerminalLaunch_LinuxUsesShellFallback(t *testing.T) {
 
 func TestTerminalLaunch_ReportsMissingTerminalCommand(t *testing.T) {
 	env := fakeGetenv(map[string]string{"TERMINAL": "ghostterm"})
-	_, err := terminalLaunch("/repo", "linux", env, fakeLookPath())
+	_, err := terminalLaunch("/repo", "linux", env, fakeLookPath(), nil)
 	if err == nil {
 		t.Fatal("expected missing TERMINAL command error")
 	}
