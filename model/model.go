@@ -13,12 +13,13 @@ import (
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
-const listRequestSlots = int(ui.ModeSessions) + 1
+const listRequestSlots = int(ui.ModePlans) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
@@ -32,6 +33,7 @@ type Model struct {
 	commits                   pane.Pane[gitquery.Commit]
 	reflogs                   pane.Pane[gitquery.ReflogEntry]
 	sessions                  pane.Pane[sessions.SessionRecord]
+	plans                     pane.Pane[planstore.PlanRecord]
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	listRequestSeq            uint64
@@ -51,6 +53,8 @@ type Model struct {
 	fetchRepo                 func(string) error
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
+	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	readPlan                  func(string) (string, error)
 	saveAgent                 func(string) error
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
@@ -93,6 +97,8 @@ type Options struct {
 	FetchRepo            func(string) error
 	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
+	ListPlans            func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	ReadPlan             func(string) (string, error)
 	SaveAgentCommand     func(string) error
 	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	FinalizeAgentSession func(actions.AgentLaunchContext) error
@@ -124,6 +130,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if readTranscript == nil {
 		readTranscript = func(sessions.Provider, string) ([]sessions.TranscriptEvent, error) { return nil, nil }
 	}
+	listPlans := opts.ListPlans
+	if listPlans == nil {
+		listPlans = func(planstore.PlanFilter) ([]planstore.PlanRecord, error) { return nil, nil }
+	}
+	readPlan := opts.ReadPlan
+	if readPlan == nil {
+		readPlan = func(string) (string, error) { return "", nil }
+	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
@@ -148,11 +162,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		commits:              newCommitPane(),
 		reflogs:              newReflogPane(),
 		sessions:             newSessionPane(),
+		plans:                newPlanPane(),
 		mode:                 ui.ModeWorktrees,
 		agentCommand:         agent.Normalize(opts.AgentCommand),
 		fetchRepo:            fetchRepo,
 		listSessions:         listSessions,
 		readTranscript:       readTranscript,
+		listPlans:            listPlans,
+		readPlan:             readPlan,
 		saveAgent:            saveAgent,
 		launchAgent:          launchAgent,
 		finalizeAgentSession: finalizeAgentSession,
@@ -160,7 +177,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bootstrapHookForRepo: bootstrapHookForRepo,
 		runBootstrapHook:     runBootstrapHook,
 	}
-	for mode := ui.ModeWorktrees; mode <= ui.ModeSessions; mode++ {
+	for mode := ui.ModeWorktrees; mode <= ui.ModePlans; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
@@ -197,10 +214,17 @@ func (m Model) Sessions() []sessions.SessionRecord {
 	sessions, _, _ := m.sessions.View()
 	return sessions
 }
+func (m Model) Plans() []planstore.PlanRecord {
+	plans, _, _ := m.plans.View()
+	return plans
+}
+func (m Model) PlanSelected() int               { return m.plans.SelectedIndex() }
+func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
 func (m Model) OverlayDiff() string             { return m.modal.View().Diff }
+func (m Model) OverlayText() string             { return m.modal.View().Text }
 func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
 func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
 func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
@@ -231,8 +255,9 @@ func (m Model) View() string {
 	commits, commitSelected, commitScroll := m.commits.View()
 	reflogs, reflogSelected, reflogScroll := m.reflogs.View()
 	sessions, sessionSelected, sessionScroll := m.sessions.View()
+	plans, planSelected, planScroll := m.plans.View()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
-	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions))
+	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans))
 	if len(repos) == 0 {
 		worktrees = nil
 		rows = nil
@@ -240,6 +265,7 @@ func (m Model) View() string {
 		commits = nil
 		reflogs = nil
 		sessions = nil
+		plans = nil
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
@@ -278,6 +304,10 @@ func (m Model) View() string {
 		Sessions:                 sessions,
 		SessionSelected:          sessionSelected,
 		SessionScroll:            sessionScroll,
+		Plans:                    plans,
+		PlanSelected:             planSelected,
+		PlanScroll:               planScroll,
+		OverlayText:              modalView.Text,
 		TransientError:           m.visibleStatusText(),
 		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
 		SearchActive:             m.searchActive,
@@ -308,14 +338,14 @@ func (m Model) repoEmptyMessage(filteredRepos int) string {
 	return "No repo results"
 }
 
-func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions int) string {
+func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans int) string {
 	if filteredRepos == 0 {
 		if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
 			return "No matching repo"
 		}
 		return "No selected repo"
 	}
-	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions)
+	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
 		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
 	}
@@ -325,7 +355,7 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	return modeEmptyMessage(m.mode)
 }
 
-func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions int) (int, int) {
+func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans int) (int, int) {
 	switch m.mode {
 	case ui.ModeWorktrees:
 		return m.worktrees.ItemCount(), filteredWorktrees
@@ -339,6 +369,8 @@ func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredSta
 		return m.reflogs.ItemCount(), filteredReflogs
 	case ui.ModeSessions:
 		return m.sessions.ItemCount(), filteredSessions
+	case ui.ModePlans:
+		return m.plans.ItemCount(), filteredPlans
 	default:
 		return 0, 0
 	}
@@ -358,6 +390,8 @@ func modeDataName(mode ui.Mode) string {
 		return "reflog"
 	case ui.ModeSessions:
 		return "sessions"
+	case ui.ModePlans:
+		return "plans"
 	default:
 		return "items"
 	}
@@ -377,6 +411,8 @@ func modeResultName(mode ui.Mode) string {
 		return "reflog"
 	case ui.ModeSessions:
 		return "session"
+	case ui.ModePlans:
+		return "plan"
 	default:
 		return "item"
 	}
@@ -396,6 +432,8 @@ func modeEmptyMessage(mode ui.Mode) string {
 		return "No reflog entries"
 	case ui.ModeSessions:
 		return "No sessions"
+	case ui.ModePlans:
+		return "No plans"
 	default:
 		return "nothing here yet"
 	}
@@ -423,8 +461,16 @@ func (m Model) overlayState() ui.OverlayState {
 		case modal.DiffSessionTranscript:
 			return ui.OverlaySessionTranscript
 		}
+	case modal.Text:
+		return ui.OverlayPlanText
 	}
 	return ui.OverlayNone
+}
+
+func (m Model) openPlanText() Model {
+	m.diffRequestSeq++
+	m.modal = modal.OpenText("").WithRequest(m.diffRequestSeq)
+	return m
 }
 
 func (m Model) openDiff(kind modal.DiffKind) Model {
@@ -503,6 +549,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSessionResult(msg), nil
 	case SessionTranscriptResultMsg:
 		return m.handleSessionTranscriptResult(msg), nil
+	case PlanResultMsg:
+		return m.handlePlanResult(msg), nil
+	case PlanReadResultMsg:
+		return m.handlePlanReadResult(msg), nil
 	case WorktreeDiffResultMsg:
 		return m.handleWorktreeDiffResult(msg), nil
 	case CommitDiffResultMsg:
@@ -594,6 +644,13 @@ func (m Model) selectedSession() (sessions.SessionRecord, bool) {
 	return m.sessions.Selected()
 }
 
+func (m Model) selectedPlan() (planstore.PlanRecord, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return planstore.PlanRecord{}, false
+	}
+	return m.plans.Selected()
+}
+
 func (m Model) isSelectedBranchDirtyWorktree() bool {
 	row, ok := m.selectedRow()
 	return ok && row.Branch.Dirty && row.Branch.IsWorktree
@@ -642,6 +699,15 @@ func (m Model) reflowSessions() Model {
 		contentHeight = 16
 	}
 	m.sessions = m.sessions.Reflow(contentHeight, m.contentWidth())
+	return m
+}
+
+func (m Model) reflowPlans() Model {
+	contentHeight := m.height - ui.BranchContentOverhead
+	if contentHeight <= 0 {
+		contentHeight = 16
+	}
+	m.plans = m.plans.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 

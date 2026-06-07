@@ -483,6 +483,7 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		"WTUI_BRANCH="+ctx.Branch,
 		"WTUI_COMMIT="+commit,
 		"WTUI_SESSION_STATE_ROOT="+ctx.SessionStateRoot,
+		"WTUI_PLAN_STATE_ROOT="+ctx.SessionStateRoot,
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 )
@@ -25,6 +26,7 @@ const (
 	OverlayWorktreeDiff
 	OverlayReflogDiff
 	OverlaySessionTranscript
+	OverlayPlanText
 	OverlayWorktreeInput
 )
 
@@ -49,6 +51,7 @@ const (
 	ModeHistory
 	ModeReflog
 	ModeSessions
+	ModePlans
 )
 
 const LeftPaneWidth = 30
@@ -163,6 +166,10 @@ type RenderParams struct {
 	Sessions                 []sessions.SessionRecord
 	SessionSelected          int
 	SessionScroll            int
+	Plans                    []planstore.PlanRecord
+	PlanSelected             int
+	PlanScroll               int
+	OverlayText              string
 	TransientError           string
 	TransientErrorFadeStep   int
 	SearchActive             bool
@@ -219,6 +226,7 @@ func Render(p RenderParams) string {
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
+	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	status := statusBarParams{
 		Width:                     p.Width,
 		Mode:                      p.Mode,
@@ -240,6 +248,7 @@ func Render(p RenderParams) string {
 		CommitSelected:            commitSelected,
 		ReflogSelected:            reflogSelected,
 		SessionSelected:           sessionSelected,
+		PlanSelected:              planSelected,
 		TransientError:            p.TransientError,
 		TransientErrorFadeStep:    p.TransientErrorFadeStep,
 		SearchActive:              p.SearchActive,
@@ -299,6 +308,7 @@ func Render(p RenderParams) string {
 	worktreeSel := p.WorktreeSelected
 	reflogSel := p.ReflogSelected
 	sessionSel := p.SessionSelected
+	planSel := p.PlanSelected
 	if p.ActivePane == 0 {
 		branchSel = -1
 		stashSel = -1
@@ -306,6 +316,7 @@ func Render(p RenderParams) string {
 		worktreeSel = -1
 		reflogSel = -1
 		sessionSel = -1
+		planSel = -1
 	}
 
 	var rightLines []string
@@ -322,6 +333,8 @@ func Render(p RenderParams) string {
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
+	case p.Mode == ModePlans && len(p.Plans) > 0:
+		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -363,6 +376,7 @@ func renderModeHeader(mode Mode, width int) string {
 		{ModeHistory, "history"},
 		{ModeReflog, "reflog"},
 		{ModeSessions, "sessions"},
+		{ModePlans, "plans"},
 	}
 
 	var parts []string
@@ -433,6 +447,7 @@ type statusBarParams struct {
 	CommitSelected            bool
 	ReflogSelected            bool
 	SessionSelected           bool
+	PlanSelected              bool
 	TransientError            string
 	TransientErrorFadeStep    int
 	SearchActive              bool
@@ -720,6 +735,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeSessions:
 		if sp.ActivePane == 1 && sp.SessionSelected {
 			actions = append(actions, shortcutHint{Key: "enter", Label: "transcript"})
+		}
+	case ModePlans:
+		if sp.ActivePane == 1 && sp.PlanSelected {
+			actions = append(actions, shortcutHint{Key: "enter", Label: "plan"})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1018,6 +1037,8 @@ func modeShortcutTitle(mode Mode) string {
 		return "Reflog"
 	case ModeSessions:
 		return "Sessions"
+	case ModePlans:
+		return "Plans"
 	default:
 		return "Items"
 	}
@@ -1281,6 +1302,104 @@ func fitSessionColumn(value string, width int) string {
 	return value + strings.Repeat(" ", width-lipgloss.Width(value))
 }
 
+const (
+	planStatusWidth  = 12
+	planBranchWidth  = 20
+	planPhaseWidth   = 7
+	planUpdatedWidth = 10
+)
+
+func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	header := truncateToWidth(statusStyle.Render(formatPlanColumns("   ", "Status", "Branch", "Phase", "Updated", "Title")), width)
+	if height == 1 {
+		return []string{header}
+	}
+
+	var rows []string
+	for i, record := range records {
+		phase := planPhaseProgress(record)
+		updated := planUpdatedLabel(record)
+		line := formatPlanColumns("   ",
+			statusStyle.Render(fitSessionColumn(record.Status, planStatusWidth)),
+			branchStyle.Render(fitSessionColumn(record.Branch, planBranchWidth)),
+			diffHdrStyle.Render(fitSessionColumn(phase, planPhaseWidth)),
+			stashDateStyle.Render(fitSessionColumn(updated, planUpdatedWidth)),
+			stashMsgStyle.Render(record.Title),
+		)
+		if i == selected {
+			selectedLine := truncateToWidth(formatPlanColumns(" > ",
+				record.Status,
+				record.Branch,
+				phase,
+				updated,
+				record.Title,
+			), width)
+			line = stashSelStyle.Width(width).Render(selectedLine)
+		}
+		rows = append(rows, truncateToWidth(line, width))
+	}
+	return append([]string{header}, scrollAndPad(rows, scroll, height-1)...)
+}
+
+func formatPlanColumns(prefix, status, branch, phase, updated, title string) string {
+	return fmt.Sprintf("%s%s  %s  %s  %s  %s",
+		prefix,
+		fitSessionColumn(status, planStatusWidth),
+		fitSessionColumn(branch, planBranchWidth),
+		fitSessionColumn(phase, planPhaseWidth),
+		fitSessionColumn(updated, planUpdatedWidth),
+		title,
+	)
+}
+
+// planPhaseProgress reports completed/total phases, e.g. "1/2", or "-" when no phases are recorded.
+func planPhaseProgress(record planstore.PlanRecord) string {
+	if len(record.Phases) == 0 {
+		return "-"
+	}
+	completed := 0
+	for _, phase := range record.Phases {
+		if phase.Status == "completed" {
+			completed++
+		}
+	}
+	return fmt.Sprintf("%d/%d", completed, len(record.Phases))
+}
+
+func planUpdatedLabel(record planstore.PlanRecord) string {
+	if record.UpdatedAt.IsZero() {
+		return ""
+	}
+	return record.UpdatedAt.UTC().Format("2006-01-02")
+}
+
+// renderPlainTextOverlay renders scrollable plain text with no diff coloring.
+func renderPlainTextOverlay(body string, scroll, width, height int) []string {
+	lines := make([]string, height)
+	if height <= 0 {
+		return lines
+	}
+	var content []string
+	if body != "" {
+		content = strings.Split(body, "\n")
+	}
+	start := scroll
+	if start > len(content) {
+		start = len(content)
+	}
+	visible := content[start:]
+	for i := 0; i < height; i++ {
+		if i >= len(visible) {
+			break
+		}
+		lines[i] = truncateToWidth(visible[i], width)
+	}
+	return lines
+}
+
 func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, height int) []string {
 	var content []string
 	for i, wt := range worktrees {
@@ -1351,6 +1470,10 @@ func renderOverlay(p RenderParams) string {
 	}
 	if p.Overlay == OverlayWorktreeInput {
 		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInputPlaceholder, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
+		return strings.Join(lines, "\n") + "\n" + statusBar
+	}
+	if p.Overlay == OverlayPlanText {
+		lines := renderPlainTextOverlay(p.OverlayText, p.OverlayScroll, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 

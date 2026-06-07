@@ -14,6 +14,7 @@ import (
 	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/internal/version"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 )
@@ -38,6 +39,9 @@ func run(args []string, deps runDeps) error {
 	deps = fillRunDeps(deps)
 	if len(args) > 1 && args[1] == "session-hook" {
 		return runSessionHook(args, deps)
+	}
+	if len(args) > 1 && args[1] == "plan" {
+		return runPlan(args, deps)
 	}
 
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -142,10 +146,21 @@ func runSessionHook(args []string, deps runDeps) error {
 }
 
 func startProgram(repos []scanner.Repo, cfg config.Config) error {
+	// WTUI_PLAN_STATE_ROOT relocates the whole agent-artifact root for this run,
+	// which moves both saved sessions and saved plans. This is intentional; see
+	// the docs note on the shared sessions/plans root.
+	artifactRoot := cfg.Sessions.Root
+	if envRoot := os.Getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
+		artifactRoot = envRoot
+	}
 	sessionStore, err := sessions.NewStore(sessions.StoreOptions{
-		Root:               cfg.Sessions.Root,
+		Root:               artifactRoot,
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
 	})
+	if err != nil {
+		return err
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
 	if err != nil {
 		return err
 	}
@@ -154,6 +169,8 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 		SessionStateRoot: sessionStore.Root(),
 		ListSessions:     sessionStore.List,
 		ReadTranscript:   sessionStore.ReadTranscript,
+		ListPlans:        planStore.List,
+		ReadPlan:         planStore.ReadPlan,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			return sessionStore.MarkLaunchEnded(ctx.LaunchID, time.Now().UTC())
 		},

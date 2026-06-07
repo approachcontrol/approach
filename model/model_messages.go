@@ -9,6 +9,7 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -215,6 +216,19 @@ type SessionTranscriptResultMsg struct {
 	Transcript  string
 }
 
+type PlanResultMsg struct {
+	RepoPath    string
+	Plans       []planstore.PlanRecord
+	ListRequest uint64
+}
+
+type PlanReadResultMsg struct {
+	RepoPath    string
+	PlanID      string
+	DiffRequest uint64
+	Text        string
+}
+
 type ReflogDiffResultMsg struct {
 	RepoPath    string
 	Hash        string
@@ -269,6 +283,7 @@ const (
 	FetchCommitDiff
 	FetchReflogDiff
 	FetchSessionTranscript
+	FetchPlanText
 )
 
 // FetchErrorMsg carries an error encountered while loading data for a pane,
@@ -290,6 +305,7 @@ type FetchErrorMsg struct {
 	Hash         string
 	Provider     sessions.Provider
 	SessionID    string
+	PlanID       string
 }
 
 // ActionFailedMsg carries an error from a destructive action (drop/prune)
@@ -863,10 +879,29 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 	return m
 }
 
+func (m Model) handlePlanResult(msg PlanResultMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModePlans, msg.ListRequest) {
+		return m
+	}
+	m = m.clearFetchListStatus(ui.ModePlans)
+	m.plans = m.plans.SetItems(msg.Plans)
+	m = m.clampSelectionsAfterFilter()
+	return m
+}
+
 func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
 		if record, ok := m.selectedSession(); ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID {
 			m.modal = m.modal.SetDiffForRequest(modal.DiffSessionTranscript, msg.DiffRequest, msg.Transcript)
+		}
+	}
+	return m
+}
+
+func (m Model) handlePlanReadResult(msg PlanReadResultMsg) Model {
+	if m.isCurrentRepo(msg.RepoPath) {
+		if record, ok := m.selectedPlan(); ok && record.PlanID == msg.PlanID {
+			m.modal = m.modal.SetTextForRequest(msg.DiffRequest, msg.Text)
 		}
 	}
 	return m
@@ -952,6 +987,12 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 		}
 		record, ok := m.selectedSession()
 		return ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID
+	case FetchPlanText:
+		if m.modal.View().Request != msg.DiffRequest {
+			return false
+		}
+		record, ok := m.selectedPlan()
+		return ok && record.PlanID == msg.PlanID
 	default:
 		return false
 	}

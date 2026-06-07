@@ -1571,6 +1571,7 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 		"WTUI_BRANCH":             "main",
 		"WTUI_COMMIT":             "abcdef",
 		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)

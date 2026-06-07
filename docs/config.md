@@ -25,6 +25,7 @@ exist:
 | Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
 | Sessions root | `WTUI_SESSION_STATE_ROOT` for hooks | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
+| Plan state root | `--state-root` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
@@ -143,6 +144,51 @@ stored under a hashed session directory, with the raw provider session ID kept i
 When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or
 `~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset.
 Relative roots other than `~`/`~/...` fail config parsing.
+
+`[sessions].root` doubles as the **agent-artifact root**: saved plans are stored
+under `<root>/plans/<plan-id>/` (alongside `<root>/sessions/...`). There is no
+separate plans config in v1. **Moving or cleaning the sessions root therefore
+also moves or removes saved plans.**
+
+## Saved Plans
+
+Agents persist plans explicitly through the `wtui plan` subcommands; plans are
+not captured from provider hooks in v1. Each plan is stored as
+`<artifact-root>/plans/<plan-id>/meta.json` plus `plan.md`, with the same
+restrictive permissions (`0700` directories, `0600` files) and atomic writes as
+sessions. They appear in the TUI plans pane (mode `7`).
+
+```bash
+# Save or update (reuse --plan-id) a plan; Markdown comes from --file or stdin.
+# Prints only the plan_id.
+printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" [--plan-id ID] \
+    [--summary TEXT] [--status STATUS] [--source SOURCE] [--provider PROVIDER] \
+    [--session-id ID] [--launch-id ID] [--repo-path PATH] [--worktree-path PATH] \
+    [--branch BRANCH] [--commit HASH] [--file PATH] [--state-root PATH]
+
+wtui plan phase set --plan-id ID --phase-id ID --title TITLE --status STATUS [--order N] [--state-root PATH]
+wtui plan list [--repo-path PATH] [--state-root PATH] --json   # --json required in v1
+wtui plan read --plan-id ID [--state-root PATH]                # prints Markdown only
+```
+
+Plan statuses: `draft`, `approved`, `in_progress`, `completed`, `blocked`,
+`superseded`. Phase statuses: `pending`, `in_progress`, `completed`, `blocked`,
+`skipped`. `plan_id` must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`; when
+omitted, wtui generates `YYYYMMDDTHHMMSSZ-<title-slug>` with a `-2`, `-3`, …
+suffix on collision.
+
+`save` always replaces Markdown and title from the command (both required), and
+updates `status`, `source`, `summary`, and repo/session metadata only when
+supplied; otherwise it preserves the stored values, `created_at`, and recorded
+phases. A body-only re-save keeps the existing status.
+
+The plan state root is resolved as: `--state-root` > `WTUI_PLAN_STATE_ROOT` >
+`WTUI_SESSION_STATE_ROOT` > `[sessions].root` > the user state default. The
+`wtui plan` commands may load config to resolve the root but never scan repos or
+start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
+`WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and
+`WTUI_COMMIT`. wtui does not infer git metadata in v1. The repo
+`wtui-plan-persist` skill instructs agents on when and how to save plans.
 
 ### `[bootstrap]`
 
