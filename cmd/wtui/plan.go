@@ -242,8 +242,8 @@ func shouldResolvePlanGitMetadata(store *planstore.Store, record planstore.PlanR
 	if record.PlanID == "" {
 		return true
 	}
-	hasIncomingMetadata := record.RepoPath != "" || record.WorktreePath != "" || record.Branch != "" || record.Commit != ""
-	return hasIncomingMetadata || !store.HasPlan(record.PlanID)
+	hasIncomingLocation := record.RepoPath != "" || record.WorktreePath != ""
+	return hasIncomingLocation || !store.HasPlan(record.PlanID)
 }
 
 func resolvePlanGitMetadata(record *planstore.PlanRecord, deps runDeps) {

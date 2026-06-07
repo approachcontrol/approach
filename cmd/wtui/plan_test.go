@@ -314,6 +314,77 @@ func TestRunPlanSaveUpdatePreservesExistingGitMetadataWhenOmitted(t *testing.T) 
 	}
 }
 
+func TestRunPlanSaveUpdateWithBranchOnlyPreservesOmittedGitMetadata(t *testing.T) {
+	stateRoot := t.TempDir()
+	repoDir, worktreeDir := makeLinkedWorktree(t)
+	otherRepoDir, otherWorktreeDir := makeLinkedWorktree(t)
+	var stdout bytes.Buffer
+
+	err := run([]string{"wtui", "plan", "save", "--title", "Original", "--plan-id", "p", "--state-root", stateRoot},
+		noScanDeps(t, runDeps{
+			getwd:  func() (string, error) { return worktreeDir, nil },
+			stdin:  strings.NewReader("first body"),
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("first run returned error: %v", err)
+	}
+	original := readPlanRecord(t, stateRoot, "p")
+
+	stdout.Reset()
+	err = run([]string{"wtui", "plan", "save", "--title", "Updated", "--plan-id", "p", "--state-root", stateRoot, "--branch", "manual-branch"},
+		noScanDeps(t, runDeps{
+			getwd:  func() (string, error) { return otherWorktreeDir, nil },
+			stdin:  strings.NewReader("second body"),
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("second run returned error: %v", err)
+	}
+
+	record := readPlanRecord(t, stateRoot, "p")
+	if record.Branch != "manual-branch" {
+		t.Fatalf("branch = %q, want manual-branch", record.Branch)
+	}
+	if record.RepoPath != repoDir || record.WorktreePath != worktreeDir || record.Commit != original.Commit {
+		t.Fatalf("omitted git metadata should stay original, got repo=%q worktree=%q commit=%q; want repo=%q worktree=%q commit=%q",
+			record.RepoPath, record.WorktreePath, record.Commit, repoDir, worktreeDir, original.Commit)
+	}
+	if record.RepoPath == otherRepoDir || record.WorktreePath == otherWorktreeDir {
+		t.Fatalf("omitted git metadata was overwritten by update cwd: %#v", record)
+	}
+}
+
+func TestRunPlanSaveFromBareRepoUsesBareRepoPath(t *testing.T) {
+	stateRoot := t.TempDir()
+	bareDir, commit := makeBareRepo(t)
+	var stdout bytes.Buffer
+
+	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
+		noScanDeps(t, runDeps{
+			getwd:  func() (string, error) { return bareDir, nil },
+			stdin:  strings.NewReader("body"),
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	record := readPlanRecord(t, stateRoot, "p")
+	if record.RepoPath != bareDir {
+		t.Fatalf("repo_path = %q, want bare repo %q", record.RepoPath, bareDir)
+	}
+	if record.WorktreePath != "" {
+		t.Fatalf("worktree_path = %q, want empty for bare repo", record.WorktreePath)
+	}
+	if record.Branch != "main" {
+		t.Fatalf("branch = %q, want main", record.Branch)
+	}
+	if record.Commit != commit {
+		t.Fatalf("commit = %q, want %q", record.Commit, commit)
+	}
+}
+
 func TestRunPlanListJSON(t *testing.T) {
 	root := t.TempDir()
 	mustRun(t, []string{"wtui", "plan", "save", "--title", "Alpha", "--plan-id", "alpha", "--state-root", root, "--repo-path", "/repo"}, "alpha body")
@@ -397,6 +468,24 @@ func makeLinkedWorktree(t *testing.T) (repoDir, worktreeDir string) {
 	return mustRealPath(t, repoDir), mustRealPath(t, worktreeDir)
 }
 
+func makeBareRepo(t *testing.T) (bareDir, commit string) {
+	t.Helper()
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "project")
+	bareDir = filepath.Join(root, "project.git")
+	mustGit(t, root, "init", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@example.com")
+	mustGit(t, repoDir, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoDir, "add", "README.md")
+	mustGit(t, repoDir, "commit", "-m", "initial")
+	mustGit(t, repoDir, "branch", "-M", "main")
+	mustGit(t, root, "clone", "--bare", repoDir, bareDir)
+	return mustRealPath(t, bareDir), gitOutput(t, bareDir, "rev-parse", "HEAD")
+}
+
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -404,6 +493,17 @@ func mustGit(t *testing.T, dir string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func readPlanRecord(t *testing.T, root, planID string) planstore.PlanRecord {
