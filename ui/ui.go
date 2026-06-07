@@ -740,6 +740,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModePlans:
 		if sp.ActivePane == 1 && sp.PlanSelected {
 			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+			actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1341,7 +1342,7 @@ func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, hei
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
 		rows = append(rows, truncateToWidth(line, width))
-		if i == selected && record.PlanID == expandedPlanID {
+		if record.PlanID == expandedPlanID {
 			rows = append(rows, renderPlanPhaseRows(record, width)...)
 		}
 	}

@@ -126,7 +126,7 @@ func (m Model) startFetchSessions() (Model, tea.Cmd) {
 
 func (m Model) startFetchPlans() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModePlans)
-	m.expandedPlanID = ""
+	m = m.setExpandedPlanID("")
 	return m, m.fetchPlans(request)
 }
 

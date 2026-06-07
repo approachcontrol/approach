@@ -67,7 +67,23 @@ func newSessionPane() pane.Pane[sessions.SessionRecord] {
 }
 
 func newPlanPane() pane.Pane[planstore.PlanRecord] {
-	return pane.New(planSearchText, fixedHeight[planstore.PlanRecord])
+	return pane.New(planSearchText, planItemHeight(""))
+}
+
+func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
+	return func(record planstore.PlanRecord, _ int) int {
+		return planVisualHeight(record, expandedPlanID)
+	}
+}
+
+func planVisualHeight(record planstore.PlanRecord, expandedPlanID string) int {
+	if expandedPlanID == "" || record.PlanID != expandedPlanID {
+		return 1
+	}
+	if len(record.Phases) == 0 {
+		return 2
+	}
+	return 1 + len(record.Phases)
 }
 
 func (m Model) activeSearchQuery() string {
@@ -104,10 +120,6 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		return m.reflowRepos()
 	}
 
-	selectedPlanID := ""
-	if m.mode == ui.ModePlans {
-		selectedPlanID = m.selectedPlanID()
-	}
 	m.worktrees = m.worktrees.SetQueryPreserveIndex(query)
 	m.rows = m.rows.SetQueryPreserveIndex(query)
 	m.stashes = m.stashes.SetQueryPreserveIndex(query)
@@ -137,10 +149,7 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		m = m.reflowSessions()
 	case ui.ModePlans:
 		m.plans = m.plans.SetQuery(query)
-		m = m.reflowPlans()
-		if selectedPlanID != "" && m.selectedPlanID() != selectedPlanID {
-			m.expandedPlanID = ""
-		}
+		m = m.setExpandedPlanID("")
 	}
 	return m
 }

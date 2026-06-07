@@ -252,6 +252,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
 		}
+	case "o":
+		if m.mode == ui.ModePlans {
+			return m.handleOpenPlanText()
+		}
 	case "m":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
@@ -310,10 +314,17 @@ func (m Model) moveCursor(delta int) Model {
 	case ui.ModeSessions:
 		m.sessions = m.sessions.Move(delta, h, w)
 	case ui.ModePlans:
+		if m.canScrollExpandedPlan(delta, h) {
+			m.plans = m.plans.ScrollBy(delta, h, w)
+			return m
+		}
+		if m.plans.Len() <= 1 {
+			return m
+		}
 		before := m.selectedPlanID()
 		m.plans = m.plans.Move(delta, h, w)
 		if after := m.selectedPlanID(); before != "" && after != before {
-			m.expandedPlanID = ""
+			m = m.setExpandedPlanID("")
 		}
 	}
 	return m
@@ -353,12 +364,20 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
 		if planID := m.selectedPlanID(); planID != "" {
 			if m.expandedPlanID == planID {
-				m.expandedPlanID = ""
+				m = m.setExpandedPlanID("")
 			} else {
-				m.expandedPlanID = planID
+				m = m.setExpandedPlanID(planID)
 			}
 		}
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
+	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
+		m = m.openPlanText()
+		return m, m.fetchPlanText()
 	}
 	return m, nil
 }
@@ -866,7 +885,7 @@ func (m Model) resetModeCursors() Model {
 	m.reflogs = m.reflogs.ResetSelection()
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
-	m.expandedPlanID = ""
+	m = m.setExpandedPlanID("")
 	return m
 }
 
@@ -880,7 +899,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.reflogs = m.reflogs.SetItems(nil).ResetSelection()
 	m.sessions = m.sessions.SetItems(nil).ResetSelection()
 	m.plans = m.plans.SetItems(nil).ResetSelection()
-	m.expandedPlanID = ""
+	m = m.setExpandedPlanID("")
 	return m
 }
 
@@ -900,12 +919,22 @@ func (m Model) rightContentHeight() int {
 	return height
 }
 
+func (m Model) planContentHeight() int {
+	height := m.rightContentHeight() - 1
+	if height <= 0 {
+		return 1
+	}
+	return height
+}
+
 func (m Model) contentHeightForMode() int {
 	switch m.mode {
 	case ui.ModeWorktrees:
 		return m.worktreeContentHeight()
 	case ui.ModeStashes:
 		return m.stashContentHeight()
+	case ui.ModePlans:
+		return m.planContentHeight()
 	default:
 		return m.rightContentHeight()
 	}

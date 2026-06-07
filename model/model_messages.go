@@ -885,7 +885,7 @@ func (m Model) handlePlanResult(msg PlanResultMsg) Model {
 	}
 	m = m.clearFetchListStatus(ui.ModePlans)
 	m.plans = m.plans.SetItems(msg.Plans)
-	m.expandedPlanID = ""
+	m = m.setExpandedPlanID("")
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
