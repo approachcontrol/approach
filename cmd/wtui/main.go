@@ -12,6 +12,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/config"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/internal/version"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/planstore"
@@ -43,6 +44,9 @@ func run(args []string, deps runDeps) error {
 	}
 	if len(args) > 1 && args[1] == "plan" {
 		return runPlan(args, deps)
+	}
+	if len(args) > 1 && args[1] == "flow" {
+		return runFlow(args, deps)
 	}
 
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -152,13 +156,7 @@ func runSessionHook(args []string, deps runDeps) error {
 }
 
 func startProgram(repos []scanner.Repo, cfg config.Config) error {
-	// WTUI_PLAN_STATE_ROOT relocates the whole agent-artifact root for this run,
-	// which moves both saved sessions and saved plans. This is intentional; see
-	// the docs note on the shared sessions/plans root.
-	artifactRoot := cfg.Sessions.Root
-	if envRoot := os.Getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
-		artifactRoot = envRoot
-	}
+	artifactRoot := runtimeArtifactRoot(cfg)
 	sessionStore, err := sessions.NewStore(sessions.StoreOptions{
 		Root:               artifactRoot,
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
@@ -170,6 +168,10 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		return err
+	}
 	p := tea.NewProgram(model.NewWithOptions(repos, model.Options{
 		AgentCommand:       cfg.Agent.Command,
 		PlanPromptTemplate: cfg.Agent.PlanPrompt,
@@ -177,6 +179,7 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 		ListSessions:       sessionStore.List,
 		ReadTranscript:     sessionStore.ReadTranscript,
 		ListPlans:          planStore.List,
+		ListFlows:          flowStore.List,
 		ReadPlan:           planStore.ReadPlan,
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			return sessionStore.MarkLaunchEnded(ctx.LaunchID, time.Now().UTC())
@@ -189,6 +192,19 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 	}), tea.WithAltScreen())
 	_, err = p.Run()
 	return err
+}
+
+func runtimeArtifactRoot(cfg config.Config) string {
+	if envRoot := os.Getenv("WTUI_FLOW_STATE_ROOT"); envRoot != "" {
+		return envRoot
+	}
+	if envRoot := os.Getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
+		return envRoot
+	}
+	if envRoot := os.Getenv("WTUI_SESSION_STATE_ROOT"); envRoot != "" {
+		return envRoot
+	}
+	return cfg.Sessions.Root
 }
 
 func bootstrapHookResolver(cfg config.Config) func(string) (actions.BootstrapHook, bool) {

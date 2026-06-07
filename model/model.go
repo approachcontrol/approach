@@ -10,6 +10,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/agent"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
@@ -19,7 +20,7 @@ import (
 	"github.com/brian-bell/wtui/ui"
 )
 
-const listRequestSlots = int(ui.ModePlans) + 1
+const listRequestSlots = int(ui.ModeFlows) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
@@ -34,6 +35,7 @@ type Model struct {
 	reflogs                   pane.Pane[gitquery.ReflogEntry]
 	sessions                  pane.Pane[sessions.SessionRecord]
 	plans                     pane.Pane[planstore.PlanRecord]
+	flows                     pane.Pane[flowstore.FlowRecord]
 	expandedPlanID            string
 	selectedPlanPhaseID       string
 	modal                     modal.Modal
@@ -57,6 +59,7 @@ type Model struct {
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	readPlan                  func(string) (string, error)
 	planMarkdownPath          func(string) (string, error)
 	copyToClipboard           func(string) error
@@ -104,6 +107,7 @@ type Options struct {
 	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	ListPlans            func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	ListFlows            func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	ReadPlan             func(string) (string, error)
 	PlanMarkdownPath     func(planID string) (string, error)
 	CopyToClipboard      func(text string) error
@@ -141,6 +145,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listPlans := opts.ListPlans
 	if listPlans == nil {
 		listPlans = func(planstore.PlanFilter) ([]planstore.PlanRecord, error) { return nil, nil }
+	}
+	listFlows := opts.ListFlows
+	if listFlows == nil {
+		listFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
 	}
 	readPlan := opts.ReadPlan
 	if readPlan == nil {
@@ -182,6 +190,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		reflogs:              newReflogPane(),
 		sessions:             newSessionPane(),
 		plans:                newPlanPane(),
+		flows:                newFlowPane(),
 		mode:                 ui.ModeWorktrees,
 		agentCommand:         agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:   opts.PlanPromptTemplate,
@@ -189,6 +198,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		listSessions:         listSessions,
 		readTranscript:       readTranscript,
 		listPlans:            listPlans,
+		listFlows:            listFlows,
 		readPlan:             readPlan,
 		planMarkdownPath:     planMarkdownPath,
 		copyToClipboard:      copyToClipboard,
@@ -199,7 +209,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bootstrapHookForRepo: bootstrapHookForRepo,
 		runBootstrapHook:     runBootstrapHook,
 	}
-	for mode := ui.ModeWorktrees; mode <= ui.ModePlans; mode++ {
+	for mode := ui.ModeWorktrees; mode <= ui.ModeFlows; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
@@ -240,8 +250,14 @@ func (m Model) Plans() []planstore.PlanRecord {
 	plans, _, _ := m.plans.View()
 	return plans
 }
+func (m Model) Flows() []flowstore.FlowRecord {
+	flows, _, _ := m.flows.View()
+	return flows
+}
 func (m Model) PlanSelected() int               { return m.plans.SelectedIndex() }
 func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
+func (m Model) FlowSelected() int               { return m.flows.SelectedIndex() }
+func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
 func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
@@ -279,8 +295,9 @@ func (m Model) View() string {
 	reflogs, reflogSelected, reflogScroll := m.reflogs.View()
 	sessions, sessionSelected, sessionScroll := m.sessions.View()
 	plans, planSelected, planScroll := m.plans.View()
+	flows, flowSelected, flowScroll := m.flows.View()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
-	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans))
+	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows))
 	if len(repos) == 0 {
 		worktrees = nil
 		rows = nil
@@ -289,6 +306,7 @@ func (m Model) View() string {
 		reflogs = nil
 		sessions = nil
 		plans = nil
+		flows = nil
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
@@ -330,6 +348,9 @@ func (m Model) View() string {
 		Plans:                    plans,
 		PlanSelected:             planSelected,
 		PlanScroll:               planScroll,
+		Flows:                    flows,
+		FlowSelected:             flowSelected,
+		FlowScroll:               flowScroll,
 		ExpandedPlanID:           m.expandedPlanID,
 		SelectedPlanPhaseID:      m.selectedPlanPhaseID,
 		OverlayText:              modalView.Text,
@@ -363,14 +384,14 @@ func (m Model) repoEmptyMessage(filteredRepos int) string {
 	return "No repo results"
 }
 
-func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans int) string {
+func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows int) string {
 	if filteredRepos == 0 {
 		if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
 			return "No matching repo"
 		}
 		return "No selected repo"
 	}
-	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans)
+	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
 		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
 	}
@@ -380,7 +401,7 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	return modeEmptyMessage(m.mode)
 }
 
-func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans int) (int, int) {
+func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows int) (int, int) {
 	switch m.mode {
 	case ui.ModeWorktrees:
 		return m.worktrees.ItemCount(), filteredWorktrees
@@ -396,6 +417,8 @@ func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredSta
 		return m.sessions.ItemCount(), filteredSessions
 	case ui.ModePlans:
 		return m.plans.ItemCount(), filteredPlans
+	case ui.ModeFlows:
+		return m.flows.ItemCount(), filteredFlows
 	default:
 		return 0, 0
 	}
@@ -417,6 +440,8 @@ func modeDataName(mode ui.Mode) string {
 		return "sessions"
 	case ui.ModePlans:
 		return "plans"
+	case ui.ModeFlows:
+		return "flows"
 	default:
 		return "items"
 	}
@@ -438,6 +463,8 @@ func modeResultName(mode ui.Mode) string {
 		return "session"
 	case ui.ModePlans:
 		return "plan"
+	case ui.ModeFlows:
+		return "flow"
 	default:
 		return "item"
 	}
@@ -459,6 +486,8 @@ func modeEmptyMessage(mode ui.Mode) string {
 		return "No sessions"
 	case ui.ModePlans:
 		return "No plans"
+	case ui.ModeFlows:
+		return "No flows"
 	default:
 		return "nothing here yet"
 	}
@@ -576,6 +605,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSessionTranscriptResult(msg), nil
 	case PlanResultMsg:
 		return m.handlePlanResult(msg), nil
+	case FlowResultMsg:
+		return m.handleFlowResult(msg), nil
 	case PlanReadResultMsg:
 		return m.handlePlanReadResult(msg), nil
 	case WorktreeDiffResultMsg:
@@ -922,6 +953,11 @@ func (m Model) reflowPlans() Model {
 	if m.selectedPlanPhaseID != "" {
 		return m.ensureSelectedPlanPhaseVisible()
 	}
+	return m
+}
+
+func (m Model) reflowFlows() Model {
+	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
 	return m
 }
 

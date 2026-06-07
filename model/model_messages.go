@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
@@ -220,6 +221,12 @@ type SessionTranscriptResultMsg struct {
 type PlanResultMsg struct {
 	RepoPath    string
 	Plans       []planstore.PlanRecord
+	ListRequest uint64
+}
+
+type FlowResultMsg struct {
+	RepoPath    string
+	Flows       []flowstore.FlowRecord
 	ListRequest uint64
 }
 
@@ -896,6 +903,16 @@ func (m Model) handlePlanResult(msg PlanResultMsg) Model {
 	m = m.clearFetchListStatus(ui.ModePlans)
 	m.plans = m.plans.SetItems(msg.Plans)
 	m = m.setExpandedPlanID("")
+	m = m.clampSelectionsAfterFilter()
+	return m
+}
+
+func (m Model) handleFlowResult(msg FlowResultMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeFlows, msg.ListRequest) {
+		return m
+	}
+	m = m.clearFetchListStatus(ui.ModeFlows)
+	m.flows = m.flows.SetItems(msg.Flows)
 	m = m.clampSelectionsAfterFilter()
 	return m
 }

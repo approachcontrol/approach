@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
@@ -53,6 +54,7 @@ const (
 	ModeReflog
 	ModeSessions
 	ModePlans
+	ModeFlows
 )
 
 const LeftPaneWidth = 30
@@ -107,6 +109,10 @@ const SessionContentOverhead = BranchContentOverhead + TableHeaderRows
 // PlanContentOverhead is the number of rows consumed before plan data rows can
 // render: right-pane chrome plus the plans table header.
 const PlanContentOverhead = BranchContentOverhead + TableHeaderRows
+
+// FlowContentOverhead is the number of rows consumed before flow data rows can
+// render: right-pane chrome plus the flows table header.
+const FlowContentOverhead = BranchContentOverhead + TableHeaderRows
 
 // StashPrefixWidth is the visible width consumed by the stash line prefix:
 // indent/cursor (3) + date (10) + separator (2).
@@ -188,6 +194,9 @@ type RenderParams struct {
 	Plans                    []planstore.PlanRecord
 	PlanSelected             int
 	PlanScroll               int
+	Flows                    []flowstore.FlowRecord
+	FlowSelected             int
+	FlowScroll               int
 	ExpandedPlanID           string
 	SelectedPlanPhaseID      string
 	OverlayText              string
@@ -248,6 +257,7 @@ func Render(p RenderParams) string {
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
+	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	planPhaseSelected := selectedPlanPhaseID != ""
 	status := statusBarParams{
@@ -274,6 +284,7 @@ func Render(p RenderParams) string {
 		SessionSelected:           sessionSelected,
 		PlanSelected:              planSelected,
 		PlanPhaseSelected:         planPhaseSelected,
+		FlowSelected:              flowSelected,
 		TransientError:            p.TransientError,
 		TransientErrorFadeStep:    p.TransientErrorFadeStep,
 		SearchActive:              p.SearchActive,
@@ -334,6 +345,7 @@ func Render(p RenderParams) string {
 	reflogSel := p.ReflogSelected
 	sessionSel := p.SessionSelected
 	planSel := p.PlanSelected
+	flowSel := p.FlowSelected
 	if p.ActivePane == 0 {
 		branchSel = -1
 		stashSel = -1
@@ -342,6 +354,7 @@ func Render(p RenderParams) string {
 		reflogSel = -1
 		sessionSel = -1
 		planSel = -1
+		flowSel = -1
 		selectedPlanPhaseID = ""
 	}
 
@@ -361,6 +374,8 @@ func Render(p RenderParams) string {
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
+	case p.Mode == ModeFlows && len(p.Flows) > 0:
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -419,6 +434,7 @@ func renderModeHeader(mode Mode, width int) string {
 		{ModeReflog, "reflog"},
 		{ModeSessions, "sessions"},
 		{ModePlans, "plans"},
+		{ModeFlows, "flows"},
 	}
 
 	var parts []string
@@ -492,6 +508,7 @@ type statusBarParams struct {
 	SessionSelected           bool
 	PlanSelected              bool
 	PlanPhaseSelected         bool
+	FlowSelected              bool
 	TransientError            string
 	TransientErrorFadeStep    int
 	SearchActive              bool
@@ -1101,6 +1118,8 @@ func modeShortcutTitle(mode Mode) string {
 		return "Sessions"
 	case ModePlans:
 		return "Plans"
+	case ModeFlows:
+		return "Flows"
 	default:
 		return "Items"
 	}
@@ -1470,6 +1489,99 @@ func planPhaseProgress(record planstore.PlanRecord) string {
 }
 
 func planUpdatedLabel(record planstore.PlanRecord) string {
+	if record.UpdatedAt.IsZero() {
+		return ""
+	}
+	return record.UpdatedAt.UTC().Format("2006-01-02")
+}
+
+const (
+	flowStatusWidth  = 15
+	flowBranchWidth  = 20
+	flowPhaseWidth   = 7
+	flowPRWidth      = 8
+	flowUpdatedWidth = 10
+)
+
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	header := truncateToWidth(statusStyle.Render(formatFlowColumns("   ", "Status", "Branch", "Phase", "PR", "Updated", "Title")), width)
+	rowHeight := height - TableHeaderRows
+	if rowHeight <= 0 {
+		return []string{header}
+	}
+
+	var rows []string
+	for i, record := range records {
+		phase := flowPhaseProgress(record)
+		pr := flowPRLabel(record)
+		updated := flowUpdatedLabel(record)
+		branch := record.Branch
+		if branch == "" {
+			branch = filepath.Base(record.WorktreePath)
+		}
+		line := formatFlowColumns("   ",
+			statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth)),
+			branchStyle.Render(fitSessionColumn(branch, flowBranchWidth)),
+			diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth)),
+			statusStyle.Render(fitSessionColumn(pr, flowPRWidth)),
+			stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth)),
+			stashMsgStyle.Render(record.Title),
+		)
+		if i == selected {
+			selectedLine := truncateToWidth(formatFlowColumns(" > ",
+				record.Status,
+				branch,
+				phase,
+				pr,
+				updated,
+				record.Title,
+			), width)
+			line = stashSelStyle.Width(width).Render(selectedLine)
+		}
+		rows = append(rows, truncateToWidth(line, width))
+	}
+	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
+}
+
+func formatFlowColumns(prefix, status, branch, phase, pr, updated, title string) string {
+	return fmt.Sprintf("%s%s  %s  %s  %s  %s  %s",
+		prefix,
+		fitSessionColumn(status, flowStatusWidth),
+		fitSessionColumn(branch, flowBranchWidth),
+		fitSessionColumn(phase, flowPhaseWidth),
+		fitSessionColumn(pr, flowPRWidth),
+		fitSessionColumn(updated, flowUpdatedWidth),
+		title,
+	)
+}
+
+func flowPhaseProgress(record flowstore.FlowRecord) string {
+	if len(record.Phases) == 0 {
+		return "-"
+	}
+	completed := 0
+	for _, phase := range record.Phases {
+		if phase.Status == flowstore.PhaseCompleted || phase.Status == flowstore.PhaseSkipped {
+			completed++
+		}
+	}
+	return fmt.Sprintf("%d/%d", completed, len(record.Phases))
+}
+
+func flowPRLabel(record flowstore.FlowRecord) string {
+	if record.PR.Number > 0 {
+		return fmt.Sprintf("#%d", record.PR.Number)
+	}
+	if record.PR.URL != "" {
+		return filepath.Base(record.PR.URL)
+	}
+	return "-"
+}
+
+func flowUpdatedLabel(record flowstore.FlowRecord) string {
 	if record.UpdatedAt.IsZero() {
 		return ""
 	}
