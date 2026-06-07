@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -450,7 +451,16 @@ func TestStoreSetPhaseReportsLockTimeout(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	lockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
-	if err := os.WriteFile(lockPath, []byte("held"), 0o600); err != nil {
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open lock file: %v", err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("flock lock file: %v", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	if _, err := lockFile.WriteString("held\n"); err != nil {
 		t.Fatalf("write lock file: %v", err)
 	}
 
@@ -461,6 +471,45 @@ func TestStoreSetPhaseReportsLockTimeout(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "timed out waiting for flow lock") {
 		t.Fatalf("SetPhase() error = %v, want lock timeout", err)
+	}
+}
+
+func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Stale lock",
+		Instructions: "recover phase updates",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	lockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
+	if err := os.WriteFile(lockPath, []byte("not a live lock\n"), 0o600); err != nil {
+		t.Fatalf("write lock file: %v", err)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+	if updated.Phases[0].Status != flowstore.PhaseRunning {
+		t.Fatalf("phase status = %q, want running", updated.Phases[0].Status)
+	}
+	lockData, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock file: %v", err)
+	}
+	if !strings.Contains(string(lockData), "\n") || strings.Contains(string(lockData), "not a live lock") {
+		t.Fatalf("lock marker was not refreshed: %q", lockData)
 	}
 }
 

@@ -117,6 +117,7 @@ func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 		notes    string
 		wantFlow string
 	}{
+		{name: "running", status: flowstore.PhaseRunning, wantFlow: flowstore.StatusInProgress},
 		{name: "completed", status: flowstore.PhaseCompleted, wantFlow: flowstore.StatusInProgress},
 		{name: "needs attention", status: flowstore.PhaseNeedsAttention, wantFlow: flowstore.StatusNeedsAttention},
 		{name: "blocked", status: flowstore.PhaseBlocked, wantFlow: flowstore.StatusBlocked},
@@ -159,6 +160,57 @@ func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Restart Blocked", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	err := run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseBlocked,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+	if err != nil {
+		t.Fatalf("set blocked returned error: %v", err)
+	}
+
+	err = run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseRunning,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+	if err == nil || !strings.Contains(err.Error(), "restarting blocked phase requires notes") {
+		t.Fatalf("restart without notes error = %v, want notes requirement", err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--status", flowstore.PhaseRunning,
+		"--notes", "Unblocked after user confirmed scope.",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("restart with notes returned error: %v", err)
+	}
+	var updated flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if updated.Phases[0].Status != flowstore.PhaseRunning {
+		t.Fatalf("phase status = %q, want running", updated.Phases[0].Status)
+	}
+	if updated.Phases[0].Notes != "Unblocked after user confirmed scope." {
+		t.Fatalf("phase notes = %q", updated.Phases[0].Notes)
+	}
+}
+
 func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -170,7 +222,6 @@ func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 		want   string
 	}{
 		{name: "ready", status: flowstore.PhaseReady, want: "cannot set phase status to ready"},
-		{name: "running", status: flowstore.PhaseRunning, want: "unsupported agent-facing phase status"},
 		{name: "bogus", status: "done", want: "unsupported agent-facing phase status"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

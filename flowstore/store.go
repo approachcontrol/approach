@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -311,18 +312,40 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 
 func (s *Store) acquireFlowLock(flowID string) (func(), error) {
 	lockPath := filepath.Join(s.flowDir(flowID), ".update.lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, filePerm)
+	if err != nil {
+		return nil, fmt.Errorf("open flow lock: %w", err)
+	}
 	deadline := time.Now().Add(s.lockTimeout)
 	for {
-		file, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
-			_, _ = fmt.Fprintf(file, "%d\n", os.Getpid())
-			_ = file.Close()
-			return func() { _ = os.Remove(lockPath) }, nil
+			if err := file.Truncate(0); err != nil {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+				return nil, fmt.Errorf("truncate flow lock: %w", err)
+			}
+			if _, err := file.Seek(0, 0); err != nil {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+				return nil, fmt.Errorf("seek flow lock: %w", err)
+			}
+			if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+				return nil, fmt.Errorf("write flow lock: %w", err)
+			}
+			return func() {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+			}, nil
 		}
-		if !os.IsExist(err) {
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			_ = file.Close()
 			return nil, fmt.Errorf("acquire flow lock: %w", err)
 		}
 		if !time.Now().Before(deadline) {
+			_ = file.Close()
 			return nil, fmt.Errorf("timed out waiting for flow lock %q", flowID)
 		}
 		time.Sleep(5 * time.Millisecond)

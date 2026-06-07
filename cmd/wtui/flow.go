@@ -185,7 +185,7 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 		return fmt.Errorf("flow phase set requires --status")
 	}
 	switch *status {
-	case flowstore.PhaseCompleted, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked, flowstore.PhaseSkipped:
+	case flowstore.PhaseRunning, flowstore.PhaseCompleted, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked, flowstore.PhaseSkipped:
 	case flowstore.PhaseReady:
 		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
 	default:
