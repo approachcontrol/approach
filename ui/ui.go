@@ -182,6 +182,7 @@ type RenderParams struct {
 	PlanSelected             int
 	PlanScroll               int
 	ExpandedPlanID           string
+	SelectedPlanPhaseID      string
 	OverlayText              string
 	TransientError           string
 	TransientErrorFadeStep   int
@@ -240,6 +241,8 @@ func Render(p RenderParams) string {
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
+	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
+	planPhaseSelected := selectedPlanPhaseID != ""
 	status := statusBarParams{
 		Width:                     p.Width,
 		Mode:                      p.Mode,
@@ -262,6 +265,7 @@ func Render(p RenderParams) string {
 		ReflogSelected:            reflogSelected,
 		SessionSelected:           sessionSelected,
 		PlanSelected:              planSelected,
+		PlanPhaseSelected:         planPhaseSelected,
 		TransientError:            p.TransientError,
 		TransientErrorFadeStep:    p.TransientErrorFadeStep,
 		SearchActive:              p.SearchActive,
@@ -330,6 +334,7 @@ func Render(p RenderParams) string {
 		reflogSel = -1
 		sessionSel = -1
 		planSel = -1
+		selectedPlanPhaseID = ""
 	}
 
 	var rightLines []string
@@ -347,7 +352,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
-		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID)
+		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -375,6 +380,22 @@ func Render(p RenderParams) string {
 	content := lipgloss.JoinHorizontal(lipgloss.Top, panes...)
 
 	return content + "\n" + statusBar
+}
+
+func scopedSelectedPlanPhaseID(p RenderParams, planSelected bool) string {
+	if !planSelected || p.SelectedPlanPhaseID == "" {
+		return ""
+	}
+	plan := p.Plans[p.PlanSelected]
+	if p.ExpandedPlanID != plan.PlanID {
+		return ""
+	}
+	for _, phase := range plan.Phases {
+		if phase.PhaseID == p.SelectedPlanPhaseID {
+			return p.SelectedPlanPhaseID
+		}
+	}
+	return ""
 }
 
 // renderModeHeader produces the mode selector line shown at the top of the right pane.
@@ -461,6 +482,7 @@ type statusBarParams struct {
 	ReflogSelected            bool
 	SessionSelected           bool
 	PlanSelected              bool
+	PlanPhaseSelected         bool
 	TransientError            string
 	TransientErrorFadeStep    int
 	SearchActive              bool
@@ -757,10 +779,14 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		}
 	case ModePlans:
 		if sp.ActivePane == 1 && sp.PlanSelected {
+			implementLabel := "implement"
+			if sp.PlanPhaseSelected {
+				implementLabel = "implement phase"
+			}
 			actions = append(actions,
 				shortcutHint{Key: "enter", Label: "phases"},
 				shortcutHint{Key: "o", Label: "open"},
-				shortcutHint{Key: "i", Label: "implement"},
+				shortcutHint{Key: "i", Label: implementLabel},
 				shortcutHint{Key: "y", Label: "copy path"},
 			)
 		}
@@ -1339,7 +1365,7 @@ const (
 	planUpdatedWidth = 10
 )
 
-func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, height int, expandedPlanID string) []string {
+func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, height int, expandedPlanID, selectedPhaseID string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1360,7 +1386,7 @@ func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, hei
 			stashDateStyle.Render(fitSessionColumn(updated, planUpdatedWidth)),
 			stashMsgStyle.Render(record.Title),
 		)
-		if i == selected {
+		if i == selected && selectedPhaseID == "" {
 			selectedLine := truncateToWidth(formatPlanColumns(" > ",
 				record.Status,
 				record.Branch,
@@ -1372,13 +1398,13 @@ func renderPlanPane(records []planstore.PlanRecord, selected, scroll, width, hei
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.PlanID == expandedPlanID {
-			rows = append(rows, renderPlanPhaseRows(record, width)...)
+			rows = append(rows, renderPlanPhaseRows(record, width, selectedPhaseID)...)
 		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderPlanPhaseRows(record planstore.PlanRecord, width int) []string {
+func renderPlanPhaseRows(record planstore.PlanRecord, width int, selectedPhaseID string) []string {
 	if len(record.Phases) == 0 {
 		return []string{truncateToWidth("      No phases", width)}
 	}
@@ -1391,6 +1417,16 @@ func renderPlanPhaseRows(record planstore.PlanRecord, width int) []string {
 			"",
 			stashMsgStyle.Render(phase.Title),
 		)
+		if phase.PhaseID == selectedPhaseID {
+			selectedLine := truncateToWidth(formatPlanColumns(" > ",
+				phase.Status,
+				"",
+				"",
+				"",
+				phase.Title,
+			), width)
+			line = stashSelStyle.Width(width).Render(selectedLine)
+		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return rows

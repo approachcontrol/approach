@@ -87,6 +87,9 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		PlanID:           "plan-1",
 		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPhaseID:      "phase-1",
+		PlanPhaseTitle:   "Resolve conflicts",
+		PlanPhaseStatus:  "in_progress",
 		InitialPrompt:    "Read the plan and begin implementation.",
 	}, "darwin")
 	if err != nil {
@@ -109,6 +112,9 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
 		"WTUI_PLAN_ID=" + shellQuote("plan-1"),
 		"WTUI_PLAN_PATH=" + shellQuote("/state/wtui/sessions/v1/plans/plan-1/plan.md"),
+		"WTUI_PLAN_PHASE_ID=" + shellQuote("phase-1"),
+		"WTUI_PLAN_PHASE_TITLE=" + shellQuote("Resolve conflicts"),
+		"WTUI_PLAN_PHASE_STATUS=" + shellQuote("in_progress"),
 		"--state-root " + shellQuote("/state/wtui/sessions/v1"),
 	} {
 		if !strings.Contains(prompt, want) {

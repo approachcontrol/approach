@@ -173,6 +173,55 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlan(t *testing.T) {
 	}
 }
 
+func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanMarkdownPath: func(planID string) (string, error) {
+			if planID != "plan-1" {
+				t.Fatalf("resolver planID = %q, want plan-1", planID)
+			}
+			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{{
+		PlanID:       "plan-1",
+		Title:        "Implement plans",
+		Status:       "approved",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/plans",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "p1", Title: "Store tracer bullet", Status: "completed", Order: 1},
+			{PhaseID: "p2", Title: "CLI subcommands", Status: "pending", Order: 2},
+		},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if gotPhase := m.SelectedPlanPhaseID(); gotPhase != "p2" {
+		t.Fatalf("selected phase = %q, want p2", gotPhase)
+	}
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if got.PlanPhaseID != "p2" || got.PlanPhaseTitle != "CLI subcommands" || got.PlanPhaseStatus != "pending" {
+		t.Fatalf("unexpected phase launch context: %#v", got)
+	}
+	prompt := strings.ToLower(got.InitialPrompt)
+	for _, want := range []string{"implement only", "selected phase", "p2", "cli subcommands", "pending", "read the plan file"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("phase prompt missing %q: %q", want, got.InitialPrompt)
+		}
+	}
+}
+
 func TestModel_IKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)

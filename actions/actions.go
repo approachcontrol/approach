@@ -468,6 +468,9 @@ type AgentLaunchContext struct {
 	ResumeSessionID  string
 	PlanID           string
 	PlanPath         string
+	PlanPhaseID      string
+	PlanPhaseTitle   string
+	PlanPhaseStatus  string
 	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
@@ -510,6 +513,9 @@ func agentLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error
 		envVar{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
 		envVar{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		envVar{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+		envVar{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		envVar{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		envVar{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }
@@ -568,7 +574,10 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 		ctx.Commit == "" &&
 		ctx.SessionStateRoot == "" &&
 		ctx.PlanID == "" &&
-		ctx.PlanPath == "" {
+		ctx.PlanPath == "" &&
+		ctx.PlanPhaseID == "" &&
+		ctx.PlanPhaseTitle == "" &&
+		ctx.PlanPhaseStatus == "" {
 		return ""
 	}
 
@@ -583,6 +592,9 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
 	}
 
 	var kept []envVar
