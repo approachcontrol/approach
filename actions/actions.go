@@ -452,6 +452,10 @@ func OpenVSCode(path string) error {
 type TerminalLaunchSpec struct {
 	Cmd         *exec.Cmd
 	Interactive bool
+	// Detached means the command hands the agent off to another terminal or
+	// multiplexer session; provider hooks own completed-session metadata.
+	Detached bool
+	Cleanup  func()
 }
 
 // AgentLaunchContext carries metadata wtui knows at launch time so provider
@@ -468,6 +472,9 @@ type AgentLaunchContext struct {
 	ResumeSessionID  string
 	PlanID           string
 	PlanPath         string
+	PlanPhaseID      string
+	PlanPhaseTitle   string
+	PlanPhaseStatus  string
 	// InitialPrompt is appended as the trailing positional prompt argument.
 	InitialPrompt string
 }
@@ -482,7 +489,7 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 }
 
 func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
-	cmd, overrides, err := agentCommandSpec(ctx)
+	cmd, _, err := agentCommandSpec(ctx)
 	if err != nil {
 		return TerminalLaunchSpec{}, err
 	}
@@ -495,13 +502,35 @@ func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPat
 	if sessionSource == "" {
 		sessionSource = cmd.Dir
 	}
-	command := &terminalCommand{
-		argv:    cmd.Args,
-		dir:     cmd.Dir,
-		env:     overrides,
-		session: agentSessionName(sessionSource, ctx.LaunchID),
+	argv, err := resolvedCommandArgv(cmd)
+	if err != nil {
+		return TerminalLaunchSpec{}, err
 	}
-	return terminalLaunch(cmd.Dir, goos, getenv, lookPath, command)
+	command, err := newTerminalCommand(cmd.Dir, cmd.Env, argv, agentSessionName(sessionSource, ctx.LaunchID))
+	if err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	launch, err := terminalLaunch(cmd.Dir, goos, getenv, lookPath, command)
+	if err != nil {
+		command.cleanup()
+		return TerminalLaunchSpec{}, err
+	}
+	launch.Cleanup = command.cleanup
+	return launch, nil
+}
+
+func resolvedCommandArgv(cmd *exec.Cmd) ([]string, error) {
+	if cmd.Err != nil {
+		return nil, cmd.Err
+	}
+	if len(cmd.Args) == 0 {
+		return nil, fmt.Errorf("agent command has no argv")
+	}
+	argv := append([]string(nil), cmd.Args...)
+	if cmd.Path != "" {
+		argv[0] = cmd.Path
+	}
+	return argv, nil
 }
 
 // agentSessionName derives a tmux/Zellij session name for an agent launch. It is
@@ -573,6 +602,9 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
 	}
 	cmd.Env = envWithOverrides(overrides...)
 	return cmd, overrides, nil
@@ -664,36 +696,113 @@ func wtuiSessionHookCommand(provider string) string {
 }
 
 // terminalCommand describes an inner process (such as a coding agent) that a
-// terminal transport should run inside the worktree session, carrying the
-// argv, working directory, and the environment overrides that must survive the
-// hop into a new terminal/multiplexer session.
+// terminal transport should run inside the worktree session. The actual command
+// lives in an owner-readable script so inherited secrets are not serialized into
+// tmux/zellij/osascript/terminal argv.
 type terminalCommand struct {
-	argv []string
-	dir  string
-	env  []envVar
+	scriptPath string
 	// session overrides the tmux/Zellij session name for this launch. When
 	// empty, the transport falls back to WorktreeSessionName(path).
 	session string
 }
 
-// shellCommand renders a single shell command line that changes into the
-// working directory and execs the inner command with its environment overrides
-// applied. Everything is shell-quoted so paths, args, branch names, prompts,
-// and session values cannot break out of the command.
-func (c *terminalCommand) shellCommand() string {
-	var b strings.Builder
-	b.WriteString("cd ")
-	b.WriteString(shellQuote(c.dir))
-	b.WriteString(" && exec env")
-	for _, item := range c.env {
-		b.WriteByte(' ')
-		b.WriteString(shellQuote(item.key + "=" + item.value))
+func newTerminalCommand(dir string, env []string, argv []string, session string) (*terminalCommand, error) {
+	scriptPath, err := writeTerminalCommandScript(dir, env, argv)
+	if err != nil {
+		return nil, err
 	}
-	for _, arg := range c.argv {
+	return &terminalCommand{scriptPath: scriptPath, session: session}, nil
+}
+
+// shellCommand renders only the safe transport command. The script it calls
+// contains the quoted environment, cwd, and argv, then deletes itself before
+// exec'ing the agent.
+func (c *terminalCommand) shellCommand() string {
+	return "exec sh " + shellQuote(c.scriptPath)
+}
+
+func (c *terminalCommand) cleanup() {
+	if c != nil && c.scriptPath != "" {
+		_ = os.Remove(c.scriptPath)
+	}
+}
+
+func writeTerminalCommandScript(dir string, env []string, argv []string) (string, error) {
+	if len(argv) == 0 {
+		return "", fmt.Errorf("agent command has no argv")
+	}
+
+	file, err := os.CreateTemp("", "wtui-agent-*.sh")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	cleanup := func() {
+		_ = file.Close()
+		_ = os.Remove(path)
+	}
+
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("script_path=$0\n")
+	b.WriteString("cleanup() { rm -f \"$script_path\"; }\n")
+	b.WriteString("trap cleanup EXIT HUP INT TERM\n")
+	b.WriteString("cd ")
+	b.WriteString(shellQuote(dir))
+	b.WriteString(" || exit\n")
+	for _, entry := range env {
+		if line, ok := shellExportLine(entry); ok {
+			b.WriteString(line)
+		}
+	}
+	b.WriteString("cleanup\n")
+	b.WriteString("trap - EXIT HUP INT TERM\n")
+	b.WriteString("exec")
+	for _, arg := range argv {
 		b.WriteByte(' ')
 		b.WriteString(shellQuote(arg))
 	}
-	return b.String()
+	b.WriteByte('\n')
+
+	if _, err := file.WriteString(b.String()); err != nil {
+		cleanup()
+		return "", err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		cleanup()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+func shellExportLine(entry string) (string, bool) {
+	key, value, ok := strings.Cut(entry, "=")
+	if !ok || !isShellIdentifier(key) {
+		return "", false
+	}
+	return "export " + key + "=" + shellQuote(value) + "\n", true
+}
+
+func isShellIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 {
+			if r != '_' && !unicode.IsLetter(r) {
+				return false
+			}
+			continue
+		}
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // TerminalLaunch returns a command that opens or switches to a multiplexer
@@ -720,7 +829,8 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 			// switch-session cannot carry a command, so run the agent in a new
 			// pane of the current Zellij session; wtui keeps running in its pane.
 			return TerminalLaunchSpec{
-				Cmd: exec.Command("zellij", "run", "--cwd", path, "--", "sh", "-c", command.shellCommand()),
+				Cmd:      exec.Command("zellij", "run", "--cwd", path, "--", "sh", "-c", command.shellCommand()),
+				Detached: true,
 			}, nil
 		}
 		return TerminalLaunchSpec{
@@ -728,22 +838,26 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 		}, nil
 	case getenv("TMUX") != "" && commandExists("tmux", lookPath):
 		return TerminalLaunchSpec{
-			Cmd: tmuxSwitchCommand(sessionName, path, command),
+			Cmd:      tmuxSwitchCommand(sessionName, path, command),
+			Detached: command != nil,
 		}, nil
 	case commandExists("tmux", lookPath):
 		if goos == "darwin" && commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{
-				Cmd: externalTerminalCommand(tmuxAttachCommand(sessionName, path, command)),
+				Cmd:      externalTerminalCommand(tmuxAttachCommand(sessionName, path, command)),
+				Detached: command != nil,
 			}, nil
 		}
 		return TerminalLaunchSpec{
 			Cmd:         tmuxNewSessionCommand(sessionName, path, command),
 			Interactive: true,
+			Detached:    command != nil,
 		}, nil
 	case commandExists("zellij", lookPath):
 		if goos == "darwin" && commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{
-				Cmd: externalTerminalCommand(zellijAttachCommand(sessionName, path, command)),
+				Cmd:      externalTerminalCommand(zellijAttachCommand(sessionName, path, command)),
+				Detached: command != nil,
 			}, nil
 		}
 		return TerminalLaunchSpec{
@@ -762,7 +876,8 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 				return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in Terminal")
 			}
 			return TerminalLaunchSpec{
-				Cmd: externalTerminalCommand(command.shellCommand()),
+				Cmd:      externalTerminalCommand(command.shellCommand()),
+				Detached: true,
 			}, nil
 		}
 		return TerminalLaunchSpec{
@@ -820,7 +935,7 @@ func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc, c
 		}
 		cmd := exec.Command(name, args...)
 		cmd.Dir = path
-		return TerminalLaunchSpec{Cmd: cmd}, nil
+		return TerminalLaunchSpec{Cmd: cmd, Detached: command != nil}, nil
 	}
 
 	if goos == "darwin" {

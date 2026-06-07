@@ -3349,10 +3349,16 @@ func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
+	cleanupCalled := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("false")}, nil
+			return actions.TerminalLaunchSpec{
+				Cmd: exec.Command("false"),
+				Cleanup: func() {
+					cleanupCalled = true
+				},
+			}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -3366,6 +3372,9 @@ func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 	m, _ = update(m, cmd())
 	if !strings.Contains(m.View(), "exit status") {
 		t.Fatal("expected agent process error in status bar")
+	}
+	if !cleanupCalled {
+		t.Fatal("expected failed detached launch to run cleanup")
 	}
 }
 

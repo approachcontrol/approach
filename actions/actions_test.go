@@ -1638,6 +1638,9 @@ func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT",
 		"WTUI_PLAN_ID",
 		"WTUI_PLAN_PATH",
+		"WTUI_PLAN_PHASE_ID",
+		"WTUI_PLAN_PHASE_TITLE",
+		"WTUI_PLAN_PHASE_STATUS",
 	} {
 		t.Setenv(key, "inherited-"+key)
 	}
@@ -1652,6 +1655,9 @@ func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		PlanID:           "plan-2",
 		PlanPath:         "/state/wtui/sessions/v1/plans/plan-2/plan.md",
+		PlanPhaseID:      "phase-2",
+		PlanPhaseTitle:   "Phase two",
+		PlanPhaseStatus:  "pending",
 	})
 	if err != nil {
 		t.Fatalf("AgentCommand returned error: %v", err)
@@ -1668,6 +1674,9 @@ func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
 		"WTUI_PLAN_ID":            "plan-2",
 		"WTUI_PLAN_PATH":          "/state/wtui/sessions/v1/plans/plan-2/plan.md",
+		"WTUI_PLAN_PHASE_ID":      "phase-2",
+		"WTUI_PLAN_PHASE_TITLE":   "Phase two",
+		"WTUI_PLAN_PHASE_STATUS":  "pending",
 	} {
 		got, count := envEntryValue(cmd.Env, key)
 		if got != want || count != 1 {

@@ -25,7 +25,43 @@ func planAgentContext() AgentLaunchContext {
 	}
 }
 
+func putAgentOnPath(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write fake agent executable: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return path
+}
+
+func agentLaunchScript(t *testing.T) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "wtui-agent-*.sh"))
+	if err != nil {
+		t.Fatalf("glob agent launch script: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one agent launch script in %s, got %d: %#v", os.TempDir(), len(matches), matches)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read agent launch script: %v", err)
+	}
+	return string(data)
+}
+
+func requireScriptContains(t *testing.T, script, want string) {
+	t.Helper()
+	if !strings.Contains(script, want) {
+		t.Fatalf("agent launch script missing %q", want)
+	}
+}
+
 func TestAgentLaunch_InsideTmuxRunsAgentInSession(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
 	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("tmux"))
 	if err != nil {
@@ -40,21 +76,21 @@ func TestAgentLaunch_InsideTmuxRunsAgentInSession(t *testing.T) {
 	}
 	// The agent command, plan environment, and prompt must survive the hop
 	// into the tmux session.
+	script := agentLaunchScript(t)
 	for _, want := range []string{
 		"codex",
 		"--config",
 		"session-hook --provider codex",
-		"WTUI_PLAN_ID=plan-1",
-		"WTUI_PLAN_PATH=/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"WTUI_PLAN_ID='plan-1'",
+		"WTUI_PLAN_PATH='/state/wtui/sessions/v1/plans/plan-1/plan.md'",
 		"Read the plan and begin implementation.",
 	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected tmux agent launch to contain %q, got %#v", want, launch.Cmd.Args)
-		}
+		requireScriptContains(t, script, want)
 	}
 }
 
 func TestAgentLaunch_InsideZellijRunsAgentInSession(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	env := fakeGetenv(map[string]string{"ZELLIJ": "0"})
 	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("zellij"))
 	if err != nil {
@@ -67,15 +103,14 @@ func TestAgentLaunch_InsideZellijRunsAgentInSession(t *testing.T) {
 	if len(args) < 6 || args[0] != "zellij" || args[1] != "run" || args[2] != "--cwd" || args[3] != "/repo/worktree" {
 		t.Fatalf("unexpected zellij run args: %#v", args)
 	}
-	joined := strings.Join(args, "\x00")
-	for _, want := range []string{"codex", "WTUI_PLAN_ID=plan-1", "Read the plan and begin implementation."} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected zellij agent launch to contain %q, got %#v", want, args)
-		}
+	script := agentLaunchScript(t)
+	for _, want := range []string{"codex", "WTUI_PLAN_ID='plan-1'", "Read the plan and begin implementation."} {
+		requireScriptContains(t, script, want)
 	}
 }
 
 func TestAgentLaunch_DarwinExternalTerminalRunsAgent(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	launch, err := agentLaunch(planAgentContext(), "darwin", fakeGetenv(nil), fakeLookPath("osascript", "open"))
 	if err != nil {
 		t.Fatalf("agentLaunch returned error: %v", err)
@@ -86,15 +121,14 @@ func TestAgentLaunch_DarwinExternalTerminalRunsAgent(t *testing.T) {
 	if launch.Cmd.Args[0] != "osascript" {
 		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
 	}
-	joined := strings.Join(launch.Cmd.Args, "\x00")
+	script := agentLaunchScript(t)
 	for _, want := range []string{"cd '/repo/worktree'", "codex", "Read the plan and begin implementation."} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected osascript agent command to contain %q, got %#v", want, launch.Cmd.Args)
-		}
+		requireScriptContains(t, script, want)
 	}
 }
 
 func TestAgentLaunch_TerminalEnvRunsAgentWithDashE(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
 	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("alacritty"))
 	if err != nil {
@@ -111,15 +145,31 @@ func TestAgentLaunch_TerminalEnvRunsAgentWithDashE(t *testing.T) {
 	if !strings.Contains(joined, "-e\x00sh\x00-c\x00") {
 		t.Fatalf("expected -e sh -c invocation, got %#v", args)
 	}
-	if !strings.Contains(joined, "codex") {
-		t.Fatalf("expected agent command in TERMINAL launch, got %#v", args)
+	if !strings.Contains(joined, "wtui-agent-") {
+		t.Fatalf("expected agent script path in TERMINAL launch, got %#v", args)
 	}
 	if launch.Cmd.Dir != "/repo/worktree" {
 		t.Fatalf("expected launch dir /repo/worktree, got %q", launch.Cmd.Dir)
 	}
+	requireScriptContains(t, agentLaunchScript(t), "codex")
+}
+
+func TestAgentLaunch_OutsideTmuxUsesTTYButIsDetachedForFinalization(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	launch, err := agentLaunch(planAgentContext(), "linux", fakeGetenv(nil), fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	if !launch.Interactive {
+		t.Fatal("outside-tmux tmux launch should use the current TTY")
+	}
+	if !launch.Detached {
+		t.Fatal("outside-tmux tmux launch should be detached for session finalization")
+	}
 }
 
 func TestAgentLaunch_TerminalEnvDarwinUnsupportedReturnsError(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	env := fakeGetenv(map[string]string{"TERMINAL": "MacTerminalApp"})
 	_, err := agentLaunch(planAgentContext(), "darwin", env, fakeLookPath("open"))
 	if err == nil {
@@ -128,6 +178,7 @@ func TestAgentLaunch_TerminalEnvDarwinUnsupportedReturnsError(t *testing.T) {
 }
 
 func TestAgentLaunch_ShellFallbackIsInteractive(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	shell := tempExecutableShell(t)
 	env := fakeGetenv(map[string]string{"SHELL": shell})
 	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath())
@@ -138,29 +189,87 @@ func TestAgentLaunch_ShellFallbackIsInteractive(t *testing.T) {
 		t.Fatal("shell fallback agent launch should be interactive (hands over the TTY)")
 	}
 	joined := strings.Join(launch.Cmd.Args, "\x00")
-	if !strings.Contains(joined, "codex") {
-		t.Fatalf("expected agent command in shell fallback, got %#v", launch.Cmd.Args)
+	if !strings.Contains(joined, "wtui-agent-") {
+		t.Fatalf("expected agent script path in shell fallback, got %#v", launch.Cmd.Args)
 	}
+	requireScriptContains(t, agentLaunchScript(t), "codex")
 }
 
 func TestAgentLaunch_WorkingDirControlsCommandDirKeepsWorktreeMetadata(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	ctx := planAgentContext()
 	ctx.WorkingDir = "/repo/worktree/subdir"
 	ctx.ResumeSessionID = "codex-session-1"
 	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
-	launch, err := agentLaunch(ctx, "linux", env, fakeLookPath("tmux"))
+	if _, err := agentLaunch(ctx, "linux", env, fakeLookPath("tmux")); err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+	script := agentLaunchScript(t)
+	requireScriptContains(t, script, "cd '/repo/worktree/subdir'")
+	requireScriptContains(t, script, "WTUI_WORKTREE_PATH='/repo/worktree'")
+	requireScriptContains(t, script, "'resume' 'codex-session-1'")
+}
+
+func TestAgentLaunch_UsesResolvedAgentExecutablePath(t *testing.T) {
+	agentPath := putAgentOnPath(t, "codex")
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
+	if _, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("tmux")); err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+
+	script := agentLaunchScript(t)
+	if !strings.Contains(script, shellQuote(agentPath)) {
+		t.Fatalf("expected detached launch to use resolved agent path %q", agentPath)
+	}
+}
+
+func TestAgentLaunch_PropagatesInheritedAgentEnvironment(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	t.Setenv("OPENAI_API_KEY", "secret-from-wtui-process")
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
+
+	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("tmux"))
 	if err != nil {
 		t.Fatalf("agentLaunch returned error: %v", err)
 	}
+
 	joined := strings.Join(launch.Cmd.Args, "\x00")
-	if !strings.Contains(joined, "cd '/repo/worktree/subdir'") {
-		t.Fatalf("expected command to run in working dir, got %#v", launch.Cmd.Args)
+	if strings.Contains(joined, "secret-from-wtui-process") {
+		t.Fatalf("secret leaked into transport argv: %#v", launch.Cmd.Args)
 	}
-	if !strings.Contains(joined, "WTUI_WORKTREE_PATH=/repo/worktree") {
-		t.Fatalf("expected worktree metadata preserved, got %#v", launch.Cmd.Args)
+	script := agentLaunchScript(t)
+	if !strings.Contains(script, "export OPENAI_API_KEY='secret-from-wtui-process'") {
+		t.Fatal("expected detached launch script to propagate inherited agent env")
 	}
-	if !strings.Contains(joined, "'resume' 'codex-session-1'") {
-		t.Fatalf("expected shell-quoted resume args adjacent, got %#v", launch.Cmd.Args)
+}
+
+func TestAgentLaunch_RejectsMissingAgentExecutableBeforeTransport(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
+
+	_, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("tmux"))
+	if err == nil {
+		t.Fatal("expected missing agent executable error")
+	}
+	if !strings.Contains(err.Error(), "codex") {
+		t.Fatalf("expected error to mention codex, got %v", err)
+	}
+}
+
+func TestAgentLaunch_CleansScriptWhenTransportSelectionFails(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	env := fakeGetenv(map[string]string{"TERMINAL": "ghostterm"})
+
+	_, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath())
+	if err == nil {
+		t.Fatal("expected terminal selection error")
+	}
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "wtui-agent-*.sh"))
+	if err != nil {
+		t.Fatalf("glob agent launch script: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected failed launch to clean agent script, got %#v", matches)
 	}
 }
 
@@ -173,14 +282,15 @@ func TestTerminalCommand_ShellCommandResistsInjection(t *testing.T) {
 	// shellQuote becomes the identity function) this test fails — verified by
 	// mutation testing. With correct quoting, only the legitimate command runs.
 	tmp := t.TempDir()
-	tc := &terminalCommand{
-		dir: tmp,
-		env: []envVar{
-			// Attempts to break out of the `env KEY=VAL` token.
-			{key: "WTUI_BRANCH", value: `x$(touch pwned_env)`},
-		},
+	tc, err := newTerminalCommand(tmp, []string{
+		// Attempts to break out of the `export KEY=VAL` token.
+		`WTUI_BRANCH=x$(touch pwned_env)`,
+	}, []string{
 		// argv[0] is the legitimate command; the trailing arg attempts injection.
-		argv: []string{"touch", "ran", `$(touch pwned_arg)`},
+		"touch", "ran", `$(touch pwned_arg)`,
+	}, "")
+	if err != nil {
+		t.Fatalf("newTerminalCommand returned error: %v", err)
 	}
 
 	cmd := exec.Command("sh", "-c", tc.shellCommand())
@@ -195,9 +305,13 @@ func TestTerminalCommand_ShellCommandResistsInjection(t *testing.T) {
 			t.Fatalf("injection succeeded: %q was created (quoting failed)", marker)
 		}
 	}
+	if _, err := os.Stat(tc.scriptPath); !os.IsNotExist(err) {
+		t.Fatalf("agent script was not removed after launch, stat err=%v", err)
+	}
 }
 
 func TestAgentLaunch_OsascriptEscapesShellCommand(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	ctx := planAgentContext()
 	// Adversarial prompt that tries to break out of the AppleScript string. It
 	// contains no single quotes, so correct shellQuote wraps it verbatim in
@@ -230,14 +344,19 @@ func TestAgentLaunch_OsascriptEscapesShellCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do-script payload is not a valid quoted string (escaping broke): %q", doScript)
 	}
-	// The decoded shell command must carry the prompt inside literal single
-	// quotes. Fixed expectation, not recomputed via shellQuote.
-	if !strings.Contains(inner, `'`+prompt+`'`) {
-		t.Fatalf("expected prompt single-quoted inside the shell command, got %q", inner)
+	if strings.Contains(inner, prompt) {
+		t.Fatalf("prompt leaked into AppleScript command: %q", inner)
+	}
+	script := agentLaunchScript(t)
+	// The launch script must carry the prompt inside literal single quotes. Fixed
+	// expectation, not recomputed via shellQuote.
+	if !strings.Contains(script, `'`+prompt+`'`) {
+		t.Fatal("expected prompt single-quoted inside the launch script")
 	}
 }
 
 func TestAgentLaunch_SessionNameIsUniquePerLaunchAndDistinctFromTerminal(t *testing.T) {
+	putAgentOnPath(t, "codex")
 	ctx := planAgentContext()
 	ctx.LaunchID = "launch-aaa"
 	env := fakeGetenv(map[string]string{"TMUX": "/tmp/s"})

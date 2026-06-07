@@ -35,6 +35,7 @@ type Model struct {
 	sessions                  pane.Pane[sessions.SessionRecord]
 	plans                     pane.Pane[planstore.PlanRecord]
 	expandedPlanID            string
+	selectedPlanPhaseID       string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	listRequestSeq            uint64
@@ -238,6 +239,7 @@ func (m Model) Plans() []planstore.PlanRecord {
 }
 func (m Model) PlanSelected() int               { return m.plans.SelectedIndex() }
 func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
+func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
@@ -326,6 +328,7 @@ func (m Model) View() string {
 		PlanSelected:             planSelected,
 		PlanScroll:               planScroll,
 		ExpandedPlanID:           m.expandedPlanID,
+		SelectedPlanPhaseID:      m.selectedPlanPhaseID,
 		OverlayText:              modalView.Text,
 		TransientError:           m.visibleStatusText(),
 		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
@@ -683,8 +686,40 @@ func (m Model) selectedPlanID() string {
 	return record.PlanID
 }
 
+func (m Model) selectedPlanPhase() (planstore.PlanPhase, bool) {
+	record, ok := m.selectedPlan()
+	if !ok || record.PlanID == "" || record.PlanID != m.expandedPlanID || m.selectedPlanPhaseID == "" {
+		return planstore.PlanPhase{}, false
+	}
+	for _, phase := range record.Phases {
+		if phase.PhaseID == m.selectedPlanPhaseID {
+			return phase, true
+		}
+	}
+	return planstore.PlanPhase{}, false
+}
+
+func (m Model) selectedPlanPhaseIndex() (int, bool) {
+	record, ok := m.selectedPlan()
+	if !ok || record.PlanID == "" || record.PlanID != m.expandedPlanID || m.selectedPlanPhaseID == "" {
+		return 0, false
+	}
+	for i, phase := range record.Phases {
+		if phase.PhaseID == m.selectedPlanPhaseID {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (m Model) clearSelectedPlanPhase() Model {
+	m.selectedPlanPhaseID = ""
+	return m
+}
+
 func (m Model) setExpandedPlanID(planID string) Model {
 	m.expandedPlanID = planID
+	m.selectedPlanPhaseID = ""
 	m.plans = m.plans.SetItemHeight(planItemHeight(planID))
 	m = m.reflowPlans()
 	if planID == "" {
@@ -750,6 +785,86 @@ func (m Model) reflowExpandedPlan() Model {
 	return m
 }
 
+func (m Model) moveSelectedPlanPhase(delta int) (Model, bool) {
+	if m.mode != ui.ModePlans || m.expandedPlanID == "" || m.selectedPlanID() != m.expandedPlanID {
+		return m, false
+	}
+	record, ok := m.selectedPlan()
+	if !ok || len(record.Phases) == 0 {
+		return m, false
+	}
+
+	index, hasPhase := m.selectedPlanPhaseIndex()
+	if !hasPhase {
+		if delta > 0 {
+			m.selectedPlanPhaseID = record.Phases[0].PhaseID
+			return m.ensureSelectedPlanPhaseVisible(), true
+		}
+		return m, false
+	}
+
+	nextIndex := index + delta
+	if nextIndex < 0 {
+		m = m.clearSelectedPlanPhase()
+		return m.reflowExpandedPlan(), true
+	}
+	if nextIndex >= len(record.Phases) {
+		if m.plans.Len() <= 1 {
+			return m.ensureSelectedPlanPhaseVisible(), true
+		}
+		before := m.selectedPlanID()
+		m.plans = m.plans.Move(delta, m.contentHeightForMode(), m.contentWidth())
+		if after := m.selectedPlanID(); before != "" && after != before {
+			m = m.clearSelectedPlanPhase()
+			m = m.setExpandedPlanID("")
+		}
+		return m, true
+	}
+	m.selectedPlanPhaseID = record.Phases[nextIndex].PhaseID
+	return m.ensureSelectedPlanPhaseVisible(), true
+}
+
+func (m Model) ensureSelectedPlanPhaseVisible() Model {
+	index, ok := m.selectedPlanPhaseIndex()
+	if !ok {
+		return m.reflowExpandedPlan()
+	}
+	line, ok := m.selectedPlanVisualLine()
+	if !ok {
+		return m
+	}
+	line += 1 + index
+	viewHeight := m.planContentHeight()
+	if viewHeight <= 0 {
+		viewHeight = 1
+	}
+	scroll := m.PlanScroll()
+	target := scroll
+	if line < target {
+		target = line
+	}
+	if line >= target+viewHeight {
+		target = line - viewHeight + 1
+	}
+	if target != scroll {
+		m.plans = m.plans.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+	}
+	return m
+}
+
+func (m Model) selectedPlanVisualLine() (int, bool) {
+	plans := m.filteredPlans()
+	selected := m.PlanSelected()
+	if selected < 0 || selected >= len(plans) {
+		return 0, false
+	}
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += planVisualHeight(plans[i], m.expandedPlanID)
+	}
+	return line, true
+}
+
 func (m Model) isSelectedBranchDirtyWorktree() bool {
 	row, ok := m.selectedRow()
 	return ok && row.Branch.Dirty && row.Branch.IsWorktree
@@ -799,6 +914,9 @@ func (m Model) reflowSessions() Model {
 
 func (m Model) reflowPlans() Model {
 	m.plans = m.plans.Reflow(m.planContentHeight(), m.contentWidth())
+	if m.selectedPlanPhaseID != "" {
+		return m.ensureSelectedPlanPhaseVisible()
+	}
 	return m
 }
 

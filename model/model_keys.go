@@ -254,6 +254,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "tab":
 		m.activePane = 0
+		if m.mode == ui.ModePlans {
+			m = m.clearSelectedPlanPhase()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -329,6 +332,9 @@ func (m Model) moveCursor(delta int) Model {
 	case ui.ModeSessions:
 		m.sessions = m.sessions.Move(delta, h, w)
 	case ui.ModePlans:
+		if next, ok := m.moveSelectedPlanPhase(delta); ok {
+			return next
+		}
 		if m.canScrollExpandedPlan(delta, h) {
 			m.plans = m.plans.ScrollBy(delta, h, w)
 			return m
@@ -738,6 +744,12 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		PlanPath:         planPath,
 		InitialPrompt:    implementationPrompt(plan, planPath),
 	}
+	if phase, ok := m.selectedPlanPhase(); ok {
+		ctx.PlanPhaseID = phase.PhaseID
+		ctx.PlanPhaseTitle = phase.Title
+		ctx.PlanPhaseStatus = phase.Status
+		ctx.InitialPrompt = implementationPromptForPhase(plan, planPath, phase)
+	}
 	return m.launchAgentWithContext(ctx)
 }
 
@@ -747,6 +759,22 @@ func implementationPrompt(plan planstore.PlanRecord, planPath string) string {
 		title = "(untitled)"
 	}
 	return fmt.Sprintf("Implement the saved wtui plan %q (ID: %s) at %s. Read the plan file, then begin implementation.", title, plan.PlanID, planPath)
+}
+
+func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, phase planstore.PlanPhase) string {
+	title := plan.Title
+	if title == "" {
+		title = "(untitled)"
+	}
+	phaseTitle := phase.Title
+	if phaseTitle == "" {
+		phaseTitle = "(untitled)"
+	}
+	phaseStatus := phase.Status
+	if phaseStatus == "" {
+		phaseStatus = "(unknown)"
+	}
+	return fmt.Sprintf("Implement only the selected phase of the saved wtui plan %q (ID: %s) at %s. Selected phase: %s (%q), status %s. Read the plan file, then begin implementation of only that phase.", title, plan.PlanID, planPath, phase.PhaseID, phaseTitle, phaseStatus)
 }
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
@@ -769,19 +797,26 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 		return m, nil
 	}
 	if launch.Interactive {
-		// wtui hands over the TTY and waits for the agent process itself, so the
-		// captured session can be finalized once it exits.
+		// wtui hands over the TTY until the launch command exits. Some launch
+		// commands are only terminal/multiplexer clients; launch.Detached records
+		// whether provider hooks, not this result, own session completion.
 		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
 			if err != nil {
-				return AgentResultMsg{LaunchContext: ctx, Err: err.Error()}
+				if launch.Cleanup != nil {
+					launch.Cleanup()
+				}
+				return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: launch.Detached}
 			}
-			return AgentResultMsg{LaunchContext: ctx}
+			return AgentResultMsg{LaunchContext: ctx, Detached: launch.Detached}
 		})
 	}
 	// Detached launch: the command only opens or switches to an external
 	// terminal/multiplexer session and returns while the agent keeps running.
 	return m, func() tea.Msg {
 		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
 			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
 		}
 		return AgentResultMsg{LaunchContext: ctx, Detached: true}

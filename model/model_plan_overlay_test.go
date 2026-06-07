@@ -121,7 +121,7 @@ func TestModel_EnterOnExpandedPlanCollapsesPhases(t *testing.T) {
 	}
 }
 
-func TestModel_MovingToDifferentPlanCollapsesExpandedPhases(t *testing.T) {
+func TestModel_DownOnExpandedPlanSelectsFirstPhase(t *testing.T) {
 	m := model.New(testRepos())
 	m = plansInRightPane(t, m, []planstore.PlanRecord{
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Persist plans", Status: "draft",
@@ -132,9 +132,14 @@ func TestModel_MovingToDifferentPlanCollapsesExpandedPhases(t *testing.T) {
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	view := m.View()
-	if strings.Contains(view, "Tracer bullet") || strings.Contains(view, "Other phase") {
-		t.Fatalf("moving to another plan should collapse expanded phases:\n%s", view)
+	if got := m.PlanSelected(); got != 0 {
+		t.Fatalf("phase selection should keep selected plan, got %d", got)
+	}
+	if got := m.SelectedPlanPhaseID(); got != "p1" {
+		t.Fatalf("selected phase = %q, want p1", got)
+	}
+	if view := m.View(); !strings.Contains(view, "Tracer bullet") || strings.Contains(view, "Other phase") {
+		t.Fatalf("expanded selected plan should stay visible and not expand another plan:\n%s", view)
 	}
 }
 
@@ -203,12 +208,12 @@ func TestModel_ExpandedSinglePlanScrollsWithinManyPhases(t *testing.T) {
 	if got := m.PlanSelected(); got != 0 {
 		t.Fatalf("scrolling inside expanded single plan should not move selection, got %d", got)
 	}
-	if got := m.PlanScroll(); got != 3 {
-		t.Fatalf("expected expanded phase block to scroll to 3, got %d", got)
+	if got := m.PlanScroll(); got != 1 {
+		t.Fatalf("expected expanded phase block to scroll to 1, got %d", got)
 	}
 	view := m.View()
-	if !strings.Contains(view, "Phase 5") {
-		t.Fatalf("lower expanded phase should be reachable:\n%s", view)
+	if !strings.Contains(view, "Phase 3") {
+		t.Fatalf("selected expanded phase should be reachable:\n%s", view)
 	}
 	if strings.Contains(view, "Plan 1") {
 		t.Fatalf("scrolling within an oversized expanded plan should move past the plan row:\n%s", view)
@@ -248,7 +253,7 @@ func TestModel_TallExpandedPlanAtViewportBottomShowsFirstPhases(t *testing.T) {
 	}
 }
 
-func TestModel_ExpandedPlanMovesAndCollapsesAfterScrolledToBoundary(t *testing.T) {
+func TestModel_ExpandedPlanPhaseSelectionMovesToNextPlanAfterLastPhase(t *testing.T) {
 	m := model.New(testRepos())
 	m = plansInRightPaneAtSize(t, m, []planstore.PlanRecord{
 		{
@@ -265,12 +270,15 @@ func TestModel_ExpandedPlanMovesAndCollapsesAfterScrolledToBoundary(t *testing.T
 	}, 140, ui.BranchContentOverhead+4)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 
 	if got := m.PlanSelected(); got != 1 {
-		t.Fatalf("expected movement to next plan after expanded boundary, got %d", got)
+		t.Fatalf("expected movement to next plan after last phase, got %d", got)
+	}
+	if got := m.SelectedPlanPhaseID(); got != "" {
+		t.Fatalf("phase selection should clear after moving to next plan, got %q", got)
 	}
 	view := m.View()
 	if strings.Contains(view, "Phase 5") {
@@ -312,10 +320,19 @@ func TestModel_ExpandedPlanScrollsUpWithinManyPhases(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	if got := m.PlanSelected(); got != 0 {
-		t.Fatalf("expected movement to previous plan after expanded top boundary, got %d", got)
+	if got := m.PlanSelected(); got != 1 {
+		t.Fatalf("returning from first phase should keep selected plan, got %d", got)
 	}
 	view := m.View()
+	if !strings.Contains(view, "Phase 1") {
+		t.Fatalf("expanded phases should remain visible after returning to plan row:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.PlanSelected(); got != 0 {
+		t.Fatalf("expected movement to previous plan after returning to plan row, got %d", got)
+	}
+	view = m.View()
 	if strings.Contains(view, "Phase 1") {
 		t.Fatalf("moving to previous plan should collapse expanded phases:\n%s", view)
 	}
