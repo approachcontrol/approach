@@ -237,6 +237,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "y":
 		return m.handleCopyHash()
+	case "s":
+		return m.handleCopySessionID()
+	case "r":
+		return m.handleResumeSession()
 	case "tab":
 		m.activePane = 0
 	case "enter":
@@ -620,6 +624,36 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.launchAgentAtPath(path)
+}
+
+func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeSessions {
+		return m, nil
+	}
+	record, ok := m.selectedSession()
+	if !ok {
+		return m, nil
+	}
+	workingDir := record.WorktreePath
+	if workingDir == "" {
+		workingDir = record.CWD
+	}
+	if workingDir == "" {
+		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
+		return m, nil
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:          string(record.Provider),
+		LaunchID:         newLaunchID(),
+		RepoPath:         record.RepoPath,
+		WorktreePath:     record.WorktreePath,
+		WorkingDir:       workingDir,
+		Branch:           record.Branch,
+		Commit:           record.Commit,
+		SessionStateRoot: m.sessionStateRoot,
+		ResumeSessionID:  record.SessionID,
+	}
+	return m.launchAgentWithContext(ctx)
 }
 
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {

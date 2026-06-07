@@ -246,7 +246,7 @@ func TestRender_SessionsModeEmptyMessages(t *testing.T) {
 	}
 }
 
-func TestRender_SessionsModeShowsTranscriptShortcut(t *testing.T) {
+func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
@@ -263,8 +263,35 @@ func TestRender_SessionsModeShowsTranscriptShortcut(t *testing.T) {
 		ActivePane:      1,
 		SessionSelected: 0,
 	})
-	if !strings.Contains(shortcutPaneText(view), "enter  transcript") {
-		t.Fatalf("sessions view should expose transcript shortcut:\n%s", view)
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"enter  transcript", "r      resume", "s      copy id"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("sessions view should expose selected session shortcut %q:\n%s", want, pane)
+		}
+	}
+}
+
+func TestRender_SessionsModeHidesSessionActionsWithoutSelection(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    120,
+		Height:   10,
+		Mode:     ModeSessions,
+		Sessions: []sessions.SessionRecord{{
+			Provider:  sessions.ProviderCodex,
+			SessionID: "codex-session-1",
+			Status:    "ended",
+			RepoPath:  "/dev/wtui",
+		}},
+		ActivePane:      1,
+		SessionSelected: -1,
+	})
+	pane := shortcutPaneText(view)
+	for _, hidden := range []string{"enter  transcript", "r      resume", "s      copy id"} {
+		if strings.Contains(pane, hidden) {
+			t.Fatalf("sessions view should hide %q without selected session:\n%s", hidden, pane)
+		}
 	}
 }
 
@@ -774,12 +801,12 @@ func TestRender_ShortBranchPaneClipsLegendAfterActions(t *testing.T) {
 	}
 }
 
-func TestRender_ShortSessionPaneKeepsTranscriptAction(t *testing.T) {
+func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    120,
-		Height:   8,
+		Height:   10,
 		Mode:     ModeSessions,
 		Sessions: []sessions.SessionRecord{{
 			Provider:  sessions.ProviderCodex,
@@ -791,8 +818,10 @@ func TestRender_ShortSessionPaneKeepsTranscriptAction(t *testing.T) {
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "enter  transcript") || !strings.Contains(pane, shortcutOverflowMarker) {
-		t.Fatalf("short session shortcut pane should keep transcript action and clip, got:\n%s", pane)
+	for _, want := range []string{"enter  transcript", "r      resume", "s      copy id", shortcutOverflowMarker} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("short session shortcut pane should keep selected session action %q, got:\n%s", want, pane)
+		}
 	}
 }
 

@@ -58,6 +58,7 @@ type Model struct {
 	saveAgent                 func(string) error
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
+	copyToClipboard           func(string) error
 	sessionStateRoot          string
 	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
@@ -102,6 +103,7 @@ type Options struct {
 	SaveAgentCommand     func(string) error
 	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	FinalizeAgentSession func(actions.AgentLaunchContext) error
+	CopyToClipboard      func(string) error
 	SessionStateRoot     string
 	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
 	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
@@ -154,6 +156,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
+	copyToClipboard := opts.CopyToClipboard
+	if copyToClipboard == nil {
+		copyToClipboard = actions.CopyToClipboard
+	}
 	m := Model{
 		repos:                newRepoPane().SetItems(repos),
 		rows:                 newBranchPane(),
@@ -173,6 +179,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		saveAgent:            saveAgent,
 		launchAgent:          launchAgent,
 		finalizeAgentSession: finalizeAgentSession,
+		copyToClipboard:      copyToClipboard,
 		sessionStateRoot:     opts.SessionStateRoot,
 		bootstrapHookForRepo: bootstrapHookForRepo,
 		runBootstrapHook:     runBootstrapHook,
