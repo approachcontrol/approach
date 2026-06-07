@@ -110,7 +110,9 @@ func runPlanSave(args []string, deps runDeps) error {
 		Branch:       fallbackEnv(*branch, "WTUI_BRANCH", deps),
 		Commit:       fallbackEnv(*commit, "WTUI_COMMIT", deps),
 	}
-	resolvePlanGitMetadata(&record, deps)
+	if shouldResolvePlanGitMetadata(store, record) {
+		resolvePlanGitMetadata(&record, deps)
+	}
 	savedID, err := store.Save(record)
 	if err != nil {
 		return err
@@ -234,6 +236,14 @@ type planGitMetadata struct {
 	Branch       string
 	Commit       string
 	Linked       bool
+}
+
+func shouldResolvePlanGitMetadata(store *planstore.Store, record planstore.PlanRecord) bool {
+	if record.PlanID == "" {
+		return true
+	}
+	hasIncomingMetadata := record.RepoPath != "" || record.WorktreePath != "" || record.Branch != "" || record.Commit != ""
+	return hasIncomingMetadata || !store.HasPlan(record.PlanID)
 }
 
 func resolvePlanGitMetadata(record *planstore.PlanRecord, deps runDeps) {

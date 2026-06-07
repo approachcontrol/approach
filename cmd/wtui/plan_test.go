@@ -267,6 +267,53 @@ func TestRunPlanSaveExplicitRepoPathDoesNotUseUnrelatedCWDMetadata(t *testing.T)
 	}
 }
 
+func TestRunPlanSaveUpdatePreservesExistingGitMetadataWhenOmitted(t *testing.T) {
+	stateRoot := t.TempDir()
+	repoDir, worktreeDir := makeLinkedWorktree(t)
+	otherRepoDir, otherWorktreeDir := makeLinkedWorktree(t)
+	var stdout bytes.Buffer
+
+	err := run([]string{"wtui", "plan", "save", "--title", "Original", "--plan-id", "p", "--state-root", stateRoot},
+		noScanDeps(t, runDeps{
+			getwd:  func() (string, error) { return worktreeDir, nil },
+			stdin:  strings.NewReader("first body"),
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("first run returned error: %v", err)
+	}
+
+	stdout.Reset()
+	err = run([]string{"wtui", "plan", "save", "--title", "Updated", "--plan-id", "p", "--state-root", stateRoot},
+		noScanDeps(t, runDeps{
+			getwd:  func() (string, error) { return otherWorktreeDir, nil },
+			stdin:  strings.NewReader("second body"),
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("second run returned error: %v", err)
+	}
+
+	record := readPlanRecord(t, stateRoot, "p")
+	if record.Title != "Updated" {
+		t.Fatalf("title = %q, want Updated", record.Title)
+	}
+	if record.RepoPath != repoDir || record.WorktreePath != worktreeDir {
+		t.Fatalf("git metadata should stay on original checkout, got repo=%q worktree=%q; want repo=%q worktree=%q",
+			record.RepoPath, record.WorktreePath, repoDir, worktreeDir)
+	}
+	if record.RepoPath == otherRepoDir || record.WorktreePath == otherWorktreeDir {
+		t.Fatalf("git metadata was overwritten by update cwd: %#v", record)
+	}
+	md, err := os.ReadFile(filepath.Join(stateRoot, "plans", "p", "plan.md"))
+	if err != nil {
+		t.Fatalf("read plan.md: %v", err)
+	}
+	if string(md) != "second body" {
+		t.Fatalf("plan.md = %q, want second body", md)
+	}
+}
+
 func TestRunPlanListJSON(t *testing.T) {
 	root := t.TempDir()
 	mustRun(t, []string{"wtui", "plan", "save", "--title", "Alpha", "--plan-id", "alpha", "--state-root", root, "--repo-path", "/repo"}, "alpha body")

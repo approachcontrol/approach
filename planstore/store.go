@@ -156,6 +156,12 @@ func (s *Store) Root() string {
 	return s.root
 }
 
+// HasPlan reports whether a valid plan record already exists.
+func (s *Store) HasPlan(planID string) bool {
+	_, ok := s.readRecord(planID)
+	return ok
+}
+
 // Save writes a plan record and returns its plan ID. When a plan with the same
 // ID already exists, Markdown and Title are always replaced from the incoming
 // record (both are required), while Status, Source, Summary, phases,
