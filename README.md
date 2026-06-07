@@ -90,9 +90,9 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
-| `y` | Copy hash to clipboard (history/reflog view) |
+| `y` | Copy hash to clipboard (history/reflog view) or selected agent session ID (sessions view) |
 | `r` | Resume selected agent session (sessions view) |
-| `s` | Copy selected agent session ID (sessions view) |
+| `s` | Show selected agent session summary (sessions view) |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close overlay or quit |
@@ -171,8 +171,8 @@ Browse captured Claude Code and Codex sessions associated with the selected
 repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
 filter sessions by provider, session ID, launch ID, branch, worktree, model,
 status, or summary. Press `enter` to open the normalized transcript overlay,
-`r` to resume the selected provider session, or `s` to copy the raw provider
-session ID.
+`s` to show the selected summary, `r` to resume the selected provider session,
+or `y` to copy the raw provider session ID.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
