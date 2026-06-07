@@ -634,9 +634,9 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	workingDir := record.WorktreePath
+	workingDir := record.CWD
 	if workingDir == "" {
-		workingDir = record.CWD
+		workingDir = record.WorktreePath
 	}
 	if workingDir == "" {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")

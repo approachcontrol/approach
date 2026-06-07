@@ -3593,7 +3593,7 @@ func TestModel_SKeySessionCopyErrorShowsStatus(t *testing.T) {
 	}
 }
 
-func TestModel_RKeyResumesSelectedSession(t *testing.T) {
+func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SessionStateRoot: "/state/wtui/sessions/v1",
@@ -3636,7 +3636,7 @@ func TestModel_RKeyResumesSelectedSession(t *testing.T) {
 		got.ResumeSessionID != "claude-session-1" ||
 		got.RepoPath != "/dev/alpha" ||
 		got.WorktreePath != "/dev/alpha-worktrees/feat" ||
-		got.WorkingDir != "/dev/alpha-worktrees/feat" ||
+		got.WorkingDir != "/dev/alpha-worktrees/feat/subdir" ||
 		got.Branch != "feat" ||
 		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" {
