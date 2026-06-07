@@ -468,16 +468,23 @@ type AgentLaunchContext struct {
 	ResumeSessionID  string
 	PlanID           string
 	PlanPath         string
-	// InitialPrompt is appended as the trailing positional prompt argument.
+	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
 
 // AgentLaunch returns a safe, direct command for launching a supported coding
 // agent in path.
 func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
+	return agentLaunch(ctx, runtime.GOOS)
+}
+
+func agentLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
 	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
+	}
+	if command == agent.CommandCodexApp {
+		return codexAppLaunch(ctx, goos)
 	}
 	args := agentLaunchArgs(command, ctx.ResumeSessionID)
 	if ctx.InitialPrompt != "" {
@@ -505,6 +512,58 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		envVar{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
+	if goos != "darwin" {
+		return TerminalLaunchSpec{}, fmt.Errorf("codex-app launch is only supported on macOS")
+	}
+	launchURL, err := codexAppLaunchURL(ctx)
+	if err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	cmd := exec.Command("open", launchURL)
+	cmd.Env = envWithoutPrefix("WTUI_")
+	return TerminalLaunchSpec{Cmd: cmd}, nil
+}
+
+func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
+	if ctx.ResumeSessionID != "" {
+		return "codex://threads/" + url.PathEscape(ctx.ResumeSessionID), nil
+	}
+
+	path := ctx.WorkingDir
+	if path == "" {
+		path = ctx.WorktreePath
+	}
+	if path == "" {
+		return "", fmt.Errorf("codex-app launch requires a worktree path or working directory")
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("codex-app launch path must be absolute: %s", path)
+	}
+
+	values := []string{"path=" + codexAppQueryEscape(path)}
+	if ctx.InitialPrompt != "" {
+		values = append(values, "prompt="+codexAppQueryEscape(ctx.InitialPrompt))
+	}
+	return "codex://threads/new?" + strings.Join(values, "&"), nil
+}
+
+func codexAppQueryEscape(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
+}
+
+func envWithoutPrefix(prefix string) []string {
+	env := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && strings.HasPrefix(key, prefix) {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env
 }
 
 func envWithOverrides(overrides ...envVar) []string {

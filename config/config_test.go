@@ -283,6 +283,56 @@ func TestSaveAgentCommand_CreatesMissingConfig(t *testing.T) {
 	}
 }
 
+func TestLoadFrom_AcceptsCodexAppAgent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[agent]\ncommand = \" CoDeX-App \"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.Command != "codex-app" {
+		t.Fatalf("expected normalized agent codex-app, got %q", cfg.Agent.Command)
+	}
+}
+
+func TestSaveAgentCommand_WritesCodexApp(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveAgentCommand("codex-app",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentCommand returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `command = "codex-app"`) {
+		t.Fatalf("expected codex-app command in saved config, got:\n%s", raw)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.Command != "codex-app" {
+		t.Fatalf("expected saved agent codex-app, got %q", cfg.Agent.Command)
+	}
+}
+
 func TestSaveAgentCommand_PreservesExistingParsedSettings(t *testing.T) {
 	xdg := t.TempDir()
 	home := t.TempDir()
