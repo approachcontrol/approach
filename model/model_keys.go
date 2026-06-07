@@ -802,19 +802,39 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 		return m, nil
 	}
 	if launch.Interactive {
+		// wtui hands over the TTY until the launch command exits. Some launch
+		// commands are only terminal/multiplexer clients; launch.Detached records
+		// whether provider hooks, not this result, own session completion.
 		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
 			if err != nil {
-				return AgentResultMsg{LaunchContext: ctx, Err: err.Error()}
+				if launch.Cleanup != nil {
+					launch.Cleanup()
+				}
+				return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: launch.Detached}
 			}
-			return AgentResultMsg{LaunchContext: ctx}
+			return AgentResultMsg{LaunchContext: ctx, Detached: launch.Detached}
 		})
 	}
+	// Detached launch: the command only opens or switches to an external
+	// terminal/multiplexer session and returns while the agent keeps running.
 	return m, func() tea.Msg {
 		if err := launch.Cmd.Run(); err != nil {
-			return AgentResultMsg{LaunchContext: ctx, Err: err.Error()}
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return AgentResultMsg{LaunchContext: ctx, Err: err.Error(), Detached: true}
 		}
-		return AgentResultMsg{LaunchContext: ctx}
+		return AgentResultMsg{LaunchContext: ctx, Detached: true}
 	}
+}
+
+// agentLaunchedStatus describes a successful detached launch without implying
+// the agent has finished; the agent keeps running in its terminal session.
+func agentLaunchedStatus(command string) string {
+	if command == "" {
+		return "Launched agent in a terminal session"
+	}
+	return fmt.Sprintf("Launched %s in a terminal session", command)
 }
 
 func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {

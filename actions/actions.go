@@ -452,6 +452,10 @@ func OpenVSCode(path string) error {
 type TerminalLaunchSpec struct {
 	Cmd         *exec.Cmd
 	Interactive bool
+	// Detached means the command hands the agent off to another terminal or
+	// multiplexer session; provider hooks own completed-session metadata.
+	Detached bool
+	Cleanup  func()
 }
 
 // AgentLaunchContext carries metadata wtui knows at launch time so provider
@@ -475,19 +479,115 @@ type AgentLaunchContext struct {
 	InitialPrompt string
 }
 
-// AgentLaunch returns a safe, direct command for launching a supported coding
-// agent in path.
+// AgentLaunch builds a supported coding-agent command for ctx and wraps it in a
+// terminal/multiplexer transport so the agent runs in its own
+// window/session—matching the behavior of the `t` shortcut—instead of taking
+// over the wtui TTY. Detached transports leave the wtui TUI usable; only
+// transports that genuinely need the current TTY are returned as interactive.
 func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
-	return agentLaunch(ctx, runtime.GOOS)
+	return agentLaunch(ctx, runtime.GOOS, os.Getenv, exec.LookPath)
 }
 
-func agentLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
+func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
 	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
 	}
 	if command == agent.CommandCodexApp {
 		return codexAppLaunch(ctx, goos)
+	}
+
+	cmd, _, err := agentCommandSpec(ctx)
+	if err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	// Name the session after the worktree root (not WorkingDir, which may be a
+	// subdir on resume) so it is recognizable, and suffix it with the launch id
+	// so each launch gets its own session. A pre-existing same-named session
+	// (e.g. one opened by `t`) would otherwise cause tmux to drop the agent
+	// command and only switch to the old shell session.
+	sessionSource := ctx.WorktreePath
+	if sessionSource == "" {
+		sessionSource = cmd.Dir
+	}
+	argv, err := resolvedCommandArgv(cmd)
+	if err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	termCommand, err := newTerminalCommand(cmd.Dir, cmd.Env, argv, agentSessionName(sessionSource, ctx.LaunchID))
+	if err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	launch, err := terminalLaunch(cmd.Dir, goos, getenv, lookPath, termCommand)
+	if err != nil {
+		termCommand.cleanup()
+		return TerminalLaunchSpec{}, err
+	}
+	launch.Cleanup = termCommand.cleanup
+	return launch, nil
+}
+
+func resolvedCommandArgv(cmd *exec.Cmd) ([]string, error) {
+	if cmd.Err != nil {
+		return nil, cmd.Err
+	}
+	if len(cmd.Args) == 0 {
+		return nil, fmt.Errorf("agent command has no argv")
+	}
+	argv := append([]string(nil), cmd.Args...)
+	if cmd.Path != "" {
+		argv[0] = cmd.Path
+	}
+	return argv, nil
+}
+
+// agentSessionName derives a tmux/Zellij session name for an agent launch. It is
+// rooted at the worktree, always carries an "-agent" segment so it can never
+// equal the plain `t` terminal session for the same worktree, and is suffixed
+// with the launch id so each launch gets its own session (a pre-existing
+// same-named session would otherwise cause tmux to drop the agent command). If
+// launchID is empty the name still differs from the `t` session via "-agent".
+func agentSessionName(worktreePath, launchID string) string {
+	name := WorktreeSessionName(worktreePath) + "-agent"
+	if suffix := sanitizeSessionSuffix(launchID); suffix != "" {
+		name += "-" + suffix
+	}
+	return name
+}
+
+func sanitizeSessionSuffix(s string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.' {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), ".-")
+}
+
+// AgentCommand builds the direct command for launching a supported coding agent
+// in ctx, including provider hook args, resume args, the trailing prompt, the
+// working directory, and the WTUI_* environment overrides. It does not wrap the
+// command in a terminal transport; AgentLaunch does that.
+func AgentCommand(ctx AgentLaunchContext) (*exec.Cmd, error) {
+	cmd, _, err := agentCommandSpec(ctx)
+	return cmd, err
+}
+
+func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
+	command := agent.Normalize(ctx.Command)
+	if err := agent.Validate(command); err != nil {
+		return nil, nil, err
+	}
+	if command == agent.CommandCodexApp {
+		return nil, nil, fmt.Errorf("codex-app launches are URL-based; use AgentLaunch")
 	}
 	args := agentLaunchArgs(command, ctx.ResumeSessionID)
 	if ctx.InitialPrompt != "" {
@@ -502,22 +602,23 @@ func agentLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error
 	if commit == "" {
 		commit = ctx.Commit
 	}
-	cmd.Env = envWithOverrides(
-		envVar{key: "WTUI_AGENT", value: command},
-		envVar{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
-		envVar{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
-		envVar{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
-		envVar{key: "WTUI_BRANCH", value: ctx.Branch},
-		envVar{key: "WTUI_COMMIT", value: commit},
-		envVar{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
-		envVar{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
-		envVar{key: "WTUI_PLAN_ID", value: ctx.PlanID},
-		envVar{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
-		envVar{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
-		envVar{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
-		envVar{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
-	)
-	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+	overrides := []envVar{
+		{key: "WTUI_AGENT", value: command},
+		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
+		{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
+		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
+		{key: "WTUI_BRANCH", value: ctx.Branch},
+		{key: "WTUI_COMMIT", value: commit},
+		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
+		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
+		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
+	}
+	cmd.Env = envWithOverrides(overrides...)
+	return cmd, overrides, nil
 }
 
 func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
@@ -724,53 +825,191 @@ func wtuiSessionHookCommand(provider string) string {
 	return shellQuote(executable) + " session-hook --provider " + provider
 }
 
+// terminalCommand describes an inner process (such as a coding agent) that a
+// terminal transport should run inside the worktree session. The actual command
+// lives in an owner-readable script so inherited secrets are not serialized into
+// tmux/zellij/osascript/terminal argv.
+type terminalCommand struct {
+	scriptPath string
+	// session overrides the tmux/Zellij session name for this launch. When
+	// empty, the transport falls back to WorktreeSessionName(path).
+	session string
+}
+
+func newTerminalCommand(dir string, env []string, argv []string, session string) (*terminalCommand, error) {
+	scriptPath, err := writeTerminalCommandScript(dir, env, argv)
+	if err != nil {
+		return nil, err
+	}
+	return &terminalCommand{scriptPath: scriptPath, session: session}, nil
+}
+
+// shellCommand renders only the safe transport command. The script it calls
+// contains the quoted environment, cwd, and argv, then deletes itself before
+// exec'ing the agent.
+func (c *terminalCommand) shellCommand() string {
+	return "exec sh " + shellQuote(c.scriptPath)
+}
+
+func (c *terminalCommand) cleanup() {
+	if c != nil && c.scriptPath != "" {
+		_ = os.Remove(c.scriptPath)
+	}
+}
+
+func writeTerminalCommandScript(dir string, env []string, argv []string) (string, error) {
+	if len(argv) == 0 {
+		return "", fmt.Errorf("agent command has no argv")
+	}
+
+	file, err := os.CreateTemp("", "wtui-agent-*.sh")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	cleanup := func() {
+		_ = file.Close()
+		_ = os.Remove(path)
+	}
+
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("script_path=$0\n")
+	b.WriteString("cleanup() { rm -f \"$script_path\"; }\n")
+	b.WriteString("trap cleanup EXIT HUP INT TERM\n")
+	b.WriteString("cd ")
+	b.WriteString(shellQuote(dir))
+	b.WriteString(" || exit\n")
+	for _, entry := range env {
+		if line, ok := shellExportLine(entry); ok {
+			b.WriteString(line)
+		}
+	}
+	b.WriteString("cleanup\n")
+	b.WriteString("trap - EXIT HUP INT TERM\n")
+	b.WriteString("exec")
+	for _, arg := range argv {
+		b.WriteByte(' ')
+		b.WriteString(shellQuote(arg))
+	}
+	b.WriteByte('\n')
+
+	if _, err := file.WriteString(b.String()); err != nil {
+		cleanup()
+		return "", err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		cleanup()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+func shellExportLine(entry string) (string, bool) {
+	key, value, ok := strings.Cut(entry, "=")
+	if !ok || !isShellIdentifier(key) {
+		return "", false
+	}
+	return "export " + key + "=" + shellQuote(value) + "\n", true
+}
+
+func isShellIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 {
+			if r != '_' && !unicode.IsLetter(r) {
+				return false
+			}
+			continue
+		}
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // TerminalLaunch returns a command that opens or switches to a multiplexer
 // session for path. It adapts to the current environment:
 //   - inside Zellij: switch to a Zellij session with the worktree name
 //   - inside tmux: create the tmux session if needed, then switch-client
 //   - outside a multiplexer: prefer tmux, Zellij, $TERMINAL, then a platform/shell fallback
 func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
-	return terminalLaunch(path, runtime.GOOS, os.Getenv, exec.LookPath)
+	return terminalLaunch(path, runtime.GOOS, os.Getenv, exec.LookPath, nil)
 }
 
-func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
+// terminalLaunch chooses a transport for path. When command is nil it opens a
+// plain shell/terminal session (the `t` shortcut). When command is non-nil it
+// runs that command inside the chosen session instead.
+func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc, command *terminalCommand) (TerminalLaunchSpec, error) {
 	sessionName := WorktreeSessionName(path)
+	if command != nil && command.session != "" {
+		sessionName = command.session
+	}
 
 	switch {
 	case getenv("ZELLIJ") != "" && commandExists("zellij", lookPath):
+		if command != nil {
+			// switch-session cannot carry a command, so run the agent in a new
+			// pane of the current Zellij session; wtui keeps running in its pane.
+			return TerminalLaunchSpec{
+				Cmd:      exec.Command("zellij", "run", "--cwd", path, "--", "sh", "-c", command.shellCommand()),
+				Detached: true,
+			}, nil
+		}
 		return TerminalLaunchSpec{
 			Cmd: exec.Command("zellij", "action", "switch-session", sessionName, "--cwd", path),
 		}, nil
 	case getenv("TMUX") != "" && commandExists("tmux", lookPath):
 		return TerminalLaunchSpec{
-			Cmd: exec.Command("sh", "-c", tmuxSwitchScript, "wtui", sessionName, path),
+			Cmd:      tmuxSwitchCommand(sessionName, path, command),
+			Detached: command != nil,
 		}, nil
 	case commandExists("tmux", lookPath):
 		if goos == "darwin" && commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{
-				Cmd: externalTerminalCommand(tmuxAttachCommand(sessionName, path)),
+				Cmd:      externalTerminalCommand(tmuxAttachCommand(sessionName, path, command)),
+				Detached: command != nil,
 			}, nil
 		}
 		return TerminalLaunchSpec{
-			Cmd:         exec.Command("tmux", "new-session", "-A", "-s", sessionName, "-c", path),
+			Cmd:         tmuxNewSessionCommand(sessionName, path, command),
 			Interactive: true,
+			Detached:    command != nil,
 		}, nil
 	case commandExists("zellij", lookPath):
 		if goos == "darwin" && commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{
-				Cmd: externalTerminalCommand(zellijAttachCommand(sessionName, path)),
+				Cmd:      externalTerminalCommand(zellijAttachCommand(sessionName, path, command)),
+				Detached: command != nil,
 			}, nil
 		}
-		cmd := exec.Command("zellij", "attach", "--create", sessionName)
-		cmd.Dir = path
-		return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+		return TerminalLaunchSpec{
+			Cmd:         zellijAttachLocalCommand(sessionName, path, command),
+			Interactive: true,
+		}, nil
 	}
 
 	if terminal := strings.TrimSpace(getenv("TERMINAL")); terminal != "" {
-		return terminalLaunchFromEnv(goos, terminal, path, lookPath)
+		return terminalLaunchFromEnv(goos, terminal, path, lookPath, command)
 	}
 
 	if goos == "darwin" && commandExists("open", lookPath) {
+		if command != nil {
+			if !commandExists("osascript", lookPath) {
+				return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in Terminal")
+			}
+			return TerminalLaunchSpec{
+				Cmd:      externalTerminalCommand(command.shellCommand()),
+				Detached: true,
+			}, nil
+		}
 		return TerminalLaunchSpec{
 			Cmd: exec.Command("open", "-a", "Terminal", path),
 		}, nil
@@ -780,6 +1019,14 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc)
 	// we still validate it points at a runnable executable before exec'ing it
 	// and fall back to /bin/sh when it is empty or invalid.
 	shell := resolveShell(strings.TrimSpace(getenv("SHELL")), lookPath)
+	if command != nil {
+		// No detached transport is available, so hand over the current TTY and
+		// run the agent directly. This is the only interactive agent path.
+		return TerminalLaunchSpec{
+			Cmd:         exec.Command(shell, "-c", command.shellCommand()),
+			Interactive: true,
+		}, nil
+	}
 	cmd := exec.Command(shell)
 	cmd.Dir = path
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
@@ -802,7 +1049,7 @@ func resolveShell(shell string, lookPath lookPathFunc) string {
 	return fallback
 }
 
-func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
+func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc, command *terminalCommand) (TerminalLaunchSpec, error) {
 	fields := strings.Fields(terminal)
 	if len(fields) == 0 {
 		return TerminalLaunchSpec{}, fmt.Errorf("TERMINAL is empty")
@@ -811,12 +1058,20 @@ func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc) (
 	name := fields[0]
 	args := fields[1:]
 	if commandExists(name, lookPath) {
+		if command != nil {
+			// Best-effort: most terminals accept `-e <command>` to run a
+			// command instead of an interactive shell.
+			args = append(append([]string{}, args...), "-e", "sh", "-c", command.shellCommand())
+		}
 		cmd := exec.Command(name, args...)
 		cmd.Dir = path
-		return TerminalLaunchSpec{Cmd: cmd}, nil
+		return TerminalLaunchSpec{Cmd: cmd, Detached: command != nil}, nil
 	}
 
 	if goos == "darwin" {
+		if command != nil {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: TERMINAL %q must be on PATH to run a command; run inside tmux/zellij or use a terminal that accepts -e", terminal)
+		}
 		return TerminalLaunchSpec{
 			Cmd: exec.Command("open", "-a", name, path),
 		}, nil
@@ -1006,11 +1261,58 @@ tmux has-session -t "$session" 2>/dev/null || tmux new-session -d -s "$session" 
 tmux switch-client -t "$session"
 `
 
+const tmuxSwitchRunScript = `
+session=$1
+path=$2
+cmd=$3
+tmux has-session -t "$session" 2>/dev/null || tmux new-session -d -s "$session" -c "$path" "$cmd"
+tmux switch-client -t "$session"
+`
+
+// tmuxSwitchCommand creates (if needed) and switches to the worktree session
+// from within an existing tmux client. With a command it runs the command in a
+// freshly created session.
+func tmuxSwitchCommand(sessionName, path string, command *terminalCommand) *exec.Cmd {
+	if command != nil {
+		return exec.Command("sh", "-c", tmuxSwitchRunScript, "wtui", sessionName, path, command.shellCommand())
+	}
+	return exec.Command("sh", "-c", tmuxSwitchScript, "wtui", sessionName, path)
+}
+
+// tmuxNewSessionCommand attaches to (creating if needed) the worktree session
+// in the current terminal. With a command it runs the command on creation.
+func tmuxNewSessionCommand(sessionName, path string, command *terminalCommand) *exec.Cmd {
+	args := []string{"new-session", "-A", "-s", sessionName, "-c", path}
+	if command != nil {
+		args = append(args, command.shellCommand())
+	}
+	return exec.Command("tmux", args...)
+}
+
+// zellijAttachLocalCommand attaches to (creating if needed) the worktree
+// session in the current terminal. With a command it hands the TTY to a shell
+// running the agent directly, since Zellij cannot create a detached session
+// running a command from outside an existing session.
+func zellijAttachLocalCommand(sessionName, path string, command *terminalCommand) *exec.Cmd {
+	if command != nil {
+		return exec.Command("sh", "-c", command.shellCommand())
+	}
+	cmd := exec.Command("zellij", "attach", "--create", sessionName)
+	cmd.Dir = path
+	return cmd
+}
+
 func commandExists(name string, lookPath lookPathFunc) bool {
 	_, err := lookPath(name)
 	return err == nil
 }
 
+// externalTerminalCommand opens macOS Terminal running shellCommand. shellCommand
+// is embedded via Go %q, which escapes the AppleScript string; untrusted values
+// inside it are already single-quoted by shellQuote, so they cannot break out of
+// either the AppleScript string or the shell. Exotic control characters (bell,
+// vtab) are assumed absent from paths/branches/prompts; they would be mangled by
+// the AppleScript layer but cannot inject.
 func externalTerminalCommand(shellCommand string) *exec.Cmd {
 	return exec.Command(
 		"osascript",
@@ -1019,11 +1321,20 @@ func externalTerminalCommand(shellCommand string) *exec.Cmd {
 	)
 }
 
-func tmuxAttachCommand(sessionName, path string) string {
-	return "tmux new-session -A -s " + shellQuote(sessionName) + " -c " + shellQuote(path)
+func tmuxAttachCommand(sessionName, path string, command *terminalCommand) string {
+	cmd := "tmux new-session -A -s " + shellQuote(sessionName) + " -c " + shellQuote(path)
+	if command != nil {
+		cmd += " " + shellQuote(command.shellCommand())
+	}
+	return cmd
 }
 
-func zellijAttachCommand(sessionName, path string) string {
+func zellijAttachCommand(sessionName, path string, command *terminalCommand) string {
+	if command != nil {
+		// A brand-new external terminal has no Zellij session to attach to, so
+		// run the agent directly in the opened window.
+		return command.shellCommand()
+	}
 	return "cd " + shellQuote(path) + " && zellij attach --create " + shellQuote(sessionName)
 }
 

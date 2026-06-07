@@ -1543,10 +1543,10 @@ func TestOpenVSCode_RunsWithoutPanic(t *testing.T) {
 	_ = actions.OpenVSCode(t.TempDir())
 }
 
-func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
+func TestAgentCommand_BuildsSupportedCommands(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
-			launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+			cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 				Command:      command,
 				LaunchID:     "launch-1",
 				RepoPath:     "/repo",
@@ -1555,23 +1555,20 @@ func TestAgentLaunch_BuildsSupportedCommands(t *testing.T) {
 				Commit:       "abcdef",
 			})
 			if err != nil {
-				t.Fatalf("AgentLaunch returned error: %v", err)
+				t.Fatalf("AgentCommand returned error: %v", err)
 			}
-			if launch.Cmd.Dir != "/repo/worktree" {
-				t.Fatalf("expected command dir /repo/worktree, got %q", launch.Cmd.Dir)
+			if cmd.Dir != "/repo/worktree" {
+				t.Fatalf("expected command dir /repo/worktree, got %q", cmd.Dir)
 			}
-			if !launch.Interactive {
-				t.Fatal("expected agent launch to be interactive")
-			}
-			if len(launch.Cmd.Args) == 0 || launch.Cmd.Args[0] != command {
-				t.Fatalf("expected command args to start with %q, got %#v", command, launch.Cmd.Args)
+			if len(cmd.Args) == 0 || cmd.Args[0] != command {
+				t.Fatalf("expected command args to start with %q, got %#v", command, cmd.Args)
 			}
 		})
 	}
 }
 
-func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandAddsSessionMetadataEnvironment(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1581,10 +1578,10 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	env := envMap(launch.Cmd.Env)
+	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
 		"WTUI_AGENT":              "codex",
 		"WTUI_LAUNCH_ID":          "launch-1",
@@ -1596,13 +1593,13 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
 	} {
 		if env[key] != want {
-			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
 		}
 	}
 }
 
-func TestAgentLaunchCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1613,23 +1610,23 @@ func TestAgentLaunchCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 		InitialPrompt:    "Read the plan and begin implementation.",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	env := envMap(launch.Cmd.Env)
+	env := envMap(cmd.Env)
 	if env["WTUI_PLAN_ID"] != "plan-1" {
 		t.Fatalf("WTUI_PLAN_ID = %q, want plan-1", env["WTUI_PLAN_ID"])
 	}
 	if env["WTUI_PLAN_PATH"] != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
 		t.Fatalf("WTUI_PLAN_PATH = %q", env["WTUI_PLAN_PATH"])
 	}
-	if got := launch.Cmd.Args[len(launch.Cmd.Args)-1]; got != "Read the plan and begin implementation." {
-		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, launch.Cmd.Args)
+	if got := cmd.Args[len(cmd.Args)-1]; got != "Read the plan and begin implementation." {
+		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, cmd.Args)
 	}
 }
 
-func TestAgentLaunchAddsPlanPhaseEnvironment(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandAddsPlanPhaseEnvironment(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:         "codex",
 		WorktreePath:    "/repo/worktree",
 		PlanID:          "plan-1",
@@ -1639,22 +1636,22 @@ func TestAgentLaunchAddsPlanPhaseEnvironment(t *testing.T) {
 		PlanPhaseStatus: "pending",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	env := envMap(launch.Cmd.Env)
+	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
 		"WTUI_PLAN_PHASE_ID":     "p2",
 		"WTUI_PLAN_PHASE_TITLE":  "CLI subcommands",
 		"WTUI_PLAN_PHASE_STATUS": "pending",
 	} {
 		if env[key] != want {
-			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
 		}
 	}
 }
 
-func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
+func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 	t.Setenv("CUSTOM_KEEP", "still-here")
 	for _, key := range []string{
 		"WTUI_AGENT",
@@ -1674,7 +1671,7 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		t.Setenv(key, "inherited-"+key)
 	}
 
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-2",
 		RepoPath:         "/repo",
@@ -1684,12 +1681,12 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		PlanID:           "plan-2",
 		PlanPath:         "/state/wtui/sessions/v1/plans/plan-2/plan.md",
-		PlanPhaseID:      "p2",
-		PlanPhaseTitle:   "Launch environment",
-		PlanPhaseStatus:  "in_progress",
+		PlanPhaseID:      "phase-2",
+		PlanPhaseTitle:   "Phase two",
+		PlanPhaseStatus:  "pending",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
 	for key, want := range map[string]string{
@@ -1703,22 +1700,22 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
 		"WTUI_PLAN_ID":            "plan-2",
 		"WTUI_PLAN_PATH":          "/state/wtui/sessions/v1/plans/plan-2/plan.md",
-		"WTUI_PLAN_PHASE_ID":      "p2",
-		"WTUI_PLAN_PHASE_TITLE":   "Launch environment",
-		"WTUI_PLAN_PHASE_STATUS":  "in_progress",
+		"WTUI_PLAN_PHASE_ID":      "phase-2",
+		"WTUI_PLAN_PHASE_TITLE":   "Phase two",
+		"WTUI_PLAN_PHASE_STATUS":  "pending",
 	} {
-		got, count := envEntryValue(launch.Cmd.Env, key)
+		got, count := envEntryValue(cmd.Env, key)
 		if got != want || count != 1 {
-			t.Fatalf("%s appears %d time(s) with value %q, want exactly one %q in env %#v", key, count, got, want, launch.Cmd.Env)
+			t.Fatalf("%s appears %d time(s) with value %q, want exactly one %q in env %#v", key, count, got, want, cmd.Env)
 		}
 	}
-	if got := envMap(launch.Cmd.Env)["CUSTOM_KEEP"]; got != "still-here" {
-		t.Fatalf("CUSTOM_KEEP = %q, want unrelated env preserved in %#v", got, launch.Cmd.Env)
+	if got := envMap(cmd.Env)["CUSTOM_KEEP"]; got != "still-here" {
+		t.Fatalf("CUSTOM_KEEP = %q, want unrelated env preserved in %#v", got, cmd.Env)
 	}
 }
 
-func TestAgentLaunchClaudeAddsPromptAsFinalArg(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandClaudeAddsPromptAsFinalArg(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:       "claude",
 		LaunchID:      "launch-1",
 		RepoPath:      "/repo",
@@ -1728,31 +1725,31 @@ func TestAgentLaunchClaudeAddsPromptAsFinalArg(t *testing.T) {
 		InitialPrompt: "Read the plan and begin implementation.",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	env := envMap(launch.Cmd.Env)
+	env := envMap(cmd.Env)
 	if env["WTUI_PLAN_ID"] != "plan-1" || env["WTUI_PLAN_PATH"] != "/state/plans/plan-1/plan.md" {
 		t.Fatalf("plan env not exported: %#v", env)
 	}
-	if got := launch.Cmd.Args[len(launch.Cmd.Args)-1]; got != "Read the plan and begin implementation." {
-		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, launch.Cmd.Args)
+	if got := cmd.Args[len(cmd.Args)-1]; got != "Read the plan and begin implementation." {
+		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, cmd.Args)
 	}
 }
 
-func TestAgentLaunchEmptyPromptLeavesProviderArgsUnchanged(t *testing.T) {
+func TestAgentCommandEmptyPromptLeavesProviderArgsUnchanged(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
-			withoutPlan, err := actions.AgentLaunch(actions.AgentLaunchContext{
+			withoutPlan, err := actions.AgentCommand(actions.AgentLaunchContext{
 				Command:      command,
 				LaunchID:     "launch-1",
 				RepoPath:     "/repo",
 				WorktreePath: "/repo/worktree",
 			})
 			if err != nil {
-				t.Fatalf("AgentLaunch without prompt returned error: %v", err)
+				t.Fatalf("AgentCommand without prompt returned error: %v", err)
 			}
-			withEmptyPrompt, err := actions.AgentLaunch(actions.AgentLaunchContext{
+			withEmptyPrompt, err := actions.AgentCommand(actions.AgentLaunchContext{
 				Command:       command,
 				LaunchID:      "launch-1",
 				RepoPath:      "/repo",
@@ -1760,20 +1757,20 @@ func TestAgentLaunchEmptyPromptLeavesProviderArgsUnchanged(t *testing.T) {
 				InitialPrompt: "",
 			})
 			if err != nil {
-				t.Fatalf("AgentLaunch with empty prompt returned error: %v", err)
+				t.Fatalf("AgentCommand with empty prompt returned error: %v", err)
 			}
-			if strings.Join(withEmptyPrompt.Cmd.Args, "\x00") != strings.Join(withoutPlan.Cmd.Args, "\x00") {
-				t.Fatalf("empty prompt changed args:\nwithout=%#v\nwith=%#v", withoutPlan.Cmd.Args, withEmptyPrompt.Cmd.Args)
+			if strings.Join(withEmptyPrompt.Args, "\x00") != strings.Join(withoutPlan.Args, "\x00") {
+				t.Fatalf("empty prompt changed args:\nwithout=%#v\nwith=%#v", withoutPlan.Args, withEmptyPrompt.Args)
 			}
 		})
 	}
 }
 
-func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
+func TestAgentCommandResolvesMissingCommitFromWorktree(t *testing.T) {
 	repoPath := setupRepo(t)
 	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
 
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:      "codex",
 		LaunchID:     "launch-1",
 		RepoPath:     repoPath,
@@ -1781,19 +1778,19 @@ func TestAgentLaunchResolvesMissingCommitFromWorktree(t *testing.T) {
 		Branch:       "main",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if got := envMap(launch.Cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
+	if got := envMap(cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
 		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
 	}
 }
 
-func TestAgentLaunchResolvesMissingCommitFromWorkingDir(t *testing.T) {
+func TestAgentCommandResolvesMissingCommitFromWorkingDir(t *testing.T) {
 	repoPath := setupRepo(t)
 	wantCommit := strings.TrimSpace(runOutput(t, repoPath, "git", "rev-parse", "HEAD"))
 
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:         "codex",
 		LaunchID:        "launch-1",
 		RepoPath:        repoPath,
@@ -1801,16 +1798,16 @@ func TestAgentLaunchResolvesMissingCommitFromWorkingDir(t *testing.T) {
 		ResumeSessionID: "codex-session-1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if got := envMap(launch.Cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
+	if got := envMap(cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
 		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
 	}
 }
 
-func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandWiresCodexSessionHook(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1820,23 +1817,23 @@ func TestAgentLaunchWiresCodexSessionHook(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	args := strings.Join(launch.Cmd.Args, "\x00")
+	args := strings.Join(cmd.Args, "\x00")
 	for _, want := range []string{
 		"--config",
 		"hooks.Stop",
 		"session-hook --provider codex",
 	} {
 		if !strings.Contains(args, want) {
-			t.Fatalf("expected codex launch args to contain %q, got %#v", want, launch.Cmd.Args)
+			t.Fatalf("expected codex launch args to contain %q, got %#v", want, cmd.Args)
 		}
 	}
 }
 
-func TestAgentLaunchBuildsCodexResumeCommand(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandBuildsCodexResumeCommand(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1847,16 +1844,13 @@ func TestAgentLaunchBuildsCodexResumeCommand(t *testing.T) {
 		ResumeSessionID:  "codex-session-1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if launch.Cmd.Dir != "/repo/worktree" {
-		t.Fatalf("command dir = %q, want /repo/worktree", launch.Cmd.Dir)
+	if cmd.Dir != "/repo/worktree" {
+		t.Fatalf("command dir = %q, want /repo/worktree", cmd.Dir)
 	}
-	if !launch.Interactive {
-		t.Fatal("expected resume launch to be interactive")
-	}
-	args := launch.Cmd.Args
+	args := cmd.Args
 	if len(args) != 5 {
 		t.Fatalf("args = %#v, want command plus --config hook, resume, and id", args)
 	}
@@ -1867,7 +1861,7 @@ func TestAgentLaunchBuildsCodexResumeCommand(t *testing.T) {
 		t.Fatalf("expected codex hook config in args, got %#v", args)
 	}
 
-	env := envMap(launch.Cmd.Env)
+	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
 		"WTUI_AGENT":              "codex",
 		"WTUI_LAUNCH_ID":          "launch-1",
@@ -1879,13 +1873,13 @@ func TestAgentLaunchBuildsCodexResumeCommand(t *testing.T) {
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
 	} {
 		if env[key] != want {
-			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, launch.Cmd.Env)
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
 		}
 	}
 }
 
-func TestAgentLaunchWiresClaudeSessionHook(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandWiresClaudeSessionHook(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "claude",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1895,23 +1889,23 @@ func TestAgentLaunchWiresClaudeSessionHook(t *testing.T) {
 		SessionStateRoot: "/state/wtui/sessions/v1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	args := strings.Join(launch.Cmd.Args, "\x00")
+	args := strings.Join(cmd.Args, "\x00")
 	for _, want := range []string{
 		"--settings",
 		"SessionEnd",
 		"session-hook --provider claude",
 	} {
 		if !strings.Contains(args, want) {
-			t.Fatalf("expected claude launch args to contain %q, got %#v", want, launch.Cmd.Args)
+			t.Fatalf("expected claude launch args to contain %q, got %#v", want, cmd.Args)
 		}
 	}
 }
 
-func TestAgentLaunchBuildsClaudeResumeCommand(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandBuildsClaudeResumeCommand(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "claude",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1922,10 +1916,10 @@ func TestAgentLaunchBuildsClaudeResumeCommand(t *testing.T) {
 		ResumeSessionID:  "claude-session-1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	args := launch.Cmd.Args
+	args := cmd.Args
 	if len(args) != 5 {
 		t.Fatalf("args = %#v, want command plus --settings hook, --resume, and id", args)
 	}
@@ -1937,8 +1931,8 @@ func TestAgentLaunchBuildsClaudeResumeCommand(t *testing.T) {
 	}
 }
 
-func TestAgentLaunchResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing.T) {
-	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+func TestAgentCommandResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
@@ -1950,14 +1944,24 @@ func TestAgentLaunchResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing.
 		ResumeSessionID:  "codex-session-1",
 	})
 	if err != nil {
-		t.Fatalf("AgentLaunch returned error: %v", err)
+		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if launch.Cmd.Dir != "/repo/worktree/subdir" {
-		t.Fatalf("command dir = %q, want /repo/worktree/subdir", launch.Cmd.Dir)
+	if cmd.Dir != "/repo/worktree/subdir" {
+		t.Fatalf("command dir = %q, want /repo/worktree/subdir", cmd.Dir)
 	}
-	if got := envMap(launch.Cmd.Env)["WTUI_WORKTREE_PATH"]; got != "/repo/worktree" {
+	if got := envMap(cmd.Env)["WTUI_WORKTREE_PATH"]; got != "/repo/worktree" {
 		t.Fatalf("WTUI_WORKTREE_PATH = %q, want /repo/worktree", got)
+	}
+}
+
+func TestAgentCommand_RejectsMissingOrUnsupportedCommand(t *testing.T) {
+	for _, command := range []string{"", "vim"} {
+		t.Run(command, func(t *testing.T) {
+			if _, err := actions.AgentCommand(actions.AgentLaunchContext{Command: command, WorktreePath: "/repo/worktree"}); err == nil {
+				t.Fatal("expected AgentCommand error")
+			}
+		})
 	}
 }
 

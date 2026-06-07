@@ -3406,10 +3406,16 @@ func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
+	cleanupCalled := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("false")}, nil
+			return actions.TerminalLaunchSpec{
+				Cmd: exec.Command("false"),
+				Cleanup: func() {
+					cleanupCalled = true
+				},
+			}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -3423,6 +3429,9 @@ func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 	m, _ = update(m, cmd())
 	if !strings.Contains(m.View(), "exit status") {
 		t.Fatal("expected agent process error in status bar")
+	}
+	if !cleanupCalled {
+		t.Fatal("expected failed detached launch to run cleanup")
 	}
 }
 
@@ -3459,6 +3468,65 @@ func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
 	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx})
 	if !strings.Contains(m.View(), "finalize session: state unavailable") {
 		t.Fatal("expected finalize error in status bar")
+	}
+}
+
+func TestModel_DetachedAgentResultDoesNotFinalize(t *testing.T) {
+	finalized := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
+			finalized = true
+			return nil
+		},
+	})
+	ctx := actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		Branch:       "main",
+	}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true})
+	if finalized {
+		t.Fatal("detached launch must not finalize the captured session; provider hooks own that")
+	}
+}
+
+func TestModel_DetachedAgentResultShowsLaunchedStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true})
+	view := m.View()
+	if !strings.Contains(view, "Launched codex") {
+		t.Fatalf("expected detached launch status mentioning the agent, got view:\n%s", view)
+	}
+	if strings.Contains(view, "complete") || strings.Contains(view, "finished") {
+		t.Fatalf("detached launch status should not imply the agent finished, got view:\n%s", view)
+	}
+}
+
+func TestModel_DetachedAgentResultErrorTakesPrecedence(t *testing.T) {
+	finalized := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
+			finalized = true
+			return nil
+		},
+	})
+	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
+
+	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true, Err: "exit status 1"})
+	if finalized {
+		t.Fatal("detached launch must not finalize even on error")
+	}
+	view := m.View()
+	if !strings.Contains(view, "exit status 1") {
+		t.Fatalf("expected detached launch error in status bar, got view:\n%s", view)
+	}
+	if strings.Contains(view, "Launched codex") {
+		t.Fatalf("error should take precedence over the launched-status message, got view:\n%s", view)
 	}
 }
 
