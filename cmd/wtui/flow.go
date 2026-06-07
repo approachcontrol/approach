@@ -15,7 +15,7 @@ import (
 // the artifact root but must never scan repositories or start the TUI.
 func runFlow(args []string, deps runDeps) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read> [flags]")
+		return fmt.Errorf("usage: wtui flow <create|list|read|phase> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -24,6 +24,8 @@ func runFlow(args []string, deps runDeps) error {
 		return runFlowList(args[3:], deps)
 	case "read":
 		return runFlowRead(args[3:], deps)
+	case "phase":
+		return runFlowPhase(args[3:], deps)
 	default:
 		return fmt.Errorf("unknown flow subcommand %q", args[2])
 	}
@@ -147,6 +149,60 @@ func runFlowRead(args []string, deps runDeps) error {
 		return err
 	}
 	record, err := store.Read(*flowID)
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func runFlowPhase(args []string, deps runDeps) error {
+	if len(args) < 1 || args[0] != "set" {
+		return fmt.Errorf("usage: wtui flow phase set [flags]")
+	}
+	return runFlowPhaseSet(args[1:], deps)
+}
+
+func runFlowPhaseSet(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow phase set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", "", "flow id")
+	phaseID := flags.String("phase-id", "", "phase id")
+	status := flags.String("status", "", "phase status")
+	outcome := flags.String("outcome", "", "phase outcome")
+	summary := flags.String("summary", "", "phase summary")
+	notes := flags.String("notes", "", "phase notes")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow phase set requires --flow-id")
+	}
+	if *phaseID == "" {
+		return fmt.Errorf("flow phase set requires --phase-id")
+	}
+	if *status == "" {
+		return fmt.Errorf("flow phase set requires --status")
+	}
+	switch *status {
+	case flowstore.PhaseCompleted, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked, flowstore.PhaseSkipped:
+	case flowstore.PhaseReady:
+		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
+	default:
+		return fmt.Errorf("unsupported agent-facing phase status %q", *status)
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  *flowID,
+		PhaseID: *phaseID,
+		Status:  *status,
+		Outcome: *outcome,
+		Notes:   *notes,
+		Summary: *summary,
+	})
 	if err != nil {
 		return err
 	}
