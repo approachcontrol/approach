@@ -556,7 +556,8 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	title := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render(modeShortcutTitle(sp.Mode))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
-	if !compact {
+	tight := height <= 7
+	if !compact && !tight {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
 	sectionCount := 0
@@ -567,7 +568,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 			continue
 		}
 		if !compact {
-			if sectionCount > 0 {
+			if sectionCount > 0 && !tight {
 				lines = append(lines, strings.Repeat(" ", width))
 			}
 			lines = append(lines, truncateToWidth(" "+shortcutGroupStyle.Render(section.Title), width))
@@ -750,7 +751,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions,
 				shortcutHint{Key: "enter", Label: "transcript"},
 				shortcutHint{Key: "r", Label: "resume"},
-				shortcutHint{Key: "s", Label: "copy id"},
+				shortcutHint{Key: "s", Label: "summary"},
+				shortcutHint{Key: "y", Label: "copy id"},
 			)
 		}
 	case ModePlans:
@@ -1277,12 +1279,13 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		if worktree == "." || worktree == string(filepath.Separator) {
 			worktree = ""
 		}
+		summary := sessionSummaryDisplayText(record.Summary)
 		line := formatSessionColumns("   ",
 			diffHdrStyle.Render(fitSessionColumn(provider, sessionProviderWidth)),
 			branchStyle.Render(fitSessionColumn(record.Branch, sessionBranchWidth)),
 			stashDateStyle.Render(fitSessionColumn(worktree, sessionWorktreeWidth)),
 			statusStyle.Render(fitSessionColumn(record.Status, sessionStatusWidth)),
-			stashMsgStyle.Render(record.Summary),
+			stashMsgStyle.Render(summary),
 		)
 		if i == selected {
 			selectedLine := truncateToWidth(formatSessionColumns(" > ",
@@ -1290,13 +1293,17 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 				record.Branch,
 				worktree,
 				record.Status,
-				record.Summary,
+				summary,
 			), width)
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
+}
+
+func sessionSummaryDisplayText(summary string) string {
+	return strings.Join(strings.Fields(summary), " ")
 }
 
 const (

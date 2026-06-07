@@ -181,6 +181,95 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
+	params := RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeSessions,
+		Sessions: []sessions.SessionRecord{
+			{
+				Provider:  sessions.ProviderCodex,
+				SessionID: "codex-above",
+				Status:    "ended",
+				RepoPath:  "/dev/wtui",
+				Branch:    "above",
+				Summary:   "above summary",
+			},
+			{
+				Provider:  sessions.ProviderCodex,
+				SessionID: "codex-selected",
+				Status:    "ended",
+				RepoPath:  "/dev/wtui",
+				Branch:    "selected",
+				Summary:   "selected first line\n\nselected third line",
+			},
+			{
+				Provider:  sessions.ProviderClaude,
+				SessionID: "claude-below",
+				Status:    "ended",
+				RepoPath:  "/dev/wtui",
+				Branch:    "below",
+				Summary:   "below summary",
+			},
+		},
+		ActivePane:      1,
+		SessionSelected: 1,
+	}
+
+	baseline := strippedLines(Render(params))
+	view := Render(params)
+	lines := strippedLines(view)
+
+	baselineAbove := lineIndexContaining(baseline, "above summary")
+	above := lineIndexContaining(lines, "above summary")
+	row := lineIndexContaining(lines, "selected first line")
+	below := lineIndexContaining(lines, "below summary")
+
+	if above != baselineAbove {
+		t.Fatalf("summary should not force preceding content up, above row index=%d baseline=%d:\n%s", above, baselineAbove, view)
+	}
+	if row < 0 || below != row+1 {
+		t.Fatalf("summary should occupy only the selected row, row=%d below=%d:\n%s", row, below, view)
+	}
+	if !strings.Contains(lines[row], "selected first line selected third line") {
+		t.Fatalf("summary whitespace should collapse onto one display row:\n%s", view)
+	}
+}
+
+func TestRender_SessionsModeTruncatesSummaryToPaneWidth(t *testing.T) {
+	const rightContentWidth = 58
+	lines := renderSessionPane([]sessions.SessionRecord{{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "codex-selected",
+		Status:    "ended",
+		RepoPath:  "/dev/wtui",
+		Branch:    "selected",
+		Summary:   "selected first line " + strings.Repeat("very long summary ", 20),
+	}}, 0, 0, rightContentWidth, 4)
+	row := ""
+	for _, line := range lines {
+		stripped := ansi.Strip(line)
+		if strings.Contains(stripped, "selected") {
+			row = stripped
+			break
+		}
+	}
+
+	if row == "" {
+		t.Fatalf("expected session row in view:\n%s", strings.Join(lines, "\n"))
+	}
+	if lipgloss.Width(row) > rightContentWidth {
+		t.Fatalf("session row width = %d, want <= %d:\n%s", lipgloss.Width(row), rightContentWidth, strings.Join(lines, "\n"))
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "very long summary very long summary very long summary very long summary") {
+			t.Fatalf("summary should be truncated to pane width, got overlong visible text:\n%s", strings.Join(lines, "\n"))
+		}
+	}
+}
+
 func lineContaining(view, needle string) string {
 	for _, line := range strings.Split(view, "\n") {
 		stripped := ansi.Strip(line)
@@ -189,6 +278,23 @@ func lineContaining(view, needle string) string {
 		}
 	}
 	return ""
+}
+
+func strippedLines(view string) []string {
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Strip(line)
+	}
+	return lines
+}
+
+func lineIndexContaining(lines []string, needle string) int {
+	for i, line := range lines {
+		if strings.Contains(line, needle) {
+			return i
+		}
+	}
+	return -1
 }
 
 func shortcutPaneLines(view string) []string {
@@ -264,10 +370,13 @@ func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  transcript", "r      resume", "s      copy id"} {
+	for _, want := range []string{"enter  transcript", "r      resume", "s      summary", "y      copy id"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("sessions view should expose selected session shortcut %q:\n%s", want, pane)
 		}
+	}
+	if strings.Contains(pane, "s      copy id") {
+		t.Fatalf("sessions view should not expose old copy-id shortcut:\n%s", pane)
 	}
 }
 
@@ -288,7 +397,7 @@ func TestRender_SessionsModeHidesSessionActionsWithoutSelection(t *testing.T) {
 		SessionSelected: -1,
 	})
 	pane := shortcutPaneText(view)
-	for _, hidden := range []string{"enter  transcript", "r      resume", "s      copy id"} {
+	for _, hidden := range []string{"enter  transcript", "r      resume", "s      summary", "y      copy id", "s      copy id"} {
 		if strings.Contains(pane, hidden) {
 			t.Fatalf("sessions view should hide %q without selected session:\n%s", hidden, pane)
 		}
@@ -818,7 +927,7 @@ func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  transcript", "r      resume", "s      copy id", shortcutOverflowMarker} {
+	for _, want := range []string{"enter  transcript", "r      resume", "s      summary", "y      copy id", shortcutOverflowMarker} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("short session shortcut pane should keep selected session action %q, got:\n%s", want, pane)
 		}
