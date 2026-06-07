@@ -18,8 +18,8 @@ are already implemented and should be treated as the baseline product:
 
 - Multi-repo scanning under `WORKTREE_ROOT` or `~/dev`, up to two levels deep,
   excluding sibling `*-worktrees` directories.
-- Seven right-pane modes: worktrees, branches, stashes, history, reflog,
-  captured agent sessions, and saved agent plans.
+- Eight right-pane modes: worktrees, branches, stashes, history, reflog,
+  captured agent sessions, saved agent plans, and task-centric Flows.
 - Read-only default posture with explicit destructive mode (`D`) before delete,
   drop, or prune actions are exposed.
 - Worktree creation from an existing branch, tag, ref, or new branch name using
@@ -44,7 +44,11 @@ are already implemented and should be treated as the baseline product:
   with normalized transcript overlays, session resume actions, raw session ID
   copying, and user-state storage outside repos.
 - Saved agent plans persisted through the `wtui plan` CLI and browsed in the
-  plans pane with per-phase progress.
+  plans pane with per-phase progress, phase expansion, plan-path copying, and
+  editable launch instructions for whole-plan or selected-phase agent launch.
+- Flow records persisted through the `wtui flow` CLI and browsed in the flows
+  pane with derived status, phase progress, PR metadata, and repo-scoped
+  filtering.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.
@@ -113,6 +117,7 @@ Goal: add context that helps users decide which worktree needs attention.
 | GitHub/GitLab provider config | Needed for PR creation, PR detection, and CI lookup without hardcoding one provider. | P2 |
 | Worktree notes, labels, or tags | Useful once users have many parallel branches, especially for review or agent-driven work. | P3 |
 | Agent session follow-ups | Add open-native-transcript actions and richer status when provider signals are reliable. | P3 |
+| Flow follow-ups | Add mutation/update commands or agent adapters for phase/session/PR/merge metadata after the browse-only v1 store is proven. | P3 |
 | Desktop notifications | Notify on long-running fetch/pull/batch completion only after the operation model is mature. | P3 |
 
 ### Phase 5: Release and Community Hygiene

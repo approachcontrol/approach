@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/planstore"
@@ -70,6 +71,10 @@ func newPlanPane() pane.Pane[planstore.PlanRecord] {
 	return pane.New(planSearchText, planItemHeight(""))
 }
 
+func newFlowPane() pane.Pane[flowstore.FlowRecord] {
+	return pane.New(flowSearchText, fixedHeight[flowstore.FlowRecord])
+}
+
 func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
 	return func(record planstore.PlanRecord, _ int) int {
 		return planVisualHeight(record, expandedPlanID)
@@ -109,6 +114,8 @@ func (m Model) activeItemPaneQuery() string {
 		return m.sessions.Query()
 	case ui.ModePlans:
 		return m.plans.Query()
+	case ui.ModeFlows:
+		return m.flows.Query()
 	default:
 		return ""
 	}
@@ -127,6 +134,7 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	m.reflogs = m.reflogs.SetQueryPreserveIndex(query)
 	m.sessions = m.sessions.SetQueryPreserveIndex(query)
 	m.plans = m.plans.SetQueryPreserveIndex(query)
+	m.flows = m.flows.SetQueryPreserveIndex(query)
 
 	switch m.mode {
 	case ui.ModeWorktrees:
@@ -150,6 +158,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	case ui.ModePlans:
 		m.plans = m.plans.SetQuery(query)
 		m = m.setExpandedPlanID("")
+	case ui.ModeFlows:
+		m.flows = m.flows.SetQuery(query)
+		m = m.reflowFlows()
 	}
 	return m
 }
@@ -163,6 +174,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowReflogs()
 	m = m.reflowSessions()
 	m = m.reflowPlans()
+	m = m.reflowFlows()
 	return m
 }
 
@@ -226,6 +238,14 @@ func (m Model) filteredPlans() []planstore.PlanRecord {
 	return plans
 }
 
+func (m Model) filteredFlows() []flowstore.FlowRecord {
+	if len(m.filteredRepos()) == 0 {
+		return nil
+	}
+	flows, _, _ := m.flows.View()
+	return flows
+}
+
 func planSearchText(record planstore.PlanRecord) string {
 	parts := []string{
 		record.Title,
@@ -240,6 +260,32 @@ func planSearchText(record planstore.PlanRecord) string {
 	}
 	for _, phase := range record.Phases {
 		parts = append(parts, phase.Title, phase.Status)
+	}
+	return strings.Join(parts, " ")
+}
+
+func flowSearchText(record flowstore.FlowRecord) string {
+	parts := []string{
+		record.Title,
+		record.Instructions,
+		record.Status,
+		record.Branch,
+		record.WorktreePath,
+		filepath.Base(record.WorktreePath),
+		record.PlanID,
+		record.PlanPath,
+		record.PR.URL,
+		record.PR.HeadBranch,
+		record.PR.BaseBranch,
+	}
+	if record.PR.Number > 0 {
+		parts = append(parts, fmt.Sprintf("#%d", record.PR.Number))
+	}
+	for _, phase := range record.Phases {
+		parts = append(parts, phase.Title, phase.Status, phase.Summary)
+		for _, session := range phase.Sessions {
+			parts = append(parts, session.Provider, session.SessionID, session.Status)
+		}
 	}
 	return strings.Join(parts, " ")
 }

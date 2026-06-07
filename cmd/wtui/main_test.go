@@ -152,6 +152,36 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 	}
 }
 
+func TestRuntimeArtifactRootPrecedenceIncludesFlowRoot(t *testing.T) {
+	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
+	t.Setenv("WTUI_SESSION_STATE_ROOT", "/from/session")
+	t.Setenv("WTUI_PLAN_STATE_ROOT", "/from/plan")
+	t.Setenv("WTUI_FLOW_STATE_ROOT", "/from/flow")
+
+	if got := runtimeArtifactRoot(cfg); got != "/from/flow" {
+		t.Fatalf("artifact root = %q, want flow root", got)
+	}
+}
+
+func TestRuntimeArtifactRootFallsBackThroughPlanSessionConfig(t *testing.T) {
+	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
+	t.Setenv("WTUI_SESSION_STATE_ROOT", "/from/session")
+	t.Setenv("WTUI_PLAN_STATE_ROOT", "/from/plan")
+	if got := runtimeArtifactRoot(cfg); got != "/from/plan" {
+		t.Fatalf("artifact root = %q, want plan root", got)
+	}
+
+	t.Setenv("WTUI_PLAN_STATE_ROOT", "")
+	if got := runtimeArtifactRoot(cfg); got != "/from/session" {
+		t.Fatalf("artifact root = %q, want session root", got)
+	}
+
+	t.Setenv("WTUI_SESSION_STATE_ROOT", "")
+	if got := runtimeArtifactRoot(cfg); got != "/from/config" {
+		t.Fatalf("artifact root = %q, want config root", got)
+	}
+}
+
 func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 	root := t.TempDir()
 	transcriptPath := filepath.Join(root, "claude.jsonl")

@@ -191,7 +191,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.startFetchForMode()
 		}
 	case "right", "l":
-		if m.mode < ui.ModePlans {
+		if m.mode < ui.ModeFlows {
 			m.mode++
 			m = m.resetModeCursors()
 			return m.startFetchForMode()
@@ -237,6 +237,12 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			m.mode = ui.ModePlans
 			m = m.resetModeCursors()
 			return m.startFetchPlans()
+		}
+	case "8":
+		if m.mode != ui.ModeFlows {
+			m.mode = ui.ModeFlows
+			m = m.resetModeCursors()
+			return m.startFetchFlows()
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -349,6 +355,8 @@ func (m Model) moveCursor(delta int) Model {
 		if after := m.selectedPlanID(); before != "" && after != before {
 			m = m.setExpandedPlanID("")
 		}
+	case ui.ModeFlows:
+		m.flows = m.flows.Move(delta, h, w)
 	}
 	return m
 }
@@ -1084,6 +1092,7 @@ func (m Model) resetModeCursors() Model {
 	m.reflogs = m.reflogs.ResetSelection()
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
+	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
 	return m
 }
@@ -1098,6 +1107,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.reflogs = m.reflogs.SetItems(nil).ResetSelection()
 	m.sessions = m.sessions.SetItems(nil).ResetSelection()
 	m.plans = m.plans.SetItems(nil).ResetSelection()
+	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
 	return m
 }
@@ -1126,6 +1136,14 @@ func (m Model) planContentHeight() int {
 	return height
 }
 
+func (m Model) flowContentHeight() int {
+	height := m.height - ui.FlowContentOverhead
+	if height <= 0 {
+		return 1
+	}
+	return height
+}
+
 func (m Model) sessionContentHeight() int {
 	height := m.height - ui.SessionContentOverhead
 	if height <= 0 {
@@ -1144,6 +1162,8 @@ func (m Model) contentHeightForMode() int {
 		return m.sessionContentHeight()
 	case ui.ModePlans:
 		return m.planContentHeight()
+	case ui.ModeFlows:
+		return m.flowContentHeight()
 	default:
 		return m.rightContentHeight()
 	}

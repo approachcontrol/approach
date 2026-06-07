@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/sessions"
@@ -36,6 +37,8 @@ func (m Model) startFetchForMode() (Model, tea.Cmd) {
 		return m.startFetchSessions()
 	case ui.ModePlans:
 		return m.startFetchPlans()
+	case ui.ModeFlows:
+		return m.startFetchFlows()
 	}
 	return m, nil
 }
@@ -57,6 +60,8 @@ func (m Model) fetchForMode() tea.Cmd {
 		return m.fetchSessions(request)
 	case ui.ModePlans:
 		return m.fetchPlans(request)
+	case ui.ModeFlows:
+		return m.fetchFlows(request)
 	}
 	return nil
 }
@@ -128,6 +133,11 @@ func (m Model) startFetchPlans() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModePlans)
 	m = m.setExpandedPlanID("")
 	return m, m.fetchPlans(request)
+}
+
+func (m Model) startFetchFlows() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeFlows)
+	return m, m.fetchFlows(request)
 }
 
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
@@ -600,6 +610,20 @@ func (m Model) fetchPlans(request uint64) tea.Cmd {
 			return FetchErrorMsg{RepoPath: repoPath, Pane: "plans", Err: fmt.Sprintf("failed to load plans: %v", err), Kind: FetchList, Mode: ui.ModePlans, ListRequest: request}
 		}
 		return PlanResultMsg{RepoPath: repoPath, Plans: records, ListRequest: request}
+	}
+}
+
+func (m Model) fetchFlows(request uint64) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		records, err := m.listFlows(flowstore.FlowFilter{RepoPath: repoPath})
+		if err != nil {
+			return FetchErrorMsg{RepoPath: repoPath, Pane: "flows", Err: fmt.Sprintf("failed to load flows: %v", err), Kind: FetchList, Mode: ui.ModeFlows, ListRequest: request}
+		}
+		return FlowResultMsg{RepoPath: repoPath, Flows: records, ListRequest: request}
 	}
 }
 

@@ -65,6 +65,11 @@ func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 			msg.ListRequest = m.ListRequest(ui.ModeReflog)
 		}
 		return msg
+	case model.FlowResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeFlows)
+		}
+		return msg
 	case model.FetchErrorMsg:
 		if msg.Kind == model.FetchList && msg.ListRequest == 0 {
 			msg.ListRequest = m.ListRequest(msg.Mode)
@@ -1303,16 +1308,17 @@ func TestModel_ModeClampsAtEdges(t *testing.T) {
 	if m.Mode() != 1 {
 		t.Errorf("expected mode 1 (clamped), got %d", m.Mode())
 	}
-	// Go to mode 7 (ModePlans), right should stay at 7
+	// Go to mode 8 (ModeFlows), right should stay at 8
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 2
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 3
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 4
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 5
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 6
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 7
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // still 7
-	if m.Mode() != ui.ModePlans {
-		t.Errorf("expected plans mode (clamped), got %d", m.Mode())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // 8
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // still 8
+	if m.Mode() != ui.ModeFlows {
+		t.Errorf("expected flows mode (clamped), got %d", m.Mode())
 	}
 }
 
