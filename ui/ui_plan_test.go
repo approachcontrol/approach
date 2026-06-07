@@ -74,7 +74,7 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    120,
-		Height:   10,
+		Height:   14,
 		Mode:     ModePlans,
 		Plans: []planstore.PlanRecord{{
 			PlanID: "plan-1",
@@ -85,8 +85,31 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 		PlanSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "enter  phases") || !strings.Contains(pane, "o      open") {
-		t.Fatalf("plans view should expose phases shortcut:\n%s", view)
+	for _, want := range []string{"enter  phases", "o      open", "i      implement", "y      copy path"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("plans view should expose shortcut %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(pane, "a      agent") {
+		t.Fatalf("plans view should not expose normal agent shortcut:\n%s", view)
+	}
+}
+
+func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:   0,
+		Width:      120,
+		Height:     10,
+		Mode:       ModePlans,
+		ActivePane: 1,
+	})
+
+	pane := shortcutPaneText(view)
+	for _, forbidden := range []string{"enter  phases", "o      open", "i      implement", "y      copy path", "a      agent"} {
+		if strings.Contains(pane, forbidden) {
+			t.Fatalf("empty plans view should omit %q:\n%s", forbidden, view)
+		}
 	}
 }
 

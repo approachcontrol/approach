@@ -755,8 +755,12 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		}
 	case ModePlans:
 		if sp.ActivePane == 1 && sp.PlanSelected {
-			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
-			actions = append(actions, shortcutHint{Key: "o", Label: "open"})
+			actions = append(actions,
+				shortcutHint{Key: "enter", Label: "phases"},
+				shortcutHint{Key: "o", Label: "open"},
+				shortcutHint{Key: "i", Label: "implement"},
+				shortcutHint{Key: "y", Label: "copy path"},
+			)
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {

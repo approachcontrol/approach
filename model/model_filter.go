@@ -258,6 +258,8 @@ func sessionSearchText(record sessions.SessionRecord) string {
 		record.Branch,
 		record.WorktreePath,
 		filepath.Base(record.WorktreePath),
+		record.PlanID,
+		record.PlanPath,
 		record.Model,
 		record.Status,
 		record.Summary,

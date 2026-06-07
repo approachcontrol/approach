@@ -141,6 +141,8 @@ func runSessionHook(args []string, deps runDeps) error {
 			"WTUI_LAUNCH_ID":          deps.getenv("WTUI_LAUNCH_ID"),
 			"WTUI_REPO_PATH":          deps.getenv("WTUI_REPO_PATH"),
 			"WTUI_WORKTREE_PATH":      deps.getenv("WTUI_WORKTREE_PATH"),
+			"WTUI_PLAN_ID":            deps.getenv("WTUI_PLAN_ID"),
+			"WTUI_PLAN_PATH":          deps.getenv("WTUI_PLAN_PATH"),
 			"WTUI_BRANCH":             deps.getenv("WTUI_BRANCH"),
 			"WTUI_COMMIT":             deps.getenv("WTUI_COMMIT"),
 			"WTUI_SESSION_STATE_ROOT": deps.getenv("WTUI_SESSION_STATE_ROOT"),

@@ -186,6 +186,41 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 	}
 }
 
+func TestRunSessionHookPersistsPlanEnvironment(t *testing.T) {
+	root := t.TempDir()
+	planPath := filepath.Join(root, "plans", "plan-1", "plan.md")
+
+	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{}, nil
+		},
+		getenv: func(key string) string {
+			switch key {
+			case "WTUI_PLAN_ID":
+				return "plan-1"
+			case "WTUI_PLAN_PATH":
+				return planPath
+			default:
+				return ""
+			}
+		},
+		stdin: strings.NewReader(`{"session_id":"codex-plan-1","cwd":"/repo/worktree"}`),
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	meta, err := os.ReadFile(singleSessionFile(t, root, "codex", "meta.json"))
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	for _, want := range []string{`"plan_id": "plan-1"`, `"plan_path": ` + quoteJSON(planPath)} {
+		if !strings.Contains(string(meta), want) {
+			t.Fatalf("metadata missing %s:\n%s", want, meta)
+		}
+	}
+}
+
 func TestRunSessionHookRejectsMalformedJSON(t *testing.T) {
 	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", t.TempDir()}, runDeps{
 		loadConfig: func() (config.Config, error) { return config.Config{}, nil },

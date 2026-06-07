@@ -466,6 +466,10 @@ type AgentLaunchContext struct {
 	Commit           string
 	SessionStateRoot string
 	ResumeSessionID  string
+	PlanID           string
+	PlanPath         string
+	// InitialPrompt is appended as the trailing positional prompt argument.
+	InitialPrompt string
 }
 
 // AgentLaunch returns a safe, direct command for launching a supported coding
@@ -476,6 +480,9 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		return TerminalLaunchSpec{}, err
 	}
 	args := agentLaunchArgs(command, ctx.ResumeSessionID)
+	if ctx.InitialPrompt != "" {
+		args = append(args, ctx.InitialPrompt)
+	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = ctx.WorktreePath
 	if ctx.WorkingDir != "" {
@@ -494,6 +501,8 @@ func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 		envVar{key: "WTUI_COMMIT", value: commit},
 		envVar{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
 		envVar{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		envVar{key: "WTUI_PLAN_ID", value: ctx.PlanID},
+		envVar{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
 	)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }

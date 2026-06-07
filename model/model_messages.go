@@ -1061,3 +1061,21 @@ func (m Model) handleCopySessionID() (tea.Model, tea.Cmd) {
 		return ClipboardResultMsg{}
 	}
 }
+
+func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
+	plan, ok := m.selectedPlan()
+	if !ok {
+		return m, nil
+	}
+	planPath, err := m.planMarkdownPath(plan.PlanID)
+	if err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := m.copyToClipboard(planPath); err != nil {
+			return ClipboardResultMsg{Err: err.Error()}
+		}
+		return ClipboardResultMsg{}
+	}
+}

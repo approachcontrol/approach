@@ -151,6 +151,24 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "wtui", "sessions", "v1"), nil
 }
 
+// MarkdownPath returns the expected plan.md path for planID without reading it.
+func MarkdownPath(root, planID string) (string, error) {
+	if err := validatePlanID(planID); err != nil {
+		return "", err
+	}
+	if root == "" {
+		var err error
+		root, err = DefaultRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("plan store root must be absolute: %s", root)
+	}
+	return filepath.Join(root, "plans", planID, "plan.md"), nil
+}
+
 // Root returns the artifact root in use.
 func (s *Store) Root() string {
 	return s.root

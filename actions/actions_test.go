@@ -1601,6 +1601,33 @@ func TestAgentLaunchAddsSessionMetadataEnvironment(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanID:           "plan-1",
+		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		InitialPrompt:    "Read the plan and begin implementation.",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	if env["WTUI_PLAN_ID"] != "plan-1" {
+		t.Fatalf("WTUI_PLAN_ID = %q, want plan-1", env["WTUI_PLAN_ID"])
+	}
+	if env["WTUI_PLAN_PATH"] != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
+		t.Fatalf("WTUI_PLAN_PATH = %q", env["WTUI_PLAN_PATH"])
+	}
+	if got := launch.Cmd.Args[len(launch.Cmd.Args)-1]; got != "Read the plan and begin implementation." {
+		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, launch.Cmd.Args)
+	}
+}
+
 func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 	t.Setenv("CUSTOM_KEEP", "still-here")
 	for _, key := range []string{
@@ -1612,6 +1639,8 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_COMMIT",
 		"WTUI_SESSION_STATE_ROOT",
 		"WTUI_PLAN_STATE_ROOT",
+		"WTUI_PLAN_ID",
+		"WTUI_PLAN_PATH",
 	} {
 		t.Setenv(key, "inherited-"+key)
 	}
@@ -1624,6 +1653,8 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		Branch:           "main",
 		Commit:           "ctx-commit",
 		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanID:           "plan-2",
+		PlanPath:         "/state/wtui/sessions/v1/plans/plan-2/plan.md",
 	})
 	if err != nil {
 		t.Fatalf("AgentLaunch returned error: %v", err)
@@ -1638,6 +1669,8 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 		"WTUI_COMMIT":             "ctx-commit",
 		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
+		"WTUI_PLAN_ID":            "plan-2",
+		"WTUI_PLAN_PATH":          "/state/wtui/sessions/v1/plans/plan-2/plan.md",
 	} {
 		got, count := envEntryValue(launch.Cmd.Env, key)
 		if got != want || count != 1 {
@@ -1646,6 +1679,58 @@ func TestAgentLaunchReplacesInheritedWTUIEnvironment(t *testing.T) {
 	}
 	if got := envMap(launch.Cmd.Env)["CUSTOM_KEEP"]; got != "still-here" {
 		t.Fatalf("CUSTOM_KEEP = %q, want unrelated env preserved in %#v", got, launch.Cmd.Env)
+	}
+}
+
+func TestAgentLaunchClaudeAddsPromptAsFinalArg(t *testing.T) {
+	launch, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:       "claude",
+		LaunchID:      "launch-1",
+		RepoPath:      "/repo",
+		WorktreePath:  "/repo/worktree",
+		PlanID:        "plan-1",
+		PlanPath:      "/state/plans/plan-1/plan.md",
+		InitialPrompt: "Read the plan and begin implementation.",
+	})
+	if err != nil {
+		t.Fatalf("AgentLaunch returned error: %v", err)
+	}
+
+	env := envMap(launch.Cmd.Env)
+	if env["WTUI_PLAN_ID"] != "plan-1" || env["WTUI_PLAN_PATH"] != "/state/plans/plan-1/plan.md" {
+		t.Fatalf("plan env not exported: %#v", env)
+	}
+	if got := launch.Cmd.Args[len(launch.Cmd.Args)-1]; got != "Read the plan and begin implementation." {
+		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, launch.Cmd.Args)
+	}
+}
+
+func TestAgentLaunchEmptyPromptLeavesProviderArgsUnchanged(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			withoutPlan, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:      command,
+				LaunchID:     "launch-1",
+				RepoPath:     "/repo",
+				WorktreePath: "/repo/worktree",
+			})
+			if err != nil {
+				t.Fatalf("AgentLaunch without prompt returned error: %v", err)
+			}
+			withEmptyPrompt, err := actions.AgentLaunch(actions.AgentLaunchContext{
+				Command:       command,
+				LaunchID:      "launch-1",
+				RepoPath:      "/repo",
+				WorktreePath:  "/repo/worktree",
+				InitialPrompt: "",
+			})
+			if err != nil {
+				t.Fatalf("AgentLaunch with empty prompt returned error: %v", err)
+			}
+			if strings.Join(withEmptyPrompt.Cmd.Args, "\x00") != strings.Join(withoutPlan.Cmd.Args, "\x00") {
+				t.Fatalf("empty prompt changed args:\nwithout=%#v\nwith=%#v", withoutPlan.Cmd.Args, withEmptyPrompt.Cmd.Args)
+			}
+		})
 	}
 }
 

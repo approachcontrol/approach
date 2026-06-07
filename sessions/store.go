@@ -52,6 +52,8 @@ type SessionRecord struct {
 	CWD            string    `json:"cwd,omitempty"`
 	RepoPath       string    `json:"repo_path,omitempty"`
 	WorktreePath   string    `json:"worktree_path,omitempty"`
+	PlanID         string    `json:"plan_id,omitempty"`
+	PlanPath       string    `json:"plan_path,omitempty"`
 	Branch         string    `json:"branch,omitempty"`
 	Commit         string    `json:"commit,omitempty"`
 	Model          string    `json:"model,omitempty"`
