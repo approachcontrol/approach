@@ -68,10 +68,10 @@ the user. These persistence failures must not be treated as successful phase
 progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
-The current Flow CLI exposes `create`, `list`, `read`, `phase set`, and
-`plan set`. Dedicated structured commands for child phases, PR metadata, and
-merge metadata are not part of the implemented contract yet. Until those
-commands exist, record the best available details in the current phase
+The current Flow CLI exposes `create`, `list`, `read`, `phase set`,
+`phase add-child`, and `plan set`. Dedicated structured commands for PR
+metadata and merge metadata are not part of the implemented contract yet. Until
+those commands exist, record the best available details in the current phase
 `--summary`, `--outcome`, and `--notes`, and explicitly tell the user that the
 richer metadata was not persisted as first-class Flow fields.
 
@@ -234,11 +234,22 @@ TUI-launched Implementation phases provide `WTUI_FLOW_ID`,
 `WTUI_FLOW_PHASE_ID=implementation`, `WTUI_PLAN_ID`, `WTUI_PLAN_PATH`,
 `WTUI_WORKTREE_PATH`, and the shared state roots. Use `wtui plan read` when
 `WTUI_PLAN_ID` is available, then implement and verify the requested behavior in
-the Flow worktree. If the work splits into follow-up child phases, the current
-CLI cannot add child phases yet; record the child phase IDs and instructions in
-`--summary` or `--notes`, mark the phase `needs_attention` if the split needs
-user orchestration, and tell the user structured child phase persistence is not
-available in this CLI version.
+the Flow worktree. If the work splits into follow-up child phases, create stable
+ordered children before advancing downstream phases:
+
+```bash
+wtui flow phase add-child \
+  --flow-id "$WTUI_FLOW_ID" \
+  --parent-phase-id implementation \
+  --phase-id implementation-api \
+  --title "API integration" \
+  --order 10 \
+  "${FLOW_STATE_ARGS[@]}"
+```
+
+Re-running the same `phase add-child` command updates the existing child phase
+instead of duplicating it. Child phases gate review loop and PR creation until
+completed or skipped with notes.
 
 ```bash
 wtui flow phase set \
@@ -269,7 +280,7 @@ wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
   --phase-id review-loop \
   --status completed \
-  --outcome "passed" \
+  --outcome "completed" \
   --summary "Review loop passed after revisions." \
   "${FLOW_STATE_ARGS[@]}"
 ```

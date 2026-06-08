@@ -251,7 +251,8 @@ open the linked plan body in a plain-text overlay; wtui shows a status message
 when the selected Flow has no linked plan. Press `a` on a Flow with a ready phase
 to launch the configured agent for that phase. When Implementation is still
 gated by Plan Review, wtui reports the Plan Review state and notes instead of
-launching.
+launching. Expanded phase rows group child implementation phases directly under
+Implementation.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and
@@ -276,7 +277,21 @@ wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 # outcomes, or after an explicit skipped-with-notes Plan Review override.
 wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review \
   --status completed --outcome approved
+
+# Split Implementation into ordered child phases. Re-running the same command
+# updates the stable child phase without duplicating it.
+wtui flow phase add-child --flow-id "$FLOW_ID" \
+  --parent-phase-id implementation \
+  --phase-id implementation-api \
+  --title "API integration" \
+  --order 10
 ```
+
+Child implementation phases gate downstream readiness in phase order: review
+loop and PR creation remain pending until required implementation children are
+completed or explicitly skipped with notes. The review-loop launch prompt asks
+the agent to run a first-level implementation review and record `completed`,
+`needs_attention`, or `blocked` through `wtui flow phase set`.
 
 The flow state root is resolved with this precedence: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >

@@ -1586,10 +1586,14 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
 		return []string{truncateToWidth("      No phases", width)}
 	}
 	rows := make([]string, 0, len(record.Phases))
-	for _, phase := range record.Phases {
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
 		state := phase.Status
 		if phase.Outcome != "" {
 			state = phase.Outcome
+		}
+		title := phase.Title
+		if phase.ParentPhaseID != "" {
+			title = "  " + title
 		}
 		line := formatFlowColumns("      ",
 			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
@@ -1598,7 +1602,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
 			"",
 			"",
 			"",
-			stashMsgStyle.Render(phase.Title),
+			stashMsgStyle.Render(title),
 		)
 		rows = append(rows, truncateToWidth(line, width))
 	}
@@ -1624,7 +1628,8 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 	}
 	completed := 0
 	current := flowstore.FlowPhase{}
-	for _, phase := range record.Phases {
+	phases := flowstore.OrderedPhases(record.Phases)
+	for _, phase := range phases {
 		if phase.Status == flowstore.PhaseCompleted || phase.Status == flowstore.PhaseSkipped {
 			completed++
 			continue
@@ -1634,13 +1639,13 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 		}
 	}
 	if current.PhaseID == "" {
-		current = record.Phases[len(record.Phases)-1]
+		current = phases[len(phases)-1]
 	}
 	state := current.Status
 	if current.Outcome != "" {
 		state = current.Outcome
 	}
-	return fmt.Sprintf("%d/%d %s:%s", completed, len(record.Phases), current.PhaseID, state)
+	return fmt.Sprintf("%d/%d %s:%s", completed, len(phases), current.PhaseID, state)
 }
 
 func flowPlanLabel(record flowstore.FlowRecord) string {

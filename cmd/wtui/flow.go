@@ -158,10 +158,17 @@ func runFlowRead(args []string, deps runDeps) error {
 }
 
 func runFlowPhase(args []string, deps runDeps) error {
-	if len(args) < 1 || args[0] != "set" {
-		return fmt.Errorf("usage: wtui flow phase set [flags]")
+	if len(args) < 1 {
+		return fmt.Errorf("usage: wtui flow phase <set|add-child> [flags]")
 	}
-	return runFlowPhaseSet(args[1:], deps)
+	switch args[0] {
+	case "set":
+		return runFlowPhaseSet(args[1:], deps)
+	case "add-child":
+		return runFlowPhaseAddChild(args[1:], deps)
+	default:
+		return fmt.Errorf("usage: wtui flow phase <set|add-child> [flags]")
+	}
 }
 
 func runFlowPhaseSet(args []string, deps runDeps) error {
@@ -204,6 +211,47 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 		Outcome: *outcome,
 		Notes:   *notes,
 		Summary: *summary,
+	})
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func runFlowPhaseAddChild(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow phase add-child", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", "", "flow id")
+	parentPhaseID := flags.String("parent-phase-id", "implementation", "parent phase id")
+	phaseID := flags.String("phase-id", "", "child phase id")
+	title := flags.String("title", "", "child phase title")
+	order := flags.Int("order", 0, "child phase order under implementation")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow phase add-child requires --flow-id")
+	}
+	if *phaseID == "" {
+		return fmt.Errorf("flow phase add-child requires --phase-id")
+	}
+	if strings.TrimSpace(*title) == "" {
+		return fmt.Errorf("flow phase add-child requires --title")
+	}
+	if *order < 1 {
+		return fmt.Errorf("flow phase add-child requires positive --order")
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        *flowID,
+		ParentPhaseID: *parentPhaseID,
+		PhaseID:       *phaseID,
+		Title:         *title,
+		Order:         *order,
 	})
 	if err != nil {
 		return err
