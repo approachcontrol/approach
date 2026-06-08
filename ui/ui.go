@@ -161,6 +161,10 @@ type RenderParams struct {
 	Worktrees                []gitquery.Worktree
 	WorktreeSelected         int
 	WorktreeScroll           int
+	WorktreeSessions         []sessions.SessionRecord
+	WorktreeSessionSelected  int
+	WorktreeSessionScroll    int
+	InlineWorktreeSessions   bool
 	Commits                  []gitquery.Commit
 	CommitSelected           int
 	CommitScroll             int
@@ -191,6 +195,7 @@ type RenderParams struct {
 	FetchVisibleAvailable    bool
 	PullAvailable            bool
 	WorktreeMoveAvailable    bool
+	WorktreeSessionsOpen     bool
 	AgentAvailable           bool
 	NewAgentAvailable        bool
 }
@@ -238,6 +243,7 @@ func Render(p RenderParams) string {
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
+	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	planPhaseSelected := selectedPlanPhaseID != ""
 	status := statusBarParams{
@@ -255,6 +261,8 @@ func Render(p RenderParams) string {
 		WorktreeDeletableSelected: worktreeDeletableSelected,
 		WorktreeOpenableSelected:  worktreeOpenableSelected,
 		WorktreeMoveSelected:      worktreeMoveSelected,
+		WorktreeSessionsOpen:      p.WorktreeSessionsOpen,
+		WorktreeSessionSelected:   worktreeSessionSelected,
 		BranchDirtySelected:       branchDirtySelected,
 		BranchDeletableSelected:   branchDeletableSelected,
 		BranchOpenableSelected:    branchOpenableSelected,
@@ -341,7 +349,7 @@ func Render(p RenderParams) string {
 	var rightLines []string
 	switch {
 	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
-		rightLines = renderWorktreePane(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
 	case p.Mode == ModeBranches && len(p.Branches) > 0:
 		rightLines = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, rightContentWidth, rightContentHeight, repoPath)
 	case p.Mode == ModeStashes && len(p.Stashes) > 0:
@@ -479,6 +487,8 @@ type statusBarParams struct {
 	WorktreeDeletableSelected bool
 	WorktreeOpenableSelected  bool
 	WorktreeMoveSelected      bool
+	WorktreeSessionsOpen      bool
+	WorktreeSessionSelected   bool
 	BranchDirtySelected       bool
 	BranchDeletableSelected   bool
 	BranchOpenableSelected    bool
@@ -689,7 +699,12 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
 			}
 			actions = append(actions, shortcutHint{Key: "P", Label: "PR"})
-			if sp.DirtySelected {
+			if sp.WorktreeSessionsOpen && sp.WorktreeSessionSelected {
+				actions = append(actions, shortcutHint{Key: "enter", Label: "resume"})
+			} else if sp.WorktreeSelected && !sp.FetchAvailable && !sp.PullAvailable && !sp.AgentAvailable && !sp.NewAgent {
+				actions = append(actions, shortcutHint{Key: "x", Label: "sessions"})
+			}
+			if sp.DirtySelected && !sp.WorktreeSessionsOpen {
 				actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
 			}
 			if sp.WorktreeMoveSelected {
@@ -1785,6 +1800,10 @@ func renderPlainTextOverlay(body string, scroll, width, height int) []string {
 }
 
 func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, height int) []string {
+	return renderWorktreePaneWithSessions(worktrees, selected, scroll, width, height, false, nil, 0, 0)
+}
+
+func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scroll, width, height int, inlineSessions bool, records []sessions.SessionRecord, sessionSelected, sessionScroll int) []string {
 	var content []string
 	for i, wt := range worktrees {
 		name := branchStyle.Render(wt.BranchName)
@@ -1822,10 +1841,30 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 			line = renderSelectedWorktreeRow(wt, width)
 		}
 		content = append(content, line)
+		if inlineSessions && i == selected {
+			content = append(content, renderInlineWorktreeSessions(records, sessionSelected, sessionScroll, width)...)
+		}
 	}
 
 	truncateLines(content, width)
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderInlineWorktreeSessions(records []sessions.SessionRecord, selected, scroll, width int) []string {
+	if len(records) == 0 {
+		return []string{"   " + statusStyle.Render("Sessions: none")}
+	}
+	contentWidth := width - 3
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+	lines := renderSessionPane(records, selected, scroll, contentWidth, len(records)+1)
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, "   "+statusStyle.Render("Sessions"))
+	for _, line := range lines[1:] {
+		out = append(out, "   "+line)
+	}
+	return out
 }
 
 func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {

@@ -521,6 +521,66 @@ func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
 	}
 }
 
+func TestRender_WorktreesModeShowsInlineSessionHints(t *testing.T) {
+	base := RenderParams{
+		Repos: []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Worktrees: []gitquery.Worktree{
+			{Path: "/dev/wtui-worktrees/inline", BranchName: "feature/inline"},
+		},
+		Selected:         0,
+		Width:            140,
+		Height:           12,
+		Mode:             ModeWorktrees,
+		ActivePane:       1,
+		WorktreeSelected: 0,
+	}
+
+	closed := shortcutPaneText(Render(base))
+	if !strings.Contains(closed, "x      sessions") {
+		t.Fatalf("closed inline sessions should expose sessions shortcut, got:\n%s", closed)
+	}
+
+	base.InlineWorktreeSessions = true
+	base.WorktreeSessionsOpen = true
+	base.WorktreeSessions = []sessions.SessionRecord{{
+		Provider:  sessions.ProviderCodex,
+		SessionID: "codex-inline-1",
+		Branch:    "feature/inline",
+	}}
+	base.WorktreeSessionSelected = 0
+	open := shortcutPaneText(Render(base))
+	if !strings.Contains(open, "enter  resume") {
+		t.Fatalf("open inline sessions should expose resume shortcut, got:\n%s", open)
+	}
+	if strings.Contains(open, "x      sessions") {
+		t.Fatalf("open inline sessions should not expose closed sessions shortcut, got:\n%s", open)
+	}
+}
+
+func TestRender_WorktreesModeShowsEmptyInlineSessions(t *testing.T) {
+	view := Render(RenderParams{
+		Repos: []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Worktrees: []gitquery.Worktree{
+			{Path: "/dev/wtui-worktrees/inline", BranchName: "feature/inline"},
+		},
+		Selected:               0,
+		Width:                  140,
+		Height:                 12,
+		Mode:                   ModeWorktrees,
+		ActivePane:             1,
+		WorktreeSelected:       0,
+		InlineWorktreeSessions: true,
+		WorktreeSessionsOpen:   true,
+	})
+
+	if !strings.Contains(view, "Sessions: none") {
+		t.Fatalf("empty inline sessions should render in-pane empty copy:\n%s", view)
+	}
+	if strings.Contains(shortcutPaneText(view), "enter  resume") {
+		t.Fatalf("empty inline sessions should not expose resume shortcut:\n%s", view)
+	}
+}
+
 func TestRender_StaleWorktreeShowsSetAgentHint(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},

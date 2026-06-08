@@ -290,6 +290,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleImplementPlan()
 		}
 	case "x":
+		if m.mode == ui.ModeWorktrees {
+			return m.handleToggleWorktreeSessions()
+		}
 		if m.mode == ui.ModeFlows {
 			return m.handleToggleFlowPhases()
 		}
@@ -367,6 +370,10 @@ func (m Model) moveCursor(delta int) Model {
 	h, w := m.contentHeightForMode(), m.contentWidth()
 	switch m.mode {
 	case ui.ModeWorktrees:
+		if m.inlineWorktreeSessionPath != "" {
+			m.worktreeSessions = m.worktreeSessions.Move(delta, m.worktreeSessionContentHeight(), w)
+			return m
+		}
 		m.worktrees = m.worktrees.Move(delta, h, w)
 	case ui.ModeBranches:
 		m.rows = m.rows.Move(delta, h, w)
@@ -415,6 +422,17 @@ func (m Model) moveCursor(delta int) Model {
 
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeWorktrees {
+		if m.inlineWorktreeSessionPath != "" {
+			record, ok := m.selectedWorktreeSession()
+			if !ok {
+				return m, nil
+			}
+			ctx, ok, next := m.sessionResumeLaunchContext(record)
+			if !ok {
+				return next, nil
+			}
+			return next.launchAgentWithContext(ctx)
+		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
 			m = m.startViewRequest(FetchWorktreeDiff, ui.ModeWorktrees)
@@ -469,6 +487,26 @@ func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
 		m = m.setExpandedFlowID(flowID)
 	}
 	return m, nil
+}
+
+func (m Model) handleToggleWorktreeSessions() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeWorktrees || len(m.filteredWorktrees()) == 0 {
+		return m, nil
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	wt, ok := m.selectedWorktree()
+	if !ok || wt.Path == "" {
+		return m, nil
+	}
+	if m.inlineWorktreeSessionRepo == repoPath && m.inlineWorktreeSessionPath == wt.Path {
+		return m.clearInlineWorktreeSessions(), nil
+	}
+	var request uint64
+	m, request = m.nextWorktreeSessionRequest(repoPath, wt.Path)
+	return m, m.fetchWorktreeSessions(wt.Path, request)
 }
 
 func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
@@ -950,6 +988,14 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	if !ok {
+		return next, nil
+	}
+	return next.launchAgentWithContext(ctx)
+}
+
+func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, bool, Model) {
 	command := string(record.Provider)
 	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
 		command = agent.CommandCodexApp
@@ -960,7 +1006,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	}
 	if workingDir == "" && command != agent.CommandCodexApp {
 		m = m.setStatus(statusOther, "Session has no worktree path or cwd to resume from")
-		return m, nil
+		return actions.AgentLaunchContext{}, false, m
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
@@ -977,7 +1023,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		FlowID:           record.FlowID,
 		FlowPhaseID:      record.FlowPhaseID,
 	}
-	return m.launchAgentWithContext(ctx)
+	return ctx, true, m
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
@@ -1680,6 +1726,7 @@ func (m Model) resetModeCursors() Model {
 	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
 	m = m.setExpandedFlowID("")
+	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
 	return m
 }
@@ -1697,7 +1744,16 @@ func (m Model) resetRightPaneCursors() Model {
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
 	m = m.setExpandedFlowID("")
+	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
+	return m
+}
+
+func (m Model) clearInlineWorktreeSessions() Model {
+	m.activeWorktreeSessionReq = 0
+	m.inlineWorktreeSessionRepo = ""
+	m.inlineWorktreeSessionPath = ""
+	m.worktreeSessions = newSessionPane()
 	return m
 }
 
@@ -1735,6 +1791,14 @@ func (m Model) flowContentHeight() int {
 
 func (m Model) sessionContentHeight() int {
 	height := m.height - ui.SessionContentOverhead
+	if height <= 0 {
+		return 1
+	}
+	return height
+}
+
+func (m Model) worktreeSessionContentHeight() int {
+	height := m.worktreeContentHeight() - 2
 	if height <= 0 {
 		return 1
 	}

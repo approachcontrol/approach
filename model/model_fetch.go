@@ -45,6 +45,22 @@ func (m Model) nextListFetchRequest(mode ui.Mode) (Model, uint64) {
 	return m, request
 }
 
+func (m Model) nextWorktreeSessionRequest(repoPath, worktreePath string) (Model, uint64) {
+	m.worktreeSessionRequestSeq++
+	m.activeWorktreeSessionReq = m.worktreeSessionRequestSeq
+	m.inlineWorktreeSessionRepo = repoPath
+	m.inlineWorktreeSessionPath = worktreePath
+	m.worktreeSessions = newSessionPane()
+	return m, m.activeWorktreeSessionReq
+}
+
+func (m Model) isCurrentWorktreeSessionRequest(msg WorktreeSessionResultMsg) bool {
+	return msg.Request != 0 &&
+		msg.Request == m.activeWorktreeSessionReq &&
+		msg.RepoPath == m.inlineWorktreeSessionRepo &&
+		msg.WorktreePath == m.inlineWorktreeSessionPath
+}
+
 func (m Model) nextWorktreeCreateRequest() (Model, uint64) {
 	m.worktreeCreateSeq++
 	m.activeWorktreeCreate = m.worktreeCreateSeq
@@ -279,6 +295,28 @@ func (m Model) fetchList(desc listFetchDescriptor, request uint64) tea.Cmd {
 			}
 		}
 		return msg
+	}
+}
+
+func (m Model) fetchWorktreeSessions(worktreePath string, request uint64) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok || worktreePath == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		records, err := m.listSessions(sessions.SessionFilter{RepoPath: repoPath, WorktreePath: worktreePath})
+		if err != nil {
+			return FetchErrorMsg{
+				RepoPath:     repoPath,
+				Pane:         "worktree sessions",
+				Err:          fmt.Sprintf("failed to load worktree sessions: %v", err),
+				Kind:         FetchList,
+				Mode:         ui.ModeWorktrees,
+				ListRequest:  request,
+				WorktreePath: worktreePath,
+			}
+		}
+		return WorktreeSessionResultMsg{RepoPath: repoPath, WorktreePath: worktreePath, Sessions: records, Request: request}
 	}
 }
 
