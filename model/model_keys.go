@@ -229,49 +229,49 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode != ui.ModeWorktrees {
 			m.mode = ui.ModeWorktrees
 			m = m.resetModeCursors()
-			return m.startFetchWorktrees()
+			return m.startFetchMode(ui.ModeWorktrees)
 		}
 	case "2":
 		if m.mode != ui.ModeBranches {
 			m.mode = ui.ModeBranches
 			m = m.resetModeCursors()
-			return m.startFetchBranches()
+			return m.startFetchMode(ui.ModeBranches)
 		}
 	case "3":
 		if m.mode != ui.ModeStashes {
 			m.mode = ui.ModeStashes
 			m = m.resetModeCursors()
-			return m.startFetchStashes()
+			return m.startFetchMode(ui.ModeStashes)
 		}
 	case "4":
 		if m.mode != ui.ModeHistory {
 			m.mode = ui.ModeHistory
 			m = m.resetModeCursors()
-			return m.startFetchCommits()
+			return m.startFetchMode(ui.ModeHistory)
 		}
 	case "5":
 		if m.mode != ui.ModeReflog {
 			m.mode = ui.ModeReflog
 			m = m.resetModeCursors()
-			return m.startFetchReflog()
+			return m.startFetchMode(ui.ModeReflog)
 		}
 	case "6":
 		if m.mode != ui.ModeSessions {
 			m.mode = ui.ModeSessions
 			m = m.resetModeCursors()
-			return m.startFetchSessions()
+			return m.startFetchMode(ui.ModeSessions)
 		}
 	case "7":
 		if m.mode != ui.ModePlans {
 			m.mode = ui.ModePlans
 			m = m.resetModeCursors()
-			return m.startFetchPlans()
+			return m.startFetchMode(ui.ModePlans)
 		}
 	case "8":
 		if m.mode != ui.ModeFlows {
 			m.mode = ui.ModeFlows
 			m = m.resetModeCursors()
-			return m.startFetchFlows()
+			return m.startFetchMode(ui.ModeFlows)
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -660,7 +660,7 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 	}
 	m = m.setStatus(statusOther, errText)
 	if m.mode == ui.ModeFlows {
-		return m.startFetchFlows()
+		return m.startFetchMode(ui.ModeFlows)
 	}
 	return m, nil
 }

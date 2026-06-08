@@ -746,7 +746,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
-			next, fetchCmd := next.startFetchFlows()
+			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
@@ -774,7 +774,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m, resultErr = m.markFlowLaunchNeedsAttention(msg.LaunchContext, resultErr)
 			m = m.setStatus(statusOther, resultErr)
 			if msg.LaunchContext.FlowID != "" && m.mode == ui.ModeFlows {
-				return m.startFetchFlows()
+				return m.startFetchMode(ui.ModeFlows)
 			}
 		} else if msg.Detached {
 			m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
@@ -789,7 +789,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ActionFailedMsg:
 		next := m.handleActionFailed(msg)
 		if next.mode == ui.ModeFlows && next.isCurrentRepo(msg.RepoPath) {
-			return next.startFetchFlows()
+			return next.startFetchMode(ui.ModeFlows)
 		}
 		return next, nil
 	}
