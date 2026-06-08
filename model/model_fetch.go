@@ -398,6 +398,18 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 		}); err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
 		}
+		if err := m.runFlowBootstrapHook(repoPath, worktree); err != nil {
+			errText := "Bootstrap hook failed: " + err.Error()
+			if _, phaseErr := m.setFlowPhase(flowstore.PhaseUpdate{
+				FlowID:  flow.FlowID,
+				PhaseID: "plan",
+				Status:  flowstore.PhaseBlocked,
+				Notes:   errText,
+			}); phaseErr != nil {
+				return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: fmt.Sprintf("%s; mark flow blocked: %v", errText, phaseErr)}
+			}
+			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: errText}
+		}
 		launchID := newLaunchID()
 		if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   flow.FlowID,
@@ -422,6 +434,19 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 			InitialPrompt:    flowPlanPrompt(flow, worktree, baseRef),
 		}}
 	}
+}
+
+func (m Model) runFlowBootstrapHook(repoPath string, worktree actions.FlowWorktreeCreateResult) error {
+	hook, ok := m.bootstrapHookForRepo(repoPath)
+	if !ok {
+		return nil
+	}
+	return m.runBootstrapHook(actions.BootstrapContext{
+		RepoPath:     repoPath,
+		WorktreePath: worktree.WorktreePath,
+		Ref:          worktree.Branch,
+		Kind:         actions.WorktreeCreateFlow,
+	}, hook)
 }
 
 func flowPlanPrompt(flow flowstore.FlowRecord, worktree actions.FlowWorktreeCreateResult, baseRef string) string {

@@ -45,12 +45,15 @@ type WorktreeCreateKind int
 const (
 	WorktreeCreateGeneric WorktreeCreateKind = iota
 	WorktreeCreatePullRequest
+	WorktreeCreateFlow
 )
 
 func (k WorktreeCreateKind) String() string {
 	switch k {
 	case WorktreeCreatePullRequest:
 		return "pull_request"
+	case WorktreeCreateFlow:
+		return "flow"
 	default:
 		return "generic"
 	}

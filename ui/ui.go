@@ -825,6 +825,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				shortcutHint{Key: "y", Label: "copy path"},
 			)
 		}
+	case ModeFlows:
+		if sp.ActivePane == 1 && sp.RepoSelected {
+			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
 		if sp.FetchAvailable {

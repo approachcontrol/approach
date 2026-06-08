@@ -795,6 +795,10 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		Commit:           record.Commit,
 		SessionStateRoot: m.sessionStateRoot,
 		ResumeSessionID:  record.SessionID,
+		PlanID:           record.PlanID,
+		PlanPath:         record.PlanPath,
+		FlowID:           record.FlowID,
+		FlowPhaseID:      record.FlowPhaseID,
 	}
 	return m.launchAgentWithContext(ctx)
 }

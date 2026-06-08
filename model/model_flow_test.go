@@ -307,6 +307,76 @@ func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.
 	}
 }
 
+func TestModel_NewFlowRunsBootstrapBeforeLaunchingPlanAgent(t *testing.T) {
+	var gotCtx actions.BootstrapContext
+	var gotHook actions.BootstrapHook
+	var calls []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			calls = append(calls, "create-flow")
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
+			return record, nil
+		},
+		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			calls = append(calls, "create-worktree")
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
+		},
+		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "set-start")
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "add-launch")
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		BootstrapHookForRepo: func(repoPath string) (actions.BootstrapHook, bool) {
+			if repoPath != "/dev/alpha" {
+				t.Fatalf("BootstrapHookForRepo(%q)", repoPath)
+			}
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
+			calls = append(calls, "bootstrap")
+			gotCtx = ctx
+			gotHook = hook
+			return nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			calls = append(calls, "launch-agent")
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "main")
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, _ = update(m, launchMsg)
+
+	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,add-launch,launch-agent" {
+		t.Fatalf("call order = %#v", calls)
+	}
+	if gotCtx.RepoPath != "/dev/alpha" ||
+		gotCtx.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
+		gotCtx.Ref != "flow/add-flow-mode" ||
+		gotCtx.Kind != actions.WorktreeCreateFlow {
+		t.Fatalf("bootstrap context = %#v", gotCtx)
+	}
+	if gotHook.Script != ".wtui/bootstrap" || gotHook.TimeoutSeconds != 7 {
+		t.Fatalf("bootstrap hook = %#v", gotHook)
+	}
+}
+
 func TestModel_NewFlowWarnsWhenNoAgentConfigured(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
@@ -322,6 +392,72 @@ func TestModel_NewFlowWarnsWhenNoAgentConfigured(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "Press A to choose") {
 		t.Fatalf("expected missing-agent warning in view:\n%s", m.View())
+	}
+}
+
+func TestModel_NewFlowBootstrapFailureBlocksPlanPhase(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	var calls []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			calls = append(calls, "create-flow")
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}}
+			return record, nil
+		},
+		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			calls = append(calls, "create-worktree")
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
+		},
+		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "set-start")
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			calls = append(calls, "bootstrap")
+			return errors.New("missing env file")
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "set-phase")
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("agent should not launch after bootstrap failure")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	msg, ok := cmd().(model.FlowCreateFailedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowCreateFailedMsg", msg)
+	}
+
+	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,set-phase" {
+		t.Fatalf("call order = %#v", calls)
+	}
+	if !strings.Contains(msg.Err, "Bootstrap hook failed") || !strings.Contains(msg.Err, "missing env file") {
+		t.Fatalf("error = %q, want bootstrap failure", msg.Err)
+	}
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "plan" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "missing env file") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
 }
 

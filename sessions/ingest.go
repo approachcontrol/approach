@@ -194,6 +194,9 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 	}
 	root := opts.Env["WTUI_FLOW_STATE_ROOT"]
 	if root == "" {
+		root = opts.Env["WTUI_PLAN_STATE_ROOT"]
+	}
+	if root == "" {
 		root = opts.StateRoot
 	}
 	if root == "" {
