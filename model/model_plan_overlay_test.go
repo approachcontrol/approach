@@ -1,11 +1,13 @@
 package model_test
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/ui"
@@ -57,7 +59,12 @@ func TestModel_EnterOnPlanExpandsPhasesWithoutReadingPlan(t *testing.T) {
 }
 
 func TestModel_OKeyOnPlanOpensPlanText(t *testing.T) {
+	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
 		ReadPlan: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("ReadPlan called with %q", planID)
@@ -74,14 +81,16 @@ func TestModel_OKeyOnPlanOpensPlanText(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("plans-mode o should return a plan read command")
 	}
-	if m.Overlay() != ui.OverlayPlanText {
-		t.Fatalf("expected plan text overlay, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
-	m, _ = update(m, cmd())
-	view := m.View()
+	_, cmd = update(m, cmd())
+	if cmd == nil {
+		t.Fatal("expected plan text pager command")
+	}
 	for _, want := range []string{"# Persist plans", "full body"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("plan text overlay missing %q:\n%s", want, view)
+		if len(paged) != 1 || !strings.Contains(paged[0], want) {
+			t.Fatalf("paged plan text missing %q: %#v", want, paged)
 		}
 	}
 }

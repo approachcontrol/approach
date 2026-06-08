@@ -518,6 +518,20 @@ func CopyToClipboard(text string) error {
 	return cmd.Run()
 }
 
+// PageText builds an interactive pager command for read-only text views.
+func PageText(body string) (TerminalLaunchSpec, error) {
+	return pageText(body, exec.LookPath)
+}
+
+func pageText(body string, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
+	if _, err := lookPath("less"); err != nil {
+		return TerminalLaunchSpec{}, err
+	}
+	cmd := exec.Command("less", "-R")
+	cmd.Stdin = strings.NewReader(body)
+	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
 // OpenVSCode opens VSCode at the given path.
 func OpenVSCode(path string) error {
 	return exec.Command("code", path).Run()

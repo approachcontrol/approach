@@ -166,6 +166,7 @@ func TestRuntimeArtifactRootPrecedenceIncludesFlowRoot(t *testing.T) {
 
 func TestRuntimeArtifactRootFallsBackThroughPlanSessionConfig(t *testing.T) {
 	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
+	t.Setenv("WTUI_FLOW_STATE_ROOT", "")
 	t.Setenv("WTUI_SESSION_STATE_ROOT", "/from/session")
 	t.Setenv("WTUI_PLAN_STATE_ROOT", "/from/plan")
 	if got := runtimeArtifactRoot(cfg); got != "/from/plan" {

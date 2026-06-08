@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -11,6 +12,30 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestPageTextBuildsInteractiveLessCommand(t *testing.T) {
+	launch, err := pageText("diff --git a/f.txt\n+added\n", fakeLookPath("less"))
+	if err != nil {
+		t.Fatalf("pageText returned error: %v", err)
+	}
+	if !launch.Interactive {
+		t.Fatal("expected page text launch to be interactive")
+	}
+	if launch.Cmd == nil {
+		t.Fatal("expected command")
+	}
+	wantArgs := []string{"less", "-R"}
+	if !reflect.DeepEqual(launch.Cmd.Args, wantArgs) {
+		t.Fatalf("args = %#v, want %#v", launch.Cmd.Args, wantArgs)
+	}
+	gotBody, err := io.ReadAll(launch.Cmd.Stdin)
+	if err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
+	if string(gotBody) != "diff --git a/f.txt\n+added\n" {
+		t.Fatalf("stdin = %q", string(gotBody))
+	}
+}
 
 func planAgentContext() AgentLaunchContext {
 	return AgentLaunchContext{

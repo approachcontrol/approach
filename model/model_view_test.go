@@ -363,32 +363,6 @@ func TestModel_ViewStashesModeShowsStashContent(t *testing.T) {
 	}
 }
 
-func TestModel_ViewOverlayShowsDiff(t *testing.T) {
-	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	stash := testStashes()[0]
-	m, _ = update(m, model.StashDiffResultMsg{
-		RepoPath:    "/dev/alpha",
-		Index:       stash.Index,
-		Date:        stash.Date,
-		Message:     stash.Message,
-		DiffRequest: 1,
-		Diff:        "diff --git a/f.txt\n--- a/f.txt\n+++ b/f.txt",
-	})
-
-	view := m.View()
-	if !strings.Contains(view, "diff --git") {
-		t.Error("overlay should show diff content")
-	}
-	if !strings.Contains(view, "esc") {
-		t.Error("overlay should show esc hint")
-	}
-}
-
 func TestModel_StatusBarStashesModeShowsStashKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -782,31 +756,6 @@ func TestModel_ViewWorktreesStaleHidesAllActions(t *testing.T) {
 	}
 }
 
-func TestModel_ViewWorktreeDiffOverlayShowsDiff(t *testing.T) {
-	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = inRightPane(m)
-	wts := []gitquery.Worktree{
-		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true, FilesChanged: 1},
-	}
-	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.WorktreeDiffResultMsg{
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha",
-		DiffRequest:  1,
-		Diff:         "diff --git a/f.txt\n--- a/f.txt\n+++ b/f.txt",
-	})
-
-	view := m.View()
-	if !strings.Contains(view, "diff --git") {
-		t.Error("overlay should show diff content")
-	}
-	if !strings.Contains(view, "esc") {
-		t.Error("overlay should show esc hint")
-	}
-}
-
 func TestModel_ViewWorktreeUnlockFailureShowsStatusError(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -1181,7 +1130,7 @@ func TestModel_WrongModeListSuccessDoesNotClearFetchStatus(t *testing.T) {
 	}
 }
 
-func TestModel_NonModalKeyClearsStatusButModalKeyDoesNot(t *testing.T) {
+func TestModel_NonModalKeysClearFetchStatus(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m, _ = update(m, model.FetchErrorMsg{RepoPath: "/dev/alpha", Err: "fetch failed", Kind: model.FetchList, Mode: ui.ModeWorktrees})
@@ -1205,8 +1154,8 @@ func TestModel_NonModalKeyClearsStatusButModalKeyDoesNot(t *testing.T) {
 	})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if !strings.Contains(m.View(), "diff failed") {
-		t.Error("modal keypress should not clear status by itself")
+	if strings.Contains(m.View(), "diff failed") {
+		t.Error("non-modal keypress should clear diff fetch status")
 	}
 }
 
@@ -1232,8 +1181,9 @@ func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 	}
 }
 
-func TestModel_ViewReflogDiffOverlayShowsEmptyMessage(t *testing.T) {
-	m := model.New(testRepos())
+func TestModel_ReflogEmptyDiffPagesMessage(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
@@ -1241,18 +1191,20 @@ func TestModel_ViewReflogDiffOverlayShowsEmptyMessage(t *testing.T) {
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
 	})
-	// Open overlay and receive empty diff (e.g. checkout entry)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: ""})
+	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: ""})
 
-	view := m.View()
-	if !strings.Contains(view, "No changes at this reflog entry") {
-		t.Error("reflog diff overlay with empty diff should show 'No changes at this reflog entry'")
+	if cmd == nil {
+		t.Fatal("expected empty reflog diff pager command")
+	}
+	if len(paged) != 1 || paged[0] != "No changes at this reflog entry" {
+		t.Fatalf("paged empty reflog diff = %#v", paged)
 	}
 }
 
-func TestModel_ViewReflogDiffOverlayShowsDiff(t *testing.T) {
-	m := model.New(testRepos())
+func TestModel_ReflogDiffPagesContent(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
@@ -1261,11 +1213,13 @@ func TestModel_ViewReflogDiffOverlayShowsDiff(t *testing.T) {
 		Reflogs:  testReflogs(),
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt\n+added line"})
+	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt\n+added line"})
 
-	view := m.View()
-	if !strings.Contains(view, "diff --git") {
-		t.Error("reflog diff overlay should show diff content")
+	if cmd == nil {
+		t.Fatal("expected reflog diff pager command")
+	}
+	if len(paged) != 1 || !strings.Contains(paged[0], "diff --git") {
+		t.Fatalf("paged reflog diff = %#v", paged)
 	}
 }
 
