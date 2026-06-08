@@ -76,7 +76,7 @@ filter matches, or a load failure with details in the status bar.
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page session transcript, or expand/collapse plan phases |
+| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page session transcript, or expand/collapse plan phases |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
@@ -90,6 +90,7 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
+| `x` | Show/hide sessions for the selected worktree (worktrees view) or expand/collapse Flow phase rows (flows view) |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), or plan Markdown path (plans view) |
 | `r` | Resume selected agent session (sessions view) |
 | `s` | Page selected agent session summary (sessions view) |
@@ -134,6 +135,14 @@ selected worktree. Press `m` on a linked non-stale, unlocked worktree to move it
 to an absolute path or rename it with a sibling-relative destination; dirty local
 changes move with the worktree. Locked worktrees cannot be moved, deleted, or
 pruned; press `u` to unlock one.
+
+Press `x` on a selected worktree to show captured agent sessions for that
+worktree inline. While the inline session list is open, `up`/`down` move through
+the sessions and `enter` resumes the selected session from its recorded `cwd` or
+worktree path. Filtering worktrees, refreshing the worktree list, switching
+modes, or changing repos closes the inline list. The full sessions view in mode
+`6` remains repo-scoped and keeps transcript, summary, resume, and copy-id
+actions.
 
 ### Branches view (mode 2)
 

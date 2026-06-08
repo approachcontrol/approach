@@ -41,8 +41,9 @@ are already implemented and should be treated as the baseline product:
 - Coding-agent launches for Codex and Claude Code, including create-then-launch
   from the worktrees view.
 - Agent-session capture and browsing for Claude Code and Codex hook payloads,
-  with normalized transcript paging, session resume actions, raw session ID
-  copying, and user-state storage outside repos.
+  with inline worktree-scoped session lists, normalized transcript paging,
+  session resume actions, raw session ID copying, and user-state storage outside
+  repos.
 - Saved agent plans persisted through the `wtui plan` CLI and browsed in the
   plans pane with per-phase progress, phase expansion, plan-path copying, and
   editable launch instructions for whole-plan or selected-phase agent launch.

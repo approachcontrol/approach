@@ -31,6 +31,7 @@ type Model struct {
 	rows                      pane.Pane[gitquery.BranchRow]
 	stashes                   pane.Pane[gitquery.Stash]
 	worktrees                 pane.Pane[gitquery.Worktree]
+	worktreeSessions          pane.Pane[sessions.SessionRecord]
 	commits                   pane.Pane[gitquery.Commit]
 	reflogs                   pane.Pane[gitquery.ReflogEntry]
 	sessions                  pane.Pane[sessions.SessionRecord]
@@ -45,6 +46,10 @@ type Model struct {
 	activeViewKind            FetchKind
 	activeViewMode            ui.Mode
 	listRequestSeq            uint64
+	worktreeSessionRequestSeq uint64
+	activeWorktreeSessionReq  uint64
+	inlineWorktreeSessionRepo string
+	inlineWorktreeSessionPath string
 	worktreeCreateSeq         uint64
 	activeWorktreeCreate      uint64
 	flowCreateSeq             uint64
@@ -257,6 +262,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		rows:                 newBranchPane(),
 		stashes:              newStashPane(),
 		worktrees:            newWorktreePane(),
+		worktreeSessions:     newSessionPane(),
 		commits:              newCommitPane(),
 		reflogs:              newReflogPane(),
 		sessions:             newSessionPane(),
@@ -318,8 +324,13 @@ func (m Model) Worktrees() []gitquery.Worktree {
 	worktrees, _, _ := m.worktrees.View()
 	return worktrees
 }
+func (m Model) WorktreeSessions() []sessions.SessionRecord {
+	sessions, _, _ := m.worktreeSessions.View()
+	return sessions
+}
 func (m Model) WorktreeSelected() int           { return m.worktrees.SelectedIndex() }
 func (m Model) WorktreeScroll() int             { return m.worktrees.Scroll() }
+func (m Model) WorktreeSessionSelected() int    { return m.worktreeSessions.SelectedIndex() }
 func (m Model) Commits() []gitquery.Commit      { commits, _, _ := m.commits.View(); return commits }
 func (m Model) CommitSelected() int             { return m.commits.SelectedIndex() }
 func (m Model) CommitScroll() int               { return m.commits.Scroll() }
@@ -372,6 +383,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) View() string {
 	repos, selected, repoScroll := m.repos.View()
 	worktrees, worktreeSelected, worktreeScroll := m.worktrees.View()
+	worktreeSessions, worktreeSessionSelected, worktreeSessionScroll := m.worktreeSessions.View()
 	rows, branchSelected, branchScroll := m.rows.View()
 	stashes, stashSelected, stashScroll := m.stashes.View()
 	commits, commitSelected, commitScroll := m.commits.View()
@@ -422,6 +434,10 @@ func (m Model) View() string {
 		Worktrees:                worktrees,
 		WorktreeSelected:         worktreeSelected,
 		WorktreeScroll:           worktreeScroll,
+		WorktreeSessions:         worktreeSessions,
+		WorktreeSessionSelected:  worktreeSessionSelected,
+		WorktreeSessionScroll:    worktreeSessionScroll,
+		InlineWorktreeSessions:   m.inlineWorktreeSessionPath != "",
 		Commits:                  commits,
 		CommitSelected:           commitSelected,
 		CommitScroll:             commitScroll,
@@ -452,6 +468,7 @@ func (m Model) View() string {
 		FetchVisibleAvailable:    m.canFetchVisibleRepos(),
 		PullAvailable:            m.canPull(),
 		WorktreeMoveAvailable:    m.canMoveWorktree(),
+		WorktreeSessionsOpen:     m.inlineWorktreeSessionPath != "",
 		AgentAvailable:           m.canLaunchAgent(),
 		NewAgentAvailable:        m.canCreateAndLaunchAgent(),
 	})
@@ -711,6 +728,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleReflogResult(msg), nil
 	case SessionResultMsg:
 		return m.handleSessionResult(msg), nil
+	case WorktreeSessionResultMsg:
+		return m.handleWorktreeSessionResult(msg), nil
 	case SessionTranscriptResultMsg:
 		return m.handleSessionTranscriptResult(msg)
 	case PlanResultMsg:
@@ -838,6 +857,13 @@ func (m Model) selectedSession() (sessions.SessionRecord, bool) {
 		return sessions.SessionRecord{}, false
 	}
 	return m.sessions.Selected()
+}
+
+func (m Model) selectedWorktreeSession() (sessions.SessionRecord, bool) {
+	if _, ok := m.currentRepoPath(); !ok || m.inlineWorktreeSessionPath == "" {
+		return sessions.SessionRecord{}, false
+	}
+	return m.worktreeSessions.Selected()
 }
 
 func (m Model) selectedPlan() (planstore.PlanRecord, bool) {
@@ -1142,6 +1168,12 @@ func (m Model) reflowWorktrees() Model {
 		contentHeight = 16
 	}
 	m.worktrees = m.worktrees.Reflow(contentHeight, m.contentWidth())
+	m = m.reflowWorktreeSessions()
+	return m
+}
+
+func (m Model) reflowWorktreeSessions() Model {
+	m.worktreeSessions = m.worktreeSessions.Reflow(m.worktreeSessionContentHeight(), m.contentWidth())
 	return m
 }
 

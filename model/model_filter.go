@@ -155,6 +155,7 @@ func (m Model) setActiveSearchQuery(query string) Model {
 
 	switch m.mode {
 	case ui.ModeWorktrees:
+		m = m.clearInlineWorktreeSessions()
 		m.worktrees = m.worktrees.SetQuery(query)
 		m = m.reflowWorktrees()
 	case ui.ModeBranches:

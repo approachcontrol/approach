@@ -4104,6 +4104,250 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_XKeyOpensInlineSessionsForSelectedWorktree(t *testing.T) {
+	var gotFilter sessions.SessionFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			gotFilter = filter
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderCodex,
+				SessionID:    "codex-inline-1",
+				RepoPath:     filter.RepoPath,
+				WorktreePath: filter.WorktreePath,
+				Branch:       "feature/inline",
+				Status:       "ended",
+				Summary:      "Inline worktree sessions",
+			}}, nil
+		},
+	})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected inline session fetch command")
+	}
+	msg := cmd()
+	m, _ = update(m, msg)
+
+	if gotFilter.RepoPath != "/dev/alpha" || gotFilter.WorktreePath != "/dev/alpha-worktrees/inline" {
+		t.Fatalf("SessionFilter = %#v, want repo and selected worktree", gotFilter)
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
+	}
+	view := m.View()
+	for _, want := range []string{"Sessions", "codex", "feature/inline", "ended", "Inline worktree sessions"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("inline sessions view missing %q:\n%s", want, view)
+		}
+	}
+	if got := m.Sessions(); len(got) != 0 {
+		t.Fatalf("full sessions pane should stay empty, got %#v", got)
+	}
+}
+
+func TestModel_ArrowKeysSelectInlineWorktreeSessions(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{
+				{Provider: sessions.ProviderCodex, SessionID: "codex-inline-1", RepoPath: filter.RepoPath, WorktreePath: filter.WorktreePath, Branch: "first"},
+				{Provider: sessions.ProviderClaude, SessionID: "claude-inline-2", RepoPath: filter.RepoPath, WorktreePath: filter.WorktreePath, Branch: "second"},
+			}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, cmd())
+
+	worktreeSelected := m.WorktreeSelected()
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if m.WorktreeSelected() != worktreeSelected {
+		t.Fatalf("WorktreeSelected() = %d, want %d", m.WorktreeSelected(), worktreeSelected)
+	}
+	if m.WorktreeSessionSelected() != 1 {
+		t.Fatalf("WorktreeSessionSelected() = %d, want 1", m.WorktreeSessionSelected())
+	}
+	got := m.WorktreeSessions()
+	if len(got) != 2 || got[1].SessionID != "claude-inline-2" {
+		t.Fatalf("WorktreeSessions() = %#v, want second session selectable", got)
+	}
+}
+
+func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderClaude,
+				SessionID:    "claude-inline-1",
+				LaunchID:     "old-launch",
+				RepoPath:     filter.RepoPath,
+				WorktreePath: filter.WorktreePath,
+				CWD:          filter.WorktreePath + "/subdir",
+				Branch:       "feature/inline",
+				Commit:       "abc123",
+				PlanID:       "plan-1",
+				PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+				FlowID:       "flow-1",
+				FlowPhaseID:  "implementation",
+			}}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, cmd())
+
+	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected inline session resume command")
+	}
+	msg, ok := cmd().(model.AgentResultMsg)
+	if !ok {
+		t.Fatalf("expected AgentResultMsg from inline resume command, got %T", msg)
+	}
+	if msg.Err != "" {
+		t.Fatalf("expected successful inline resume command, got %q", msg.Err)
+	}
+	if got.Command != "claude" ||
+		got.ResumeSessionID != "claude-inline-1" ||
+		got.RepoPath != "/dev/alpha" ||
+		got.WorktreePath != "/dev/alpha-worktrees/inline" ||
+		got.WorkingDir != "/dev/alpha-worktrees/inline/subdir" ||
+		got.Branch != "feature/inline" ||
+		got.Commit != "abc123" ||
+		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.PlanID != "plan-1" ||
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
+		got.FlowID != "flow-1" ||
+		got.FlowPhaseID != "implementation" {
+		t.Fatalf("unexpected inline resume launch context: %#v", got)
+	}
+	if got.LaunchID == "" || got.LaunchID == "old-launch" {
+		t.Fatalf("expected fresh launch id, got %#v", got)
+	}
+}
+
+func TestModel_FilteringWorktreesClosesInlineSessions(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderCodex,
+				SessionID:    "codex-inline-1",
+				RepoPath:     filter.RepoPath,
+				WorktreePath: filter.WorktreePath,
+				Branch:       "feature/inline",
+				Summary:      "Inline worktree sessions",
+			}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range []rune("main") {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	if got := m.WorktreeSessions(); len(got) != 0 {
+		t.Fatalf("inline sessions should close after filtering worktrees, got %#v", got)
+	}
+	if strings.Contains(m.View(), "Inline worktree sessions") {
+		t.Fatalf("inline session row should disappear after filtering:\n%s", m.View())
+	}
+}
+
+func TestModel_InlineWorktreeSessionFetchErrorShowsStatus(t *testing.T) {
+	calls := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			calls++
+			if calls == 1 {
+				return nil, nil
+			}
+			return nil, errors.New("session store offline")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected inline session fetch command")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected second inline session fetch command")
+	}
+	m, _ = update(m, cmd())
+
+	if !strings.Contains(m.View(), "failed to load worktree sessions: session store offline") {
+		t.Fatalf("expected inline fetch error in status:\n%s", m.View())
+	}
+}
+
+func TestModel_StaleInlineWorktreeSessionResultIsIgnored(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderCodex,
+				SessionID:    "codex-stale",
+				RepoPath:     filter.RepoPath,
+				WorktreePath: filter.WorktreePath,
+				Summary:      "stale inline result",
+			}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected inline session fetch command")
+	}
+	staleMsg := cmd()
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, staleMsg)
+
+	if got := m.WorktreeSessions(); len(got) != 0 {
+		t.Fatalf("stale inline result should be ignored, got %#v", got)
+	}
+	if strings.Contains(m.View(), "stale inline result") {
+		t.Fatalf("stale inline row should not render after mode switch:\n%s", m.View())
+	}
+}
+
 func TestModel_SessionsFilterMatchesSessionFields(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)

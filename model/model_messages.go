@@ -210,6 +210,13 @@ type SessionResultMsg struct {
 	ListRequest uint64
 }
 
+type WorktreeSessionResultMsg struct {
+	RepoPath     string
+	WorktreePath string
+	Sessions     []sessions.SessionRecord
+	Request      uint64
+}
+
 type SessionTranscriptResultMsg struct {
 	RepoPath    string
 	Provider    sessions.Provider
@@ -442,6 +449,7 @@ func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 		return m
 	}
 	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
+	m = m.clearInlineWorktreeSessions()
 	if m.pendingWorktreeSelection != "" {
 		pendingPath := m.pendingWorktreeSelection
 		m.worktrees = m.worktrees.SelectFunc(func(wt gitquery.Worktree) bool {
@@ -927,6 +935,16 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 	return m
 }
 
+func (m Model) handleWorktreeSessionResult(msg WorktreeSessionResultMsg) Model {
+	if !m.isCurrentWorktreeSessionRequest(msg) {
+		return m
+	}
+	m.worktreeSessions = m.worktreeSessions.SetItems(msg.Sessions)
+	m = m.clearFetchListStatus(ui.ModeWorktrees)
+	m = m.reflowWorktreeSessions()
+	return m
+}
+
 func (m Model) handlePlanResult(msg PlanResultMsg) Model {
 	var ok bool
 	m, ok = m.acceptListResult(msg.RepoPath, ui.ModePlans, msg.ListRequest)
@@ -1016,6 +1034,11 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 	case FetchUnknown:
 		return false
 	case FetchList:
+		if msg.Pane == "worktree sessions" {
+			return msg.Mode == ui.ModeWorktrees &&
+				msg.ListRequest == m.activeWorktreeSessionReq &&
+				msg.WorktreePath == m.inlineWorktreeSessionPath
+		}
 		return msg.Mode == m.mode && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
 	case FetchWorktreeDiff:
 		if !m.activeViewMatches(FetchWorktreeDiff, ui.ModeWorktrees, msg.DiffRequest) {
