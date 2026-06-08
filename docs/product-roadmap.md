@@ -47,8 +47,8 @@ are already implemented and should be treated as the baseline product:
   plans pane with per-phase progress, phase expansion, plan-path copying, and
   editable launch instructions for whole-plan or selected-phase agent launch.
 - Flow records persisted through the `wtui flow` CLI and browsed in the flows
-  pane with derived status, phase progress, PR metadata, and repo-scoped
-  filtering.
+  pane with derived status, phase progress, linked plan metadata, PR metadata,
+  repo-scoped filtering, and linked-plan body opening.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.

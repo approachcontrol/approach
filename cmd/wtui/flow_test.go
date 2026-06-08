@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/planstore"
 )
 
 func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
@@ -106,6 +108,117 @@ func TestRunFlowReadPrintsJSONRecord(t *testing.T) {
 	}
 	if read.FlowID != created.FlowID || read.Title != "Readable" || read.RepoPath != repoPath {
 		t.Fatalf("read record mismatch: %#v", read)
+	}
+}
+
+func TestRunFlowPlanSetLinksPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	planPath := filepath.Join(root, "plans", "plan-1", "plan.md")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Plan Link", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
+	savePlanArtifact(t, root, "plan-1")
+
+	var linkedAt string
+	for i := 0; i < 2; i++ {
+		var stdout bytes.Buffer
+		args := []string{
+			"wtui", "flow", "plan", "set",
+			"--flow-id", created.FlowID,
+			"--plan-id", "plan-1",
+			"--state-root", root,
+		}
+		if i == 1 {
+			args = append(args, "--plan-path", planPath)
+		}
+		err := run(args, noScanDeps(t, runDeps{stdout: &stdout}))
+		if err != nil {
+			t.Fatalf("run returned error on attempt %d: %v", i+1, err)
+		}
+		var updated flowstore.FlowRecord
+		if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+			t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+		}
+		if updated.PlanID != "plan-1" || updated.PlanPath != planPath {
+			t.Fatalf("linked plan = (%q, %q), want plan-1 and %q", updated.PlanID, updated.PlanPath, planPath)
+		}
+		if i == 0 {
+			linkedAt = updated.UpdatedAt.Format(time.RFC3339Nano)
+		} else if got := updated.UpdatedAt.Format(time.RFC3339Nano); got != linkedAt {
+			t.Fatalf("idempotent retry changed UpdatedAt from %s to %s", linkedAt, got)
+		}
+	}
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.PlanID != "plan-1" || read.PlanPath != planPath {
+		t.Fatalf("persisted linked plan = (%q, %q), want plan-1 and %q", read.PlanID, read.PlanPath, planPath)
+	}
+	if got := read.UpdatedAt.Format(time.RFC3339Nano); got != linkedAt {
+		t.Fatalf("persisted UpdatedAt = %s, want idempotent retry to preserve %s", got, linkedAt)
+	}
+}
+
+func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Plan Link Validation", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
+	savePlanArtifact(t, root, "plan-1")
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing plan id",
+			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-path", filepath.Join(root, "plans", "plan-1", "plan.md"), "--state-root", root},
+			want: "requires --plan-id",
+		},
+		{
+			name: "missing plan",
+			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "missing-plan", "--state-root", root},
+			want: `plan "missing-plan" not found`,
+		},
+		{
+			name: "relative plan path",
+			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-1", "--plan-path", "plans/plan-1/plan.md", "--state-root", root},
+			want: "flow plan path must be absolute",
+		},
+		{
+			name: "mismatched plan path",
+			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-1", "--plan-path", filepath.Join(root, "plans", "other", "plan.md"), "--state-root", root},
+			want: "does not match plan",
+		},
+		{
+			name: "missing flow",
+			args: []string{"wtui", "flow", "plan", "set", "--flow-id", "missing-flow", "--plan-id", "plan-1", "--plan-path", filepath.Join(root, "plans", "plan-1", "plan.md"), "--state-root", root},
+			want: `flow "missing-flow" not found`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.PlanID != "" || read.PlanPath != "" {
+		t.Fatalf("rejected plan link should not mutate record: %#v", read)
 	}
 }
 
@@ -368,4 +481,20 @@ func mustRunFlow(t *testing.T, args []string) flowstore.FlowRecord {
 		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
 	}
 	return record
+}
+
+func savePlanArtifact(t *testing.T, root, planID string) {
+	t.Helper()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewPlanStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:   planID,
+		Title:    "Linked plan",
+		Status:   "approved",
+		Markdown: "# Linked plan\n",
+	}); err != nil {
+		t.Fatalf("SavePlan() error = %v", err)
+	}
 }

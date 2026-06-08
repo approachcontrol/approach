@@ -20,6 +20,7 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 	requireContainsAll(t, "flow commands", skill, []string{
 		"wtui flow read --flow-id",
 		"wtui flow phase set",
+		"wtui flow plan set",
 		"wtui plan save",
 		"wtui plan phase set",
 		"wtui plan read",
@@ -60,9 +61,13 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	if !strings.Contains(skill, "wtui flow phase set") || !strings.Contains(flowCLI, "runFlowPhaseSet") {
 		t.Fatal("skill and CLI should both expose flow phase set")
 	}
+	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
+		t.Fatal("skill and CLI should both expose flow plan set")
+	}
 	for _, flagName := range []string{
 		"flow-id",
 		"phase-id",
+		"plan-id",
 		"status",
 		"outcome",
 		"summary",
@@ -99,7 +104,6 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 
 	for _, unimplementedCommand := range []string{
 		"wtui flow phase add-child",
-		"wtui flow plan set",
 		"wtui flow pr set",
 		"wtui flow merge set",
 		"wtui flow session attach",
@@ -140,6 +144,9 @@ func TestWtuiFlowSkillPlanPhaseGuardsPersistenceFailures(t *testing.T) {
 
 	requireContainsAll(t, "plan persistence guards", skill, []string{
 		"if ! PLAN_ID=$(",
+		"wtui flow plan set",
+		`--plan-id "$PLAN_ID"`,
+		`--outcome "plan_link_failed"`,
 		`--outcome "plan_save_failed"`,
 		`--outcome "plan_phase_save_failed"`,
 		`--outcome "plan_read_failed"`,

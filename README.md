@@ -93,15 +93,15 @@ filter matches, or a load failure with details in the status bar.
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), or plan Markdown path (plans view) |
 | `r` | Resume selected agent session (sessions view) |
 | `s` | Show selected agent session summary (sessions view) |
-| `o` | Open selected plan Markdown in a plain-text overlay (plans view) |
+| `o` | Open selected plan Markdown in a plain-text overlay (plans view), or the linked plan body (flows view) |
 | `i` | Edit launch instructions and launch the selected plan or selected plan phase (plans view) |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close overlay or quit |
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
-switch between worktrees, branches, stashes, history, reflog, sessions, and
-plans, and flows.
+switch between worktrees, branches, stashes, history, reflog, sessions, plans,
+and flows.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
@@ -242,13 +242,16 @@ skill dirs for use across repos. v1 has no TUI plan editing or deletion.
 
 Browse persisted Flow records for the selected repo. Rows show status, branch
 or worktree basename, phase progress (`completed/total`, counting skipped phases
-as done), PR number or label, updated date, and title. Use `/` to filter by
-title, instructions, status, branch, worktree basename, plan metadata, PR
-metadata, phase titles/statuses/summaries, and linked session metadata.
+as done), linked plan ID when present, PR number or label, updated date, and
+title. Use `/` to filter by title, instructions, status, branch, worktree
+basename, plan metadata, PR metadata, phase titles/statuses/summaries, and
+linked session metadata. Press `o` to open the linked plan body in a plain-text
+overlay; wtui shows a status message when the selected Flow has no linked plan.
 
 Flows are task-centric workflow records stored beside sessions and plans under
-`<sessions root>/flows/<flow-id>/meta.json`. The TUI is browse/filter only in
-v1; create/read/list records with the `wtui flow` CLI:
+`<sessions root>/flows/<flow-id>/meta.json`. The TUI does not mutate Flow
+records in v1; create, read, list, update phase state, and link saved plans with
+the `wtui flow` CLI:
 
 ```bash
 # Create a flow; --repo-path must be absolute and --json is required in v1.
@@ -259,6 +262,9 @@ wtui flow create --title "Ship saved plans" \
 # List or read flows.
 wtui flow list --repo-path "$REPO" --json
 wtui flow read --flow-id "$FLOW_ID"
+
+# Link a saved plan artifact back to a flow.
+wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 ```
 
 The flow state root is resolved with this precedence: `--state-root` >

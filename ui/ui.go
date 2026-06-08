@@ -1509,6 +1509,7 @@ const (
 	flowStatusWidth  = 15
 	flowBranchWidth  = 20
 	flowPhaseWidth   = 7
+	flowPlanWidth    = 12
 	flowPRWidth      = 8
 	flowUpdatedWidth = 10
 )
@@ -1517,7 +1518,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 	if height <= 0 {
 		return nil
 	}
-	header := truncateToWidth(statusStyle.Render(formatFlowColumns("   ", "Status", "Branch", "Phase", "PR", "Updated", "Title")), width)
+	header := truncateToWidth(statusStyle.Render(formatFlowColumns("   ", "Status", "Branch", "Phase", "Plan", "PR", "Updated", "Title")), width)
 	rowHeight := height - TableHeaderRows
 	if rowHeight <= 0 {
 		return []string{header}
@@ -1526,6 +1527,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 	var rows []string
 	for i, record := range records {
 		phase := flowPhaseProgress(record)
+		plan := flowPlanLabel(record)
 		pr := flowPRLabel(record)
 		updated := flowUpdatedLabel(record)
 		branch := record.Branch
@@ -1536,6 +1538,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth)),
 			branchStyle.Render(fitSessionColumn(branch, flowBranchWidth)),
 			diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth)),
+			statusStyle.Render(fitSessionColumn(plan, flowPlanWidth)),
 			statusStyle.Render(fitSessionColumn(pr, flowPRWidth)),
 			stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth)),
 			stashMsgStyle.Render(record.Title),
@@ -1545,6 +1548,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				record.Status,
 				branch,
 				phase,
+				plan,
 				pr,
 				updated,
 				record.Title,
@@ -1556,12 +1560,13 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func formatFlowColumns(prefix, status, branch, phase, pr, updated, title string) string {
-	return fmt.Sprintf("%s%s  %s  %s  %s  %s  %s",
+func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string) string {
+	return fmt.Sprintf("%s%s  %s  %s  %s  %s  %s  %s",
 		prefix,
 		fitSessionColumn(status, flowStatusWidth),
 		fitSessionColumn(branch, flowBranchWidth),
 		fitSessionColumn(phase, flowPhaseWidth),
+		fitSessionColumn(plan, flowPlanWidth),
 		fitSessionColumn(pr, flowPRWidth),
 		fitSessionColumn(updated, flowUpdatedWidth),
 		title,
@@ -1579,6 +1584,13 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 		}
 	}
 	return fmt.Sprintf("%d/%d", completed, len(record.Phases))
+}
+
+func flowPlanLabel(record flowstore.FlowRecord) string {
+	if record.PlanID != "" {
+		return record.PlanID
+	}
+	return "-"
 }
 
 func flowPRLabel(record flowstore.FlowRecord) string {

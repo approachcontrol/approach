@@ -16,6 +16,15 @@ import (
 	"github.com/brian-bell/wtui/ui"
 )
 
+func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
+	t.Helper()
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: records, ListRequest: m.ListRequest(ui.ModeFlows)})
+	return m
+}
+
 func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	var gotFilter flowstore.FlowFilter
 	want := []flowstore.FlowRecord{
@@ -174,6 +183,62 @@ func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 	}
 }
 
+func TestModel_OKeyOnFlowOpensLinkedPlanText(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ReadPlan: func(planID string) (string, error) {
+			if planID != "plan-1" {
+				t.Fatalf("ReadPlan called with %q", planID)
+			}
+			return "# Flow plan\n\nfull body\n", nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:    "flow-1",
+		RepoPath:  "/dev/alpha",
+		Title:     "Linked flow",
+		Status:    flowstore.StatusInProgress,
+		PlanID:    "plan-1",
+		PlanPath:  "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		UpdatedAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if cmd == nil {
+		t.Fatal("flows-mode o should return a plan read command for linked plan")
+	}
+	if m.Overlay() != ui.OverlayPlanText {
+		t.Fatalf("expected plan text overlay, got %d", m.Overlay())
+	}
+	m, _ = update(m, cmd())
+	view := m.View()
+	for _, want := range []string{"# Flow plan", "full body"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("linked flow plan overlay missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Unlinked flow",
+		Status:   flowstore.StatusPending,
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if cmd != nil {
+		t.Fatalf("unlinked flow o returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Flow has no linked plan") {
+		t.Fatalf("status = %q, want missing linked plan message", got)
+	}
+}
+
 func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
@@ -300,7 +365,7 @@ func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.
 		t.Fatalf("launch context = %#v", launched)
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "build the thing", "create and persist the plan"} {
+	for _, want := range []string{"wtui-flow", "build the thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
 		}
@@ -379,6 +444,72 @@ func TestModel_NewFlowRunsBootstrapBeforeLaunchingPlanAgent(t *testing.T) {
 	}
 	if gotHook.Script != ".wtui/bootstrap" || gotHook.TimeoutSeconds != 7 {
 		t.Fatalf("bootstrap hook = %#v", gotHook)
+	}
+}
+
+func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
+	launched := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
+			return record, nil
+		},
+		CreateFlowWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			if repoPath != "/dev/alpha" {
+				t.Fatalf("CreateFlowWorktree repo = %q, want /dev/alpha", repoPath)
+			}
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-stale", Branch: "flow/stale"}, nil
+		},
+		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Stale Flow")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected title submit command")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Do the stale thing")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected instructions submit command")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if createCmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	staleMsg := createCmd()
+	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
+		t.Fatalf("creation command returned %#v, want tagged PlanLaunchRequestedMsg", staleMsg)
+	}
+	m, cmd = update(m, staleMsg)
+	if cmd != nil {
+		t.Fatalf("stale launch returned command %T, want nil", cmd)
+	}
+	if launched {
+		t.Fatal("stale flow creation launch should be ignored after repo change")
 	}
 }
 

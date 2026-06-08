@@ -15,7 +15,7 @@ import (
 // the artifact root but must never scan repositories or start the TUI.
 func runFlow(args []string, deps runDeps) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read|phase> [flags]")
+		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -26,6 +26,8 @@ func runFlow(args []string, deps runDeps) error {
 		return runFlowRead(args[3:], deps)
 	case "phase":
 		return runFlowPhase(args[3:], deps)
+	case "plan":
+		return runFlowPlan(args[3:], deps)
 	default:
 		return fmt.Errorf("unknown flow subcommand %q", args[2])
 	}
@@ -202,6 +204,44 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 		Outcome: *outcome,
 		Notes:   *notes,
 		Summary: *summary,
+	})
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func runFlowPlan(args []string, deps runDeps) error {
+	if len(args) < 1 || args[0] != "set" {
+		return fmt.Errorf("usage: wtui flow plan set [flags]")
+	}
+	return runFlowPlanSet(args[1:], deps)
+}
+
+func runFlowPlanSet(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow plan set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", "", "flow id")
+	planID := flags.String("plan-id", "", "plan id")
+	planPath := flags.String("plan-path", "", "plan markdown path")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow plan set requires --flow-id")
+	}
+	if *planID == "" {
+		return fmt.Errorf("flow plan set requires --plan-id")
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{
+		FlowID:   *flowID,
+		PlanID:   *planID,
+		PlanPath: *planPath,
 	})
 	if err != nil {
 		return err
