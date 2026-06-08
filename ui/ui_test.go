@@ -13,6 +13,57 @@ import (
 	"github.com/brian-bell/wtui/sessions"
 )
 
+func TestClearDarkThemeUsesSemanticTruecolorPalette(t *testing.T) {
+	requireStyleColor(t, "repo foreground", repoStyle.GetForeground(), clearDarkPalette.success)
+	requireStyleColor(t, "branch foreground", branchStyle.GetForeground(), clearDarkPalette.fgStrong)
+	requireStyleColor(t, "status foreground", statusStyle.GetForeground(), clearDarkPalette.muted)
+	requireStyleColor(t, "root foreground", rootStyle.GetForeground(), clearDarkPalette.focus)
+	requireStyleColor(t, "locked foreground", lockedStyle.GetForeground(), clearDarkPalette.info)
+	requireStyleColor(t, "ahead behind foreground", aheadBehindStyle.GetForeground(), clearDarkPalette.warning)
+	requireStyleColor(t, "dirty foreground", dirtyRedStyle.GetForeground(), clearDarkPalette.danger)
+	requireStyleColor(t, "no upstream foreground", noUpstreamStyle.GetForeground(), clearDarkPalette.special)
+	requireStyleColor(t, "diff add foreground", diffAddStyle.GetForeground(), clearDarkPalette.success)
+	requireStyleColor(t, "diff del foreground", diffDelStyle.GetForeground(), clearDarkPalette.danger)
+	requireStyleColor(t, "diff header foreground", diffHdrStyle.GetForeground(), clearDarkPalette.info)
+}
+
+func TestClearDarkThemeSelectedRowsUseExplicitSelectionColors(t *testing.T) {
+	selectedStyles := map[string]lipgloss.Style{
+		"repo":   selectedStyle,
+		"stash":  stashSelStyle,
+		"branch": branchSelStyle,
+	}
+	for name, style := range selectedStyles {
+		if style.GetReverse() {
+			t.Fatalf("%s selected style should not use reverse video", name)
+		}
+		requireStyleColor(t, name+" foreground", style.GetForeground(), clearDarkPalette.selectionFg)
+		requireStyleColor(t, name+" background", style.GetBackground(), clearDarkPalette.selectionBg)
+		if !style.GetBold() {
+			t.Fatalf("%s selected style should be bold", name)
+		}
+	}
+}
+
+func TestClearDarkThemeBordersUseFocusAndMutedTokens(t *testing.T) {
+	if clearDarkTheme.activeBorder != clearDarkPalette.focus {
+		t.Fatalf("active border = %v, want %v", clearDarkTheme.activeBorder, clearDarkPalette.focus)
+	}
+	if clearDarkTheme.inactiveBorder != clearDarkPalette.borderMuted {
+		t.Fatalf("inactive border = %v, want %v", clearDarkTheme.inactiveBorder, clearDarkPalette.borderMuted)
+	}
+	if clearDarkTheme.destructiveBorder != clearDarkPalette.danger {
+		t.Fatalf("destructive border = %v, want %v", clearDarkTheme.destructiveBorder, clearDarkPalette.danger)
+	}
+}
+
+func requireStyleColor(t *testing.T, name string, got lipgloss.TerminalColor, want lipgloss.Color) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", name, got, want)
+	}
+}
+
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {

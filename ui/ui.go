@@ -130,42 +130,6 @@ const FlowContentOverhead = BranchContentOverhead + TableHeaderRows
 // indent/cursor (3) + date (10) + separator (2).
 const StashPrefixWidth = 15
 
-// ANSI palette codes used below (8-/16-color + 256-color grays):
-//
-//	5   = magenta        6   = cyan          9   = bright red
-//	10  = bright green   11  = bright yellow  12  = bright blue
-//	14  = bright cyan    15  = bright white   238 = dark gray
-//	241 = medium gray
-var (
-	repoStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
-	selectedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Reverse(true) // 10 = bright green
-	placeholderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)            // 241 = medium gray
-	statusStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	branchStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	cleanStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
-	commitStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	activeModeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	inactiveModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	shortcutTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	shortcutModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
-	shortcutGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)               // 14 = bright cyan
-	shortcutKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
-	shortcutTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))                         // 250 = light gray
-	stashDateStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	stashMsgStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
-	stashSelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true) // 15 = bright white
-	branchSelStyle     = lipgloss.NewStyle().Bold(true).Reverse(true)
-	rootStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 12 = bright blue
-	lockedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
-	noUpstreamStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // 5 = magenta
-	aheadBehindStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 11 = bright yellow
-	mergedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // 6 = cyan
-	dirtyRedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
-	diffAddStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 10 = bright green
-	diffDelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
-	diffHdrStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
-)
-
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
 	Repos                    []scanner.Repo
@@ -316,10 +280,10 @@ func Render(p RenderParams) string {
 	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, innerHeight, status)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
 
-	// Border colors based on active pane
-	activeBorderColor := lipgloss.Color("12")
-	inactiveBorderColor := lipgloss.Color("238")
-	destructiveBorderColor := lipgloss.Color("9")
+	// Border colors based on active pane.
+	activeBorderColor := clearDarkTheme.activeBorder
+	inactiveBorderColor := clearDarkTheme.inactiveBorder
+	destructiveBorderColor := clearDarkTheme.destructiveBorder
 
 	leftBorderColor := inactiveBorderColor
 	rightBorderColor := inactiveBorderColor
@@ -902,9 +866,9 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 func transientStatusStyle(fadeStep int) lipgloss.Style {
 	switch fadeStep {
 	case 1:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		return lipgloss.NewStyle().Foreground(clearDarkTheme.palette.muted)
 	case 2:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+		return lipgloss.NewStyle().Foreground(clearDarkTheme.palette.borderMuted)
 	default:
 		return dirtyRedStyle
 	}
@@ -1221,7 +1185,8 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 		line := "   " + branch + indicators + locationLabel
 		if i == selected {
-			line = branchSelStyle.Render(" > " + strings.TrimPrefix(line, "   "))
+			selectedLine := truncateToWidth(" > "+strings.TrimPrefix(ansi.Strip(line), "   "), width)
+			line = branchSelStyle.Width(width).Render(selectedLine)
 		}
 		content = append(content, line)
 
@@ -1821,7 +1786,8 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 
 		line := "   " + name + indicators + rootLabel + path
 		if i == selected {
-			line = branchSelStyle.Render(" > " + strings.TrimPrefix(line, "   "))
+			selectedLine := truncateToWidth(" > "+strings.TrimPrefix(ansi.Strip(line), "   "), width)
+			line = branchSelStyle.Width(width).Render(selectedLine)
 		}
 		content = append(content, line)
 	}
@@ -2064,7 +2030,7 @@ func renderLaunchInstructionsDialog(promptText, placeholder, input, errText stri
 	}
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("12")).
+		BorderForeground(clearDarkTheme.activeBorder).
 		Width(contentWidth + 2).
 		Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
