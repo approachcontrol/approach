@@ -438,31 +438,122 @@ func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing
 		launched.SessionStateRoot != "/state/wtui/sessions/v1" {
 		t.Fatalf("launch context = %#v", launched)
 	}
-	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{
-		"use the review-loop skill",
-		"/state/wtui/sessions/v1/plans/plan-1/plan.md",
-		"flow-1",
-		"plan-review",
-		"wtui flow phase set --flow-id flow-1 --phase-id plan-review",
-		"approved",
-		"approved_with_concerns",
-		"changes_requested",
-		"blocked",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("launch prompt missing %q:\n%s", want, launched.InitialPrompt)
-		}
+	wantPrompt := strings.Join([]string{
+		"Use the review loop skill to review the saved plan.",
+		"",
+		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"Worktree: /dev/alpha-worktrees/flow-review",
+		"Branch: flow/review",
+		"Commit(s): abc123",
+	}, "\n")
+	if launched.InitialPrompt != wantPrompt {
+		t.Fatalf("plan-review prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
 	}
+	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, unwanted := range []string{
 		"custom flow instructions from the user",
 		"# saved plan",
 		"implement issue 112 with tests",
 		"saved and linked plan-1",
 		"plan author noted a migration risk",
+		"wtui flow phase set",
+		"approved_with_concerns",
+		"changes_requested",
 	} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("minimum reliable prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_AKeyOnFlowLaunchesImplementationWithMinimalPrompt(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("Implementation launch should pass the plan path without pre-reading %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+		Branch:       "flow/implementation",
+		Commit:       "fed321",
+		Title:        "Implement saved plan",
+		Instructions: "Custom flow instructions from the user.",
+		Status:       flowstore.StatusInProgress,
+		PlanID:       "plan-1",
+		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Summary: "Saved and linked plan-1."},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Summary: "Plan approved."},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare an implementation launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	m, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if launched.FlowID != "flow-1" ||
+		launched.FlowPhaseID != "implementation" ||
+		launched.PlanID != "plan-1" ||
+		launched.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		launched.WorktreePath != "/dev/alpha-worktrees/flow-implementation" ||
+		launched.Branch != "flow/implementation" ||
+		launched.Commit != "fed321" ||
+		launched.SessionStateRoot != "/state/wtui/sessions/v1" {
+		t.Fatalf("launch context = %#v", launched)
+	}
+	wantPrompt := strings.Join([]string{
+		"Implement the approved plan.",
+		"",
+		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"Worktree: /dev/alpha-worktrees/flow-implementation",
+		"Branch: flow/implementation",
+		"Commit(s): fed321",
+	}, "\n")
+	if launched.InitialPrompt != wantPrompt {
+		t.Fatalf("implementation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, unwanted := range []string{
+		"custom flow instructions from the user",
+		"saved and linked plan-1",
+		"plan approved",
+		"plan review gate",
+		"wtui flow phase set",
+		"verify the target behavior",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("implementation prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
@@ -505,10 +596,8 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
-			if planID != "plan-1" {
-				t.Fatalf("ReadPlan called with %q", planID)
-			}
-			return "# Saved plan\n\nImplement issue 114 with children.\n", nil
+			t.Fatalf("Review Loop launch should pass metadata without pre-reading %q", planID)
+			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
@@ -524,6 +613,7 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-review-loop",
 		Branch:       "flow/review-loop",
+		Commit:       "def456",
 		Title:        "Review implementation",
 		Instructions: "Custom flow instructions from the user.",
 		Status:       flowstore.StatusInProgress,
@@ -559,20 +649,124 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 	if launched.FlowID != "flow-1" || launched.FlowPhaseID != "review-loop" || launched.PlanID != "plan-1" {
 		t.Fatalf("launch context = %#v", launched)
 	}
+	wantPrompt := strings.Join([]string{
+		"Use the review loop skill to review the changes.",
+		"",
+		"Worktree: /dev/alpha-worktrees/flow-review-loop",
+		"Branch: flow/review-loop",
+		"Commit(s): def456",
+	}, "\n")
+	if launched.InitialPrompt != wantPrompt {
+		t.Fatalf("review-loop prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
+	}
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
-		"use the review-loop skill",
+		"/dev/alpha-worktrees/flow-review-loop",
+		"flow/review-loop",
+		"def456",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review-loop prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{
+		"custom flow instructions from the user",
 		"first-level implementation review",
 		"implementation-api",
 		"api integration",
 		"# saved plan",
-		"wtui flow phase set --flow-id flow-1 --phase-id review-loop",
+		"wtui flow phase set",
 		"--status completed",
 		"--status needs_attention",
 		"--status blocked",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("review-loop prompt missing %q:\n%s", want, launched.InitialPrompt)
+		if strings.Contains(strings.ToLower(launched.InitialPrompt), unwanted) {
+			t.Fatalf("review-loop prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_AKeyOnFlowLaunchesPRCreationWithMinimalPrompt(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("PR Creation launch should pass metadata without pre-reading %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-pr",
+		Branch:       "flow/pr",
+		Commit:       "abc789",
+		Title:        "Create PR",
+		Instructions: "Custom flow instructions from the user.",
+		Status:       flowstore.StatusInProgress,
+		PlanID:       "plan-1",
+		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Summary: "Implemented the main slice."},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted, Summary: "No blocking findings."},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare a pr-creation launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	m, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "pr-creation" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if launched.FlowID != "flow-1" || launched.FlowPhaseID != "pr-creation" || launched.PlanID != "plan-1" {
+		t.Fatalf("launch context = %#v", launched)
+	}
+	wantPrompt := strings.Join([]string{
+		"Create a PR for the changes.",
+		"",
+		"Worktree: /dev/alpha-worktrees/flow-pr",
+		"Branch: flow/pr",
+		"Commit(s): abc789",
+	}, "\n")
+	if launched.InitialPrompt != wantPrompt {
+		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, unwanted := range []string{
+		"custom flow instructions from the user",
+		"implemented the main slice",
+		"no blocking findings",
+		"# saved plan",
+		"wtui flow phase set",
+		"advance this phase",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("pr-creation prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
@@ -582,7 +776,8 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testi
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
-			return "# Saved plan\n", nil
+			t.Fatalf("PR Creation launch should pass metadata without pre-reading %q", planID)
+			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -597,6 +792,7 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testi
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-pr",
 		Branch:       "flow/pr",
+		Commit:       "abc789",
 		PlanID:       "plan-1",
 		Status:       flowstore.StatusInProgress,
 		Phases: []flowstore.FlowPhase{
@@ -623,21 +819,27 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testi
 	}
 	_ = cmd()
 
+	wantPrompt := strings.Join([]string{
+		"Create a PR for the changes.",
+		"",
+		"Worktree: /dev/alpha-worktrees/flow-pr",
+		"Branch: flow/pr",
+		"Commit(s): abc789",
+	}, "\n")
+	if launched.InitialPrompt != wantPrompt {
+		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
+	}
 	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{
+	for _, unwanted := range []string{
 		"flow phase: pr creation",
 		"wtui flow pr set",
 		"--provider github",
-		"--number",
-		"--url",
-		"--head flow/pr",
-		"--base",
-		"wtui flow phase set --flow-id flow-1 --phase-id pr-creation",
+		"wtui flow phase set",
 		"--status completed",
 		"--status blocked",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("pr-creation prompt missing %q:\n%s", want, launched.InitialPrompt)
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("pr-creation prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
