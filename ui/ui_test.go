@@ -1713,6 +1713,27 @@ func TestBranchPane_RootAnnotationUsesBlueStyle(t *testing.T) {
 	}
 }
 
+func TestBranchPane_SelectedRowPreservesSemanticIndicatorStyles(t *testing.T) {
+	rows := []gitquery.BranchRow{
+		{Branch: gitquery.Branch{Name: "feat", HasUpstream: true, Ahead: 2, Dirty: true, IsWorktree: true,
+			FilesChanged: 1, LinesAdded: 5, LinesDeleted: 2}},
+	}
+	lines := renderBranchPaneSelected(rows, 0, 0, 80, 10, "")
+	joined := strings.Join(lines, "\n")
+	for _, styled := range []string{
+		selectedSegment(aheadBehindStyle, " ●"),
+		selectedStyle.Render(" +2/-0"),
+		selectedSegment(dirtyRedStyle, " ●"),
+		selectedStyle.Render(" 1 files "),
+		selectedSegment(diffAddStyle, "+5"),
+		selectedSegment(diffDelStyle, "-2"),
+	} {
+		if !strings.Contains(joined, styled) {
+			t.Fatalf("selected branch row should preserve semantic style %q in:\n%s", styled, joined)
+		}
+	}
+}
+
 func TestBranchPane_NonWorktreeNoAnnotation(t *testing.T) {
 	rows := []gitquery.BranchRow{
 		{Branch: gitquery.Branch{Name: "feat", HasUpstream: true, IsWorktree: false}},
@@ -2469,6 +2490,25 @@ func TestWorktreePane_CursorHighlight(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "> feat") {
 		t.Error("expected '> feat' cursor on second item")
+	}
+}
+
+func TestWorktreePane_SelectedRowPreservesSemanticIndicatorStyles(t *testing.T) {
+	wts := []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Locked: true, LockReason: "review"},
+		{Path: "/dev/alpha-feat", BranchName: "feat", Dirty: true, FilesChanged: 2, LinesAdded: 7, LinesDeleted: 3},
+	}
+	lines := renderWorktreePane(wts, 1, 0, 100, 10)
+	joined := strings.Join(lines, "\n")
+	for _, styled := range []string{
+		selectedSegment(dirtyRedStyle, " ●"),
+		selectedStyle.Render(" 2 files "),
+		selectedSegment(diffAddStyle, "+7"),
+		selectedSegment(diffDelStyle, "-3"),
+	} {
+		if !strings.Contains(joined, styled) {
+			t.Fatalf("selected worktree row should preserve semantic style %q in:\n%s", styled, joined)
+		}
 	}
 }
 

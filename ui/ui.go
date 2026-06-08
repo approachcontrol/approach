@@ -1185,8 +1185,7 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 		line := "   " + branch + indicators + locationLabel
 		if i == selected {
-			selectedLine := truncateToWidth(" > "+strings.TrimPrefix(ansi.Strip(line), "   "), width)
-			line = branchSelStyle.Width(width).Render(selectedLine)
+			line = renderSelectedBranchRow(row, repoPath, width)
 		}
 		content = append(content, line)
 
@@ -1206,6 +1205,40 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 	truncateLines(content, width)
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderSelectedBranchRow(row gitquery.BranchRow, repoPath string, width int) string {
+	b := row.Branch
+	line := selectedStyle.Render(" > ") + selectedSegment(branchStyle, b.Name)
+
+	var indicators string
+	if b.Ahead > 0 || b.Behind > 0 {
+		indicators += selectedSegment(aheadBehindStyle, " ●")
+		indicators += selectedStyle.Render(fmt.Sprintf(" +%d/-%d", b.Ahead, b.Behind))
+	}
+	if b.Dirty {
+		indicators += renderSelectedDirtyIndicator(b.FilesChanged, b.LinesAdded, b.LinesDeleted)
+	}
+	if !b.HasUpstream || b.UpstreamGone {
+		indicators += selectedSegment(noUpstreamStyle, " ●")
+	}
+	if b.Merged {
+		indicators += selectedSegment(mergedStyle, " merged")
+	}
+	if indicators == "" {
+		indicators = selectedSegment(cleanStyle, " ✔")
+	}
+	line += indicators
+
+	if row.WorktreePath != "" {
+		line += selectedStyle.Render(" ")
+		if repoPath != "" && row.WorktreePath == repoPath {
+			line += selectedSegment(rootStyle, "[root]")
+		} else {
+			line += selectedSegment(commitStyle, fmt.Sprintf("[%s]", row.WorktreePath))
+		}
+	}
+	return renderSelectedRow(line, width)
 }
 
 // StashLineCount returns the number of visual lines a stash entry occupies
@@ -1786,14 +1819,48 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 
 		line := "   " + name + indicators + rootLabel + path
 		if i == selected {
-			selectedLine := truncateToWidth(" > "+strings.TrimPrefix(ansi.Strip(line), "   "), width)
-			line = branchSelStyle.Width(width).Render(selectedLine)
+			line = renderSelectedWorktreeRow(wt, width)
 		}
 		content = append(content, line)
 	}
 
 	truncateLines(content, width)
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
+	name := wt.BranchName
+	if wt.Detached {
+		name = "(detached)"
+	}
+	line := selectedStyle.Render(" > ") + selectedSegment(branchStyle, name)
+
+	if wt.Locked {
+		line += renderSelectedLockedIndicator(wt.LockReason)
+		if !wt.Stale {
+			if wt.Dirty {
+				line += renderSelectedDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
+			} else {
+				line += selectedSegment(cleanStyle, " ✔")
+			}
+		}
+	} else if wt.Stale {
+		line += selectedSegment(dirtyRedStyle, " ✗")
+		line += selectedStyle.Render(" ")
+		line += selectedSegment(dirtyRedStyle, "stale")
+	} else if wt.Dirty {
+		line += renderSelectedDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
+	} else {
+		line += selectedSegment(cleanStyle, " ✔")
+	}
+
+	if wt.IsMain {
+		line += selectedStyle.Render(" ")
+		line += selectedSegment(rootStyle, "[root]")
+	}
+	line += selectedStyle.Render(" ")
+	line += selectedSegment(commitStyle, wt.Path)
+	return renderSelectedRow(line, width)
 }
 
 func renderOverlay(p RenderParams) string {
@@ -2135,12 +2202,7 @@ func truncateToWidth(s string, maxWidth int) string {
 	if lipgloss.Width(s) <= maxWidth {
 		return s
 	}
-	// Strip ANSI, truncate runes, re-measure. Crude but correct for our use.
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes)) > maxWidth {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes)
+	return ansi.Truncate(s, maxWidth, "")
 }
 
 // scrollAndPad applies a scroll offset to content and returns a zero-padded
@@ -2172,6 +2234,15 @@ func renderDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
 	return s
 }
 
+func renderSelectedDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
+	s := selectedSegment(dirtyRedStyle, " ●")
+	s += selectedStyle.Render(fmt.Sprintf(" %d files ", filesChanged))
+	s += selectedSegment(diffAddStyle, fmt.Sprintf("+%d", linesAdded))
+	s += selectedStyle.Render("/")
+	s += selectedSegment(diffDelStyle, fmt.Sprintf("-%d", linesDeleted))
+	return s
+}
+
 // MaxLockReasonWidth caps the visible width of a lock reason in the worktree
 // pane so a long reason cannot push the path off the end of the line.
 const MaxLockReasonWidth = 40
@@ -2182,6 +2253,29 @@ func renderLockedIndicator(reason string) string {
 		s += " " + lockedStyle.Render(truncateReason(reason, MaxLockReasonWidth))
 	}
 	return s
+}
+
+func renderSelectedLockedIndicator(reason string) string {
+	s := selectedSegment(lockedStyle, " 🔒")
+	s += selectedStyle.Render(" ")
+	s += selectedSegment(lockedStyle, "locked")
+	if reason != "" {
+		s += selectedStyle.Render(" ")
+		s += selectedSegment(lockedStyle, truncateReason(reason, MaxLockReasonWidth))
+	}
+	return s
+}
+
+func selectedSegment(style lipgloss.Style, text string) string {
+	return style.Background(clearDarkTheme.palette.selectionBg).Bold(true).Render(text)
+}
+
+func renderSelectedRow(line string, width int) string {
+	line = truncateToWidth(line, width)
+	if padding := width - lipgloss.Width(line); padding > 0 {
+		line += selectedStyle.Render(strings.Repeat(" ", padding))
+	}
+	return line
 }
 
 func truncateReason(s string, max int) string {
