@@ -395,6 +395,9 @@ func (m Model) View() string {
 		WorktreeInputPlaceholder: modalView.Placeholder,
 		WorktreeInput:            modalView.Input,
 		WorktreeInputErr:         modalView.InputErr,
+		SelectPrompt:             modalView.Prompt,
+		SelectItems:              uiSelectItems(modalView.SelectItems),
+		SelectSelected:           modalView.SelectIndex,
 		BranchScroll:             branchScroll,
 		RepoScroll:               repoScroll,
 		StashScroll:              stashScroll,
@@ -568,6 +571,8 @@ func (m Model) overlayState() ui.OverlayState {
 		return ui.OverlayConfirm
 	case modal.Input:
 		return ui.OverlayWorktreeInput
+	case modal.Select:
+		return ui.OverlayAgentSelect
 	case modal.Diff:
 		switch view.DiffKind {
 		case modal.DiffStash:
@@ -587,6 +592,17 @@ func (m Model) overlayState() ui.OverlayState {
 		return ui.OverlayPlanText
 	}
 	return ui.OverlayNone
+}
+
+func uiSelectItems(items []modal.SelectItem) []ui.SelectItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]ui.SelectItem, len(items))
+	for i, item := range items {
+		out[i] = ui.SelectItem{Label: item.Label, Value: item.Value}
+	}
+	return out
 }
 
 func (m Model) openPlanText() Model {

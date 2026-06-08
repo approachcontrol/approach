@@ -29,6 +29,7 @@ const (
 	OverlaySessionTranscript
 	OverlayPlanText
 	OverlayWorktreeInput
+	OverlayAgentSelect
 )
 
 const BranchPrompt = "New branch"
@@ -46,6 +47,11 @@ const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
 const AgentInputPlaceholder = "codex, codex-app, or claude"
+
+type SelectItem struct {
+	Label string
+	Value string
+}
 
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
@@ -180,6 +186,9 @@ type RenderParams struct {
 	WorktreeInputPlaceholder string
 	WorktreeInput            string
 	WorktreeInputErr         string
+	SelectPrompt             string
+	SelectItems              []SelectItem
+	SelectSelected           int
 	BranchScroll             int
 	RepoScroll               int
 	StashScroll              int
@@ -599,6 +608,8 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			return statusStyle.Width(width).Render("  enter: launch  esc: cancel  backspace: delete")
 		}
 		return statusStyle.Width(width).Render("  enter: create/set  esc: cancel  backspace: delete")
+	case overlay == OverlayAgentSelect:
+		return statusStyle.Width(width).Render("  up/down select  enter: confirm  esc: cancel")
 	case overlay != OverlayNone:
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
@@ -1753,6 +1764,10 @@ func renderOverlay(p RenderParams) string {
 		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInputPlaceholder, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
+	if p.Overlay == OverlayAgentSelect {
+		lines := renderSelectDialog(p.SelectPrompt, p.SelectItems, p.SelectSelected, p.Width, contentHeight)
+		return strings.Join(lines, "\n") + "\n" + statusBar
+	}
 	if p.Overlay == OverlayPlanText {
 		lines := renderPlainTextOverlay(p.OverlayText, p.OverlayScroll, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
@@ -1815,6 +1830,44 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 			style = dirtyRedStyle.Bold(true)
 		}
 		lines[mid] = strings.Repeat(" ", pad) + style.Render(prompt)
+	}
+	return lines
+}
+
+func renderSelectDialog(prompt string, items []SelectItem, selected int, width, height int) []string {
+	lines := make([]string, height)
+	if height <= 0 {
+		return lines
+	}
+	if prompt == "" {
+		prompt = "Choose"
+	}
+	if selected < 0 || selected >= len(items) {
+		selected = 0
+	}
+
+	blockHeight := len(items) + 1
+	start := (height - blockHeight) / 2
+	if start < 0 {
+		start = 0
+	}
+	if start < len(lines) {
+		lines[start] = centeredLine(activeModeStyle.Render(prompt), width)
+	}
+	for i, item := range items {
+		row := start + 1 + i
+		if row >= len(lines) {
+			break
+		}
+		label := item.Label
+		if label == "" {
+			label = item.Value
+		}
+		line := "  " + label
+		if i == selected {
+			line = selectedStyle.Render("> " + label)
+		}
+		lines[row] = centeredLine(line, width)
 	}
 	return lines
 }

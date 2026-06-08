@@ -127,7 +127,8 @@ Parsed for future launch behavior.
 ### `[agent]`
 
 Stores the selected coding agent for interactive launches. Pressing `A` in wtui
-updates this value immediately, creating the config file if needed.
+opens an agent picker for `codex`, `codex-app`, or `claude` and updates this
+value immediately, creating the config file if needed.
 
 | Key | Type | Description |
 |-----|------|-------------|
