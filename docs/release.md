@@ -28,8 +28,7 @@ HOMEBREW_TAP_GITHUB_TOKEN
 ## Cutting a Release
 
 1. Land the release changes on `main`.
-2. Wait for CI, including the `release-snapshot` job in
-   `.github/workflows/ci.yml`, to pass.
+2. Wait for CI and the `Release Snapshot` workflow to pass.
 3. Optional local check if GoReleaser is installed:
 
    ```bash
