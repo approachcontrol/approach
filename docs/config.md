@@ -265,9 +265,10 @@ Implementation can be split into ordered child phases with
 `wtui flow phase add-child`. Child phase IDs are stable: re-running the command
 updates the same child instead of duplicating it. Child phases currently belong
 under `implementation`; they gate review loop and PR creation until completed or
-skipped with notes. The review-loop phase records the first-level implementation
-review with `wtui flow phase set --phase-id review-loop --status completed`,
-`needs_attention`, or `blocked`.
+skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
+Implementation point to the saved plan artifact, while Review Loop and PR
+Creation include only the worktree, branch, and start commit metadata needed to
+inspect the changes.
 
 The PR Creation phase should record structured PR metadata with
 `wtui flow pr set` after a pull request exists. The command currently supports

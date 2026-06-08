@@ -229,7 +229,7 @@ state default. CLI-launched agents get `WTUI_PLAN_STATE_ROOT` and
 filled first from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
 `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`; for new plans, and for
 updates that provide a repo or worktree location, wtui also resolves best-effort
-repo, worktree, branch, and commit metadata from git. `codex-app` launches use
+repo, worktree, branch, and start commit metadata from git. `codex-app` launches use
 macOS `open`, so they do not inherit `WTUI_*`; wtui uses the repo path as the
 deep-link project path and includes worktree, state-root, plan, and flow
 metadata in the launch prompt. Agents should pass the listed `--state-root` when
@@ -300,11 +300,12 @@ wtui flow pr set --flow-id "$FLOW_ID" \
 
 Child implementation phases gate downstream readiness in phase order: review
 loop and PR creation remain pending until required implementation children are
-completed or explicitly skipped with notes. The review-loop launch prompt asks
-the agent to run a first-level implementation review and record `completed`,
-`needs_attention`, or `blocked` through `wtui flow phase set`. Autoreview is
-ready only after PR Creation is complete and `wtui flow pr set` has recorded
-provider, PR number, URL, head branch, and base branch metadata.
+completed or explicitly skipped with notes. Flow phase launch prompts stay
+minimal: Plan Review and Implementation point to the saved plan artifact, while
+Review Loop and PR Creation include only the worktree, branch, and start commit
+metadata needed to inspect the changes. Autoreview is ready only after PR
+Creation is complete and `wtui flow pr set` has recorded provider, PR number,
+URL, head branch, and base branch metadata.
 
 The flow state root is resolved with this precedence: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
