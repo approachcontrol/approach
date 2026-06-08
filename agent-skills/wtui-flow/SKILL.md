@@ -328,6 +328,19 @@ Creation by recording the missing metadata with `wtui flow pr set`; if a PR does
 not exist or cannot be recovered, rerun PR Creation as `running` with notes and
 then mark PR Creation `blocked` with notes.
 
+If Autoreview is already `needs_attention` or `blocked`, do not mark it
+`completed` directly. First restart the phase as `running` with notes, then
+complete it after the rerun succeeds:
+
+```bash
+wtui flow phase set \
+  --flow-id "$WTUI_FLOW_ID" \
+  --phase-id autoreview \
+  --status running \
+  --notes "Rerunning Autoreview after addressing prior findings." \
+  "${FLOW_STATE_ARGS[@]}"
+```
+
 ```bash
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
