@@ -1220,38 +1220,33 @@ func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.T) {
-	var created flowstore.FlowRecord
-	var startUpdate flowstore.StartMetadataUpdate
-	var launchUpdate flowstore.PhaseLaunchUpdate
+func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
+	var startRequest model.FlowStartRequest
 	var launched actions.AgentLaunchContext
 	var calls []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/wtui/sessions/v1",
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			calls = append(calls, "create-flow")
-			created = record
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
-			calls = append(calls, "create-worktree")
-			if repoPath != "/dev/alpha" || title != "Add Flow Mode" || baseRef != "main" {
-				t.Fatalf("CreateFlowWorktree(%q, %q, %q)", repoPath, title, baseRef)
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			calls = append(calls, "start-flow")
+			startRequest = req
+			if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build the thing" || req.BaseRef != "main" {
+				t.Fatalf("StartFlowPlan request = %#v", req)
 			}
-			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
-		},
-		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			calls = append(calls, "set-start")
-			startUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID, WorktreePath: update.WorktreePath, Branch: update.Branch, BaseRef: update.BaseRef}, nil
-		},
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			calls = append(calls, "add-launch")
-			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{PhaseID: update.PhaseID, Status: flowstore.PhaseRunning, LaunchIDs: []string{update.LaunchID}}}}, nil
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:          req.AgentCommand,
+				LaunchID:         "launch-1",
+				RepoPath:         req.RepoPath,
+				WorktreePath:     "/dev/alpha-worktrees/flow-add-flow-mode",
+				Branch:           "flow/add-flow-mode",
+				SessionStateRoot: req.SessionStateRoot,
+				PlanPhaseID:      req.PlanPhaseID,
+				PlanPhaseTitle:   req.PlanPhaseTitle,
+				PlanPhaseStatus:  req.PlanPhaseStatus,
+				FlowID:           "flow-1",
+				FlowPhaseID:      req.PlanPhaseID,
+				InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild the thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+			}}, nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			calls = append(calls, "launch-agent")
@@ -1293,25 +1288,20 @@ func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.
 	if !ok {
 		t.Fatalf("creation command returned %T, want PlanLaunchRequestedMsg", msg)
 	}
-	m, cmd = update(m, launchMsg)
+	_, cmd = update(m, launchMsg)
 	if cmd == nil {
 		t.Fatal("expected agent result command")
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,add-launch,launch-agent" {
+	if strings.Join(calls, ",") != "start-flow,launch-agent" {
 		t.Fatalf("call order = %#v", calls)
 	}
-	if created.Title != "Add Flow Mode" || created.Instructions != "Build the thing" || created.RepoPath != "/dev/alpha" || created.BaseRef != "main" {
-		t.Fatalf("created record = %#v", created)
-	}
-	if startUpdate.FlowID != "flow-1" ||
-		startUpdate.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
-		startUpdate.Branch != "flow/add-flow-mode" ||
-		startUpdate.BaseRef != "main" {
-		t.Fatalf("start update = %#v", startUpdate)
-	}
-	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "plan" || launchUpdate.LaunchID == "" {
-		t.Fatalf("launch update = %#v", launchUpdate)
+	if startRequest.AgentCommand != "codex" ||
+		startRequest.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		startRequest.PlanPhaseID != "plan" ||
+		startRequest.PlanPhaseTitle != "Plan" ||
+		startRequest.PlanPhaseStatus != flowstore.PhaseRunning {
+		t.Fatalf("start request metadata = %#v", startRequest)
 	}
 	if launched.Command != "codex" ||
 		launched.RepoPath != "/dev/alpha" ||
@@ -1321,7 +1311,7 @@ func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.
 		launched.FlowID != "flow-1" ||
 		launched.FlowPhaseID != "plan" ||
 		launched.PlanPhaseID != "plan" ||
-		launched.LaunchID != launchUpdate.LaunchID {
+		launched.LaunchID != "launch-1" {
 		t.Fatalf("launch context = %#v", launched)
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
@@ -1337,42 +1327,21 @@ func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.
 	}
 }
 
-func TestModel_NewFlowRunsBootstrapBeforeLaunchingPlanAgent(t *testing.T) {
-	var gotCtx actions.BootstrapContext
-	var gotHook actions.BootstrapHook
+func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 	var calls []string
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			calls = append(calls, "create-flow")
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			calls = append(calls, "create-worktree")
-			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
-		},
-		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			calls = append(calls, "set-start")
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			calls = append(calls, "add-launch")
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		BootstrapHookForRepo: func(repoPath string) (actions.BootstrapHook, bool) {
-			if repoPath != "/dev/alpha" {
-				t.Fatalf("BootstrapHookForRepo(%q)", repoPath)
-			}
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
-		},
-		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
-			calls = append(calls, "bootstrap")
-			gotCtx = ctx
-			gotHook = hook
-			return nil
+		AgentCommand: "codex",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			calls = append(calls, "start-flow")
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:      req.AgentCommand,
+				LaunchID:     "launch-1",
+				RepoPath:     req.RepoPath,
+				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
+				Branch:       "flow/add-flow-mode",
+				FlowID:       "flow-1",
+				FlowPhaseID:  req.PlanPhaseID,
+			}}, nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			calls = append(calls, "launch-agent")
@@ -1393,17 +1362,8 @@ func TestModel_NewFlowRunsBootstrapBeforeLaunchingPlanAgent(t *testing.T) {
 	}
 	_, _ = update(m, launchMsg)
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,add-launch,launch-agent" {
+	if strings.Join(calls, ",") != "start-flow,launch-agent" {
 		t.Fatalf("call order = %#v", calls)
-	}
-	if gotCtx.RepoPath != "/dev/alpha" ||
-		gotCtx.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
-		gotCtx.Ref != "flow/add-flow-mode" ||
-		gotCtx.Kind != actions.WorktreeCreateFlow {
-		t.Fatalf("bootstrap context = %#v", gotCtx)
-	}
-	if gotHook.Script != ".wtui/bootstrap" || gotHook.TimeoutSeconds != 7 {
-		t.Fatalf("bootstrap hook = %#v", gotHook)
 	}
 }
 
@@ -1414,22 +1374,19 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
 		},
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
-			if repoPath != "/dev/alpha" {
-				t.Fatalf("CreateFlowWorktree repo = %q, want /dev/alpha", repoPath)
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if req.RepoPath != "/dev/alpha" {
+				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
 			}
-			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-stale", Branch: "flow/stale"}, nil
-		},
-		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:      req.AgentCommand,
+				LaunchID:     "launch-1",
+				RepoPath:     req.RepoPath,
+				WorktreePath: "/dev/alpha-worktrees/flow-stale",
+				Branch:       "flow/stale",
+				FlowID:       "flow-1",
+				FlowPhaseID:  req.PlanPhaseID,
+			}}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = true
@@ -1464,7 +1421,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged PlanLaunchRequestedMsg", staleMsg)
 	}
-	m, cmd = update(m, staleMsg)
+	_, cmd = update(m, staleMsg)
 	if cmd != nil {
 		t.Fatalf("stale launch returned command %T, want nil", cmd)
 	}
@@ -1491,43 +1448,14 @@ func TestModel_NewFlowWarnsWhenNoAgentConfigured(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowBootstrapFailureBlocksPlanPhase(t *testing.T) {
-	var phaseUpdate flowstore.PhaseUpdate
-	var calls []string
+func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			calls = append(calls, "create-flow")
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			calls = append(calls, "create-worktree")
-			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
-		},
-		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			calls = append(calls, "set-start")
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
-		},
-		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
-			calls = append(calls, "bootstrap")
-			return errors.New("missing env file")
-		},
-		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			calls = append(calls, "set-phase")
-			phaseUpdate = update
-			return flowstore.FlowRecord{}, nil
-		},
-		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			t.Fatal("launch ID should not be recorded after bootstrap failure")
-			return flowstore.FlowRecord{}, nil
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{}, errors.New("Bootstrap hook failed: missing env file")
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatal("agent should not launch after bootstrap failure")
+			t.Fatal("agent should not launch after start failure")
 			return actions.TerminalLaunchSpec{}, nil
 		},
 	})
@@ -1543,70 +1471,41 @@ func TestModel_NewFlowBootstrapFailureBlocksPlanPhase(t *testing.T) {
 		t.Fatalf("command returned %T, want FlowCreateFailedMsg", msg)
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,set-phase" {
-		t.Fatalf("call order = %#v", calls)
-	}
 	if !strings.Contains(msg.Err, "Bootstrap hook failed") || !strings.Contains(msg.Err, "missing env file") {
 		t.Fatalf("error = %q, want bootstrap failure", msg.Err)
 	}
-	if phaseUpdate.FlowID != "flow-1" ||
-		phaseUpdate.PhaseID != "plan" ||
-		phaseUpdate.Status != flowstore.PhaseBlocked ||
-		!strings.Contains(phaseUpdate.Notes, "missing env file") {
-		t.Fatalf("phase update = %#v", phaseUpdate)
-	}
 }
 
-func TestModel_NewFlowWorktreeFailureBlocksPlanPhase(t *testing.T) {
-	var phaseUpdate flowstore.PhaseUpdate
+func TestModel_NewFlowWorktreeFailureReportsStartFailure(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
-		},
-		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdate = update
-			return flowstore.FlowRecord{}, nil
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{}, errors.New("branch exists")
 		},
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
+	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
 	msg := cmd()
-	if _, ok := msg.(model.FlowCreateFailedMsg); !ok {
+	failed, ok := msg.(model.FlowCreateFailedMsg)
+	if !ok {
 		t.Fatalf("command returned %T, want FlowCreateFailedMsg", msg)
 	}
 
-	if phaseUpdate.FlowID != "flow-1" ||
-		phaseUpdate.PhaseID != "plan" ||
-		phaseUpdate.Status != flowstore.PhaseBlocked ||
-		!strings.Contains(phaseUpdate.Notes, "branch exists") {
-		t.Fatalf("phase update = %#v", phaseUpdate)
+	if !strings.Contains(failed.Err, "branch exists") {
+		t.Fatalf("error = %q, want worktree failure", failed.Err)
 	}
 }
 
 func TestModel_NewFlowWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
-		},
-		SetFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{}, errors.New("disk full")
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{}, errors.New("branch exists; mark flow blocked: disk full")
 		},
 	})
 	m = inRightPane(m)
@@ -1629,19 +1528,16 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			record.FlowID = "flow-1"
-			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}}
-			return record, nil
-		},
-		CreateFlowWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
-			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
-		},
-		SetFlowStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:      req.AgentCommand,
+				LaunchID:     "launch-1",
+				RepoPath:     req.RepoPath,
+				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
+				Branch:       "flow/add-flow-mode",
+				FlowID:       "flow-1",
+				FlowPhaseID:  req.PlanPhaseID,
+			}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
@@ -1663,7 +1559,7 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 	if !ok {
 		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
 	}
-	m, _ = update(m, launchMsg)
+	_, _ = update(m, launchMsg)
 
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
