@@ -1,6 +1,7 @@
 package flowstore_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -441,7 +442,7 @@ func TestStoreSetPhaseRejectsInvalidTransitions(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := store.SetPhase(tc.update)
+			_, err = store.SetPhase(tc.update)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("SetPhase() error = %v, want %q", err, tc.want)
 			}
@@ -506,8 +507,407 @@ func TestStoreSetPhaseAllowsSkippedWithNotesAndIdempotentUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetPhase(pending skipped) error = %v", err)
 	}
-	if pendingSkipped.Phases[2].Status != flowstore.PhaseSkipped || pendingSkipped.Phases[2].Notes != "Implementation is covered by the existing branch." {
-		t.Fatalf("pending skipped phase = %#v", pendingSkipped.Phases[2])
+	if pendingSkipped.Phases[2].Status != flowstore.PhasePending || pendingSkipped.Phases[2].Notes != "Implementation is covered by the existing branch." {
+		t.Fatalf("gated downstream skip = %#v, want pending implementation with preserved notes", pendingSkipped.Phases[2])
+	}
+}
+
+func TestStoreSetPhasePlanReviewOutcomeGatesImplementation(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		outcome          string
+		status           string
+		notes            string
+		wantFlowStatus   string
+		wantReviewStatus string
+		wantImplStatus   string
+	}{
+		{
+			name:             "approved",
+			outcome:          "approved",
+			status:           flowstore.PhaseCompleted,
+			wantFlowStatus:   flowstore.StatusInProgress,
+			wantReviewStatus: flowstore.PhaseCompleted,
+			wantImplStatus:   flowstore.PhaseReady,
+		},
+		{
+			name:             "approved with concerns",
+			outcome:          "approved_with_concerns",
+			status:           flowstore.PhaseCompleted,
+			notes:            "Implementation can proceed if it handles the rollout risk.",
+			wantFlowStatus:   flowstore.StatusInProgress,
+			wantReviewStatus: flowstore.PhaseCompleted,
+			wantImplStatus:   flowstore.PhaseReady,
+		},
+		{
+			name:             "changes requested",
+			outcome:          "changes_requested",
+			status:           flowstore.PhaseNeedsAttention,
+			notes:            "Revise the API boundary before implementation.",
+			wantFlowStatus:   flowstore.StatusNeedsAttention,
+			wantReviewStatus: flowstore.PhaseNeedsAttention,
+			wantImplStatus:   flowstore.PhasePending,
+		},
+		{
+			name:             "blocked",
+			outcome:          "blocked",
+			status:           flowstore.PhaseBlocked,
+			notes:            "Waiting on product decision.",
+			wantFlowStatus:   flowstore.StatusBlocked,
+			wantReviewStatus: flowstore.PhaseBlocked,
+			wantImplStatus:   flowstore.PhasePending,
+		},
+		{
+			name:             "skipped override",
+			status:           flowstore.PhaseSkipped,
+			notes:            "Human already reviewed and approved the linked plan.",
+			wantFlowStatus:   flowstore.StatusInProgress,
+			wantReviewStatus: flowstore.PhaseSkipped,
+			wantImplStatus:   flowstore.PhaseReady,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "Review Gate",
+				Instructions: "gate implementation",
+				RepoPath:     filepath.Join(root, "repo"),
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "plan",
+				Status:  flowstore.PhaseCompleted,
+				Outcome: "plan_saved",
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(plan completed) error = %v", err)
+			}
+
+			updated, err := store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "plan-review",
+				Status:  tc.status,
+				Outcome: tc.outcome,
+				Notes:   tc.notes,
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(plan-review) error = %v", err)
+			}
+
+			if updated.Status != tc.wantFlowStatus {
+				t.Fatalf("flow status = %q, want %q", updated.Status, tc.wantFlowStatus)
+			}
+			if got := phaseByID(t, updated, "plan-review").Status; got != tc.wantReviewStatus {
+				t.Fatalf("plan-review status = %q, want %q", got, tc.wantReviewStatus)
+			}
+			if got := phaseByID(t, updated, "implementation").Status; got != tc.wantImplStatus {
+				t.Fatalf("implementation status = %q, want %q", got, tc.wantImplStatus)
+			}
+		})
+	}
+}
+
+func TestStoreSetPhaseTrimsPlanReviewOutcome(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Trim Review Outcome",
+		Instructions: "accept human input with whitespace",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(plan completed) error = %v", err)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan-review",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: " approved ",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(plan-review completed) error = %v", err)
+	}
+
+	if got := phaseByID(t, updated, "plan-review").Outcome; got != flowstore.OutcomeApproved {
+		t.Fatalf("plan-review outcome = %q, want trimmed approved", got)
+	}
+	if got := phaseByID(t, updated, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready", got)
+	}
+}
+
+func TestStoreReadMigratesLegacyPlanReviewApproval(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Persisted Gate",
+		Instructions: "normalize old records",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for i := range record.Phases {
+		switch record.Phases[i].PhaseID {
+		case "plan", "plan-review":
+			record.Phases[i].Status = flowstore.PhaseCompleted
+		case "implementation":
+			record.Phases[i].Status = flowstore.PhaseReady
+		}
+		record.Phases[i].UpdatedAt = now
+	}
+	record.Status = flowstore.StatusInProgress
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
+	if err := os.WriteFile(metaPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile(meta.json) error = %v", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	review := phaseByID(t, read, "plan-review")
+	if review.Status != flowstore.PhaseCompleted || review.Outcome != flowstore.OutcomeApproved {
+		t.Fatalf("plan-review = %#v, want completed approved legacy migration", review)
+	}
+	if got := phaseByID(t, read, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready after legacy approval migration", got)
+	}
+}
+
+func TestStoreSetPhaseValidatesPlanReviewOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update flowstore.PhaseUpdate
+		want   string
+	}{
+		{
+			name: "completed requires approved outcome",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseCompleted,
+			},
+			want: "plan-review completed requires outcome approved or approved_with_concerns",
+		},
+		{
+			name: "approved with concerns requires notes",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseCompleted,
+				Outcome: "approved_with_concerns",
+			},
+			want: "approved_with_concerns requires notes",
+		},
+		{
+			name: "changes requested requires notes",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseNeedsAttention,
+				Outcome: "changes_requested",
+			},
+			want: "changes_requested requires notes",
+		},
+		{
+			name: "blocked requires blocked outcome",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseBlocked,
+				Outcome: "changes_requested",
+				Notes:   "Waiting on input.",
+			},
+			want: "plan-review blocked requires outcome blocked",
+		},
+		{
+			name: "blocked requires notes",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseBlocked,
+				Outcome: "blocked",
+			},
+			want: "plan-review blocked requires notes",
+		},
+		{
+			name: "needs attention requires changes requested outcome",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseNeedsAttention,
+				Notes:   "Revise scope.",
+			},
+			want: "plan-review needs_attention requires outcome changes_requested",
+		},
+		{
+			name: "unknown outcome",
+			update: flowstore.PhaseUpdate{
+				PhaseID: "plan-review",
+				Status:  flowstore.PhaseNeedsAttention,
+				Outcome: "maybe",
+				Notes:   "Unclear.",
+			},
+			want: "invalid plan-review outcome",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "Review Outcomes",
+				Instructions: "validate outcomes",
+				RepoPath:     filepath.Join(root, "repo"),
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "plan",
+				Status:  flowstore.PhaseCompleted,
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(plan completed) error = %v", err)
+			}
+			tc.update.FlowID = record.FlowID
+			_, err = store.SetPhase(tc.update)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SetPhase() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreSetPhasePlanReviewRerunResetsImplementation(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Review Rerun",
+		Instructions: "rerun review",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(plan completed) error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseCompleted, Outcome: "approved"})
+	if err != nil {
+		t.Fatalf("SetPhase(plan-review approved) error = %v", err)
+	}
+	if got := phaseByID(t, record, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready", got)
+	}
+
+	rerun, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan-review",
+		Status:  flowstore.PhaseRunning,
+		Notes:   "Plan changed; re-review before implementation.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(plan-review running) error = %v", err)
+	}
+	if got := phaseByID(t, rerun, "implementation").Status; got != flowstore.PhasePending {
+		t.Fatalf("implementation status after rerun = %q, want pending", got)
+	}
+	if got := phaseByID(t, rerun, "plan-review").Outcome; got != "" {
+		t.Fatalf("plan-review outcome after rerun = %q, want cleared", got)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRerunsPlanReviewAndResetsImplementation(t *testing.T) {
+	for _, tc := range []struct {
+		status  string
+		outcome string
+		notes   string
+	}{
+		{status: flowstore.PhaseRunning},
+		{status: flowstore.PhaseNeedsAttention, notes: "Implementation needs review."},
+		{status: flowstore.PhaseCompleted, outcome: "implemented"},
+		{status: flowstore.PhaseBlocked, notes: "Implementation is blocked."},
+		{status: flowstore.PhaseSkipped, notes: "Implementation was covered elsewhere."},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "Review Relaunch",
+				Instructions: "relaunch review",
+				RepoPath:     filepath.Join(root, "repo"),
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted})
+			if err != nil {
+				t.Fatalf("SetPhase(plan completed) error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseCompleted, Outcome: "approved"})
+			if err != nil {
+				t.Fatalf("SetPhase(plan-review approved) error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "implementation",
+				Status:  tc.status,
+				Outcome: tc.outcome,
+				Notes:   tc.notes,
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(implementation %s) error = %v", tc.status, err)
+			}
+
+			relaunched, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+				FlowID:   record.FlowID,
+				PhaseID:  "plan-review",
+				LaunchID: "launch-review-2",
+			})
+			if err != nil {
+				t.Fatalf("AddPhaseLaunchID(plan-review) error = %v", err)
+			}
+
+			review := phaseByID(t, relaunched, "plan-review")
+			if review.Status != flowstore.PhaseRunning || review.Outcome != "" {
+				t.Fatalf("plan-review after relaunch = %#v, want running with cleared outcome", review)
+			}
+			if got := phaseByID(t, relaunched, "implementation").Status; got != flowstore.PhasePending {
+				t.Fatalf("implementation status after relaunch = %q, want pending", got)
+			}
+		})
 	}
 }
 

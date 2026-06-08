@@ -41,6 +41,13 @@ Agent-facing phase statuses are `running`, `needs_attention`, `completed`,
 by wtui. Skipped phases require `--notes`, and restarting a blocked or
 needs-attention phase as `running` requires `--notes`.
 
+For the `plan-review` phase, wtui accepts only these review outcomes:
+`approved`, `approved_with_concerns`, `changes_requested`, and `blocked`.
+`approved_with_concerns`, `changes_requested`, and `blocked` require
+`--notes`. Implementation becomes ready only after `approved` or
+`approved_with_concerns`, or after an explicit skipped-with-notes Plan Review
+override.
+
 Use the current implemented phase update command:
 
 ```bash
@@ -174,7 +181,7 @@ if [ -z "$WTUI_PLAN_ID" ]; then
       --flow-id "$WTUI_FLOW_ID" \
       --phase-id plan-review \
       --status blocked \
-      --outcome "plan_review_read_failed" \
+      --outcome "blocked" \
       --notes "wtui flow read returned JSON that could not be parsed for plan_id; report the command error to the user." \
       "${FLOW_STATE_ARGS[@]}"
     exit 1
@@ -185,8 +192,8 @@ if [ -z "$WTUI_PLAN_ID" ]; then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
     --phase-id plan-review \
-    --status needs_attention \
-    --outcome "missing_plan_id" \
+    --status blocked \
+    --outcome "blocked" \
     --notes "Plan Review needs the plan ID from the completed Plan phase." \
     "${FLOW_STATE_ARGS[@]}"
   exit 1
@@ -197,7 +204,7 @@ if ! wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null
     --flow-id "$WTUI_FLOW_ID" \
     --phase-id plan-review \
     --status blocked \
-    --outcome "plan_review_read_failed" \
+    --outcome "blocked" \
     --notes "wtui plan read failed for $WTUI_PLAN_ID; report the command error to the user." \
     "${FLOW_STATE_ARGS[@]}"
   exit 1
@@ -213,8 +220,11 @@ wtui flow phase set \
 ```
 
 Use `--status needs_attention --outcome "changes_requested"` when the plan
-needs revision. Use `--status blocked --outcome "blocked" --notes "..."` when
-human input or an external dependency is required.
+needs revision; include `--notes` explaining the required changes. Use
+`--status completed --outcome "approved_with_concerns" --notes "..."` when
+implementation may proceed but should carry the noted concern forward. Use
+`--status blocked --outcome "blocked" --notes "..."` when human input, missing
+plan context, or an external dependency prevents review.
 
 ## Implementation Phase
 

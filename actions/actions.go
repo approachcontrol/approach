@@ -721,15 +721,15 @@ func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
 		return "codex://threads/" + url.PathEscape(ctx.ResumeSessionID), nil
 	}
 
-	path := ctx.WorkingDir
-	if path == "" && ctx.FlowID != "" && ctx.RepoPath != "" {
-		path = ctx.RepoPath
+	path := ctx.RepoPath
+	if path == "" {
+		path = ctx.WorkingDir
 	}
 	if path == "" {
 		path = ctx.WorktreePath
 	}
 	if path == "" {
-		return "", fmt.Errorf("codex-app launch requires a worktree path or working directory")
+		return "", fmt.Errorf("codex-app launch requires a repo path, working directory, or worktree path")
 	}
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("codex-app launch path must be absolute: %s", path)
@@ -743,12 +743,12 @@ func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
 }
 
 func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
-	if ctx.InitialPrompt == "" {
-		return ""
-	}
 	metadata := codexAppLaunchMetadata(ctx)
 	if metadata == "" {
 		return ctx.InitialPrompt
+	}
+	if ctx.InitialPrompt == "" {
+		return metadata
 	}
 	return ctx.InitialPrompt + "\n\n" + metadata
 }
