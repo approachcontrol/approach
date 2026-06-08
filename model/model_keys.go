@@ -1160,7 +1160,21 @@ func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 }
 
 func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	if strings.TrimSpace(planPath) == "" {
+		return flowImplementationWithoutPlanPrompt(record, phase)
+	}
 	return flowMinimalArtifactPrompt("Implement the approved plan.", planPath, record)
+}
+
+func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+	var b strings.Builder
+	b.WriteString("Implement the Flow instructions.\n\n")
+	writeFlowChangeMetadata(&b, record)
+	writeFlowPromptHeader(&b, record, "")
+	writeFlowPromptPlanContext(&b, record, "")
+	writeFlowPromptPhaseSummary(&b, record, "Plan Review context", "plan-review")
+	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the implementation is complete, blocked, or needs attention.")
+	return b.String()
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -1168,7 +1182,16 @@ func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Create a PR for the changes.", record)
+	head := strings.TrimSpace(record.Branch)
+	if head == "" {
+		head = "<head>"
+	}
+	base := strings.TrimSpace(record.BaseRef)
+	if base == "" {
+		base = "<base>"
+	}
+	instruction := fmt.Sprintf("Create a PR for the changes.\nAfter the PR exists, run `wtui flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
+	return flowMinimalChangePrompt(instruction, record)
 }
 
 func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.FlowRecord) string {
@@ -1214,7 +1237,7 @@ func writeFlowChangeMetadata(b *strings.Builder, record flowstore.FlowRecord) {
 	b.WriteString(record.WorktreePath)
 	b.WriteString("\nBranch: ")
 	b.WriteString(record.Branch)
-	b.WriteString("\nCommit(s): ")
+	b.WriteString("\nStart commit: ")
 	b.WriteString(record.Commit)
 }
 

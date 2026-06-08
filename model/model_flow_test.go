@@ -444,7 +444,7 @@ func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing
 		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-review",
 		"Branch: flow/review",
-		"Commit(s): abc123",
+		"Start commit: abc123",
 	}, "\n")
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("plan-review prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -538,7 +538,7 @@ func TestModel_AKeyOnFlowLaunchesImplementationWithMinimalPrompt(t *testing.T) {
 		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-implementation",
 		"Branch: flow/implementation",
-		"Commit(s): fed321",
+		"Start commit: fed321",
 	}, "\n")
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("implementation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -555,6 +555,73 @@ func TestModel_AKeyOnFlowLaunchesImplementationWithMinimalPrompt(t *testing.T) {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("implementation prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
+	}
+}
+
+func TestModel_AKeyOnFlowLaunchesImplementationWithoutLinkedPlanContext(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("Implementation without a linked plan should not read plan %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-no-plan",
+		Branch:       "flow/no-plan",
+		Commit:       "112233",
+		Title:        "Implement without linked plan",
+		Instructions: "Ship the requested tiny CLI flag.",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseSkipped, Notes: "User asked to skip a saved plan."},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseSkipped, Notes: "User approved direct implementation without a saved plan."},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare an implementation launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	for _, want := range []string{
+		"Implement the Flow instructions.",
+		"Worktree: /dev/alpha-worktrees/flow-no-plan",
+		"Branch: flow/no-plan",
+		"Start commit: 112233",
+		"Ship the requested tiny CLI flag.",
+		"Prior Plan context:",
+		"User asked to skip a saved plan.",
+		"Plan Review context:",
+		"User approved direct implementation without a saved plan.",
+	} {
+		if !strings.Contains(launched.InitialPrompt, want) {
+			t.Fatalf("implementation prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	if strings.Contains(launched.InitialPrompt, "Plan: \n") {
+		t.Fatalf("implementation prompt should not include an empty plan path:\n%s", launched.InitialPrompt)
 	}
 }
 
@@ -654,7 +721,7 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-review-loop",
 		"Branch: flow/review-loop",
-		"Commit(s): def456",
+		"Start commit: def456",
 	}, "\n")
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("review-loop prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -748,10 +815,11 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithMinimalPrompt(t *testing.T) {
 	}
 	wantPrompt := strings.Join([]string{
 		"Create a PR for the changes.",
+		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
-		"Commit(s): abc789",
+		"Start commit: abc789",
 	}, "\n")
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -821,10 +889,11 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testi
 
 	wantPrompt := strings.Join([]string{
 		"Create a PR for the changes.",
+		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
-		"Commit(s): abc789",
+		"Start commit: abc789",
 	}, "\n")
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
@@ -832,8 +901,6 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testi
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, unwanted := range []string{
 		"flow phase: pr creation",
-		"wtui flow pr set",
-		"--provider github",
 		"wtui flow phase set",
 		"--status completed",
 		"--status blocked",
