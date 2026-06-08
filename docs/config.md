@@ -127,12 +127,12 @@ Parsed for future launch behavior.
 ### `[agent]`
 
 Stores the selected coding agent for interactive launches. Pressing `A` in wtui
-opens an agent picker for `codex` or `claude` and updates this value
-immediately, creating the config file if needed.
+opens an agent picker for `codex`, `codex-app`, or `claude` and updates this
+value immediately, creating the config file if needed.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | string | Supported values: `codex`, `codex-app`, or `claude`; the in-app picker offers `codex` and `claude`. |
+| `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
 | `plan_prompt` | string | Optional one-line template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
 ### `[sessions]`

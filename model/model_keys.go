@@ -496,14 +496,17 @@ func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
 func agentSelectItems() []modal.SelectItem {
 	return []modal.SelectItem{
 		{Label: agent.CommandCodex, Value: agent.CommandCodex},
+		{Label: agent.CommandCodexApp, Value: agent.CommandCodexApp},
 		{Label: agent.CommandClaude, Value: agent.CommandClaude},
 	}
 }
 
 func selectedAgentIndex(command string) int {
 	switch agent.Normalize(command) {
-	case agent.CommandClaude:
+	case agent.CommandCodexApp:
 		return 1
+	case agent.CommandClaude:
+		return 2
 	default:
 		return 0
 	}

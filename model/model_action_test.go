@@ -3134,7 +3134,7 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 				t.Fatalf("expected agent select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
-			for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
+			for _, want := range []string{"Choose interactive helper", "codex", "codex-app", "claude"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected agent select view to contain %q", want)
 				}
@@ -3148,27 +3148,22 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 
 func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
 	for _, tt := range []struct {
-		name      string
-		agent     string
-		wantCodex bool
+		name         string
+		agent        string
+		wantSelected string
 	}{
-		{name: "unset", wantCodex: true},
-		{name: "invalid", agent: "codex-app", wantCodex: true},
-		{name: "claude", agent: "claude", wantCodex: false},
+		{name: "unset", wantSelected: "codex"},
+		{name: "invalid", agent: "unsupported", wantSelected: "codex"},
+		{name: "codex-app", agent: "codex-app", wantSelected: "codex-app"},
+		{name: "claude", agent: "claude", wantSelected: "claude"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: tt.agent})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
 			view := m.View()
 
-			if tt.wantCodex {
-				if !strings.Contains(view, "> codex") {
-					t.Fatalf("expected codex selected in view:\n%s", view)
-				}
-				return
-			}
-			if !strings.Contains(view, "> claude") {
-				t.Fatalf("expected claude selected in view:\n%s", view)
+			if !strings.Contains(view, "> "+tt.wantSelected) {
+				t.Fatalf("expected %s selected in view:\n%s", tt.wantSelected, view)
 			}
 		})
 	}
@@ -3203,6 +3198,7 @@ func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
@@ -3210,6 +3206,29 @@ func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	m, _ = update(m, cmd())
 	if m.AgentCommand() != "claude" {
 		t.Fatalf("expected session agent claude, got %q", m.AgentCommand())
+	}
+}
+
+func TestModel_AgentSelectDownSavesAndSetsCodexApp(t *testing.T) {
+	var saved string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SaveAgentCommand: func(command string) error {
+			saved = command
+			return nil
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save-agent command")
+	}
+	m, _ = update(m, cmd())
+	if saved != "codex-app" {
+		t.Fatalf("expected saved codex-app, got %q", saved)
+	}
+	if m.AgentCommand() != "codex-app" {
+		t.Fatalf("expected session agent codex-app, got %q", m.AgentCommand())
 	}
 }
 

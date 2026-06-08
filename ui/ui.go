@@ -46,7 +46,7 @@ const FlowBaseRefInputPlaceholder = "optional base ref"
 const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
-const AgentInputPlaceholder = "codex or claude"
+const AgentInputPlaceholder = "codex, codex-app, or claude"
 
 type SelectItem struct {
 	Label string

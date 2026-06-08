@@ -1974,11 +1974,11 @@ func TestRender_AgentSelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 		Mode:           1,
 		Overlay:        OverlayAgentSelect,
 		SelectPrompt:   "Choose interactive helper",
-		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
-		SelectSelected: 1,
+		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "codex-app", Value: "codex-app"}, {Label: "claude", Value: "claude"}},
+		SelectSelected: 2,
 	})
 	stripped := ansi.Strip(view)
-	for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
+	for _, want := range []string{"Choose interactive helper", "codex", "codex-app", "claude"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("agent select dialog should show %q:\n%s", want, stripped)
 		}
