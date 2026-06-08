@@ -15,7 +15,7 @@ import (
 // the artifact root but must never scan repositories or start the TUI.
 func runFlow(args []string, deps runDeps) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan> [flags]")
+		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -28,6 +28,8 @@ func runFlow(args []string, deps runDeps) error {
 		return runFlowPhase(args[3:], deps)
 	case "plan":
 		return runFlowPlan(args[3:], deps)
+	case "pr":
+		return runFlowPR(args[3:], deps)
 	default:
 		return fmt.Errorf("unknown flow subcommand %q", args[2])
 	}
@@ -290,6 +292,61 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 		FlowID:   *flowID,
 		PlanID:   *planID,
 		PlanPath: *planPath,
+	})
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func runFlowPR(args []string, deps runDeps) error {
+	if len(args) < 1 || args[0] != "set" {
+		return fmt.Errorf("usage: wtui flow pr set [flags]")
+	}
+	return runFlowPRSet(args[1:], deps)
+}
+
+func runFlowPRSet(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow pr set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", "", "flow id")
+	provider := flags.String("provider", "github", "PR provider")
+	number := flags.Int("number", 0, "PR number")
+	prURL := flags.String("url", "", "PR URL")
+	head := flags.String("head", "", "PR head branch")
+	base := flags.String("base", "", "PR base branch")
+	status := flags.String("status", "", "PR status")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow pr set requires --flow-id")
+	}
+	if *number <= 0 {
+		return fmt.Errorf("flow pr set requires positive --number")
+	}
+	if *prURL == "" {
+		return fmt.Errorf("flow pr set requires --url")
+	}
+	if *head == "" {
+		return fmt.Errorf("flow pr set requires --head")
+	}
+	if *base == "" {
+		return fmt.Errorf("flow pr set requires --base")
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetPR(flowstore.PRUpdate{
+		FlowID:     *flowID,
+		Provider:   *provider,
+		Number:     *number,
+		URL:        *prURL,
+		HeadBranch: *head,
+		BaseBranch: *base,
+		Status:     *status,
 	})
 	if err != nil {
 		return err

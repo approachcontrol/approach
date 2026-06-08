@@ -251,7 +251,9 @@ open the linked plan body in a plain-text overlay; wtui shows a status message
 when the selected Flow has no linked plan. Press `a` on a Flow with a ready phase
 to launch the configured agent for that phase. When Implementation is still
 gated by Plan Review, wtui reports the Plan Review state and notes instead of
-launching. Expanded phase rows group child implementation phases directly under
+launching. When PR Creation is complete but structured PR metadata is missing,
+Autoreview remains pending and the Flow row shows `autoreview:missing-pr`.
+Expanded phase rows group child implementation phases directly under
 Implementation.
 
 Flows are task-centric workflow records stored beside sessions and plans under
@@ -285,13 +287,24 @@ wtui flow phase add-child --flow-id "$FLOW_ID" \
   --phase-id implementation-api \
   --title "API integration" \
   --order 10
+
+# Record structured PR metadata after PR Creation opens or updates a PR.
+wtui flow pr set --flow-id "$FLOW_ID" \
+  --provider github \
+  --number 123 \
+  --url "https://github.com/owner/repo/pull/123" \
+  --head "$FLOW_BRANCH" \
+  --base main \
+  --status open
 ```
 
 Child implementation phases gate downstream readiness in phase order: review
 loop and PR creation remain pending until required implementation children are
 completed or explicitly skipped with notes. The review-loop launch prompt asks
 the agent to run a first-level implementation review and record `completed`,
-`needs_attention`, or `blocked` through `wtui flow phase set`.
+`needs_attention`, or `blocked` through `wtui flow phase set`. Autoreview is
+ready only after PR Creation is complete and `wtui flow pr set` has recorded
+provider, PR number, URL, head branch, and base branch metadata.
 
 The flow state root is resolved with this precedence: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >

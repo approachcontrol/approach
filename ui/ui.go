@@ -1645,6 +1645,9 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 	if current.Outcome != "" {
 		state = current.Outcome
 	}
+	if current.PhaseID == "autoreview" && flowMissingPRTarget(record) {
+		state = "missing-pr"
+	}
 	return fmt.Sprintf("%d/%d %s:%s", completed, len(phases), current.PhaseID, state)
 }
 
@@ -1662,7 +1665,22 @@ func flowPRLabel(record flowstore.FlowRecord) string {
 	if record.PR.URL != "" {
 		return filepath.Base(record.PR.URL)
 	}
+	if flowMissingPRTarget(record) {
+		return "missing"
+	}
 	return "-"
+}
+
+func flowMissingPRTarget(record flowstore.FlowRecord) bool {
+	if flowstore.HasPRTarget(record.PR) {
+		return false
+	}
+	for _, phase := range record.Phases {
+		if phase.PhaseID == "pr-creation" && phase.Status == flowstore.PhaseCompleted {
+			return true
+		}
+	}
+	return false
 }
 
 func flowUpdatedLabel(record flowstore.FlowRecord) string {

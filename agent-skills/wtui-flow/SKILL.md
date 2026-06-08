@@ -69,11 +69,10 @@ progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
 The current Flow CLI exposes `create`, `list`, `read`, `phase set`,
-`phase add-child`, and `plan set`. Dedicated structured commands for PR
-metadata and merge metadata are not part of the implemented contract yet. Until
-those commands exist, record the best available details in the current phase
-`--summary`, `--outcome`, and `--notes`, and explicitly tell the user that the
-richer metadata was not persisted as first-class Flow fields.
+`phase add-child`, `plan set`, and `pr set`. Merge metadata is not a dedicated
+structured command yet; record merge details in the current phase `--summary`,
+`--outcome`, and `--notes`, and explicitly tell the user that richer merge
+metadata was not persisted as first-class Flow fields.
 
 ## Plan Phase
 
@@ -289,29 +288,46 @@ wtui flow phase set \
 
 Goal: commit, push, and open or update the pull request.
 
-After the PR exists, record the PR provider, number, URL, head branch, base
-branch, and status in the phase `--summary` or `--notes` because the current
-implemented CLI does not expose `wtui flow pr set`.
+After the PR exists, record the PR provider, positive PR number, URL, head
+branch, base branch, and status through `wtui flow pr set`. Autoreview remains
+blocked from becoming ready until this structured PR target metadata is
+persisted. The command currently supports `--provider github`; the PR head
+branch must match the Flow branch.
 
 ```bash
+wtui flow pr set \
+  --flow-id "$WTUI_FLOW_ID" \
+  --provider github \
+  --number 123 \
+  --url "https://github.com/owner/repo/pull/123" \
+  --head "$WTUI_BRANCH" \
+  --base main \
+  --status open \
+  "${FLOW_STATE_ARGS[@]}"
+
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
   --phase-id pr-creation \
   --status completed \
   --outcome "pr_open" \
-  --summary "PR github#123 https://github.com/owner/repo/pull/123 head=branch base=main status=open." \
+  --summary "Opened GitHub PR #123." \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
-If a PR cannot be created, use `blocked` with notes explaining what failed.
+If `wtui flow pr set` fails, do not mark PR Creation completed; report the
+command error. If a PR cannot be created, use `blocked` with notes explaining
+what failed.
 
 ## Autoreview Phase
 
 Goal: perform a second-level review against the PR or pushed branch.
 
-Read the Flow first and verify PR metadata is present in the PR creation phase
-summary or notes. If it is missing, use `blocked` or `needs_attention` and say
-PR creation did not record enough metadata for autoreview.
+Read the Flow first and verify the top-level `pr` object contains provider,
+number, URL, head branch, and base branch. If PR metadata is missing, do not run
+Autoreview and do not try to advance the pending Autoreview phase. Return to PR
+Creation by recording the missing metadata with `wtui flow pr set`; if a PR does
+not exist or cannot be recovered, rerun PR Creation as `running` with notes and
+then mark PR Creation `blocked` with notes.
 
 ```bash
 wtui flow phase set \

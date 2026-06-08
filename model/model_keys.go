@@ -1137,6 +1137,10 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 		return flowImplementationPrompt(record, phase, planPath, planBody)
 	case "review-loop":
 		return flowReviewLoopPrompt(record, phase, planPath, planBody)
+	case "pr-creation":
+		return flowPRCreationPrompt(record, phase, planPath, planBody)
+	case "autoreview":
+		return flowAutoreviewPrompt(record, phase, planPath, planBody)
 	default:
 		return flowGenericPhasePrompt(record, phase, planPath, planBody)
 	}
@@ -1187,6 +1191,47 @@ func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 	return b.String()
 }
 
+func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
+	b.WriteString("Flow phase: PR creation (pr-creation).\n")
+	writeFlowPromptHeader(&b, record, planPath)
+	writeFlowPromptPlanContext(&b, record, planBody)
+	writeFlowPromptPhaseSummary(&b, record, "Review loop context", "review-loop")
+	head := strings.TrimSpace(record.Branch)
+	if head == "" {
+		head = "\"...\""
+	}
+	base := strings.TrimSpace(record.BaseRef)
+	if base == "" {
+		base = "\"...\""
+	}
+	fmt.Fprintf(&b, "\nAfter the pull request exists, record structured PR metadata before completing the phase:\nwtui flow pr set --flow-id %s --provider github --number N --url URL --head %s --base %s --status open\n\n", record.FlowID, head, base)
+	fmt.Fprintf(&b, "Then mark PR Creation complete:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome pr_open --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "If the PR cannot be created, mark it blocked instead:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"", record.FlowID, phase.PhaseID)
+	return b.String()
+}
+
+func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Use the autoreview skill for this second-level review.\n\n")
+	b.WriteString("Flow phase: Autoreview (autoreview).\n")
+	writeFlowPromptHeader(&b, record, planPath)
+	writeFlowPromptPlanContext(&b, record, planBody)
+	if flowstore.HasPRTarget(record.PR) {
+		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s\n", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
+		if record.PR.Status != "" {
+			fmt.Fprintf(&b, "- Status: %s\n", record.PR.Status)
+		}
+	} else {
+		b.WriteString("\nPR target: missing. Do not run Autoreview until `wtui flow pr set` records provider, number, URL, head, and base.\n")
+	}
+	fmt.Fprintf(&b, "\ncompleted:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome passed --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "needs_attention:\nwtui flow phase set --flow-id %s --phase-id %s --status needs_attention --outcome needs_attention --notes \"...\" --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"", record.FlowID, phase.PhaseID)
+	return b.String()
+}
+
 func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
 	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
@@ -1203,6 +1248,19 @@ func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPha
 	writeFlowPromptPlanContext(&b, record, planBody)
 	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
 	return b.String()
+}
+
+func writeFlowPromptPhaseSummary(b *strings.Builder, record flowstore.FlowRecord, title, phaseID string) {
+	b.WriteString("\n")
+	b.WriteString(title)
+	b.WriteString(":\n")
+	if phase, ok := flowPhaseByID(record, phaseID); ok {
+		writeFlowPhaseContext(b, phase)
+		return
+	}
+	b.WriteString("- Phase: ")
+	b.WriteString(phaseID)
+	b.WriteString("\n")
 }
 
 func writeFlowPromptHeader(b *strings.Builder, record flowstore.FlowRecord, planPath string) {

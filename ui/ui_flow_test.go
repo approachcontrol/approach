@@ -222,6 +222,38 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "missing-pr-flow",
+			Title:  "Needs PR metadata",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/missing-pr",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+				{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
+			},
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+	})
+
+	for _, want := range []string{"autoreview:missing-pr", "missing", "Needs PR metadata"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing PR metadata view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestFlowPhaseProgressShowsDashWhenNoPhases(t *testing.T) {
 	got := flowPhaseProgress(flowstore.FlowRecord{})
 	if got != "-" {

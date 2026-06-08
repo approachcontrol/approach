@@ -238,6 +238,8 @@ wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
 wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
     --phase-id ID --title TITLE --order N [--state-root PATH]
 wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
+wtui flow pr set --flow-id ID --provider github --number N --url URL \
+    --head HEAD_BRANCH --base BASE_BRANCH [--status STATUS] [--state-root PATH]
 ```
 
 Flow IDs use the same safe single-path-segment shape as plans:
@@ -266,6 +268,13 @@ under `implementation`; they gate review loop and PR creation until completed or
 skipped with notes. The review-loop phase records the first-level implementation
 review with `wtui flow phase set --phase-id review-loop --status completed`,
 `needs_attention`, or `blocked`.
+
+The PR Creation phase should record structured PR metadata with
+`wtui flow pr set` after a pull request exists. The command currently supports
+GitHub PRs and validates the provider, absolute http(s) URL, positive PR
+number, required head/base branches, and that the head branch matches the Flow
+branch. Autoreview stays pending when PR Creation is complete but this PR target
+metadata is missing.
 
 The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
