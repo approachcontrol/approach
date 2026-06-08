@@ -443,12 +443,14 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 	prompt := gotURL.Query().Get("prompt")
 	for _, want := range []string{
 		"Read the plan & begin + ship.",
-		"WTUI_AGENT=" + shellQuote("codex-app"),
 		"WTUI_WORKTREE_PATH=" + shellQuote("/repo/work tree+plus"),
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "WTUI_AGENT") {
+		t.Fatalf("prompt should not include agent metadata:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "inherited-launch") {
 		t.Fatalf("prompt leaked inherited WTUI_LAUNCH_ID:\n%s", prompt)
@@ -492,6 +494,8 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 		PlanPhaseID:      "phase-1",
 		PlanPhaseTitle:   "Resolve conflicts",
 		PlanPhaseStatus:  "in_progress",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "plan",
 		InitialPrompt:    "Read the plan and begin implementation.",
 	}, "darwin", fakeGetenv(nil), fakeLookPath())
 	if err != nil {
@@ -507,21 +511,57 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 	for _, want := range []string{
 		"Read the plan and begin implementation.",
 		"WTUI_LAUNCH_ID=" + shellQuote("launch-1"),
-		"WTUI_REPO_PATH=" + shellQuote("/repo"),
 		"WTUI_WORKTREE_PATH=" + shellQuote("/repo/work'tree$(bad)"),
-		"WTUI_BRANCH=" + shellQuote("feature/$(echo pwned)"),
 		"WTUI_SESSION_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
 		"WTUI_PLAN_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
+		"WTUI_FLOW_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
 		"WTUI_PLAN_ID=" + shellQuote("plan-1"),
 		"WTUI_PLAN_PATH=" + shellQuote("/state/wtui/sessions/v1/plans/plan-1/plan.md"),
 		"WTUI_PLAN_PHASE_ID=" + shellQuote("phase-1"),
-		"WTUI_PLAN_PHASE_TITLE=" + shellQuote("Resolve conflicts"),
-		"WTUI_PLAN_PHASE_STATUS=" + shellQuote("in_progress"),
+		"WTUI_FLOW_ID=" + shellQuote("flow-1"),
+		"WTUI_FLOW_PHASE_ID=" + shellQuote("plan"),
 		"--state-root " + shellQuote("/state/wtui/sessions/v1"),
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	for _, unwanted := range []string{
+		"WTUI_REPO_PATH",
+		"WTUI_BRANCH",
+		"WTUI_COMMIT",
+		"WTUI_PLAN_PHASE_TITLE",
+		"WTUI_PLAN_PHASE_STATUS",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt should not include %s:\n%s", unwanted, prompt)
+		}
+	}
+}
+
+func TestCodexAppFlowLaunchUsesRepoProjectPath(t *testing.T) {
+	launch, err := agentLaunch(AgentLaunchContext{
+		Command:       "codex-app",
+		RepoPath:      "/repo",
+		WorktreePath:  "/repo-worktrees/flow-add-flow-mode",
+		FlowID:        "flow-1",
+		FlowPhaseID:   "plan",
+		InitialPrompt: "Use wtui-flow.",
+	}, "darwin", fakeGetenv(nil), fakeLookPath())
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+
+	gotURL, err := url.Parse(launch.Cmd.Args[1])
+	if err != nil {
+		t.Fatalf("parse launch URL: %v", err)
+	}
+	if got := gotURL.Query().Get("path"); got != "/repo" {
+		t.Fatalf("path query = %q, want repo project path", got)
+	}
+	prompt := gotURL.Query().Get("prompt")
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo-worktrees/flow-add-flow-mode")) {
+		t.Fatalf("prompt should still carry worktree metadata:\n%s", prompt)
 	}
 }
 

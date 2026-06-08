@@ -722,6 +722,9 @@ func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
 	}
 
 	path := ctx.WorkingDir
+	if path == "" && ctx.FlowID != "" && ctx.RepoPath != "" {
+		path = ctx.RepoPath
+	}
 	if path == "" {
 		path = ctx.WorktreePath
 	}
@@ -752,36 +755,25 @@ func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
 
 func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	if ctx.LaunchID == "" &&
-		ctx.RepoPath == "" &&
 		ctx.WorktreePath == "" &&
-		ctx.Branch == "" &&
-		ctx.Commit == "" &&
 		ctx.SessionStateRoot == "" &&
 		ctx.PlanID == "" &&
 		ctx.PlanPath == "" &&
 		ctx.PlanPhaseID == "" &&
-		ctx.PlanPhaseTitle == "" &&
-		ctx.PlanPhaseStatus == "" &&
 		ctx.FlowID == "" &&
 		ctx.FlowPhaseID == "" {
 		return ""
 	}
 
 	items := []envVar{
-		{key: "WTUI_AGENT", value: agent.CommandCodexApp},
 		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
-		{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
 		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
-		{key: "WTUI_BRANCH", value: ctx.Branch},
-		{key: "WTUI_COMMIT", value: ctx.Commit},
 		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
 		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
-		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
-		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
 		{key: "WTUI_FLOW_ID", value: ctx.FlowID},
 		{key: "WTUI_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
 	}
