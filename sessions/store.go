@@ -2,7 +2,6 @@ package sessions
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,15 +12,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/brian-bell/wtui/internal/artifacts"
 )
 
 const schemaVersion = 1
 const maxTranscriptLineBytes = 16 * 1024 * 1024
-
-const (
-	dirPerm  os.FileMode = 0o700
-	filePerm os.FileMode = 0o600
-)
 
 type Provider string
 
@@ -88,30 +84,21 @@ func NewStore(opts StoreOptions) (*Store, error) {
 			return nil, err
 		}
 	}
-	if !filepath.IsAbs(root) {
-		return nil, fmt.Errorf("session store root must be absolute: %s", root)
+	if _, err := artifacts.RequireAbsoluteRoot(root, "session"); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "sessions"), dirPerm); err != nil {
+	if err := artifacts.EnsureCollection(root, "sessions"); err != nil {
 		return nil, fmt.Errorf("create session store: %w", err)
-	}
-	if err := os.Chmod(root, dirPerm); err != nil {
-		return nil, fmt.Errorf("secure session root: %w", err)
-	}
-	if err := os.Chmod(filepath.Join(root, "sessions"), dirPerm); err != nil {
-		return nil, fmt.Errorf("secure sessions directory: %w", err)
 	}
 	return &Store{root: root, copyRawTranscripts: opts.CopyRawTranscripts}, nil
 }
 
 func DefaultRoot() (string, error) {
-	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "wtui", "sessions", "v1"), nil
-	}
-	home, err := os.UserHomeDir()
+	root, err := artifacts.DefaultRoot()
 	if err != nil {
 		return "", fmt.Errorf("resolve session state root: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "wtui", "sessions", "v1"), nil
+	return root, nil
 }
 
 func (s *Store) Upsert(record SessionRecord) error {
@@ -133,18 +120,18 @@ func (s *Store) Upsert(record SessionRecord) error {
 }
 
 func (s *Store) writeMetadata(record SessionRecord) error {
-	dir := s.sessionDir(record.Provider, record.SessionID)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("create session directory: %w", err)
+	if err := artifacts.EnsureCollection(filepath.Join(s.root, "sessions"), providerPathPart(record.Provider)); err != nil {
+		return fmt.Errorf("create session provider directory: %w", err)
 	}
-	if err := os.Chmod(dir, dirPerm); err != nil {
+	dir := s.sessionDir(record.Provider, record.SessionID)
+	if _, err := artifacts.EnsureRecordDir(filepath.Join(s.root, "sessions", providerPathPart(record.Provider)), "", safeSessionDirName(record.SessionID)); err != nil {
 		return fmt.Errorf("secure session directory: %w", err)
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode session metadata: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
+	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
 		return fmt.Errorf("write session metadata: %w", err)
 	}
 	return nil
@@ -320,79 +307,37 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("read raw transcript: %w", err)
 	}
 	defer input.Close()
-	if err := writeFileAtomicFromReader(dst, input); err != nil {
+	if err := artifacts.WriteFileAtomicFromReader(dst, input); err != nil {
 		return fmt.Errorf("write raw transcript: %w", err)
 	}
 	return nil
 }
 
-func writeFileAtomic(path string, data []byte) error {
-	return writeFileAtomicFromReader(path, bytes.NewReader(data))
-}
-
-func writeFileAtomicFromReader(path string, input io.Reader) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if _, err := io.Copy(temp, input); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Chmod(filePerm); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempName, path)
-}
-
 func writeNormalizedTranscript(path string, input io.Reader) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(filePerm); err != nil {
-		_ = temp.Close()
-		return err
-	}
-
-	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 64*1024), maxTranscriptLineBytes)
-	encoder := json.NewEncoder(temp)
-	for scanner.Scan() {
-		event, ok, err := parseTranscriptLine(scanner.Bytes())
-		if err != nil {
-			_ = temp.Close()
+	return artifacts.WriteFileAtomicFunc(path, func(output io.Writer) error {
+		scanner := bufio.NewScanner(input)
+		scanner.Buffer(make([]byte, 64*1024), maxTranscriptLineBytes)
+		encoder := json.NewEncoder(output)
+		for scanner.Scan() {
+			event, ok, err := parseTranscriptLine(scanner.Bytes())
+			if err != nil {
+				return fmt.Errorf("normalize transcript: %w", err)
+			}
+			if !ok {
+				continue
+			}
+			if event.Text == "" || !visibleEventKind(event.Kind) || !visibleRole(event.Role) {
+				continue
+			}
+			if err := encoder.Encode(event); err != nil {
+				return fmt.Errorf("encode normalized transcript: %w", err)
+			}
+		}
+		if err := scanner.Err(); err != nil {
 			return fmt.Errorf("normalize transcript: %w", err)
 		}
-		if !ok {
-			continue
-		}
-		if event.Text == "" || !visibleEventKind(event.Kind) || !visibleRole(event.Role) {
-			continue
-		}
-		if err := encoder.Encode(event); err != nil {
-			_ = temp.Close()
-			return fmt.Errorf("encode normalized transcript: %w", err)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("normalize transcript: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempName, path)
+		return nil
+	})
 }
 
 func readTranscriptEvents(input io.Reader) ([]TranscriptEvent, error) {

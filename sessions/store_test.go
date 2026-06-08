@@ -143,6 +143,37 @@ func TestStoreListSkipsCorruptMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreWritesArtifactsWithRestrictivePermissions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	providerTranscript := filepath.Join(t.TempDir(), "provider.jsonl")
+	if err := os.WriteFile(providerTranscript, []byte(`{"role":"user","kind":"message","text":"hello"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write provider transcript: %v", err)
+	}
+
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root, CopyRawTranscripts: true})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:       sessions.ProviderCodex,
+		SessionID:      "permission-check",
+		Status:         "ended",
+		TranscriptPath: providerTranscript,
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+
+	assertMode(t, root, 0o700)
+	assertMode(t, filepath.Join(root, "sessions"), 0o700)
+	assertMode(t, filepath.Join(root, "sessions", "codex"), 0o700)
+	metaPath := singleSessionFile(t, root, sessions.ProviderCodex, "meta.json")
+	sessionDir := filepath.Dir(metaPath)
+	assertMode(t, sessionDir, 0o700)
+	assertMode(t, metaPath, 0o600)
+	assertMode(t, filepath.Join(sessionDir, "transcript.jsonl"), 0o600)
+	assertMode(t, filepath.Join(sessionDir, "raw.jsonl"), 0o600)
+}
+
 func TestStoreMarksLaunchEnded(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -493,4 +524,15 @@ func singleSessionFile(t *testing.T, root string, provider sessions.Provider, na
 		t.Fatalf("glob returned %d matches, want 1: %#v", len(matches), matches)
 	}
 	return matches[0]
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", path, got, want)
+	}
 }

@@ -7,33 +7,18 @@
 package planstore
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/brian-bell/wtui/internal/artifacts"
 )
 
 const schemaVersion = 1
-
-const (
-	dirPerm  os.FileMode = 0o700
-	filePerm os.FileMode = 0o600
-)
-
-const maxSlugLength = 48
-
-// maxIDCollisionAttempts bounds the generated-ID suffix search so a corrupted
-// state directory can never spin forever.
-const maxIDCollisionAttempts = 1000
-
-// planIDPattern restricts plan IDs to a safe, single-segment directory name.
-var planIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 var validStatuses = map[string]bool{
 	"draft":       true,
@@ -120,17 +105,12 @@ func NewStore(opts StoreOptions) (*Store, error) {
 			return nil, err
 		}
 	}
-	if !filepath.IsAbs(root) {
-		return nil, fmt.Errorf("plan store root must be absolute: %s", root)
+	root, err := artifacts.RequireAbsoluteRoot(root, "plan")
+	if err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "plans"), dirPerm); err != nil {
+	if err := artifacts.EnsureCollection(root, "plans"); err != nil {
 		return nil, fmt.Errorf("create plan store: %w", err)
-	}
-	if err := os.Chmod(root, dirPerm); err != nil {
-		return nil, fmt.Errorf("secure plan root: %w", err)
-	}
-	if err := os.Chmod(filepath.Join(root, "plans"), dirPerm); err != nil {
-		return nil, fmt.Errorf("secure plans directory: %w", err)
 	}
 	now := opts.Now
 	if now == nil {
@@ -141,14 +121,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 
 // DefaultRoot returns the default artifact root, matching sessions.DefaultRoot.
 func DefaultRoot() (string, error) {
-	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "wtui", "sessions", "v1"), nil
-	}
-	home, err := os.UserHomeDir()
+	root, err := artifacts.DefaultRoot()
 	if err != nil {
 		return "", fmt.Errorf("resolve plan state root: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "wtui", "sessions", "v1"), nil
+	return root, nil
 }
 
 // MarkdownPath returns the expected plan.md path for planID without reading it.
@@ -163,15 +140,11 @@ func MarkdownPath(root, planID string) (string, error) {
 			return "", err
 		}
 	}
-	if !filepath.IsAbs(root) {
-		return "", fmt.Errorf("plan store root must be absolute: %s", root)
+	root, err := artifacts.RequireAbsoluteRoot(root, "plan")
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(root, "plans", planID, "plan.md"), nil
-}
-
-// Root returns the artifact root in use.
-func (s *Store) Root() string {
-	return s.root
 }
 
 // HasPlan reports whether a valid plan record already exists.
@@ -312,48 +285,14 @@ func mergeRecord(existing, incoming PlanRecord) PlanRecord {
 // generateID builds a unique plan ID from the current timestamp and a slug of
 // the title, appending a numeric suffix on collision.
 func (s *Store) generateID(title string) (string, error) {
-	base := s.now().UTC().Format("20060102T150405Z") + "-" + slug(title)
-	candidate := base
-	for i := 2; i < maxIDCollisionAttempts; i++ {
-		_, err := os.Stat(s.planDir(candidate))
-		if os.IsNotExist(err) {
-			return candidate, nil
-		}
-		if err != nil {
-			// A real stat error (not "missing") means we cannot trust the path.
-			return "", fmt.Errorf("check plan id collision: %w", err)
-		}
-		candidate = fmt.Sprintf("%s-%d", base, i)
-	}
-	return "", fmt.Errorf("could not allocate a unique plan id for %q after %d attempts", title, maxIDCollisionAttempts)
-}
-
-// slug lowercases the title, keeps [a-z0-9-], collapses runs of separators into
-// a single dash, trims leading/trailing dashes, caps length, and falls back to
-// "plan" when nothing usable remains.
-func slug(title string) string {
-	var b strings.Builder
-	prevDash := false
-	for _, r := range strings.ToLower(title) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			prevDash = false
-		default:
-			if !prevDash && b.Len() > 0 {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > maxSlugLength {
-		out = strings.Trim(out[:maxSlugLength], "-")
-	}
-	if out == "" {
-		return "plan"
-	}
-	return out
+	return artifacts.AllocateTimestampedID(artifacts.IDOptions{
+		Root:         s.root,
+		Collection:   "plans",
+		Title:        title,
+		FallbackSlug: "plan",
+		Kind:         "plan",
+		Now:          s.now(),
+	})
 }
 
 func preferString(incoming, existing string) string {
@@ -367,18 +306,15 @@ func (s *Store) write(record PlanRecord) error {
 	if err := validatePlanID(record.PlanID); err != nil {
 		return err
 	}
-	dir := s.planDir(record.PlanID)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("create plan directory: %w", err)
-	}
-	if err := os.Chmod(dir, dirPerm); err != nil {
+	dir, err := artifacts.EnsureRecordDir(s.root, "plans", record.PlanID)
+	if err != nil {
 		return fmt.Errorf("secure plan directory: %w", err)
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode plan metadata: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
+	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
 		return fmt.Errorf("write plan metadata: %w", err)
 	}
 	// Only (re)write the body when we actually have one. Save always supplies
@@ -386,7 +322,7 @@ func (s *Store) write(record PlanRecord) error {
 	// readRecord loaded, so guarding here avoids clobbering an existing plan.md
 	// if its body could not be read back.
 	if record.Markdown != "" {
-		if err := writeFileAtomic(filepath.Join(dir, "plan.md"), []byte(record.Markdown)); err != nil {
+		if err := artifacts.WriteFileAtomic(filepath.Join(dir, "plan.md"), []byte(record.Markdown)); err != nil {
 			return fmt.Errorf("write plan markdown: %w", err)
 		}
 	}
@@ -447,11 +383,11 @@ func (s *Store) readRecord(planID string) (PlanRecord, bool) {
 }
 
 func (s *Store) planDir(planID string) string {
-	return filepath.Join(s.root, "plans", planID)
+	return artifacts.RecordDir(s.root, "plans", planID)
 }
 
 func validatePlanID(planID string) error {
-	if !planIDPattern.MatchString(planID) || planID == "." || planID == ".." {
+	if !artifacts.IsSafeID(planID) {
 		return fmt.Errorf("invalid plan id %q", planID)
 	}
 	return nil
@@ -462,26 +398,4 @@ func matchesFilter(record PlanRecord, filter PlanFilter) bool {
 		return false
 	}
 	return true
-}
-
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if _, err := io.Copy(temp, bytes.NewReader(data)); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Chmod(filePerm); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempName, path)
 }

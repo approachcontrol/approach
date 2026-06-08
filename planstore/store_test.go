@@ -97,6 +97,12 @@ func TestStoreSavesAndListsPlansByRepoPath(t *testing.T) {
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Fatalf("expected created/updated timestamps to be set: %#v", got)
 	}
+
+	assertMode(t, root, 0o700)
+	assertMode(t, filepath.Join(root, "plans"), 0o700)
+	assertMode(t, filepath.Join(root, "plans", "plan-tracer"), 0o700)
+	assertMode(t, filepath.Join(root, "plans", "plan-tracer", "meta.json"), 0o600)
+	assertMode(t, filepath.Join(root, "plans", "plan-tracer", "plan.md"), 0o600)
 }
 
 func TestStoreListSortsByUpdatedAtDescending(t *testing.T) {
@@ -141,5 +147,16 @@ func TestStoreListSortsByUpdatedAtDescending(t *testing.T) {
 	}
 	if records[0].PlanID != "newer" || records[1].PlanID != "older" {
 		t.Fatalf("List() not sorted by updated_at desc: %#v", records)
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", path, got, want)
 	}
 }
