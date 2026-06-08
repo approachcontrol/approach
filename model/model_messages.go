@@ -214,6 +214,9 @@ type SessionTranscriptResultMsg struct {
 	RepoPath    string
 	Provider    sessions.Provider
 	SessionID   string
+	Mode        ui.Mode
+	FlowID      string
+	FlowPhaseID string
 	DiffRequest uint64
 	Transcript  string
 }
@@ -273,8 +276,23 @@ type AgentResultMsg struct {
 }
 
 type PlanLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
+	LaunchContext            actions.AgentLaunchContext
+	Request                  uint64
+	ListRequest              uint64
+	RequireSelectedFlowPhase bool
+}
+
+type FlowImplementationLaunchRequestedMsg struct {
+	RepoPath             string
+	FlowID               string
+	FlowPhaseID          string
+	RequireSelectedPhase bool
+	ListRequest          uint64
+	Record               flowstore.FlowRecord
+	Phase                flowstore.FlowPhase
+	LaunchID             string
+	ResumeSession        flowstore.Session
+	HasResumeSession     bool
 }
 
 type FlowTitleSubmittedMsg struct {
@@ -341,6 +359,8 @@ type FetchErrorMsg struct {
 	Provider     sessions.Provider
 	SessionID    string
 	PlanID       string
+	FlowID       string
+	FlowPhaseID  string
 }
 
 // ActionFailedMsg carries an error from a destructive action (drop/prune)
@@ -937,7 +957,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 
 func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if record, ok := m.selectedSession(); ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID {
+		if m.currentTranscriptTargetMatches(msg) {
 			m.modal = m.modal.SetDiffForRequest(modal.DiffSessionTranscript, msg.DiffRequest, msg.Transcript)
 		}
 	}
@@ -1031,8 +1051,7 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 		if m.modal.View().Request != msg.DiffRequest {
 			return false
 		}
-		record, ok := m.selectedSession()
-		return ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID
+		return m.currentTranscriptErrorTargetMatches(msg)
 	case FetchPlanText:
 		if m.modal.View().Request != msg.DiffRequest {
 			return false
@@ -1041,6 +1060,50 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 	default:
 		return false
 	}
+}
+
+func (m Model) currentTranscriptTargetMatches(msg SessionTranscriptResultMsg) bool {
+	switch msg.Mode {
+	case ui.ModeFlows:
+		return m.currentFlowTargetMatches(msg.FlowID, msg.FlowPhaseID)
+	default:
+		record, ok := m.selectedSession()
+		return ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID
+	}
+}
+
+func (m Model) currentTranscriptErrorTargetMatches(msg FetchErrorMsg) bool {
+	switch msg.Mode {
+	case ui.ModeFlows:
+		return m.currentFlowTargetMatches(msg.FlowID, msg.FlowPhaseID)
+	default:
+		record, ok := m.selectedSession()
+		return ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID
+	}
+}
+
+func (m Model) currentFlowTargetMatches(flowID, phaseID string) bool {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID != flowID {
+		return false
+	}
+	if phaseID == "" {
+		return true
+	}
+	phase, ok := m.selectedFlowPhase()
+	return ok && phase.PhaseID == phaseID
+}
+
+func (m Model) currentFlowLaunchTargetMatches(flowID, phaseID string, requirePhase bool) bool {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID != flowID {
+		return false
+	}
+	if !requirePhase {
+		return true
+	}
+	phase, ok := m.selectedFlowPhase()
+	return ok && phase.PhaseID == phaseID
 }
 
 func (m Model) currentPlanTextTargetMatches(mode ui.Mode, planID string) bool {

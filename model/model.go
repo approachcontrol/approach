@@ -38,6 +38,7 @@ type Model struct {
 	flows                     pane.Pane[flowstore.FlowRecord]
 	expandedPlanID            string
 	selectedPlanPhaseID       string
+	selectedFlowPhaseID       string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	listRequestSeq            uint64
@@ -324,6 +325,7 @@ func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
 func (m Model) FlowSelected() int               { return m.flows.SelectedIndex() }
 func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
 func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
+func (m Model) SelectedFlowPhaseID() string     { return m.selectedFlowPhaseID }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
@@ -418,6 +420,7 @@ func (m Model) View() string {
 		FlowScroll:               flowScroll,
 		ExpandedPlanID:           m.expandedPlanID,
 		SelectedPlanPhaseID:      m.selectedPlanPhaseID,
+		SelectedFlowPhaseID:      m.selectedFlowPhaseID,
 		OverlayText:              modalView.Text,
 		TransientError:           m.visibleStatusText(),
 		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
@@ -698,6 +701,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			return m, nil
 		}
+		if msg.ListRequest != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentListRequest(ui.ModeFlows, msg.ListRequest)) {
+			return m, nil
+		}
 		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
@@ -705,6 +711,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
+	case FlowImplementationLaunchRequestedMsg:
+		if msg.ListRequest != 0 && (!m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeFlows, msg.ListRequest) || !m.currentFlowLaunchTargetMatches(msg.FlowID, msg.FlowPhaseID, msg.RequireSelectedPhase)) {
+			return m, nil
+		}
+		return m.startFlowImplementationLaunch(msg)
 	case FlowTitleSubmittedMsg:
 		return m.handleFlowTitleSubmitted(msg), nil
 	case FlowInstructionsSubmittedMsg:
@@ -805,6 +816,32 @@ func (m Model) selectedFlow() (flowstore.FlowRecord, bool) {
 	return m.flows.Selected()
 }
 
+func (m Model) selectedFlowPhase() (flowstore.FlowPhase, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || m.selectedFlowPhaseID == "" {
+		return flowstore.FlowPhase{}, false
+	}
+	for _, phase := range record.Phases {
+		if phase.PhaseID == m.selectedFlowPhaseID {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func (m Model) selectedFlowPhaseIndex() (int, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || m.selectedFlowPhaseID == "" {
+		return 0, false
+	}
+	for i, phase := range record.Phases {
+		if phase.PhaseID == m.selectedFlowPhaseID {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (m Model) selectedPlanID() string {
 	record, ok := m.selectedPlan()
 	if !ok {
@@ -841,6 +878,11 @@ func (m Model) selectedPlanPhaseIndex() (int, bool) {
 
 func (m Model) clearSelectedPlanPhase() Model {
 	m.selectedPlanPhaseID = ""
+	return m
+}
+
+func (m Model) clearSelectedFlowPhase() Model {
+	m.selectedFlowPhaseID = ""
 	return m
 }
 
@@ -951,6 +993,78 @@ func (m Model) moveSelectedPlanPhase(delta int) (Model, bool) {
 	return m.ensureSelectedPlanPhaseVisible(), true
 }
 
+func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
+	if m.mode != ui.ModeFlows {
+		return m, false
+	}
+	record, ok := m.selectedFlow()
+	if !ok || len(record.Phases) == 0 {
+		m = m.clearSelectedFlowPhase()
+		return m, false
+	}
+
+	index, hasPhase := m.selectedFlowPhaseIndex()
+	if !hasPhase {
+		if delta > 0 {
+			m.selectedFlowPhaseID = record.Phases[0].PhaseID
+			return m.ensureSelectedFlowPhaseVisible(), true
+		}
+		if delta < 0 && m.flows.Len() > 1 {
+			m.flows = m.flows.Move(-1, m.flowContentHeight(), m.contentWidth())
+			if previous, ok := m.selectedFlow(); ok && len(previous.Phases) > 0 {
+				m.selectedFlowPhaseID = previous.Phases[len(previous.Phases)-1].PhaseID
+			}
+			return m.ensureSelectedFlowPhaseVisible(), true
+		}
+		return m, false
+	}
+
+	nextIndex := index + delta
+	if nextIndex < 0 {
+		m = m.clearSelectedFlowPhase()
+		return m.ensureSelectedFlowPhaseVisible(), true
+	}
+	if nextIndex >= len(record.Phases) {
+		m = m.clearSelectedFlowPhase()
+		if m.flows.Len() > 1 {
+			m.flows = m.flows.Move(1, m.flowContentHeight(), m.contentWidth())
+		}
+		return m.ensureSelectedFlowPhaseVisible(), true
+	}
+	m.selectedFlowPhaseID = record.Phases[nextIndex].PhaseID
+	return m.ensureSelectedFlowPhaseVisible(), true
+}
+
+func (m Model) ensureSelectedFlowPhaseVisible() Model {
+	index, ok := m.selectedFlowPhaseIndex()
+	if !ok {
+		return m
+	}
+	flows := m.filteredFlows()
+	selected := m.FlowSelected()
+	if selected < 0 || selected >= len(flows) {
+		return m
+	}
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += flowVisualHeight(flows[i])
+	}
+	line += 1 + index
+	viewHeight := m.flowContentHeight()
+	scroll := m.FlowScroll()
+	target := scroll
+	if scroll > line {
+		target = line
+	}
+	if line >= target+viewHeight {
+		target = line - viewHeight + 1
+	}
+	if target != scroll {
+		m.flows = m.flows.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+	}
+	return m
+}
+
 func (m Model) ensureSelectedPlanPhaseVisible() Model {
 	index, ok := m.selectedPlanPhaseIndex()
 	if !ok {
@@ -1049,6 +1163,9 @@ func (m Model) reflowPlans() Model {
 
 func (m Model) reflowFlows() Model {
 	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
+	if m.selectedFlowPhaseID != "" {
+		return m.ensureSelectedFlowPhaseVisible()
+	}
 	return m
 }
 

@@ -391,7 +391,11 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedPlanID("")
 		}
 	case ui.ModeFlows:
+		if next, ok := m.moveSelectedFlowPhase(delta); ok {
+			return next
+		}
 		m.flows = m.flows.Move(delta, h, w)
+		m = m.clearSelectedFlowPhase()
 	}
 	return m
 }
@@ -437,6 +441,9 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mode == ui.ModeFlows && len(m.filteredFlows()) > 0 {
+		return m.handleFlowEnter()
+	}
 	return m, nil
 }
 
@@ -451,6 +458,9 @@ func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
 func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
 		return m, nil
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
+		return m.handleOpenFlowPhaseTranscript()
 	}
 	record, ok := m.selectedFlow()
 	if !ok {
@@ -1250,6 +1260,7 @@ func (m Model) resetModeCursors() Model {
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
+	m = m.clearSelectedFlowPhase()
 	return m
 }
 
@@ -1265,6 +1276,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
+	m = m.clearSelectedFlowPhase()
 	return m
 }
 

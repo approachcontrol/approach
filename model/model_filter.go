@@ -72,7 +72,9 @@ func newPlanPane() pane.Pane[planstore.PlanRecord] {
 }
 
 func newFlowPane() pane.Pane[flowstore.FlowRecord] {
-	return pane.New(flowSearchText, fixedHeight[flowstore.FlowRecord])
+	return pane.New(flowSearchText, func(record flowstore.FlowRecord, _ int) int {
+		return flowVisualHeight(record)
+	})
 }
 
 func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
@@ -87,6 +89,13 @@ func planVisualHeight(record planstore.PlanRecord, expandedPlanID string) int {
 	}
 	if len(record.Phases) == 0 {
 		return 2
+	}
+	return 1 + len(record.Phases)
+}
+
+func flowVisualHeight(record flowstore.FlowRecord) int {
+	if len(record.Phases) == 0 {
+		return 1
 	}
 	return 1 + len(record.Phases)
 }
@@ -160,6 +169,7 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		m = m.setExpandedPlanID("")
 	case ui.ModeFlows:
 		m.flows = m.flows.SetQuery(query)
+		m = m.clearSelectedFlowPhase()
 		m = m.reflowFlows()
 	}
 	return m

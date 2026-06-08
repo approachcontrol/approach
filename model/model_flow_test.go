@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -236,6 +237,318 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 	}
 	if got := m.TransientError(); !strings.Contains(got, "Flow has no linked plan") {
 		t.Fatalf("status = %q, want missing linked plan message", got)
+	}
+}
+
+func TestModel_EnterOnFlowRowLaunchesReadyImplementation(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var launched actions.AgentLaunchContext
+	flow := readyImplementationFlow()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected implementation launch preparation command")
+	}
+	msg, ok := cmd().(model.FlowImplementationLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("launch preparation returned %T, want FlowImplementationLaunchRequestedMsg", msg)
+	}
+	m, cmd = update(m, msg)
+	if cmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+
+	if launchUpdate.FlowID != flow.FlowID || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if launched.Command != "codex" ||
+		launched.FlowID != flow.FlowID ||
+		launched.FlowPhaseID != "implementation" ||
+		launched.PlanID != flow.PlanID ||
+		launched.PlanPath != flow.PlanPath ||
+		launched.WorktreePath != flow.WorktreePath ||
+		launched.WorkingDir != flow.WorktreePath ||
+		launched.RepoPath != flow.RepoPath ||
+		launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		launched.LaunchID != launchUpdate.LaunchID {
+		t.Fatalf("launch context = %#v", launched)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{"wtui-flow", "approved flow plan", "custom implementation instructions", "wtui flow phase set --flow-id", "--phase-id implementation", "completed", "needs_attention", "blocked"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("implementation prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_EnterOnImplementationPhaseRowLaunchesExactPhase(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	flow := readyImplementationFlow()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	for m.SelectedFlowPhaseID() != "implementation" {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected implementation phase launch command")
+	}
+	msg := cmd()
+	intent, ok := msg.(model.FlowImplementationLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("launch preparation returned %T, want FlowImplementationLaunchRequestedMsg", msg)
+	}
+	_, _ = update(m, intent)
+	if launchUpdate.PhaseID != "implementation" {
+		t.Fatalf("launched phase = %q, want implementation", launchUpdate.PhaseID)
+	}
+}
+
+func TestModel_EnterOnImplementationPhaseRejectsUnapprovedPlanReview(t *testing.T) {
+	flow := readyImplementationFlow()
+	for i := range flow.Phases {
+		if flow.Phases[i].PhaseID == "plan-review" {
+			flow.Phases[i].Outcome = "changes_requested"
+		}
+	}
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"}), []flowstore.FlowRecord{flow})
+	for m.SelectedFlowPhaseID() != "implementation" {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("unapproved implementation returned command %T, want nil", cmd)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "approved Plan Review") {
+		t.Fatalf("status = %q, want plan-review gate message", got)
+	}
+}
+
+func TestModel_EnterOnImplementationResumesLatestEligibleSession(t *testing.T) {
+	flow := readyImplementationFlow()
+	for i := range flow.Phases {
+		if flow.Phases[i].PhaseID == "implementation" {
+			flow.Phases[i].Status = flowstore.PhaseRunning
+			flow.Phases[i].Sessions = []flowstore.Session{
+				{Provider: "claude", SessionID: "claude-old", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC), CWD: "/tmp/claude"},
+				{Provider: "codex", SessionID: "codex-old", StartedAt: time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC), CWD: "/tmp/old"},
+				{Provider: "codex", SessionID: "codex-new", EndedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC), CWD: "/tmp/new"},
+				{Provider: "codex", SessionID: "codex-active", LastSeenAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC), CWD: "/tmp/active"},
+			}
+		}
+	}
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex-app",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected implementation resume command")
+	}
+	_, _ = update(m, cmd())
+
+	if launched.Command != "codex-app" ||
+		launched.ResumeSessionID != "codex-active" ||
+		launched.WorkingDir != "/tmp/active" ||
+		launched.WorktreePath != flow.WorktreePath ||
+		launched.FlowPhaseID != "implementation" ||
+		launched.LaunchID == "" {
+		t.Fatalf("resume launch context = %#v", launched)
+	}
+}
+
+func TestModel_OKeyOnImplementationPhaseOpensLatestPhaseTranscript(t *testing.T) {
+	flow := readyImplementationFlow()
+	for i := range flow.Phases {
+		switch flow.Phases[i].PhaseID {
+		case "plan-review":
+			flow.Phases[i].Sessions = []flowstore.Session{{Provider: "codex", SessionID: "review", TranscriptPath: "/state/review.jsonl", EndedAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)}}
+		case "implementation":
+			flow.Phases[i].Sessions = []flowstore.Session{
+				{Provider: "codex", SessionID: "impl-old", TranscriptPath: "/state/old.jsonl", EndedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
+				{Provider: "codex", SessionID: "impl-new", TranscriptPath: "/state/new.jsonl", EndedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
+				{Provider: "codex", SessionID: "impl-active", TranscriptPath: "/state/active.jsonl", LastSeenAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)},
+			}
+		}
+	}
+	var gotProvider sessions.Provider
+	var gotSessionID string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
+			gotProvider = provider
+			gotSessionID = sessionID
+			return []sessions.TranscriptEvent{{Role: "assistant", Text: "implemented the flow"}}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	for m.SelectedFlowPhaseID() != "implementation" {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if cmd == nil {
+		t.Fatal("expected transcript read command")
+	}
+	if m.Overlay() != ui.OverlaySessionTranscript {
+		t.Fatalf("overlay = %d, want transcript", m.Overlay())
+	}
+	m, _ = update(m, cmd())
+
+	if gotProvider != sessions.ProviderCodex || gotSessionID != "impl-active" {
+		t.Fatalf("read transcript target = %s/%s, want codex/impl-active", gotProvider, gotSessionID)
+	}
+	if !strings.Contains(m.View(), "implemented the flow") {
+		t.Fatalf("transcript overlay missing event:\n%s", m.View())
+	}
+}
+
+func TestModel_ImplementationLaunchRequestIgnoredAfterRepoChange(t *testing.T) {
+	launched := false
+	addLaunchCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			addLaunchCalled = true
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{readyImplementationFlow()})
+
+	_, launchPrep := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if launchPrep == nil {
+		t.Fatal("expected implementation launch preparation command")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	msg := launchPrep()
+	m, cmd := update(m, msg)
+
+	if cmd != nil {
+		t.Fatalf("stale implementation launch returned command %T, want nil", cmd)
+	}
+	if launched {
+		t.Fatal("stale implementation launch should not start an agent")
+	}
+	if addLaunchCalled {
+		t.Fatal("stale implementation launch should not record a launch ID")
+	}
+}
+
+func TestModel_PhaseRowImplementationLaunchIgnoredAfterPhaseChange(t *testing.T) {
+	launched := false
+	addLaunchCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			addLaunchCalled = true
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{readyImplementationFlow()})
+	for m.SelectedFlowPhaseID() != "implementation" {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	_, launchPrep := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if launchPrep == nil {
+		t.Fatal("expected implementation launch preparation command")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	msg := launchPrep()
+	m, cmd := update(m, msg)
+
+	if cmd != nil {
+		t.Fatalf("stale phase-row launch returned command %T, want nil", cmd)
+	}
+	if launched {
+		t.Fatal("stale phase-row implementation launch should not start an agent")
+	}
+	if addLaunchCalled {
+		t.Fatal("stale phase-row implementation launch should not record a launch ID")
+	}
+}
+
+func TestModel_ImplementationLaunchFailureMarksImplementationNeedsAttention(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{readyImplementationFlow()}, nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("agent unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{readyImplementationFlow()})
+
+	_, launchPrep := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if launchPrep == nil {
+		t.Fatal("expected implementation launch preparation command")
+	}
+	m, cmd := update(m, launchPrep())
+	if cmd == nil {
+		t.Fatal("expected flow refresh after failed implementation launch")
+	}
+
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "implementation" ||
+		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(phaseUpdate.Notes, "agent unavailable") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "agent unavailable") {
+		t.Fatalf("status = %q, want launch failure", got)
 	}
 }
 
@@ -803,4 +1116,25 @@ func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, base
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
 	}
 	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+func readyImplementationFlow() flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Title:        "Implement Flow phase",
+		Instructions: "Custom implementation instructions",
+		Status:       flowstore.StatusInProgress,
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+		Branch:       "flow/implementation",
+		Commit:       "abc123",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Order: 2},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 3},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4},
+		},
+	}
 }

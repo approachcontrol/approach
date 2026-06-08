@@ -273,6 +273,53 @@ func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name             string
+		status           string
+		wantFlow         string
+		wantReviewStatus string
+	}{
+		{name: "completed", status: flowstore.PhaseCompleted, wantFlow: flowstore.StatusInProgress, wantReviewStatus: flowstore.PhaseReady},
+		{name: "needs attention", status: flowstore.PhaseNeedsAttention, wantFlow: flowstore.StatusNeedsAttention, wantReviewStatus: flowstore.PhasePending},
+		{name: "blocked", status: flowstore.PhaseBlocked, wantFlow: flowstore.StatusBlocked, wantReviewStatus: flowstore.PhasePending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := filepath.Join(root, "repo-implementation-"+strings.ReplaceAll(tc.name, " ", "-"))
+			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+			mustSetFlowPhase(t, root, created.FlowID, "plan-review", flowstore.PhaseCompleted, "approved", "", "")
+
+			var stdout bytes.Buffer
+			err := run([]string{
+				"wtui", "flow", "phase", "set",
+				"--flow-id", created.FlowID,
+				"--phase-id", "implementation",
+				"--status", tc.status,
+				"--summary", "Implementation updated.",
+				"--state-root", root,
+			}, noScanDeps(t, runDeps{stdout: &stdout}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			var updated flowstore.FlowRecord
+			if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+				t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+			}
+			if updated.Status != tc.wantFlow {
+				t.Fatalf("flow status = %q, want %q", updated.Status, tc.wantFlow)
+			}
+			if phaseByID(updated, "implementation").Status != tc.status {
+				t.Fatalf("implementation phase = %#v", phaseByID(updated, "implementation"))
+			}
+			if phaseByID(updated, "review-loop").Status != tc.wantReviewStatus {
+				t.Fatalf("review-loop status = %q, want %q", phaseByID(updated, "review-loop").Status, tc.wantReviewStatus)
+			}
+		})
+	}
+}
+
 func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -481,6 +528,36 @@ func mustRunFlow(t *testing.T, args []string) flowstore.FlowRecord {
 		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
 	}
 	return record
+}
+
+func mustSetFlowPhase(t *testing.T, root, flowID, phaseID, status, outcome, summary, notes string) flowstore.FlowRecord {
+	t.Helper()
+	args := []string{
+		"wtui", "flow", "phase", "set",
+		"--flow-id", flowID,
+		"--phase-id", phaseID,
+		"--status", status,
+		"--state-root", root,
+	}
+	if outcome != "" {
+		args = append(args, "--outcome", outcome)
+	}
+	if summary != "" {
+		args = append(args, "--summary", summary)
+	}
+	if notes != "" {
+		args = append(args, "--notes", notes)
+	}
+	return mustRunFlow(t, args)
+}
+
+func phaseByID(record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return phase
+		}
+	}
+	return flowstore.FlowPhase{}
 }
 
 func savePlanArtifact(t *testing.T, root, planID string) {

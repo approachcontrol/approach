@@ -245,13 +245,26 @@ or worktree basename, phase progress (`completed/total`, counting skipped phases
 as done), linked plan ID when present, PR number or label, updated date, and
 title. Use `/` to filter by title, instructions, status, branch, worktree
 basename, plan metadata, PR metadata, phase titles/statuses/summaries, and
-linked session metadata. Press `o` to open the linked plan body in a plain-text
-overlay; wtui shows a status message when the selected Flow has no linked plan.
+linked session metadata. Flow phase rows are selectable beneath each Flow row.
+Press `enter` on a ready Implementation phase, or on a Flow row whose
+Implementation phase is ready, to start or resume Implementation in the Flow
+worktree. wtui requires an approved Plan Review, a linked plan, and a Flow
+worktree before launch; each attempt records a fresh launch ID and sets
+`WTUI_FLOW_ID`, `WTUI_FLOW_PHASE_ID`, `WTUI_PLAN_ID`, `WTUI_PLAN_PATH`, and the
+shared artifact roots for the agent. If the selected Implementation phase has a
+captured session for the configured agent, wtui resumes the newest eligible
+session first; otherwise it launches a new session.
+
+Press `o` on a Flow row to open the linked plan body in a plain-text overlay;
+wtui shows a status message when the selected Flow has no linked plan. Press
+`o` on the Implementation phase row to open the latest transcript attached to
+that exact phase.
 
 Flows are task-centric workflow records stored beside sessions and plans under
-`<sessions root>/flows/<flow-id>/meta.json`. The TUI does not mutate Flow
-records in v1; create, read, list, update phase state, and link saved plans with
-the `wtui flow` CLI:
+`<sessions root>/flows/<flow-id>/meta.json`. The TUI can create new Flows,
+launch/resume the Plan and Implementation phases, and record launch attempts;
+create, read, list, update arbitrary phase state, and link saved plans with the
+`wtui flow` CLI:
 
 ```bash
 # Create a flow; --repo-path must be absolute and --json is required in v1.

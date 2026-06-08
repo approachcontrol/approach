@@ -53,7 +53,7 @@ func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   18,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{
 			{

@@ -93,7 +93,9 @@ type Session struct {
 	SessionID      string    `json:"session_id,omitempty"`
 	LaunchID       string    `json:"launch_id,omitempty"`
 	Status         string    `json:"status,omitempty"`
+	CWD            string    `json:"cwd,omitempty"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
+	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
 	EndedAt        time.Time `json:"ended_at,omitempty"`
 	TranscriptPath string    `json:"transcript_path,omitempty"`
 }
@@ -172,9 +174,10 @@ type StartMetadataUpdate struct {
 
 // PhaseLaunchUpdate records one agent launch attempt against a Flow phase.
 type PhaseLaunchUpdate struct {
-	FlowID   string
-	PhaseID  string
-	LaunchID string
+	FlowID                    string
+	PhaseID                   string
+	LaunchID                  string
+	RequirePlanReviewApproved bool
 }
 
 // SessionAttachUpdate attaches a captured provider session to a Flow phase.
@@ -447,6 +450,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
+		if update.RequirePlanReviewApproved && !implementationGateSatisfied(record) {
+			return FlowRecord{}, fmt.Errorf("implementation requires an approved plan review")
+		}
 		if err := validatePhaseUpdate(phase, PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}); err != nil {
 			return FlowRecord{}, err
 		}
@@ -458,6 +464,24 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+func implementationGateSatisfied(record FlowRecord) bool {
+	for _, phase := range record.Phases {
+		if phase.PhaseID != "plan-review" {
+			continue
+		}
+		switch phase.Status {
+		case PhaseCompleted:
+			outcome := strings.TrimSpace(phase.Outcome)
+			return outcome == "approved" || outcome == "approved_with_concerns"
+		case PhaseSkipped:
+			return strings.TrimSpace(phase.Notes) != ""
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // AttachSession records a provider session against a phase. Re-attaching the

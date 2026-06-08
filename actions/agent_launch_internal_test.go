@@ -565,6 +565,29 @@ func TestCodexAppFlowLaunchUsesRepoProjectPath(t *testing.T) {
 	}
 }
 
+func TestCodexAppFlowImplementationLaunchUsesWorkingDirPath(t *testing.T) {
+	launch, err := agentLaunch(AgentLaunchContext{
+		Command:       "codex-app",
+		RepoPath:      "/repo",
+		WorktreePath:  "/repo-worktrees/flow-implementation",
+		WorkingDir:    "/repo-worktrees/flow-implementation",
+		FlowID:        "flow-1",
+		FlowPhaseID:   "implementation",
+		InitialPrompt: "Use wtui-flow.",
+	}, "darwin", fakeGetenv(nil), fakeLookPath())
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+
+	gotURL, err := url.Parse(launch.Cmd.Args[1])
+	if err != nil {
+		t.Fatalf("parse launch URL: %v", err)
+	}
+	if got := gotURL.Query().Get("path"); got != "/repo-worktrees/flow-implementation" {
+		t.Fatalf("path query = %q, want flow worktree", got)
+	}
+}
+
 func TestCodexAppLaunchOpensResumeDeepLink(t *testing.T) {
 	t.Setenv("WTUI_SESSION_STATE_ROOT", "/inherited/state")
 	launch, err := agentLaunch(AgentLaunchContext{

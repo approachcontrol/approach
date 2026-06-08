@@ -304,7 +304,9 @@ func TestIngestHookPersistsFlowMetadataAndAttachesSession(t *testing.T) {
 	if attached.Provider != string(sessions.ProviderCodex) ||
 		attached.SessionID != "codex-flow-1" ||
 		attached.LaunchID != "launch-flow-1" ||
-		attached.Status != "last_seen" {
+		attached.Status != "last_seen" ||
+		attached.CWD != worktreePath ||
+		attached.LastSeenAt.IsZero() {
 		t.Fatalf("attached session mismatch: %#v", attached)
 	}
 }

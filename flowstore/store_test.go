@@ -165,6 +165,17 @@ func TestStoreCreateRejectsDuplicateSuppliedFlowID(t *testing.T) {
 	}
 }
 
+func flowPhaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {
+	t.Helper()
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return phase
+		}
+	}
+	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
+	return flowstore.FlowPhase{}
+}
+
 func TestStoreListFiltersSortsAndSkipsBadRecords(t *testing.T) {
 	root := t.TempDir()
 	alpha := filepath.Join(root, "alpha")
@@ -318,6 +329,85 @@ func TestStoreSetPhasePersistsUpdateAndDerivesStatus(t *testing.T) {
 	}
 	if read.Status != completed.Status || read.Phases[0].Status != flowstore.PhaseCompleted || read.Phases[1].Status != flowstore.PhaseReady {
 		t.Fatalf("persisted record = %#v, want completed plan and ready next phase", read)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRequiresApprovedPlanReviewWhenRequested(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Implementation launch gate",
+		Instructions: "gate launch",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted}); err != nil {
+		t.Fatalf("complete plan: %v", err)
+	}
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseCompleted, Outcome: "changes_requested"}); err != nil {
+		t.Fatalf("complete plan review: %v", err)
+	}
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:                    record.FlowID,
+		PhaseID:                   "implementation",
+		LaunchID:                  "launch-1",
+		RequirePlanReviewApproved: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "approved plan review") {
+		t.Fatalf("AddPhaseLaunchID() error = %v, want approved plan-review gate", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	implementation := flowPhaseByID(t, read, "implementation")
+	if implementation.Status != flowstore.PhaseReady || len(implementation.LaunchIDs) != 0 {
+		t.Fatalf("implementation mutated despite gate failure: %#v", implementation)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDAllowsSkippedPlanReviewWithNotes(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Skipped review launch gate",
+		Instructions: "gate launch",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted}); err != nil {
+		t.Fatalf("complete plan: %v", err)
+	}
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseSkipped, Notes: "Plan was approved out-of-band."}); err != nil {
+		t.Fatalf("skip plan review: %v", err)
+	}
+
+	updated, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:                    record.FlowID,
+		PhaseID:                   "implementation",
+		LaunchID:                  "launch-1",
+		RequirePlanReviewApproved: true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	implementation := flowPhaseByID(t, updated, "implementation")
+	if implementation.Status != flowstore.PhaseRunning || len(implementation.LaunchIDs) != 1 {
+		t.Fatalf("implementation phase = %#v, want running launch", implementation)
 	}
 }
 
