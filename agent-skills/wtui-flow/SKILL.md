@@ -69,10 +69,9 @@ progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
 The current Flow CLI exposes `create`, `list`, `read`, `phase set`,
-`phase add-child`, `plan set`, and `pr set`. Merge metadata is not a dedicated
-structured command yet; record merge details in the current phase `--summary`,
-`--outcome`, and `--notes`, and explicitly tell the user that richer merge
-metadata was not persisted as first-class Flow fields.
+`phase add-child`, `plan set`, `pr set`, and `merge set`. Record merge metadata
+with `wtui flow merge set`; do not claim a merge was recorded unless that
+structured command succeeds.
 
 ## Plan Phase
 
@@ -343,9 +342,11 @@ wtui flow phase set \
 
 Goal: merge deliberately after review approval.
 
-Do not merge silently. After the explicit merge action succeeds, record merge
-status, commit, timestamp, and PR URL in `--summary` or `--notes` because the
-current implemented CLI does not expose `wtui flow merge set`.
+Do not merge silently. Read the Flow first and verify the top-level `pr` object
+contains provider, number, URL, head branch, and base branch. After the explicit
+merge action succeeds, complete the Merge phase, then record the structured
+merge status, commit, and RFC3339 timestamp through `wtui flow merge set`. Both
+commands must succeed before reporting the Flow as merged.
 
 ```bash
 wtui flow phase set \
@@ -353,8 +354,31 @@ wtui flow phase set \
   --phase-id merge \
   --status completed \
   --outcome "merged" \
-  --summary "Merged PR github#123 at commit abc123 on 2026-06-07T00:00:00Z." \
+  --summary "Merged PR github#123 at commit $MERGE_COMMIT." \
+  "${FLOW_STATE_ARGS[@]}"
+
+wtui flow merge set \
+  --flow-id "$WTUI_FLOW_ID" \
+  --status merged \
+  --commit "$MERGE_COMMIT" \
+  --merged-at "$MERGED_AT_RFC3339" \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
-If merge is unsafe, rejected, or waiting on CI, use `blocked` with notes.
+If merge is unsafe, rejected, or waiting on CI, use `blocked` with notes, then
+record the structured blocked merge status:
+
+```bash
+wtui flow phase set \
+  --flow-id "$WTUI_FLOW_ID" \
+  --phase-id merge \
+  --status blocked \
+  --outcome "blocked" \
+  --notes "Explain why merge is blocked." \
+  "${FLOW_STATE_ARGS[@]}"
+
+wtui flow merge set \
+  --flow-id "$WTUI_FLOW_ID" \
+  --status blocked \
+  "${FLOW_STATE_ARGS[@]}"
+```

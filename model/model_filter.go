@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
@@ -293,6 +294,11 @@ func flowSearchText(record flowstore.FlowRecord) string {
 		record.PR.URL,
 		record.PR.HeadBranch,
 		record.PR.BaseBranch,
+		record.Merge.Status,
+		record.Merge.Commit,
+	}
+	if record.Merge.MergedAt != nil {
+		parts = append(parts, record.Merge.MergedAt.UTC().Format(time.RFC3339))
 	}
 	if record.PR.Number > 0 {
 		parts = append(parts, fmt.Sprintf("#%d", record.PR.Number))

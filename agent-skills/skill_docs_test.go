@@ -68,6 +68,9 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	if !strings.Contains(skill, "wtui flow pr set") || !strings.Contains(flowCLI, "runFlowPRSet") {
 		t.Fatal("skill and CLI should both expose flow pr set")
 	}
+	if !strings.Contains(skill, "wtui flow merge set") || !strings.Contains(flowCLI, "runFlowMergeSet") {
+		t.Fatal("skill and CLI should both expose flow merge set")
+	}
 	for _, flagName := range []string{
 		"flow-id",
 		"phase-id",
@@ -78,6 +81,8 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 		"head",
 		"base",
 		"status",
+		"commit",
+		"merged-at",
 		"outcome",
 		"summary",
 		"notes",
@@ -114,7 +119,6 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 
 	for _, unimplementedCommand := range []string{
-		"wtui flow merge set",
 		"wtui flow session attach",
 		"wtui flow abandon",
 	} {

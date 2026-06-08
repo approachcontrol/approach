@@ -309,6 +309,30 @@ func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 	}
 }
 
+func TestModel_FlowSearchIncludesMergeMetadata(t *testing.T) {
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
+		FlowID: "flow-1",
+		Title:  "Merged flow",
+		Status: flowstore.StatusMerged,
+		Merge: flowstore.Merge{
+			Status:   flowstore.MergeMerged,
+			Commit:   "0123456789abcdef",
+			MergedAt: &mergedAt,
+		},
+	}}, ListRequest: m.ListRequest(ui.ModeFlows)})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("0123456789abcdef")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
+		t.Fatalf("flow search by merge commit should keep row, got %#v", got)
+	}
+}
+
 func TestModel_OKeyOnFlowOpensLinkedPlanText(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -980,6 +1004,84 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("autoreview prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_AKeyOnFlowLaunchesMergeWithStructuredReportingPrompt(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("merge launch should not read plan body for %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-merge",
+		Branch:       "flow/merge",
+		Commit:       "abc123",
+		PlanID:       "plan-1",
+		Status:       flowstore.StatusInProgress,
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     116,
+			URL:        "https://github.com/brian-bell/wtui/pull/116",
+			HeadBranch: "flow/merge",
+			BaseBranch: "main",
+			Status:     "open",
+		},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseCompleted, Outcome: "passed"},
+			{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare a merge launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	if launched.FlowPhaseID != "merge" {
+		t.Fatalf("launched flow phase = %q, want merge", launched.FlowPhaseID)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{
+		"merge the reviewed pr deliberately",
+		"github #116",
+		"https://github.com/brian-bell/wtui/pull/116",
+		"wtui flow merge set --flow-id flow-1 --status merged",
+		"--commit <merge-commit>",
+		"--merged-at <rfc3339>",
+		"wtui flow phase set --flow-id flow-1 --phase-id merge --status completed",
+		"blocked",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("merge prompt missing %q:\n%s", want, launched.InitialPrompt)
 		}
 	}
 }

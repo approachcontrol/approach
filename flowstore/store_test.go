@@ -1309,6 +1309,393 @@ func TestStoreSetPRValidatesMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreSetMergePersistsMergedMetadataAndCompletesFlow(t *testing.T) {
+	root := t.TempDir()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Merge metadata",
+		Instructions: "record the merge",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/merge-metadata",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     116,
+		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		HeadBranch: "flow/merge-metadata",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "autoreview", "merge")
+
+	updated, err := store.SetMerge(flowstore.MergeUpdate{
+		FlowID:   record.FlowID,
+		Status:   flowstore.MergeMerged,
+		Commit:   "0123456789abcdef",
+		MergedAt: mergedAt,
+	})
+	if err != nil {
+		t.Fatalf("SetMerge() error = %v", err)
+	}
+
+	if updated.Status != flowstore.StatusMerged {
+		t.Fatalf("flow status = %q, want merged", updated.Status)
+	}
+	if updated.Merge.Status != flowstore.MergeMerged ||
+		updated.Merge.Commit != "0123456789abcdef" ||
+		updated.Merge.MergedAt == nil ||
+		!updated.Merge.MergedAt.Equal(mergedAt) {
+		t.Fatalf("merge metadata = %#v", updated.Merge)
+	}
+	repeated, err := store.SetMerge(flowstore.MergeUpdate{
+		FlowID:   record.FlowID,
+		Status:   flowstore.MergeMerged,
+		Commit:   "0123456789abcdef",
+		MergedAt: mergedAt,
+	})
+	if err != nil {
+		t.Fatalf("SetMerge(repeated) error = %v", err)
+	}
+	if repeated.UpdatedAt != updated.UpdatedAt {
+		t.Fatalf("idempotent SetMerge changed UpdatedAt from %s to %s", updated.UpdatedAt, repeated.UpdatedAt)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Status != flowstore.StatusMerged || read.Merge.Commit != "0123456789abcdef" {
+		t.Fatalf("persisted merged record = %#v", read)
+	}
+}
+
+func TestStoreSetMergeValidatesMergedMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		withPR     bool
+		status     string
+		commit     string
+		mergedAt   time.Time
+		blockPhase bool
+		blockNotes string
+		want       string
+		wantStatus string
+		wantMerge  string
+	}{
+		{
+			name:     "missing PR",
+			status:   flowstore.MergeMerged,
+			commit:   "abc123",
+			mergedAt: time.Date(2026, 6, 8, 15, 0, 0, 0, time.UTC),
+			want:     "requires existing PR metadata",
+		},
+		{
+			name:     "missing commit",
+			withPR:   true,
+			status:   flowstore.MergeMerged,
+			mergedAt: time.Date(2026, 6, 8, 15, 0, 0, 0, time.UTC),
+			want:     "requires merge commit",
+		},
+		{
+			name:   "missing timestamp",
+			withPR: true,
+			status: flowstore.MergeMerged,
+			commit: "abc123",
+			want:   "requires merge timestamp",
+		},
+		{
+			name:     "merge phase not completed",
+			withPR:   true,
+			status:   flowstore.MergeMerged,
+			commit:   "abc123",
+			mergedAt: time.Date(2026, 6, 8, 15, 0, 0, 0, time.UTC),
+			want:     "requires completed merge phase",
+		},
+		{
+			name:       "blocked without phase notes",
+			withPR:     true,
+			status:     flowstore.MergeBlocked,
+			blockPhase: true,
+			want:       "requires blocked merge phase notes",
+		},
+		{
+			name:       "blocked with phase notes",
+			withPR:     true,
+			status:     flowstore.MergeBlocked,
+			blockPhase: true,
+			blockNotes: "Merge is waiting on failing CI.",
+			wantStatus: flowstore.StatusBlocked,
+			wantMerge:  flowstore.MergeBlocked,
+		},
+		{
+			name:   "invalid status",
+			withPR: true,
+			status: "done",
+			want:   "invalid merge status",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "Merge validation",
+				Instructions: "validate merge metadata",
+				RepoPath:     filepath.Join(root, "repo"),
+				Branch:       "flow/merge-validation",
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+			if tc.withPR {
+				record, err = store.SetPR(flowstore.PRUpdate{
+					FlowID:     record.FlowID,
+					Provider:   "github",
+					Number:     116,
+					URL:        "https://github.com/brian-bell/wtui/pull/116",
+					HeadBranch: "flow/merge-validation",
+					BaseBranch: "main",
+					Status:     "open",
+				})
+				if err != nil {
+					t.Fatalf("SetPR() error = %v", err)
+				}
+			}
+			if tc.blockPhase {
+				record, err = store.SetPhase(flowstore.PhaseUpdate{
+					FlowID:  record.FlowID,
+					PhaseID: "autoreview",
+					Status:  flowstore.PhaseCompleted,
+					Outcome: "passed",
+				})
+				if err != nil {
+					t.Fatalf("SetPhase(autoreview completed) error = %v", err)
+				}
+				record, err = store.SetPhase(flowstore.PhaseUpdate{
+					FlowID:  record.FlowID,
+					PhaseID: "merge",
+					Status:  flowstore.PhaseBlocked,
+					Notes:   tc.blockNotes,
+				})
+				if err != nil && tc.blockNotes != "" {
+					t.Fatalf("SetPhase(merge blocked) error = %v", err)
+				}
+			}
+
+			updated, err := store.SetMerge(flowstore.MergeUpdate{
+				FlowID:   record.FlowID,
+				Status:   tc.status,
+				Commit:   tc.commit,
+				MergedAt: tc.mergedAt,
+			})
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("SetMerge() error = %v, want %q", err, tc.want)
+				}
+				read, readErr := store.Read(record.FlowID)
+				if readErr != nil {
+					t.Fatalf("Read() error = %v", readErr)
+				}
+				if read.Merge.Status != flowstore.MergePending {
+					t.Fatalf("rejected merge update mutated record: %#v", read.Merge)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SetMerge() error = %v", err)
+			}
+			if updated.Status != tc.wantStatus || updated.Merge.Status != tc.wantMerge {
+				t.Fatalf("updated record = %#v, want status %q merge %q", updated, tc.wantStatus, tc.wantMerge)
+			}
+		})
+	}
+}
+
+func TestStoreSetPhaseReopeningMergeClearsTerminalMergeMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		merge        flowstore.MergeUpdate
+		phaseStatus  string
+		phaseNotes   string
+		reopenStatus string
+		reopenNotes  string
+		wantStatus   string
+	}{
+		{
+			name: "merged",
+			merge: flowstore.MergeUpdate{
+				Status:   flowstore.MergeMerged,
+				Commit:   "0123456789abcdef",
+				MergedAt: time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC),
+			},
+			phaseStatus:  flowstore.PhaseCompleted,
+			reopenStatus: flowstore.PhaseRunning,
+			reopenNotes:  "Retrying merge after new information.",
+			wantStatus:   flowstore.StatusInProgress,
+		},
+		{
+			name:         "blocked",
+			merge:        flowstore.MergeUpdate{Status: flowstore.MergeBlocked},
+			phaseStatus:  flowstore.PhaseBlocked,
+			phaseNotes:   "CI is still failing.",
+			reopenStatus: flowstore.PhaseRunning,
+			reopenNotes:  "Retrying merge after new information.",
+			wantStatus:   flowstore.StatusInProgress,
+		},
+		{
+			name:         "blocked skipped",
+			merge:        flowstore.MergeUpdate{Status: flowstore.MergeBlocked},
+			phaseStatus:  flowstore.PhaseBlocked,
+			phaseNotes:   "Human decided not to merge this PR.",
+			reopenStatus: flowstore.PhaseSkipped,
+			reopenNotes:  "Merge intentionally skipped after user decision.",
+			wantStatus:   flowstore.StatusCompleted,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "Reopen merge",
+				Instructions: "retry merge",
+				RepoPath:     filepath.Join(root, "repo"),
+				Branch:       "flow/reopen-merge",
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+			record, err = store.SetPR(flowstore.PRUpdate{
+				FlowID:     record.FlowID,
+				Provider:   "github",
+				Number:     116,
+				URL:        "https://github.com/brian-bell/wtui/pull/116",
+				HeadBranch: "flow/reopen-merge",
+				BaseBranch: "main",
+				Status:     "open",
+			})
+			if err != nil {
+				t.Fatalf("SetPR() error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "autoreview",
+				Status:  flowstore.PhaseCompleted,
+				Outcome: "passed",
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(autoreview completed) error = %v", err)
+			}
+			record, err = store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "merge",
+				Status:  tc.phaseStatus,
+				Outcome: tc.merge.Status,
+				Notes:   tc.phaseNotes,
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(merge terminal) error = %v", err)
+			}
+			tc.merge.FlowID = record.FlowID
+			record, err = store.SetMerge(tc.merge)
+			if err != nil {
+				t.Fatalf("SetMerge() error = %v", err)
+			}
+			if record.Merge.Status != tc.merge.Status {
+				t.Fatalf("merge status = %q, want %q", record.Merge.Status, tc.merge.Status)
+			}
+
+			reopened, err := store.SetPhase(flowstore.PhaseUpdate{
+				FlowID:  record.FlowID,
+				PhaseID: "merge",
+				Status:  tc.reopenStatus,
+				Notes:   tc.reopenNotes,
+			})
+			if err != nil {
+				t.Fatalf("SetPhase(merge %s) error = %v", tc.reopenStatus, err)
+			}
+			if reopened.Merge.Status != flowstore.MergePending || reopened.Merge.Commit != "" || reopened.Merge.MergedAt != nil {
+				t.Fatalf("reopened merge metadata = %#v, want pending", reopened.Merge)
+			}
+			if reopened.Status != tc.wantStatus {
+				t.Fatalf("reopened flow status = %q, want %q", reopened.Status, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestStoreAddPhaseLaunchIDReopeningMergeClearsTerminalMergeMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Relaunch merge",
+		Instructions: "retry merge from the TUI",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/relaunch-merge",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     116,
+		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		HeadBranch: "flow/relaunch-merge",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "autoreview", "merge")
+	record, err = store.SetMerge(flowstore.MergeUpdate{
+		FlowID:   record.FlowID,
+		Status:   flowstore.MergeMerged,
+		Commit:   "0123456789abcdef",
+		MergedAt: time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("SetMerge() error = %v", err)
+	}
+
+	relaunched, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "merge",
+		LaunchID: "launch-merge-retry",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(merge retry) error = %v", err)
+	}
+	if relaunched.Merge.Status != flowstore.MergePending || relaunched.Merge.Commit != "" || relaunched.Merge.MergedAt != nil {
+		t.Fatalf("relaunched merge metadata = %#v, want pending", relaunched.Merge)
+	}
+	if relaunched.Status != flowstore.StatusInProgress {
+		t.Fatalf("relaunched flow status = %q, want in_progress", relaunched.Status)
+	}
+}
+
 func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(t *testing.T) {
 	root := t.TempDir()
 	times := []time.Time{

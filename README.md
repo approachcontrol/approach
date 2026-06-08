@@ -296,6 +296,18 @@ wtui flow pr set --flow-id "$FLOW_ID" \
   --head "$FLOW_BRANCH" \
   --base main \
   --status open
+
+# Record structured merge metadata after the explicit merge action succeeds.
+wtui flow phase set --flow-id "$FLOW_ID" \
+  --phase-id merge \
+  --status completed \
+  --outcome merged \
+  --summary "Merged PR at $MERGE_COMMIT."
+
+wtui flow merge set --flow-id "$FLOW_ID" \
+  --status merged \
+  --commit "$MERGE_COMMIT" \
+  --merged-at "2026-06-08T15:04:05Z"
 ```
 
 Child implementation phases gate downstream readiness in phase order: review
@@ -305,7 +317,12 @@ minimal: Plan Review and Implementation point to the saved plan artifact, while
 Review Loop and PR Creation include only the worktree, branch, and start commit
 metadata needed to inspect the changes. Autoreview is ready only after PR
 Creation is complete and `wtui flow pr set` has recorded provider, PR number,
-URL, head branch, and base branch metadata.
+URL, head branch, and base branch metadata. Merge stays an explicit phase:
+agents must record both the Merge phase update and structured merge metadata
+through `wtui flow merge set`; `--status merged` requires existing PR metadata,
+a merge commit, and an RFC3339 merge timestamp. If merge is blocked, record a
+blocked Merge phase with notes before setting structured merge status to
+`blocked`.
 
 The flow state root is resolved with this precedence: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >

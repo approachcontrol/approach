@@ -129,6 +129,14 @@ type PRUpdate struct {
 	Status     string
 }
 
+// MergeUpdate records metadata for the merge that completed or blocked a Flow.
+type MergeUpdate struct {
+	FlowID   string
+	Status   string
+	Commit   string
+	MergedAt time.Time
+}
+
 // Merge stores agent-reported merge metadata.
 type Merge struct {
 	Status   string     `json:"status,omitempty"`
@@ -369,6 +377,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	}
 	phase.UpdatedAt = now
 	record.Phases[phaseIndex] = phase
+	if phase.PhaseID == "merge" && (phase.Status == PhaseRunning || phase.Status == PhaseSkipped) {
+		record.Merge = Merge{Status: MergePending}
+	}
 	record.UpdatedAt = now
 	record = refreshPhaseReadiness(record, now)
 	record.Status = DeriveStatus(record)
@@ -496,6 +507,25 @@ func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
 	})
 }
 
+// SetMerge validates and persists the merge metadata reported by an agent.
+func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		merge, err := validateMergeUpdate(record, update)
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		if mergeEqual(record.Merge, merge) {
+			return record, nil
+		}
+		record.Merge = merge
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
 // SetStartMetadata persists branch/worktree/plan metadata discovered while
 // starting a Flow. Empty fields leave existing values unchanged.
 func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error) {
@@ -566,6 +596,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
+		if phase.PhaseID == "merge" && phase.Status == PhaseRunning {
+			record.Merge = Merge{Status: MergePending}
+		}
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
@@ -987,6 +1020,51 @@ func validateGitHubPRURL(parsed *url.URL, number int) error {
 		return fmt.Errorf("GitHub PR URL number %d must match PR number %d", urlNumber, number)
 	}
 	return nil
+}
+
+func validateMergeUpdate(record FlowRecord, update MergeUpdate) (Merge, error) {
+	status := strings.TrimSpace(update.Status)
+	switch status {
+	case MergeMerged:
+		if !HasPRTarget(record.PR) {
+			return Merge{}, fmt.Errorf("merge status merged requires existing PR metadata")
+		}
+		commit := strings.TrimSpace(update.Commit)
+		if commit == "" {
+			return Merge{}, fmt.Errorf("merge status merged requires merge commit")
+		}
+		if update.MergedAt.IsZero() {
+			return Merge{}, fmt.Errorf("merge status merged requires merge timestamp")
+		}
+		phaseIndex := phaseIndexByID(record.Phases, "merge")
+		if phaseIndex < 0 || record.Phases[phaseIndex].Status != PhaseCompleted {
+			return Merge{}, fmt.Errorf("merge status merged requires completed merge phase")
+		}
+		mergedAt := update.MergedAt.UTC()
+		return Merge{Status: MergeMerged, Commit: commit, MergedAt: &mergedAt}, nil
+	case MergeBlocked:
+		phaseIndex := phaseIndexByID(record.Phases, "merge")
+		if phaseIndex < 0 || record.Phases[phaseIndex].Status != PhaseBlocked || strings.TrimSpace(record.Phases[phaseIndex].Notes) == "" {
+			return Merge{}, fmt.Errorf("merge status blocked requires blocked merge phase notes")
+		}
+		return Merge{Status: MergeBlocked}, nil
+	default:
+		return Merge{}, fmt.Errorf("invalid merge status %q", update.Status)
+	}
+}
+
+func mergeEqual(left, right Merge) bool {
+	if left.Status != right.Status || left.Commit != right.Commit {
+		return false
+	}
+	switch {
+	case left.MergedAt == nil && right.MergedAt == nil:
+		return true
+	case left.MergedAt == nil || right.MergedAt == nil:
+		return false
+	default:
+		return left.MergedAt.Equal(*right.MergedAt)
+	}
 }
 
 func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {

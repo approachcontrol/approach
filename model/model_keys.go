@@ -1141,6 +1141,8 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 		return flowPRCreationPrompt(record, phase, planPath, planBody)
 	case "autoreview":
 		return flowAutoreviewPrompt(record, phase, planPath, planBody)
+	case "merge":
+		return flowMergePrompt(record, phase, planPath, planBody)
 	default:
 		return flowGenericPhasePrompt(record, phase, planPath, planBody)
 	}
@@ -1148,7 +1150,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
 	switch phaseID {
-	case "plan-review", "implementation", "review-loop", "pr-creation":
+	case "plan-review", "implementation", "review-loop", "pr-creation", "merge":
 		return false
 	default:
 		return true
@@ -1221,6 +1223,25 @@ func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 	fmt.Fprintf(&b, "\ncompleted:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome passed --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
 	fmt.Fprintf(&b, "needs_attention:\nwtui flow phase set --flow-id %s --phase-id %s --status needs_attention --outcome needs_attention --notes \"...\" --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
 	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"", record.FlowID, phase.PhaseID)
+	return b.String()
+}
+
+func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Merge the reviewed PR deliberately.\n\n")
+	writeFlowChangeMetadata(&b, record)
+	if flowstore.HasPRTarget(record.PR) {
+		fmt.Fprintf(&b, "\n\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s\n", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
+		if record.PR.Status != "" {
+			fmt.Fprintf(&b, "- Status: %s\n", record.PR.Status)
+		}
+	} else {
+		b.WriteString("\n\nPR target: missing. Do not merge until `wtui flow pr set` records provider, number, URL, head, and base.\n")
+	}
+	fmt.Fprintf(&b, "\nmerged:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "wtui flow merge set --flow-id %s --status merged --commit <merge-commit> --merged-at <rfc3339>\n\n", record.FlowID)
+	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "wtui flow merge set --flow-id %s --status blocked", record.FlowID)
 	return b.String()
 }
 
