@@ -230,8 +230,9 @@ filled first from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
 `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`; for new plans, and for
 updates that provide a repo or worktree location, wtui also resolves best-effort
 repo, worktree, branch, and commit metadata from git. `codex-app` launches use
-macOS `open`, so they do not inherit `WTUI_*`; wtui includes equivalent metadata
-in the launch prompt, and agents should pass the listed `--state-root` when
+macOS `open`, so they do not inherit `WTUI_*`; wtui uses the repo path as the
+deep-link project path and includes worktree, state-root, plan, and flow
+metadata in the launch prompt. Agents should pass the listed `--state-root` when
 running `wtui plan` commands. The `wtui-plan-persist` skill instructs agents on
 when and how to save plans. Its canonical source lives in
 `agent-skills/wtui-plan-persist/`, which is intentionally outside Codex and
@@ -343,7 +344,9 @@ automatically: wtui passes Claude Code or Codex a session-end hook that calls
 the current wtui binary, and it includes `WTUI_*` metadata so hook records can
 be associated with the repo, worktree, branch, and launch. `codex-app` opens via
 macOS deep link instead; wtui scrubs inherited `WTUI_*` from `open` and includes
-launch metadata in the prompt when a prompt is provided.
+launch metadata in the prompt. New `codex-app` threads use the repo path for
+Codex App project identity when wtui knows it, while the selected worktree
+remains available in the prompt metadata.
 
 For manual agent sessions that are not launched by wtui, configure Claude Code
 or Codex hooks to call wtui:
