@@ -350,6 +350,45 @@ func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 	}
 }
 
+func TestRender_FlowRecoveryWarningsFlagLatestRelaunchWithoutSession(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "relaunched-flow",
+		Title:        "Relaunched flow",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/relaunch",
+		WorktreePath: "/dev/wtui-worktrees/flow-relaunch",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseRunning,
+			LaunchIDs: []string{"launch-old", "launch-new"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-old", LaunchID: "launch-old", Status: "ended"},
+			},
+		}},
+	}
+
+	if got := flowPhaseProgress(record); got != "0/1 implementation:await-session" {
+		t.Fatalf("phase progress = %q, want latest relaunch without session to await session", got)
+	}
+	view := Render(RenderParams{
+		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:     0,
+		Width:        240,
+		Height:       10,
+		Mode:         ModeFlows,
+		Flows:        []flowstore.FlowRecord{record},
+		ActivePane:   1,
+		FlowSelected: 0,
+	})
+	if !strings.Contains(view, "implementation:await-session") {
+		t.Fatalf("rendered relaunch without session should await session:\n%s", view)
+	}
+	if strings.Contains(view, "session-mismatch") {
+		t.Fatalf("rendered relaunch with healthy older session should not show mismatch:\n%s", view)
+	}
+}
+
 func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 	flow := flowstore.FlowRecord{
 		FlowID: "missing-worktree-with-history",

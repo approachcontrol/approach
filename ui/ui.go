@@ -1658,7 +1658,7 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if flowPhaseSessionMismatch(phase) {
 		return "session-mismatch"
 	}
-	if phase.Status == flowstore.PhaseRunning && len(phase.LaunchIDs) > 0 && len(phase.Sessions) == 0 {
+	if phase.Status == flowstore.PhaseRunning && flowPhaseAwaitingSession(phase) {
 		return "await-session"
 	}
 	if phase.PhaseID == "autoreview" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
@@ -1681,6 +1681,25 @@ func flowBasePhaseState(phase flowstore.FlowPhase) string {
 
 func flowMissingWorktree(record flowstore.FlowRecord) bool {
 	return record.WorktreePath == "" && record.Branch == ""
+}
+
+func flowPhaseAwaitingSession(phase flowstore.FlowPhase) bool {
+	latestLaunchID := ""
+	for i := len(phase.LaunchIDs) - 1; i >= 0; i-- {
+		if phase.LaunchIDs[i] != "" {
+			latestLaunchID = phase.LaunchIDs[i]
+			break
+		}
+	}
+	if latestLaunchID == "" {
+		return false
+	}
+	for _, session := range phase.Sessions {
+		if session.LaunchID == latestLaunchID {
+			return false
+		}
+	}
+	return true
 }
 
 func flowPhaseSessionMismatch(phase flowstore.FlowPhase) bool {
