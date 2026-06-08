@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/sessions"
 )
 
@@ -248,6 +249,66 @@ func TestIngestHookCreatesEndedClaudeRecordFromSessionEnd(t *testing.T) {
 	}
 }
 
+func TestIngestHookPersistsFlowMetadataAndAttachesSession(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo-worktrees", "flow-new-flow-launch")
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flow, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Title:        "New Flow Launch",
+		Instructions: "Plan the work",
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		Branch:       "flow/new-flow-launch",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "codex-flow-1",
+		"cwd": `+quoteJSON(worktreePath)+`,
+		"timestamp": "2026-06-06T14:10:00Z"
+	}`)), sessions.IngestOptions{
+		Env: map[string]string{
+			"WTUI_LAUNCH_ID":          "launch-flow-1",
+			"WTUI_REPO_PATH":          repoPath,
+			"WTUI_WORKTREE_PATH":      worktreePath,
+			"WTUI_BRANCH":             "flow/new-flow-launch",
+			"WTUI_SESSION_STATE_ROOT": root,
+			"WTUI_FLOW_STATE_ROOT":    root,
+			"WTUI_FLOW_ID":            flow.FlowID,
+			"WTUI_FLOW_PHASE_ID":      "plan",
+		},
+	})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+
+	if record.FlowID != flow.FlowID || record.FlowPhaseID != "plan" {
+		t.Fatalf("flow metadata not stored on session: %#v", record)
+	}
+	read, err := flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := flowPhaseByID(t, read, "plan")
+	if len(phase.Sessions) != 1 {
+		t.Fatalf("attached sessions = %#v, want one", phase.Sessions)
+	}
+	attached := phase.Sessions[0]
+	if attached.Provider != string(sessions.ProviderCodex) ||
+		attached.SessionID != "codex-flow-1" ||
+		attached.LaunchID != "launch-flow-1" ||
+		attached.Status != "last_seen" {
+		t.Fatalf("attached session mismatch: %#v", attached)
+	}
+}
+
 func TestIngestHookPersistsToDefaultRootWhenNoStateRootProvided(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
@@ -385,4 +446,15 @@ func quoteJSON(value string) string {
 		panic(err)
 	}
 	return string(data)
+}
+
+func flowPhaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {
+	t.Helper()
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return phase
+		}
+	}
+	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
+	return flowstore.FlowPhase{}
 }

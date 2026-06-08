@@ -149,6 +149,32 @@ type PhaseUpdate struct {
 	Summary string
 }
 
+// StartMetadataUpdate adds launch-start metadata that is only known after a
+// Flow record has been allocated.
+type StartMetadataUpdate struct {
+	FlowID       string
+	WorktreePath string
+	Branch       string
+	BaseRef      string
+	Commit       string
+	PlanID       string
+	PlanPath     string
+}
+
+// PhaseLaunchUpdate records one agent launch attempt against a Flow phase.
+type PhaseLaunchUpdate struct {
+	FlowID   string
+	PhaseID  string
+	LaunchID string
+}
+
+// SessionAttachUpdate attaches a captured provider session to a Flow phase.
+type SessionAttachUpdate struct {
+	FlowID  string
+	PhaseID string
+	Session Session
+}
+
 // NewStore creates a Store rooted at an absolute artifact root.
 func NewStore(opts StoreOptions) (*Store, error) {
 	root := opts.Root
@@ -308,6 +334,161 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return record, nil
+}
+
+// SetStartMetadata persists branch/worktree/plan metadata discovered while
+// starting a Flow. Empty fields leave existing values unchanged.
+func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	if strings.TrimSpace(update.WorktreePath) != "" && !filepath.IsAbs(update.WorktreePath) {
+		return FlowRecord{}, fmt.Errorf("flow worktree path must be absolute: %s", update.WorktreePath)
+	}
+	if strings.TrimSpace(update.PlanPath) != "" && !filepath.IsAbs(update.PlanPath) {
+		return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", update.PlanPath)
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if value := strings.TrimSpace(update.WorktreePath); value != "" {
+			record.WorktreePath = filepath.Clean(value)
+		}
+		if value := strings.TrimSpace(update.Branch); value != "" {
+			record.Branch = value
+		}
+		if value := strings.TrimSpace(update.BaseRef); value != "" {
+			record.BaseRef = value
+		}
+		if value := strings.TrimSpace(update.Commit); value != "" {
+			record.Commit = value
+		}
+		if value := strings.TrimSpace(update.PlanID); value != "" {
+			record.PlanID = value
+		}
+		if value := strings.TrimSpace(update.PlanPath); value != "" {
+			record.PlanPath = filepath.Clean(value)
+		}
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// AddPhaseLaunchID records a launch attempt and marks the phase running.
+func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	if strings.TrimSpace(update.PhaseID) == "" {
+		return FlowRecord{}, fmt.Errorf("phase id is required")
+	}
+	launchID := strings.TrimSpace(update.LaunchID)
+	if launchID == "" {
+		return FlowRecord{}, fmt.Errorf("launch id is required")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		phaseIndex := -1
+		for i, phase := range record.Phases {
+			if phase.PhaseID == update.PhaseID {
+				phaseIndex = i
+				break
+			}
+		}
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		if err := validatePhaseUpdate(phase, PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}); err != nil {
+			return FlowRecord{}, err
+		}
+		phase.Status = PhaseRunning
+		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.UpdatedAt = now
+		record.Status = DeriveStatus(record)
+		return record, nil
+	})
+}
+
+// AttachSession records a provider session against a phase. Re-attaching the
+// same provider/session id updates the existing reference in place.
+func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	if strings.TrimSpace(update.PhaseID) == "" {
+		return FlowRecord{}, fmt.Errorf("phase id is required")
+	}
+	if strings.TrimSpace(update.Session.Provider) == "" {
+		return FlowRecord{}, fmt.Errorf("session provider is required")
+	}
+	if strings.TrimSpace(update.Session.SessionID) == "" {
+		return FlowRecord{}, fmt.Errorf("session id is required")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		phaseIndex := -1
+		for i, phase := range record.Phases {
+			if phase.PhaseID == update.PhaseID {
+				phaseIndex = i
+				break
+			}
+		}
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		session := update.Session
+		replaced := false
+		for i, existing := range phase.Sessions {
+			if existing.Provider == session.Provider && existing.SessionID == session.SessionID {
+				phase.Sessions[i] = session
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			phase.Sessions = append(phase.Sessions, session)
+		}
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	if _, err := os.Stat(s.flowDir(flowID)); os.IsNotExist(err) {
+		return FlowRecord{}, fmt.Errorf("flow %q not found", flowID)
+	} else if err != nil {
+		return FlowRecord{}, fmt.Errorf("stat flow %q: %w", flowID, err)
+	}
+	release, err := s.acquireFlowLock(flowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	defer release()
+	record, ok := s.readRecord(flowID)
+	if !ok {
+		return FlowRecord{}, fmt.Errorf("flow %q not found", flowID)
+	}
+	record, err = mutate(record, s.now())
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	record = normalizeRecord(record)
+	record.Status = DeriveStatus(record)
+	if err := s.write(record); err != nil {
+		return FlowRecord{}, err
+	}
+	return record, nil
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func (s *Store) acquireFlowLock(flowID string) (func(), error) {

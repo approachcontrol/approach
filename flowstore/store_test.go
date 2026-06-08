@@ -321,6 +321,84 @@ func TestStoreSetPhasePersistsUpdateAndDerivesStatus(t *testing.T) {
 	}
 }
 
+func TestStoreSetStartMetadataAddsWorktreeBranchPlanAndCommit(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "New Flow Launch",
+		Instructions: "Plan the work",
+		RepoPath:     repoPath,
+		BaseRef:      "main",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID:       record.FlowID,
+		WorktreePath: filepath.Join(root, "repo-worktrees", "flow-new-flow-launch"),
+		Branch:       "flow/new-flow-launch",
+		BaseRef:      "origin/main",
+		Commit:       "abc123",
+		PlanID:       "plan-1",
+		PlanPath:     filepath.Join(root, "plans", "plan-1", "plan.md"),
+	})
+	if err != nil {
+		t.Fatalf("SetStartMetadata() error = %v", err)
+	}
+
+	if updated.WorktreePath != filepath.Join(root, "repo-worktrees", "flow-new-flow-launch") {
+		t.Fatalf("WorktreePath = %q", updated.WorktreePath)
+	}
+	if updated.Branch != "flow/new-flow-launch" || updated.BaseRef != "origin/main" || updated.Commit != "abc123" {
+		t.Fatalf("metadata not persisted: %#v", updated)
+	}
+	if updated.PlanID != "plan-1" || updated.PlanPath != filepath.Join(root, "plans", "plan-1", "plan.md") {
+		t.Fatalf("plan metadata not persisted: %#v", updated)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDMarksPhaseRunning(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "New Flow Launch",
+		Instructions: "Plan the work",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "plan",
+		LaunchID: "launch-1",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+
+	phase := phaseByID(t, updated, "plan")
+	if phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("plan phase status = %q, want running", phase.Status)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-1" {
+		t.Fatalf("launch ids = %#v", phase.LaunchIDs)
+	}
+	if updated.Status != flowstore.StatusInProgress {
+		t.Fatalf("flow status = %q, want in_progress", updated.Status)
+	}
+}
+
 func TestStoreSetPhaseRejectsInvalidTransitions(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
@@ -721,4 +799,15 @@ func TestStoreRejectsInvalidInputs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func phaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {
+	t.Helper()
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return phase
+		}
+	}
+	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
+	return flowstore.FlowPhase{}
 }

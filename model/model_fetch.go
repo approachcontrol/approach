@@ -361,6 +361,93 @@ func (m Model) createPullRequestWorktree(input string, request uint64) tea.Cmd {
 	}
 }
 
+func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		flow, err := m.createFlow(flowstore.FlowRecord{
+			Title:        title,
+			Instructions: instructions,
+			RepoPath:     repoPath,
+			BaseRef:      baseRef,
+		})
+		if err != nil {
+			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
+		}
+		worktree, err := m.createFlowWorktree(repoPath, title, baseRef)
+		if err != nil {
+			if _, phaseErr := m.setFlowPhase(flowstore.PhaseUpdate{
+				FlowID:  flow.FlowID,
+				PhaseID: "plan",
+				Status:  flowstore.PhaseBlocked,
+				Notes:   "Worktree creation failed: " + err.Error(),
+			}); phaseErr != nil {
+				return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: fmt.Sprintf("%s; mark flow blocked: %v", err.Error(), phaseErr)}
+			}
+			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
+		}
+		commit := actions.ResolveWorktreeCommit(worktree.WorktreePath)
+		if _, err := m.setFlowStartMetadata(flowstore.StartMetadataUpdate{
+			FlowID:       flow.FlowID,
+			WorktreePath: worktree.WorktreePath,
+			Branch:       worktree.Branch,
+			BaseRef:      baseRef,
+			Commit:       commit,
+		}); err != nil {
+			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
+		}
+		launchID := newLaunchID()
+		if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+			FlowID:   flow.FlowID,
+			PhaseID:  "plan",
+			LaunchID: launchID,
+		}); err != nil {
+			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
+		}
+		return PlanLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			Command:          m.agentCommand,
+			LaunchID:         launchID,
+			RepoPath:         repoPath,
+			WorktreePath:     worktree.WorktreePath,
+			Branch:           worktree.Branch,
+			Commit:           commit,
+			SessionStateRoot: m.sessionStateRoot,
+			PlanPhaseID:      "plan",
+			PlanPhaseTitle:   "Plan",
+			PlanPhaseStatus:  flowstore.PhaseRunning,
+			FlowID:           flow.FlowID,
+			FlowPhaseID:      "plan",
+			InitialPrompt:    flowPlanPrompt(flow, worktree, baseRef),
+		}}
+	}
+}
+
+func flowPlanPrompt(flow flowstore.FlowRecord, worktree actions.FlowWorktreeCreateResult, baseRef string) string {
+	title := flow.Title
+	if title == "" {
+		title = "(untitled)"
+	}
+	var b strings.Builder
+	b.WriteString("Use the wtui-flow skill for this launch. Start the Plan phase for flow ")
+	b.WriteString(flow.FlowID)
+	b.WriteString(".\n\nTask title: ")
+	b.WriteString(title)
+	b.WriteString("\n\nCustom instructions:\n")
+	b.WriteString(flow.Instructions)
+	b.WriteString("\n\nFlow metadata:\n- Phase: plan (Plan phase)\n- Branch: ")
+	b.WriteString(worktree.Branch)
+	b.WriteString("\n- Worktree: ")
+	b.WriteString(worktree.WorktreePath)
+	if baseRef != "" {
+		b.WriteString("\n- Base ref: ")
+		b.WriteString(baseRef)
+	}
+	b.WriteString("\n\nCreate and persist the plan, then report Flow persistence failures explicitly before ending.")
+	return b.String()
+}
+
 func (m Model) moveWorktree(oldPath, input string) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {

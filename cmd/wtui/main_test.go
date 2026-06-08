@@ -236,6 +236,12 @@ func TestRunSessionHookPersistsPlanEnvironment(t *testing.T) {
 				return "plan-1"
 			case "WTUI_PLAN_PATH":
 				return planPath
+			case "WTUI_FLOW_ID":
+				return "flow-1"
+			case "WTUI_FLOW_PHASE_ID":
+				return "plan"
+			case "WTUI_FLOW_STATE_ROOT":
+				return root
 			default:
 				return ""
 			}
@@ -250,7 +256,7 @@ func TestRunSessionHookPersistsPlanEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read metadata: %v", err)
 	}
-	for _, want := range []string{`"plan_id": "plan-1"`, `"plan_path": ` + quoteJSON(planPath)} {
+	for _, want := range []string{`"plan_id": "plan-1"`, `"plan_path": ` + quoteJSON(planPath), `"flow_id": "flow-1"`, `"flow_phase_id": "plan"`} {
 		if !strings.Contains(string(meta), want) {
 			t.Fatalf("metadata missing %s:\n%s", want, meta)
 		}

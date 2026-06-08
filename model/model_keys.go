@@ -8,6 +8,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/agent"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
@@ -274,6 +275,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeBranches {
 			return m.handleNewBranch()
 		}
+		if m.mode == ui.ModeFlows {
+			return m.handleNewFlow()
+		}
 	case "P":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
@@ -507,6 +511,67 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
+	if m.agentCommand == "" {
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching a flow")
+		return m, nil
+	}
+	m.modal = modal.OpenInput(
+		ui.FlowTitlePrompt,
+		ui.FlowTitleInputPlaceholder,
+		"",
+		validateFlowTitleInput,
+		func(input string) tea.Cmd {
+			return func() tea.Msg { return FlowTitleSubmittedMsg{Title: input} }
+		},
+	)
+	return m, nil
+}
+
+func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
+	m.modal = modal.OpenInput(
+		ui.FlowInstructionsPrompt,
+		ui.FlowInstructionsInputPlaceholder,
+		"",
+		validateFlowInstructionsInput,
+		func(input string) tea.Cmd {
+			return func() tea.Msg { return FlowInstructionsSubmittedMsg{Title: msg.Title, Instructions: input} }
+		},
+	)
+	return m
+}
+
+func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
+	m.modal = modal.OpenInput(
+		ui.FlowBaseRefPrompt,
+		ui.FlowBaseRefInputPlaceholder,
+		"",
+		validateFlowBaseRefInput,
+		func(input string) tea.Cmd {
+			return m.createFlowAndLaunchPlan(msg.Title, msg.Instructions, input)
+		},
+	)
+	return m
+}
+
+func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to create flow"
+	}
+	m = m.setStatus(statusOther, errText)
+	if m.mode == ui.ModeFlows {
+		return m.startFetchFlows()
+	}
+	return m, nil
+}
+
 func validateWorktreeInput(input string) error {
 	if input == "" {
 		return fmt.Errorf("enter a branch, tag, or new branch name")
@@ -518,6 +583,24 @@ func validateBranchInput(input string) error {
 	if input == "" {
 		return fmt.Errorf("enter a branch name")
 	}
+	return nil
+}
+
+func validateFlowTitleInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("enter a flow title")
+	}
+	return nil
+}
+
+func validateFlowInstructionsInput(input string) error {
+	if input == "" {
+		return fmt.Errorf("enter flow instructions")
+	}
+	return nil
+}
+
+func validateFlowBaseRefInput(string) error {
 	return nil
 }
 
@@ -854,7 +937,9 @@ func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, 
 func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
-		m = m.setStatus(statusOther, err.Error())
+		errText := err.Error()
+		m, errText = m.markFlowLaunchNeedsAttention(ctx, errText)
+		m = m.setStatus(statusOther, errText)
 		return m, nil
 	}
 	if launch.Interactive {
@@ -882,6 +967,25 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 		}
 		return AgentResultMsg{LaunchContext: ctx, Detached: true}
 	}
+}
+
+func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errText string) (Model, string) {
+	if ctx.FlowID == "" || ctx.FlowPhaseID == "" {
+		return m, errText
+	}
+	notes := "Agent launch failed"
+	if errText != "" {
+		notes += ": " + errText
+	}
+	if _, err := m.setFlowPhase(flowstore.PhaseUpdate{
+		FlowID:  ctx.FlowID,
+		PhaseID: ctx.FlowPhaseID,
+		Status:  flowstore.PhaseNeedsAttention,
+		Notes:   notes,
+	}); err != nil && errText != "" {
+		return m, errText + "; update flow phase: " + err.Error()
+	}
+	return m, errText
 }
 
 // agentLaunchedStatus describes a successful detached launch without implying
