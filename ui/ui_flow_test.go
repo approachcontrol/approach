@@ -39,12 +39,62 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 			t.Fatalf("flows view missing %q:\n%s", want, view)
 		}
 	}
+	if strings.Contains(view, "Review loop") {
+		t.Fatalf("flow phase detail rows should be collapsed by default:\n%s", view)
+	}
 }
 
 func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
 	bar := RenderStatusBar(120, ModeFlows, OverlayNone, 1, false, false, false)
 	if !strings.Contains(bar, "n: new flow") {
 		t.Fatalf("expected new flow hint in flows mode, got %q", bar)
+	}
+}
+
+func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        120,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+	})
+	if !strings.Contains(bar, "x: phases") {
+		t.Fatalf("expected phase toggle hint for selected flow, got %q", bar)
+	}
+}
+
+func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Add Flow mode",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/add-flow-mode",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Order: 1},
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 2},
+			},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	for _, want := range []string{"plan-review:completed", "Plan Review", "implementation:ready", "Implementation"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expanded flows view missing %q:\n%s", want, view)
+		}
+	}
+	for _, clipped := range []string{"plan-re ", "impleme "} {
+		if strings.Contains(view, clipped) {
+			t.Fatalf("expanded phase ID appears clipped as %q:\n%s", clipped, view)
+		}
 	}
 }
 

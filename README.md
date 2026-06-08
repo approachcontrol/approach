@@ -246,11 +246,12 @@ or worktree basename, phase progress plus the current phase state, linked plan
 ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
-`o` to open the linked plan body in a plain-text overlay; wtui shows a status
-message when the selected Flow has no linked plan. Press `a` on a Flow with a
-ready phase to launch the configured agent for that phase. When Implementation
-is still gated by Plan Review, wtui reports the Plan Review state and notes
-instead of launching.
+`x` to expand or collapse phase detail rows for the selected Flow. Press `o` to
+open the linked plan body in a plain-text overlay; wtui shows a status message
+when the selected Flow has no linked plan. Press `a` on a Flow with a ready phase
+to launch the configured agent for that phase. When Implementation is still
+gated by Plan Review, wtui reports the Plan Review state and notes instead of
+launching.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and

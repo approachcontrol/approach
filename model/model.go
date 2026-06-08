@@ -37,6 +37,7 @@ type Model struct {
 	plans                     pane.Pane[planstore.PlanRecord]
 	flows                     pane.Pane[flowstore.FlowRecord]
 	expandedPlanID            string
+	expandedFlowID            string
 	selectedPlanPhaseID       string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
@@ -323,6 +324,7 @@ func (m Model) PlanSelected() int               { return m.plans.SelectedIndex()
 func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
 func (m Model) FlowSelected() int               { return m.flows.SelectedIndex() }
 func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
+func (m Model) ExpandedFlowID() string          { return m.expandedFlowID }
 func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
@@ -417,6 +419,7 @@ func (m Model) View() string {
 		FlowSelected:             flowSelected,
 		FlowScroll:               flowScroll,
 		ExpandedPlanID:           m.expandedPlanID,
+		ExpandedFlowID:           m.expandedFlowID,
 		SelectedPlanPhaseID:      m.selectedPlanPhaseID,
 		OverlayText:              modalView.Text,
 		TransientError:           m.visibleStatusText(),
@@ -809,6 +812,14 @@ func (m Model) selectedFlow() (flowstore.FlowRecord, bool) {
 	return m.flows.Selected()
 }
 
+func (m Model) selectedFlowID() string {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return ""
+	}
+	return record.FlowID
+}
+
 func (m Model) selectedPlanID() string {
 	record, ok := m.selectedPlan()
 	if !ok {
@@ -859,6 +870,12 @@ func (m Model) setExpandedPlanID(planID string) Model {
 	return m.reflowExpandedPlan()
 }
 
+func (m Model) setExpandedFlowID(flowID string) Model {
+	m.expandedFlowID = flowID
+	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
+	return m.reflowFlows()
+}
+
 func (m Model) canScrollExpandedPlan(delta, viewHeight int) bool {
 	if m.expandedPlanID == "" || m.selectedPlanID() != m.expandedPlanID {
 		return false
@@ -878,6 +895,34 @@ func (m Model) canScrollExpandedPlan(delta, viewHeight int) bool {
 	}
 	height := planVisualHeight(plans[selected], m.expandedPlanID)
 	scroll := m.PlanScroll()
+	if delta > 0 {
+		return line+height > scroll+viewHeight
+	}
+	if delta < 0 {
+		return scroll > line
+	}
+	return false
+}
+
+func (m Model) canScrollExpandedFlow(delta, viewHeight int) bool {
+	if m.expandedFlowID == "" || m.selectedFlowID() != m.expandedFlowID {
+		return false
+	}
+	if viewHeight <= 0 {
+		viewHeight = 1
+	}
+	flows := m.filteredFlows()
+	selected := m.FlowSelected()
+	if selected < 0 || selected >= len(flows) {
+		return false
+	}
+
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += flowVisualHeight(flows[i], m.expandedFlowID)
+	}
+	height := flowVisualHeight(flows[selected], m.expandedFlowID)
+	scroll := m.FlowScroll()
 	if delta > 0 {
 		return line+height > scroll+viewHeight
 	}
@@ -912,6 +957,35 @@ func (m Model) reflowExpandedPlan() Model {
 	}
 	if target != scroll {
 		m.plans = m.plans.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+	}
+	return m
+}
+
+func (m Model) reflowExpandedFlow() Model {
+	flows := m.filteredFlows()
+	selected := m.FlowSelected()
+	if selected < 0 || selected >= len(flows) {
+		return m
+	}
+
+	viewHeight := m.flowContentHeight()
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += flowVisualHeight(flows[i], m.expandedFlowID)
+	}
+	height := flowVisualHeight(flows[selected], m.expandedFlowID)
+	scroll := m.FlowScroll()
+	target := scroll
+	if scroll > line {
+		target = line
+	}
+	if height <= viewHeight && line+height > target+viewHeight {
+		target = line + height - viewHeight
+	} else if height > viewHeight && line+1 >= target+viewHeight {
+		target = line
+	}
+	if target != scroll {
+		m.flows = m.flows.ScrollBy(target-scroll, viewHeight, m.contentWidth())
 	}
 	return m
 }
@@ -1053,6 +1127,9 @@ func (m Model) reflowPlans() Model {
 
 func (m Model) reflowFlows() Model {
 	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
+	if m.expandedFlowID != "" {
+		return m.reflowExpandedFlow()
+	}
 	return m
 }
 

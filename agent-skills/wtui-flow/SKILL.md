@@ -230,12 +230,15 @@ plan context, or an external dependency prevents review.
 
 Goal: implement the reviewed plan in the Flow worktree.
 
-Use `wtui plan read` when `WTUI_PLAN_ID` is available, then implement and verify
-the requested behavior. If the work splits into follow-up child phases, the
-current CLI cannot add child phases yet; record the child phase IDs and
-instructions in `--summary` or `--notes`, mark the phase `needs_attention` if
-the split needs user orchestration, and tell the user structured child phase
-persistence is not available in this CLI version.
+TUI-launched Implementation phases provide `WTUI_FLOW_ID`,
+`WTUI_FLOW_PHASE_ID=implementation`, `WTUI_PLAN_ID`, `WTUI_PLAN_PATH`,
+`WTUI_WORKTREE_PATH`, and the shared state roots. Use `wtui plan read` when
+`WTUI_PLAN_ID` is available, then implement and verify the requested behavior in
+the Flow worktree. If the work splits into follow-up child phases, the current
+CLI cannot add child phases yet; record the child phase IDs and instructions in
+`--summary` or `--notes`, mark the phase `needs_attention` if the split needs
+user orchestration, and tell the user structured child phase persistence is not
+available in this CLI version.
 
 ```bash
 wtui flow phase set \
@@ -249,7 +252,9 @@ wtui flow phase set \
 
 Use `blocked` for missing requirements or unavailable services. Use
 `needs_attention` for implementation concerns that should be reviewed before the
-workflow proceeds.
+workflow proceeds. If verification or persistence fails, do not report
+Implementation as completed; use `needs_attention` or `blocked` and include the
+failure in `--summary` or `--notes`.
 
 ## Review Loop Phase
 

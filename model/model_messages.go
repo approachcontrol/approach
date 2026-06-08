@@ -931,6 +931,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 	}
 	m = m.clearFetchListStatus(ui.ModeFlows)
 	m.flows = m.flows.SetItems(msg.Flows)
+	m = m.setExpandedFlowID("")
 	m = m.clampSelectionsAfterFilter()
 	return m
 }

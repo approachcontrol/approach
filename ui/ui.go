@@ -204,6 +204,7 @@ type RenderParams struct {
 	FlowSelected             int
 	FlowScroll               int
 	ExpandedPlanID           string
+	ExpandedFlowID           string
 	SelectedPlanPhaseID      string
 	OverlayText              string
 	TransientError           string
@@ -381,7 +382,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	case p.Mode == ModeFlows && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -828,6 +829,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeFlows:
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+			if sp.FlowSelected {
+				actions = append(actions, shortcutHint{Key: "x", Label: "phases"})
+			}
 			if sp.AgentAvailable {
 				actions = append(actions, shortcutHint{Key: "a", Label: "launch phase"})
 			}
@@ -1517,7 +1521,7 @@ const (
 	flowUpdatedWidth = 10
 )
 
-func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int) []string {
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1559,8 +1563,35 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
 		rows = append(rows, truncateToWidth(line, width))
+		if record.FlowID == expandedFlowID {
+			rows = append(rows, renderFlowPhaseRows(record, width)...)
+		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
+}
+
+func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
+	if len(record.Phases) == 0 {
+		return []string{truncateToWidth("      No phases", width)}
+	}
+	rows := make([]string, 0, len(record.Phases))
+	for _, phase := range record.Phases {
+		state := phase.Status
+		if phase.Outcome != "" {
+			state = phase.Outcome
+		}
+		line := formatFlowColumns("      ",
+			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
+			"",
+			diffHdrStyle.Render(fitSessionColumn(phase.PhaseID+":"+state, flowPhaseWidth)),
+			"",
+			"",
+			"",
+			stashMsgStyle.Render(phase.Title),
+		)
+		rows = append(rows, truncateToWidth(line, width))
+	}
+	return rows
 }
 
 func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string) string {

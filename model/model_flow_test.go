@@ -25,6 +25,21 @@ func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecor
 	return m
 }
 
+func flowWithPhaseDetails() flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Flow with phases",
+		Status:   flowstore.StatusInProgress,
+		Branch:   "flow/with-phases",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}
+}
+
 func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	var gotFilter flowstore.FlowFilter
 	want := []flowstore.FlowRecord{
@@ -60,6 +75,117 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	got := m.Flows()
 	if len(got) != 1 || got[0].FlowID != "flow-1" {
 		t.Fatalf("Flows() = %#v, want %#v", got, want)
+	}
+}
+
+func TestModel_FlowPhasesCollapsedByDefaultAndToggleWithX(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+
+	if m.ExpandedFlowID() != "" {
+		t.Fatalf("expanded flow = %q, want collapsed by default", m.ExpandedFlowID())
+	}
+	if strings.Contains(m.View(), "plan-review:approved") {
+		t.Fatalf("collapsed flow should not render phase detail rows:\n%s", m.View())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("toggle phases returned command %T, want nil", cmd)
+	}
+	if got := m.ExpandedFlowID(); got != flow.FlowID {
+		t.Fatalf("expanded flow = %q, want %q", got, flow.FlowID)
+	}
+	if !strings.Contains(m.View(), "plan-review:approved") {
+		t.Fatalf("expanded flow should render phase detail rows:\n%s", m.View())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.ExpandedFlowID() != "" || strings.Contains(m.View(), "plan-review:approved") {
+		t.Fatalf("second toggle should collapse phase detail rows:\n%s", m.View())
+	}
+}
+
+func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{
+		flowWithPhaseDetails(),
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending, Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhasePending}}},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.ExpandedFlowID() == "" {
+		t.Fatal("expected selected flow to expand")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("flow selection = %d, want second flow", got)
+	}
+	if m.ExpandedFlowID() != "" {
+		t.Fatalf("expanded flow = %q, want collapsed after selecting another flow", m.ExpandedFlowID())
+	}
+}
+
+func TestModel_ExpandedFlowAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.FlowID = "flow-6"
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{
+		{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "First flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-3", RepoPath: "/dev/alpha", Title: "Third flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-4", RepoPath: "/dev/alpha", Title: "Fourth flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-5", RepoPath: "/dev/alpha", Title: "Fifth flow", Status: flowstore.StatusPending},
+		flow,
+	})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12})
+	for i := 0; i < 5; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if got := m.FlowScroll(); got != 3 {
+		t.Fatalf("flow scroll = %d, want 3", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "implementation:ready") {
+		t.Fatalf("expanded flow should scroll phase detail rows into view:\n%s", view)
+	}
+}
+
+func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.Phases = append(flow.Phases,
+		flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop", Status: flowstore.PhasePending},
+		flowstore.FlowPhase{PhaseID: "pr-creation", Title: "PR Creation", Status: flowstore.PhasePending},
+		flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
+	)
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if got := m.FlowSelected(); got != 0 {
+		t.Fatalf("single expanded flow should remain selected, got %d", got)
+	}
+	if got := m.FlowScroll(); got != 1 {
+		t.Fatalf("flow scroll = %d, want 1", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "review-loop:pending") {
+		t.Fatalf("expanded flow should scroll within phase detail rows:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if got := m.FlowScroll(); got != 3 {
+		t.Fatalf("flow scroll should stay at bottom after extra down, got %d", got)
+	}
+	view = m.View()
+	if !strings.Contains(view, "autoreview:pending") {
+		t.Fatalf("expanded flow should stay scrolled to the last phase:\n%s", view)
 	}
 }
 

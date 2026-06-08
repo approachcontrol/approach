@@ -289,6 +289,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
+	case "x":
+		if m.mode == ui.ModeFlows {
+			return m.handleToggleFlowPhases()
+		}
 	case "tab":
 		m.activePane = 0
 		if m.mode == ui.ModePlans {
@@ -391,7 +395,18 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedPlanID("")
 		}
 	case ui.ModeFlows:
+		if m.canScrollExpandedFlow(delta, h) {
+			m.flows = m.flows.ScrollBy(delta, h, w)
+			return m
+		}
+		if m.flows.Len() <= 1 {
+			return m
+		}
+		before := m.selectedFlowID()
 		m.flows = m.flows.Move(delta, h, w)
+		if after := m.selectedFlowID(); before != "" && after != before {
+			m = m.setExpandedFlowID("")
+		}
 	}
 	return m
 }
@@ -436,6 +451,22 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+		return m, nil
+	}
+	flowID := m.selectedFlowID()
+	if flowID == "" {
+		return m, nil
+	}
+	if m.expandedFlowID == flowID {
+		m = m.setExpandedFlowID("")
+	} else {
+		m = m.setExpandedFlowID(flowID)
 	}
 	return m, nil
 }
@@ -1490,6 +1521,7 @@ func (m Model) resetModeCursors() Model {
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
+	m = m.setExpandedFlowID("")
 	return m
 }
 
@@ -1505,6 +1537,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
+	m = m.setExpandedFlowID("")
 	return m
 }
 
