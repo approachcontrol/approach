@@ -61,7 +61,7 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Select previous repo |
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
-| `A` | Choose and persist the coding agent (`codex`, `codex-app`, or `claude`) |
+| `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `tab` | Switch focus to right pane |
@@ -81,7 +81,7 @@ filter matches, or a load failure with details in the status bar.
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view) |
-| `A` | Choose and persist the coding agent (`codex`, `codex-app`, or `claude`) |
+| `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
@@ -117,7 +117,7 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `A` to choose `codex`, `codex-app`, or `claude`; wtui persists the choice to config.
+Press `A` to choose `codex`, `codex-app`, or `claude` from a picker; wtui persists the choice to config.
 Press `a` to launch the selected agent in the current non-stale worktree, or
 `N` to create a worktree and launch the agent there immediately. Press `n` to
 create a worktree without launching an agent. Enter an existing branch, tag, or

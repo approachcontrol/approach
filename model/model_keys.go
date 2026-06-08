@@ -515,18 +515,32 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
-	m.modal = modal.OpenInput(
-		"Set agent ("+ui.AgentInputPlaceholder+")",
-		ui.AgentInputPlaceholder,
-		m.agentCommand,
-		validateAgentInput,
-		func(input string) tea.Cmd { return m.setAgent(agent.Normalize(input)) },
+	m.modal = modal.OpenSelect(
+		"Choose interactive helper",
+		agentSelectItems(),
+		selectedAgentIndex(m.agentCommand),
+		func(value string) tea.Cmd { return m.setAgent(agent.Normalize(value)) },
 	)
 	return m, nil
 }
 
-func validateAgentInput(input string) error {
-	return agent.Validate(input)
+func agentSelectItems() []modal.SelectItem {
+	return []modal.SelectItem{
+		{Label: agent.CommandCodex, Value: agent.CommandCodex},
+		{Label: agent.CommandCodexApp, Value: agent.CommandCodexApp},
+		{Label: agent.CommandClaude, Value: agent.CommandClaude},
+	}
+}
+
+func selectedAgentIndex(command string) int {
+	switch agent.Normalize(command) {
+	case agent.CommandCodexApp:
+		return 1
+	case agent.CommandClaude:
+		return 2
+	default:
+		return 0
+	}
 }
 
 func (m Model) setAgent(command string) tea.Cmd {
