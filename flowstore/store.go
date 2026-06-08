@@ -335,8 +335,8 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if clearsPhaseOutcome(update.Status) {
 		phase.Outcome = ""
 	}
-	if update.Outcome != "" {
-		phase.Outcome = update.Outcome
+	if outcome := strings.TrimSpace(update.Outcome); outcome != "" {
+		phase.Outcome = outcome
 	}
 	if update.Notes != "" {
 		phase.Notes = update.Notes
@@ -684,6 +684,7 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 
 func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 	predecessorsSatisfied := true
+	resetBlockedDownstream := false
 	for i := range record.Phases {
 		phase := record.Phases[i]
 		if predecessorsSatisfied && (phase.Status == PhasePending || phase.Status == PhaseReady) {
@@ -694,7 +695,7 @@ func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 				phase.UpdatedAt = now
 				record.Phases[i] = phase
 			}
-		} else if !predecessorsSatisfied && shouldResetBlockedDownstreamPhase(phase) {
+		} else if !predecessorsSatisfied && shouldResetBlockedDownstreamPhase(phase, resetBlockedDownstream) {
 			phase.Status = PhasePending
 			phase.Outcome = ""
 			phase.UpdatedAt = now
@@ -702,15 +703,20 @@ func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 		}
 		if !phaseSatisfiesDownstreamGate(phase) {
 			predecessorsSatisfied = false
+			if phase.PhaseID == "plan-review" {
+				resetBlockedDownstream = true
+			}
 		}
 	}
 	return record
 }
 
-func shouldResetBlockedDownstreamPhase(phase FlowPhase) bool {
+func shouldResetBlockedDownstreamPhase(phase FlowPhase, resetBlocked bool) bool {
 	switch phase.Status {
 	case PhaseReady, PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseSkipped:
 		return true
+	case PhaseBlocked:
+		return resetBlocked
 	default:
 		return false
 	}
@@ -975,7 +981,35 @@ func normalizeRecord(record FlowRecord) FlowRecord {
 	if record.Merge.Status == "" {
 		record.Merge.Status = MergePending
 	}
+	if hasPhase(record, "plan-review") {
+		record = normalizePlanReviewOutcomes(record)
+		record = refreshPhaseReadiness(record, record.UpdatedAt)
+	}
 	return record
+}
+
+func normalizePlanReviewOutcomes(record FlowRecord) FlowRecord {
+	for i := range record.Phases {
+		phase := record.Phases[i]
+		if phase.PhaseID != "plan-review" {
+			continue
+		}
+		phase.Outcome = strings.TrimSpace(phase.Outcome)
+		if phase.Status == PhaseCompleted && phase.Outcome == "" {
+			phase.Outcome = OutcomeApproved
+		}
+		record.Phases[i] = phase
+	}
+	return record
+}
+
+func hasPhase(record FlowRecord, phaseID string) bool {
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return true
+		}
+	}
+	return false
 }
 
 func writeFileAtomic(path string, data []byte) error {

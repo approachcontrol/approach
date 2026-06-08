@@ -1,6 +1,7 @@
 package flowstore_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -613,6 +614,93 @@ func TestStoreSetPhasePlanReviewOutcomeGatesImplementation(t *testing.T) {
 	}
 }
 
+func TestStoreSetPhaseTrimsPlanReviewOutcome(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Trim Review Outcome",
+		Instructions: "accept human input with whitespace",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(plan completed) error = %v", err)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan-review",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: " approved ",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(plan-review completed) error = %v", err)
+	}
+
+	if got := phaseByID(t, updated, "plan-review").Outcome; got != flowstore.OutcomeApproved {
+		t.Fatalf("plan-review outcome = %q, want trimmed approved", got)
+	}
+	if got := phaseByID(t, updated, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready", got)
+	}
+}
+
+func TestStoreReadMigratesLegacyPlanReviewApproval(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Persisted Gate",
+		Instructions: "normalize old records",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for i := range record.Phases {
+		switch record.Phases[i].PhaseID {
+		case "plan", "plan-review":
+			record.Phases[i].Status = flowstore.PhaseCompleted
+		case "implementation":
+			record.Phases[i].Status = flowstore.PhaseReady
+		}
+		record.Phases[i].UpdatedAt = now
+	}
+	record.Status = flowstore.StatusInProgress
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
+	if err := os.WriteFile(metaPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile(meta.json) error = %v", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	review := phaseByID(t, read, "plan-review")
+	if review.Status != flowstore.PhaseCompleted || review.Outcome != flowstore.OutcomeApproved {
+		t.Fatalf("plan-review = %#v, want completed approved legacy migration", review)
+	}
+	if got := phaseByID(t, read, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready after legacy approval migration", got)
+	}
+}
+
 func TestStoreSetPhaseValidatesPlanReviewOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -767,6 +855,7 @@ func TestStoreAddPhaseLaunchIDRerunsPlanReviewAndResetsImplementation(t *testing
 		{status: flowstore.PhaseRunning},
 		{status: flowstore.PhaseNeedsAttention, notes: "Implementation needs review."},
 		{status: flowstore.PhaseCompleted, outcome: "implemented"},
+		{status: flowstore.PhaseBlocked, notes: "Implementation is blocked."},
 		{status: flowstore.PhaseSkipped, notes: "Implementation was covered elsewhere."},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
