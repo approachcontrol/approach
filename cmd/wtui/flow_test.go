@@ -222,6 +222,101 @@ func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
 	}
 }
 
+func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "PR metadata",
+		"--instructions", "open a pull request",
+		"--repo-path", repoPath,
+		"--branch", "flow/pr-metadata",
+		"--json",
+		"--state-root", root,
+	})
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+		outcome := ""
+		if phaseID == "plan-review" {
+			outcome = flowstore.OutcomeApproved
+		}
+		mustSetFlowPhase(t, root, created.FlowID, phaseID, flowstore.PhaseCompleted, outcome, "", "")
+	}
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "pr", "set",
+		"--flow-id", created.FlowID,
+		"--provider", "github",
+		"--number", "115",
+		"--url", "https://github.com/brian-bell/wtui/pull/115",
+		"--head", "flow/pr-metadata",
+		"--base", "main",
+		"--status", "open",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var updated flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if updated.PR.Provider != "github" ||
+		updated.PR.Number != 115 ||
+		updated.PR.URL != "https://github.com/brian-bell/wtui/pull/115" ||
+		updated.PR.HeadBranch != "flow/pr-metadata" ||
+		updated.PR.BaseBranch != "main" ||
+		updated.PR.Status != "open" {
+		t.Fatalf("PR metadata = %#v", updated.PR)
+	}
+	if got := phaseByID(updated, "autoreview").Status; got != flowstore.PhaseReady {
+		t.Fatalf("autoreview status = %q, want ready", got)
+	}
+}
+
+func TestRunFlowPRSetValidatesRequiredInputs(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "PR validation",
+		"--instructions", "validate input",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--branch", "flow/pr-validation",
+		"--json",
+		"--state-root", root,
+	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing number",
+			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--url", "https://github.com/brian-bell/wtui/pull/115", "--head", "flow/pr-validation", "--base", "main", "--state-root", root},
+			want: "requires positive --number",
+		},
+		{
+			name: "missing url",
+			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--head", "flow/pr-validation", "--base", "main", "--state-root", root},
+			want: "requires --url",
+		},
+		{
+			name: "branch mismatch",
+			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--url", "https://github.com/brian-bell/wtui/pull/115", "--head", "feature/other", "--base", "main", "--state-root", root},
+			want: "must match flow branch",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {

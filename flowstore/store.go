@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -114,6 +116,17 @@ type PullRequest struct {
 	HeadBranch string `json:"head_branch,omitempty"`
 	BaseBranch string `json:"base_branch,omitempty"`
 	Status     string `json:"status,omitempty"`
+}
+
+// PRUpdate records metadata for the pull request created by a Flow.
+type PRUpdate struct {
+	FlowID     string
+	Provider   string
+	Number     int
+	URL        string
+	HeadBranch string
+	BaseBranch string
+	Status     string
 }
 
 // Merge stores agent-reported merge metadata.
@@ -463,6 +476,26 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	})
 }
 
+// SetPR validates and persists the pull request metadata reported by an agent.
+func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		pr, err := validatePRUpdate(record, update)
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		if record.PR == pr {
+			return record, nil
+		}
+		record.PR = pr
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		return record, nil
+	})
+}
+
 // SetStartMetadata persists branch/worktree/plan metadata discovered while
 // starting a Flow. Empty fields leave existing values unchanged.
 func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error) {
@@ -789,7 +822,7 @@ func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 			phase.UpdatedAt = now
 			record.Phases[i] = phase
 		}
-		if !phaseSatisfiesDownstreamGate(phase) {
+		if !phaseSatisfiesDownstreamGate(record, phase) {
 			predecessorsSatisfied = false
 			if phase.PhaseID == "plan-review" {
 				resetBlockedDownstream = true
@@ -860,7 +893,7 @@ func shouldResetBlockedDownstreamPhase(phase FlowPhase, resetBlocked bool) bool 
 	}
 }
 
-func phaseSatisfiesDownstreamGate(phase FlowPhase) bool {
+func phaseSatisfiesDownstreamGate(record FlowRecord, phase FlowPhase) bool {
 	if phase.PhaseID == "plan-review" {
 		switch phase.Status {
 		case PhaseSkipped:
@@ -871,10 +904,89 @@ func phaseSatisfiesDownstreamGate(phase FlowPhase) bool {
 			return false
 		}
 	}
+	if phase.PhaseID == "pr-creation" {
+		return phase.Status == PhaseCompleted && HasPRTarget(record.PR)
+	}
 	if phase.Status == PhaseSkipped {
 		return strings.TrimSpace(phase.Notes) != ""
 	}
 	return phase.Status == PhaseCompleted
+}
+
+// HasPRTarget reports whether PR metadata contains enough target context for
+// downstream Autoreview work.
+func HasPRTarget(pr PullRequest) bool {
+	if strings.ToLower(strings.TrimSpace(pr.Provider)) != "github" ||
+		pr.Number <= 0 ||
+		strings.TrimSpace(pr.HeadBranch) == "" ||
+		strings.TrimSpace(pr.BaseBranch) == "" {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(pr.URL))
+	return err == nil &&
+		parsed.Host != "" &&
+		(parsed.Scheme == "https" || parsed.Scheme == "http") &&
+		validateGitHubPRURL(parsed, pr.Number) == nil
+}
+
+func validatePRUpdate(record FlowRecord, update PRUpdate) (PullRequest, error) {
+	provider := strings.ToLower(strings.TrimSpace(update.Provider))
+	if provider != "github" {
+		return PullRequest{}, fmt.Errorf("unsupported PR provider %q", update.Provider)
+	}
+	if update.Number <= 0 {
+		return PullRequest{}, fmt.Errorf("PR number must be positive")
+	}
+	prURL := strings.TrimSpace(update.URL)
+	parsed, err := url.Parse(prURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return PullRequest{}, fmt.Errorf("PR URL must be an absolute http(s) URL")
+	}
+	if err := validateGitHubPRURL(parsed, update.Number); err != nil {
+		return PullRequest{}, err
+	}
+	head := strings.TrimSpace(update.HeadBranch)
+	if head == "" {
+		return PullRequest{}, fmt.Errorf("PR head branch is required")
+	}
+	base := strings.TrimSpace(update.BaseBranch)
+	if base == "" {
+		return PullRequest{}, fmt.Errorf("PR base branch is required")
+	}
+	flowBranch := strings.TrimSpace(record.Branch)
+	if flowBranch == "" {
+		return PullRequest{}, fmt.Errorf("flow branch is required before recording PR metadata")
+	}
+	if head != flowBranch {
+		return PullRequest{}, fmt.Errorf("PR head branch %q must match flow branch %q", head, flowBranch)
+	}
+	return PullRequest{
+		Provider:   provider,
+		Number:     update.Number,
+		URL:        prURL,
+		HeadBranch: head,
+		BaseBranch: base,
+		Status:     strings.TrimSpace(update.Status),
+	}, nil
+}
+
+func validateGitHubPRURL(parsed *url.URL, number int) error {
+	host := strings.ToLower(parsed.Hostname())
+	if host != "github.com" && host != "www.github.com" {
+		return fmt.Errorf("GitHub PR URL must use github.com")
+	}
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "pull" {
+		return fmt.Errorf("GitHub PR URL must have /owner/repo/pull/number path")
+	}
+	urlNumber, err := strconv.Atoi(parts[3])
+	if err != nil || urlNumber <= 0 {
+		return fmt.Errorf("GitHub PR URL must have numeric pull request number")
+	}
+	if urlNumber != number {
+		return fmt.Errorf("GitHub PR URL number %d must match PR number %d", urlNumber, number)
+	}
+	return nil
 }
 
 func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {

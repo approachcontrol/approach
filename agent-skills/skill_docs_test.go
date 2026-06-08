@@ -21,6 +21,7 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 		"wtui flow read --flow-id",
 		"wtui flow phase set",
 		"wtui flow plan set",
+		"wtui flow pr set",
 		"wtui plan save",
 		"wtui plan phase set",
 		"wtui plan read",
@@ -64,17 +65,27 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
 		t.Fatal("skill and CLI should both expose flow plan set")
 	}
+	if !strings.Contains(skill, "wtui flow pr set") || !strings.Contains(flowCLI, "runFlowPRSet") {
+		t.Fatal("skill and CLI should both expose flow pr set")
+	}
 	for _, flagName := range []string{
 		"flow-id",
 		"phase-id",
 		"plan-id",
+		"provider",
+		"number",
+		"url",
+		"head",
+		"base",
 		"status",
 		"outcome",
 		"summary",
 		"notes",
 		"state-root",
 	} {
-		if strings.Contains(skill, "--"+flagName) && !strings.Contains(flowCLI, `flags.String("`+flagName+`"`) {
+		hasStringFlag := strings.Contains(flowCLI, `flags.String("`+flagName+`"`)
+		hasIntFlag := strings.Contains(flowCLI, `flags.Int("`+flagName+`"`)
+		if strings.Contains(skill, "--"+flagName) && !hasStringFlag && !hasIntFlag {
 			t.Fatalf("skill documents --%s but flow CLI does not expose it", flagName)
 		}
 	}
@@ -103,7 +114,6 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 
 	for _, unimplementedCommand := range []string{
-		"wtui flow pr set",
 		"wtui flow merge set",
 		"wtui flow session attach",
 		"wtui flow abandon",

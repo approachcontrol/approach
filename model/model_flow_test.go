@@ -577,6 +577,144 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 	}
 }
 
+func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReadPlan: func(planID string) (string, error) {
+			return "# Saved plan\n", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-pr",
+		Branch:       "flow/pr",
+		PlanID:       "plan-1",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare a pr-creation launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{
+		"flow phase: pr creation",
+		"wtui flow pr set",
+		"--provider github",
+		"--number",
+		"--url",
+		"--head flow/pr",
+		"--base",
+		"wtui flow phase set --flow-id flow-1 --phase-id pr-creation",
+		"--status completed",
+		"--status blocked",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("pr-creation prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReadPlan: func(planID string) (string, error) {
+			return "# Saved plan\n", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-pr",
+		Branch:       "flow/pr",
+		PlanID:       "plan-1",
+		Status:       flowstore.StatusInProgress,
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     115,
+			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			HeadBranch: "flow/pr",
+			BaseBranch: "main",
+			Status:     "open",
+		},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare an autoreview launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{
+		"second-level review",
+		"github #115",
+		"https://github.com/brian-bell/wtui/pull/115",
+		"head: flow/pr",
+		"base: main",
+		"wtui flow phase set --flow-id flow-1 --phase-id autoreview",
+		"--status completed",
+		"--status needs_attention",
+		"--status blocked",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("autoreview prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+}
+
 func TestModel_AKeyOnFlowUsesChildPhaseOrderingForReadyLaunch(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{

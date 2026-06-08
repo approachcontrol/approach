@@ -1112,6 +1112,203 @@ func TestStoreSetPhaseChildPhasesGateDownstreamReadiness(t *testing.T) {
 	}
 }
 
+func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "PR metadata",
+		Instructions: "record the pull request",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/pr-metadata",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+		update := flowstore.PhaseUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: phaseID,
+			Status:  flowstore.PhaseCompleted,
+		}
+		if phaseID == "plan-review" {
+			update.Outcome = flowstore.OutcomeApproved
+		}
+		record, err = store.SetPhase(update)
+		if err != nil {
+			t.Fatalf("SetPhase(%s completed) error = %v", phaseID, err)
+		}
+	}
+	if got := phaseByID(t, record, "autoreview").Status; got != flowstore.PhasePending {
+		t.Fatalf("autoreview status before PR metadata = %q, want pending", got)
+	}
+
+	updated, err := store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     115,
+		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		HeadBranch: "flow/pr-metadata",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+
+	if updated.PR.Provider != "github" ||
+		updated.PR.Number != 115 ||
+		updated.PR.URL != "https://github.com/brian-bell/wtui/pull/115" ||
+		updated.PR.HeadBranch != "flow/pr-metadata" ||
+		updated.PR.BaseBranch != "main" ||
+		updated.PR.Status != "open" {
+		t.Fatalf("PR metadata = %#v", updated.PR)
+	}
+	if got := phaseByID(t, updated, "autoreview").Status; got != flowstore.PhaseReady {
+		t.Fatalf("autoreview status after PR metadata = %q, want ready", got)
+	}
+}
+
+func TestStoreSetPhaseSkippedPRCreationDoesNotUngateAutoreview(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Skipped PR gate",
+		Instructions: "pr creation cannot be skipped into autoreview",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/skipped-pr",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop")
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "pr-creation",
+		Status:  flowstore.PhaseSkipped,
+		Notes:   "No PR was needed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(pr-creation skipped) error = %v", err)
+	}
+
+	if got := phaseByID(t, updated, "autoreview").Status; got != flowstore.PhasePending {
+		t.Fatalf("autoreview status = %q, want pending without PR metadata", got)
+	}
+}
+
+func TestHasPRTargetRequiresValidGitHubTarget(t *testing.T) {
+	valid := flowstore.PullRequest{
+		Provider:   "github",
+		Number:     115,
+		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		HeadBranch: "flow/pr",
+		BaseBranch: "main",
+	}
+	if !flowstore.HasPRTarget(valid) {
+		t.Fatalf("HasPRTarget(valid) = false, want true")
+	}
+	for _, tc := range []struct {
+		name string
+		pr   flowstore.PullRequest
+	}{
+		{name: "provider", pr: flowstore.PullRequest{Provider: "gitlab", Number: 115, URL: valid.URL, HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
+		{name: "number", pr: flowstore.PullRequest{Provider: "github", Number: 0, URL: valid.URL, HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
+		{name: "url", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: "https://github.com/brian-bell/wtui/issues/115", HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
+		{name: "head", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: valid.URL, BaseBranch: valid.BaseBranch}},
+		{name: "base", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: valid.URL, HeadBranch: valid.HeadBranch}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if flowstore.HasPRTarget(tc.pr) {
+				t.Fatalf("HasPRTarget(%#v) = true, want false", tc.pr)
+			}
+		})
+	}
+}
+
+func TestStoreSetPRValidatesMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update flowstore.PRUpdate
+		want   string
+	}{
+		{
+			name:   "provider",
+			update: flowstore.PRUpdate{Provider: "gitlab", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			want:   "unsupported PR provider",
+		},
+		{
+			name:   "number",
+			update: flowstore.PRUpdate{Provider: "github", Number: 0, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			want:   "PR number must be positive",
+		},
+		{
+			name:   "url",
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "not-a-url", HeadBranch: "flow/pr", BaseBranch: "main"},
+			want:   "PR URL must be an absolute http(s) URL",
+		},
+		{
+			name:   "url host",
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://example.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			want:   "GitHub PR URL must use github.com",
+		},
+		{
+			name:   "url number",
+			update: flowstore.PRUpdate{Provider: "github", Number: 2, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			want:   "GitHub PR URL number",
+		},
+		{
+			name:   "url extra path",
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1/files", HeadBranch: "flow/pr", BaseBranch: "main"},
+			want:   "GitHub PR URL must have /owner/repo/pull/number path",
+		},
+		{
+			name:   "head branch",
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", BaseBranch: "main"},
+			want:   "PR head branch is required",
+		},
+		{
+			name:   "base branch",
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr"},
+			want:   "PR base branch is required",
+		},
+		{
+			name:   "branch consistency",
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "feature/other", BaseBranch: "main"},
+			want:   "PR head branch",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "PR validation",
+				Instructions: "validate pr metadata",
+				RepoPath:     filepath.Join(root, "repo"),
+				Branch:       "flow/pr",
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			tc.update.FlowID = record.FlowID
+			_, err = store.SetPR(tc.update)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SetPR() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(t *testing.T) {
 	root := t.TempDir()
 	times := []time.Time{
@@ -1479,6 +1676,25 @@ func phaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowst
 	}
 	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
 	return flowstore.FlowPhase{}
+}
+
+func mustCompleteFlowPhases(t *testing.T, store *flowstore.Store, record *flowstore.FlowRecord, phaseIDs ...string) {
+	t.Helper()
+	for _, phaseID := range phaseIDs {
+		update := flowstore.PhaseUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: phaseID,
+			Status:  flowstore.PhaseCompleted,
+		}
+		if phaseID == "plan-review" {
+			update.Outcome = flowstore.OutcomeApproved
+		}
+		updated, err := store.SetPhase(update)
+		if err != nil {
+			t.Fatalf("SetPhase(%s completed) error = %v", phaseID, err)
+		}
+		*record = updated
+	}
 }
 
 func assertPhaseOrder(t *testing.T, record flowstore.FlowRecord, phaseIDs []string) {
