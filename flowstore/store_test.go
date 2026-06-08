@@ -95,12 +95,25 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("meta.json mode = %o, want 0600", info.Mode().Perm())
 	}
+	assertMode(t, root, 0o700)
+	assertMode(t, filepath.Join(root, "flows"), 0o700)
 	dirInfo, err := os.Stat(filepath.Dir(meta))
 	if err != nil {
 		t.Fatalf("stat flow dir: %v", err)
 	}
 	if dirInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("flow dir mode = %o, want 0700", dirInfo.Mode().Perm())
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", path, got, want)
 	}
 }
 
@@ -970,6 +983,9 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 	if err := os.WriteFile(lockPath, []byte("not a live lock\n"), 0o600); err != nil {
 		t.Fatalf("write lock file: %v", err)
 	}
+	if err := os.Chmod(lockPath, 0o644); err != nil {
+		t.Fatalf("loosen lock file: %v", err)
+	}
 
 	updated, err := store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
@@ -989,6 +1005,7 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 	if !strings.Contains(string(lockData), "\n") || strings.Contains(string(lockData), "not a live lock") {
 		t.Fatalf("lock marker was not refreshed: %q", lockData)
 	}
+	assertMode(t, lockPath, 0o600)
 }
 
 func TestStoreSetPhaseConcurrentUpdatesDoNotOverwriteEachOther(t *testing.T) {

@@ -2,36 +2,24 @@
 package flowstore
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/planstore"
 )
 
 const schemaVersion = 1
 
-const (
-	dirPerm  os.FileMode = 0o700
-	filePerm os.FileMode = 0o600
-)
-
-const maxSlugLength = 48
-const maxIDCollisionAttempts = 1000
 const defaultLockTimeout = 5 * time.Second
-
-var flowIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-var phaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 const (
 	StatusPending        = "pending"
@@ -232,17 +220,12 @@ func NewStore(opts StoreOptions) (*Store, error) {
 			return nil, err
 		}
 	}
-	if !filepath.IsAbs(root) {
-		return nil, fmt.Errorf("flow store root must be absolute: %s", root)
+	root, err := artifacts.RequireAbsoluteRoot(root, "flow")
+	if err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "flows"), dirPerm); err != nil {
+	if err := artifacts.EnsureCollection(root, "flows"); err != nil {
 		return nil, fmt.Errorf("create flow store: %w", err)
-	}
-	if err := os.Chmod(root, dirPerm); err != nil {
-		return nil, fmt.Errorf("secure flow root: %w", err)
-	}
-	if err := os.Chmod(filepath.Join(root, "flows"), dirPerm); err != nil {
-		return nil, fmt.Errorf("secure flows directory: %w", err)
 	}
 	now := opts.Now
 	if now == nil {
@@ -257,19 +240,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 
 // DefaultRoot returns the default artifact root, matching sessions and plans.
 func DefaultRoot() (string, error) {
-	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "wtui", "sessions", "v1"), nil
-	}
-	home, err := os.UserHomeDir()
+	root, err := artifacts.DefaultRoot()
 	if err != nil {
 		return "", fmt.Errorf("resolve flow state root: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "wtui", "sessions", "v1"), nil
-}
-
-// Root returns the artifact root in use.
-func (s *Store) Root() string {
-	return s.root
+	return root, nil
 }
 
 // Create writes a new flow record with the default Flow phase graph.
@@ -690,9 +665,13 @@ func appendUnique(values []string, value string) []string {
 
 func (s *Store) acquireFlowLock(flowID string) (func(), error) {
 	lockPath := filepath.Join(s.flowDir(flowID), ".update.lock")
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, filePerm)
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, artifacts.FilePerm)
 	if err != nil {
 		return nil, fmt.Errorf("open flow lock: %w", err)
+	}
+	if err := file.Chmod(artifacts.FilePerm); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("secure flow lock: %w", err)
 	}
 	deadline := time.Now().Add(s.lockTimeout)
 	for {
@@ -1202,62 +1181,29 @@ func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
 }
 
 func (s *Store) generateID(title string) (string, error) {
-	base := s.now().UTC().Format("20060102T150405Z") + "-" + slug(title)
-	candidate := base
-	for i := 2; i < maxIDCollisionAttempts; i++ {
-		_, err := os.Stat(s.flowDir(candidate))
-		if os.IsNotExist(err) {
-			return candidate, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("check flow id collision: %w", err)
-		}
-		candidate = fmt.Sprintf("%s-%d", base, i)
-	}
-	return "", fmt.Errorf("could not allocate a unique flow id for %q after %d attempts", title, maxIDCollisionAttempts)
-}
-
-func slug(title string) string {
-	var b strings.Builder
-	prevDash := false
-	for _, r := range strings.ToLower(title) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			prevDash = false
-		default:
-			if !prevDash && b.Len() > 0 {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > maxSlugLength {
-		out = strings.Trim(out[:maxSlugLength], "-")
-	}
-	if out == "" {
-		return "flow"
-	}
-	return out
+	return artifacts.AllocateTimestampedID(artifacts.IDOptions{
+		Root:         s.root,
+		Collection:   "flows",
+		Title:        title,
+		FallbackSlug: "flow",
+		Kind:         "flow",
+		Now:          s.now(),
+	})
 }
 
 func (s *Store) write(record FlowRecord) error {
 	if err := validateFlowID(record.FlowID); err != nil {
 		return err
 	}
-	dir := s.flowDir(record.FlowID)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("create flow directory: %w", err)
-	}
-	if err := os.Chmod(dir, dirPerm); err != nil {
+	dir, err := artifacts.EnsureRecordDir(s.root, "flows", record.FlowID)
+	if err != nil {
 		return fmt.Errorf("secure flow directory: %w", err)
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode flow metadata: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
+	if err := artifacts.WriteFileAtomic(filepath.Join(dir, "meta.json"), data); err != nil {
 		return fmt.Errorf("write flow metadata: %w", err)
 	}
 	return nil
@@ -1284,18 +1230,18 @@ func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
 }
 
 func (s *Store) flowDir(flowID string) string {
-	return filepath.Join(s.root, "flows", flowID)
+	return artifacts.RecordDir(s.root, "flows", flowID)
 }
 
 func validateFlowID(flowID string) error {
-	if !flowIDPattern.MatchString(flowID) || flowID == "." || flowID == ".." {
+	if !artifacts.IsSafeID(flowID) {
 		return fmt.Errorf("invalid flow id %q", flowID)
 	}
 	return nil
 }
 
 func validatePhaseID(phaseID string) error {
-	if !phaseIDPattern.MatchString(phaseID) || phaseID == "." || phaseID == ".." {
+	if !artifacts.IsSafeID(phaseID) {
 		return fmt.Errorf("invalid phase id %q", phaseID)
 	}
 	return nil
@@ -1352,26 +1298,4 @@ func phaseIndexByID(phases []FlowPhase, phaseID string) int {
 		}
 	}
 	return -1
-}
-
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if _, err := io.Copy(temp, bytes.NewReader(data)); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Chmod(filePerm); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempName, path)
 }
