@@ -463,6 +463,147 @@ func TestStoreSetPhaseRejectsInvalidTransitions(t *testing.T) {
 	}
 }
 
+func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Autoreview recovery",
+		Instructions: "explain how to recover attention phases",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/autoreview-recovery",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     115,
+		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		HeadBranch: "flow/autoreview-recovery",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Status:  flowstore.PhaseNeedsAttention,
+		Outcome: "needs_attention",
+		Notes:   "Follow-up findings remain.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(autoreview needs_attention) error = %v", err)
+	}
+
+	_, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: "passed",
+	})
+	if err == nil {
+		t.Fatal("SetPhase(needs_attention -> completed) error = nil")
+	}
+	for _, want := range []string{
+		"invalid phase transition needs_attention -> completed",
+		"restart with --status running --notes before completing",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("SetPhase() error = %q, want %q", err, want)
+		}
+	}
+
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Status:  flowstore.PhaseRunning,
+		Notes:   "Rerunning autoreview after addressing prior findings.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(needs_attention -> running) error = %v", err)
+	}
+	if got := phaseByID(t, record, "autoreview").Status; got != flowstore.PhaseRunning {
+		t.Fatalf("autoreview status = %q, want running", got)
+	}
+	_, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: "passed",
+		Summary: "Autoreview passed after rerun.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(running -> completed) error = %v", err)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Autoreview relaunch",
+		Instructions: "restart autoreview from needs_attention",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/autoreview-relaunch",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     115,
+		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		HeadBranch: "flow/autoreview-relaunch",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Status:  flowstore.PhaseNeedsAttention,
+		Outcome: "needs_attention",
+		Notes:   "Follow-up findings remain.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(autoreview needs_attention) error = %v", err)
+	}
+
+	relaunched, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "autoreview",
+		LaunchID: "launch-autoreview-2",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(autoreview) error = %v", err)
+	}
+
+	phase := phaseByID(t, relaunched, "autoreview")
+	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" {
+		t.Fatalf("autoreview after relaunch = %#v, want running with cleared outcome", phase)
+	}
+	if !strings.Contains(phase.Notes, "Relaunched after needs_attention") {
+		t.Fatalf("autoreview notes = %q, want restart note", phase.Notes)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-autoreview-2" {
+		t.Fatalf("launch ids = %#v", phase.LaunchIDs)
+	}
+}
+
 func TestStoreSetPhaseAllowsSkippedWithNotesAndIdempotentUpdates(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

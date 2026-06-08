@@ -561,12 +561,19 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
-		if err := validatePhaseUpdate(phase, PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}); err != nil {
+		launchPhaseUpdate := PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}
+		if phase.Status == PhaseNeedsAttention || phase.Status == PhaseBlocked {
+			launchPhaseUpdate.Notes = fmt.Sprintf("Relaunched after %s.", phase.Status)
+		}
+		if err := validatePhaseUpdate(phase, launchPhaseUpdate); err != nil {
 			return FlowRecord{}, err
 		}
 		phase.Status = PhaseRunning
 		if clearsPhaseOutcome(phase.Status) {
 			phase.Outcome = ""
+		}
+		if launchPhaseUpdate.Notes != "" {
+			phase.Notes = launchPhaseUpdate.Notes
 		}
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
 		phase.UpdatedAt = now
@@ -786,7 +793,15 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid phase transition %s -> %s", current.Status, update.Status)
+	return invalidPhaseTransitionError(current.Status, update.Status)
+}
+
+func invalidPhaseTransitionError(currentStatus, nextStatus string) error {
+	message := fmt.Sprintf("invalid phase transition %s -> %s", currentStatus, nextStatus)
+	if (currentStatus == PhaseNeedsAttention || currentStatus == PhaseBlocked) && nextStatus == PhaseCompleted {
+		message += "; restart with --status running --notes before completing"
+	}
+	return fmt.Errorf("%s", message)
 }
 
 func validateChildPhaseUpdate(update ChildPhaseUpdate) error {
@@ -923,6 +938,20 @@ func phaseSatisfiesDownstreamGate(record FlowRecord, phase FlowPhase) bool {
 		return strings.TrimSpace(phase.Notes) != ""
 	}
 	return phase.Status == PhaseCompleted
+}
+
+// PhasePredecessorsSatisfied reports whether all phases before phaseID satisfy
+// the Flow gate rules used to derive downstream readiness.
+func PhasePredecessorsSatisfied(record FlowRecord, phaseID string) bool {
+	for _, phase := range OrderedPhases(record.Phases) {
+		if phase.PhaseID == phaseID {
+			return true
+		}
+		if !phaseSatisfiesDownstreamGate(record, phase) {
+			return false
+		}
+	}
+	return false
 }
 
 // HasPRTarget reports whether PR metadata contains enough target context for
