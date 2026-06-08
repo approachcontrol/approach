@@ -828,6 +828,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeFlows:
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+			if sp.AgentAvailable {
+				actions = append(actions, shortcutHint{Key: "a", Label: "launch phase"})
+			}
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1508,7 +1511,7 @@ func planUpdatedLabel(record planstore.PlanRecord) string {
 const (
 	flowStatusWidth  = 15
 	flowBranchWidth  = 20
-	flowPhaseWidth   = 7
+	flowPhaseWidth   = 34
 	flowPlanWidth    = 12
 	flowPRWidth      = 8
 	flowUpdatedWidth = 10
@@ -1578,12 +1581,24 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 		return "-"
 	}
 	completed := 0
+	current := flowstore.FlowPhase{}
 	for _, phase := range record.Phases {
 		if phase.Status == flowstore.PhaseCompleted || phase.Status == flowstore.PhaseSkipped {
 			completed++
+			continue
+		}
+		if current.PhaseID == "" {
+			current = phase
 		}
 	}
-	return fmt.Sprintf("%d/%d", completed, len(record.Phases))
+	if current.PhaseID == "" {
+		current = record.Phases[len(record.Phases)-1]
+	}
+	state := current.Status
+	if current.Outcome != "" {
+		state = current.Outcome
+	}
+	return fmt.Sprintf("%d/%d %s:%s", completed, len(record.Phases), current.PhaseID, state)
 }
 
 func flowPlanLabel(record flowstore.FlowRecord) string {

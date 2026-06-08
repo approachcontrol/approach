@@ -160,11 +160,26 @@ func TestWtuiFlowSkillHandlesMissingPlanID(t *testing.T) {
 
 	requireContainsAll(t, "missing plan id guidance", skill, []string{
 		`if [ -z "$WTUI_PLAN_ID" ]`,
-		"missing_plan_id",
 		`if ! wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}"`,
-		"plan_review_read_failed",
-		`--status needs_attention`,
+		`--status blocked`,
+		`--outcome "blocked"`,
 		`wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}"`,
+	})
+}
+
+func TestWtuiFlowSkillDocumentsPlanReviewGateOutcomes(t *testing.T) {
+	root := repoRoot(t)
+	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
+
+	requireContainsAll(t, "plan review outcome contract", skill, []string{
+		"approved",
+		"approved_with_concerns",
+		"changes_requested",
+		"blocked",
+		"Implementation becomes ready only after",
+		`--status needs_attention --outcome "changes_requested"`,
+		`--status completed --outcome "approved_with_concerns" --notes "..."`,
+		`--status blocked --outcome "blocked" --notes "..."`,
 	})
 }
 

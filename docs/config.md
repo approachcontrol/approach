@@ -226,6 +226,8 @@ wtui flow create --title "Ship saved plans" \
 
 wtui flow list [--repo-path PATH] [--state-root PATH] --json
 wtui flow read --flow-id ID [--state-root PATH]
+wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
+    [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
 ```
 
@@ -239,6 +241,14 @@ Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
 and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
 `needs_attention`, `completed`, `blocked`, and `skipped`.
+
+The Plan Review phase gates Implementation. Plan Review completion must use
+`--outcome approved` or `--outcome approved_with_concerns`; the latter requires
+`--notes`. Use `--status needs_attention --outcome changes_requested --notes
+...` for requested plan revisions, or `--status blocked --outcome blocked
+--notes ...` for missing inputs or external blockers. Implementation becomes
+ready only after approved Plan Review outcomes, or after an explicit
+skipped-with-notes Plan Review override.
 
 The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
