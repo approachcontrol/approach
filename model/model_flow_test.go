@@ -300,9 +300,14 @@ func TestModel_NewFlowCreatesWorktreeRecordsLaunchAndStartsPlanAgent(t *testing.
 		t.Fatalf("launch context = %#v", launched)
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "add flow mode", "build the thing", "plan phase"} {
+	for _, want := range []string{"wtui-flow", "build the thing", "create and persist the plan"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{"flow-1", "flow/add-flow-mode", "/dev/alpha-worktrees/flow-add-flow-mode", "base ref", "add flow mode"} {
+		if strings.Contains(prompt, strings.ToLower(unwanted)) {
+			t.Fatalf("launch prompt should not include metadata %q: %q", unwanted, launched.InitialPrompt)
 		}
 	}
 }

@@ -450,25 +450,9 @@ func (m Model) runFlowBootstrapHook(repoPath string, worktree actions.FlowWorktr
 }
 
 func flowPlanPrompt(flow flowstore.FlowRecord, worktree actions.FlowWorktreeCreateResult, baseRef string) string {
-	title := flow.Title
-	if title == "" {
-		title = "(untitled)"
-	}
 	var b strings.Builder
-	b.WriteString("Use the wtui-flow skill for this launch. Start the Plan phase for flow ")
-	b.WriteString(flow.FlowID)
-	b.WriteString(".\n\nTask title: ")
-	b.WriteString(title)
-	b.WriteString("\n\nCustom instructions:\n")
+	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)
-	b.WriteString("\n\nFlow metadata:\n- Phase: plan (Plan phase)\n- Branch: ")
-	b.WriteString(worktree.Branch)
-	b.WriteString("\n- Worktree: ")
-	b.WriteString(worktree.WorktreePath)
-	if baseRef != "" {
-		b.WriteString("\n- Base ref: ")
-		b.WriteString(baseRef)
-	}
 	b.WriteString("\n\nCreate and persist the plan, then report Flow persistence failures explicitly before ending.")
 	return b.String()
 }
