@@ -196,8 +196,10 @@ start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
 `WTUI_COMMIT`; for new plans, and for updates that provide a repo or worktree
 location, wtui also resolves best-effort repo, worktree, branch, and commit
 metadata from git. `codex-app` launches do not inherit `WTUI_*` because wtui
-opens a macOS deep link; use the metadata block in the launch prompt to pass
-`--state-root` or export the listed vars before running `wtui plan`. The
+opens a macOS deep link; wtui uses the repo path as the deep-link project path
+and includes worktree, state-root, plan, and flow metadata in the launch prompt.
+Pass `--state-root` or export the listed state-root vars before running
+`wtui plan`. The
 `wtui-plan-persist` skill instructs agents on when and how to save plans; its
 canonical source lives in
 `agent-skills/wtui-plan-persist/` for symlinking into user-level Codex/Claude
@@ -226,6 +228,8 @@ wtui flow create --title "Ship saved plans" \
 
 wtui flow list [--repo-path PATH] [--state-root PATH] --json
 wtui flow read --flow-id ID [--state-root PATH]
+wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
+    [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
 ```
 
@@ -239,6 +243,14 @@ Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
 and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
 `needs_attention`, `completed`, `blocked`, and `skipped`.
+
+The Plan Review phase gates Implementation. Plan Review completion must use
+`--outcome approved` or `--outcome approved_with_concerns`; the latter requires
+`--notes`. Use `--status needs_attention --outcome changes_requested --notes
+...` for requested plan revisions, or `--status blocked --outcome blocked
+--notes ...` for missing inputs or external blockers. Implementation becomes
+ready only after approved Plan Review outcomes, or after an explicit
+skipped-with-notes Plan Review override.
 
 The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
@@ -358,8 +370,9 @@ variables:
 `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
 `WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
 `codex-app` launches are the exception: wtui opens a macOS deep link, scrubs
-inherited `WTUI_*` from `open`, and includes launch metadata in the prompt when a
-prompt is provided.
+inherited `WTUI_*` from `open`, and includes launch metadata in the prompt. New
+`codex-app` threads use the repo path for Codex App project identity when
+available; the selected worktree path is still included in the prompt metadata.
 
 Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with

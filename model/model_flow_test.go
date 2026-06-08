@@ -239,6 +239,163 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("Plan Review launch should pass the plan path without pre-reading %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-review",
+		Branch:       "flow/review",
+		Commit:       "abc123",
+		Title:        "Review saved plan",
+		Instructions: "Custom flow instructions from the user.",
+		Status:       flowstore.StatusInProgress,
+		PlanID:       "plan-1",
+		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		UpdatedAt:    time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Outcome: "plan_saved", Summary: "Saved and linked plan-1.", Notes: "Plan author noted a migration risk."},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseReady},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare a plan-review launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	m, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "plan-review" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if launched.FlowID != "flow-1" ||
+		launched.FlowPhaseID != "plan-review" ||
+		launched.PlanID != "plan-1" ||
+		launched.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		launched.WorktreePath != "/dev/alpha-worktrees/flow-review" ||
+		launched.Branch != "flow/review" ||
+		launched.Commit != "abc123" ||
+		launched.SessionStateRoot != "/state/wtui/sessions/v1" {
+		t.Fatalf("launch context = %#v", launched)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{
+		"use the review-loop skill",
+		"/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"flow-1",
+		"plan-review",
+		"wtui flow phase set --flow-id flow-1 --phase-id plan-review",
+		"approved",
+		"approved_with_concerns",
+		"changes_requested",
+		"blocked",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("launch prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{
+		"custom flow instructions from the user",
+		"# saved plan",
+		"implement issue 112 with tests",
+		"saved and linked plan-1",
+		"plan author noted a migration risk",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("minimum reliable prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_AKeyOnFlowExplainsWhyImplementationIsNotReady(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-review",
+		Title:        "Review requested changes",
+		Status:       flowstore.StatusNeedsAttention,
+		PlanID:       "plan-1",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseNeedsAttention, Outcome: "changes_requested", Notes: "Clarify rollout steps."},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
+		},
+	}})
+	if view := m.View(); !strings.Contains(view, "launch phase") {
+		t.Fatalf("gated flow view should still expose launch/status action:\n%s", view)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatalf("not-ready flow launch returned command %T, want nil", cmd)
+	}
+	status := m.TransientError()
+	for _, want := range []string{"Implementation is not ready", "Plan Review", "changes_requested", "Clarify rollout steps"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("status missing %q: %q", want, status)
+		}
+	}
+}
+
+func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: filter.RepoPath, Title: "T", Status: flowstore.StatusBlocked}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "T"}})
+
+	m, cmd := update(m, model.AgentResultMsg{
+		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "plan-review", RepoPath: "/dev/alpha"},
+		Err:           "terminal failed",
+	})
+	if cmd == nil {
+		t.Fatal("expected flow refresh command")
+	}
+	_ = cmd()
+
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "plan-review" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		phaseUpdate.Outcome != flowstore.OutcomeBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "terminal failed") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+}
+
 func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)

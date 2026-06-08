@@ -742,7 +742,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FetchErrorMsg:
 		return m.handleFetchError(msg), nil
 	case ActionFailedMsg:
-		return m.handleActionFailed(msg), nil
+		next := m.handleActionFailed(msg)
+		if next.mode == ui.ModeFlows && next.isCurrentRepo(msg.RepoPath) {
+			return next.startFetchFlows()
+		}
+		return next, nil
 	}
 	return m, nil
 }
