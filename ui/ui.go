@@ -701,7 +701,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions, shortcutHint{Key: "P", Label: "PR"})
 			if sp.WorktreeSessionsOpen && sp.WorktreeSessionSelected {
 				actions = append(actions, shortcutHint{Key: "enter", Label: "resume"})
-			} else if sp.WorktreeSelected && !sp.FetchAvailable && !sp.PullAvailable && !sp.AgentAvailable && !sp.NewAgent {
+			} else if sp.WorktreeSelected && !sp.FetchAvailable && !sp.PullAvailable && !sp.AgentAvailable {
 				actions = append(actions, shortcutHint{Key: "x", Label: "sessions"})
 			}
 			if sp.DirtySelected && !sp.WorktreeSessionsOpen {
@@ -1804,6 +1804,11 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 }
 
 func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scroll, width, height int, inlineSessions bool, records []sessions.SessionRecord, sessionSelected, sessionScroll int) []string {
+	inlineHeight := 0
+	if inlineSessions && selected >= 0 && selected < len(worktrees) {
+		inlineHeight = visibleInlineWorktreeSessionHeight(records, height-1)
+		scroll = scrollForInlineWorktreeSessions(selected, scroll, height, inlineHeight)
+	}
 	var content []string
 	for i, wt := range worktrees {
 		name := branchStyle.Render(wt.BranchName)
@@ -1842,7 +1847,7 @@ func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scr
 		}
 		content = append(content, line)
 		if inlineSessions && i == selected {
-			content = append(content, renderInlineWorktreeSessions(records, sessionSelected, sessionScroll, width)...)
+			content = append(content, renderInlineWorktreeSessions(records, sessionSelected, sessionScroll, width, inlineHeight)...)
 		}
 	}
 
@@ -1850,7 +1855,38 @@ func renderWorktreePaneWithSessions(worktrees []gitquery.Worktree, selected, scr
 	return scrollAndPad(content, scroll, height)
 }
 
-func renderInlineWorktreeSessions(records []sessions.SessionRecord, selected, scroll, width int) []string {
+func visibleInlineWorktreeSessionHeight(records []sessions.SessionRecord, maxHeight int) int {
+	if maxHeight <= 0 {
+		return 0
+	}
+	if len(records) == 0 {
+		return 1
+	}
+	return min(len(records)+1, maxHeight)
+}
+
+func scrollForInlineWorktreeSessions(selected, scroll, height, inlineHeight int) int {
+	if height <= 0 || inlineHeight <= 0 {
+		return scroll
+	}
+	selectedLine := selected - scroll
+	maxSelectedLine := height - inlineHeight - 1
+	if maxSelectedLine < 0 {
+		maxSelectedLine = 0
+	}
+	switch {
+	case selectedLine < 0:
+		scroll = selected
+	case selectedLine > maxSelectedLine:
+		scroll = selected - maxSelectedLine
+	}
+	return max(scroll, 0)
+}
+
+func renderInlineWorktreeSessions(records []sessions.SessionRecord, selected, scroll, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
 	if len(records) == 0 {
 		return []string{"   " + statusStyle.Render("Sessions: none")}
 	}
@@ -1858,7 +1894,7 @@ func renderInlineWorktreeSessions(records []sessions.SessionRecord, selected, sc
 	if contentWidth < 0 {
 		contentWidth = 0
 	}
-	lines := renderSessionPane(records, selected, scroll, contentWidth, len(records)+1)
+	lines := renderSessionPane(records, selected, scroll, contentWidth, height)
 	out := make([]string, 0, len(lines)+1)
 	out = append(out, "   "+statusStyle.Render("Sessions"))
 	for _, line := range lines[1:] {
