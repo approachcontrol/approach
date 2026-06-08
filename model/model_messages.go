@@ -143,6 +143,16 @@ type VisibleRepoFetchStatusExpiredMsg struct {
 	Text    string
 }
 
+type RepoRefreshResultMsg struct {
+	Request uint64
+	Repos   []scanner.Repo
+}
+
+type RepoRefreshFailedMsg struct {
+	Request uint64
+	Err     string
+}
+
 type GitPulledMsg struct {
 	RepoPath string
 }
@@ -588,6 +598,43 @@ func (m Model) handleVisibleRepoFetchStatusExpired(msg VisibleRepoFetchStatusExp
 		m.status = statusError{}
 	}
 	return m
+}
+
+func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Request == 0 || msg.Request != m.activeRepoRefresh {
+		return m, nil
+	}
+	m.activeRepoRefresh = 0
+
+	oldPath, oldOK := m.currentRepoPath()
+	var selectedChanged, hasSelection bool
+	m, selectedChanged, hasSelection = m.replaceReposPreservingVisibleSelection(msg.Repos, oldPath)
+	if !hasSelection {
+		m = m.resetRightPaneCursors()
+		if len(msg.Repos) == 0 {
+			m = m.setStatus(statusOther, "No repositories found")
+		} else {
+			m = m.setStatus(statusOther, "No repositories match filter")
+		}
+		return m, nil
+	}
+	if selectedChanged || !oldOK {
+		m = m.resetRightPaneCursors()
+		return m.startFetchForMode()
+	}
+	return m.clearStatus(statusOther), nil
+}
+
+func (m Model) handleRepoRefreshFailed(msg RepoRefreshFailedMsg) Model {
+	if msg.Request == 0 || msg.Request != m.activeRepoRefresh {
+		return m
+	}
+	m.activeRepoRefresh = 0
+	errText := msg.Err
+	if errText == "" {
+		errText = "unknown error"
+	}
+	return m.setStatus(statusOther, "failed to refresh repos: "+errText)
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {

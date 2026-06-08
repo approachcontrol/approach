@@ -76,6 +76,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSetAgent()
 	}
 
+	if key == "f5" {
+		return m.startGlobalRefresh()
+	}
+
 	if m.activePane == 0 {
 		return m.handleLeftPaneKey(key)
 	}

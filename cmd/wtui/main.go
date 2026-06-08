@@ -29,13 +29,19 @@ func main() {
 }
 
 type runDeps struct {
-	loadConfig   func() (config.Config, error)
-	getenv       func(string) string
-	getwd        func() (string, error)
-	scan         func(scanner.ScanOptions) ([]scanner.Repo, error)
-	startProgram func([]scanner.Repo, config.Config) error
-	stdin        io.Reader
-	stdout       io.Writer
+	loadConfig              func() (config.Config, error)
+	getenv                  func(string) string
+	getwd                   func() (string, error)
+	scan                    func(scanner.ScanOptions) ([]scanner.Repo, error)
+	startProgram            func([]scanner.Repo, config.Config) error
+	startProgramWithOptions func([]scanner.Repo, startProgramOptions) error
+	stdin                   io.Reader
+	stdout                  io.Writer
+}
+
+type startProgramOptions struct {
+	Config    config.Config
+	ScanRepos func() ([]scanner.Repo, error)
 }
 
 func run(args []string, deps runDeps) error {
@@ -81,7 +87,16 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error scanning repos: %w", err)
 	}
 
-	if err := deps.startProgram(repos, cfg); err != nil {
+	scanOptions := scanner.ScanOptions{
+		Root:     root,
+		MaxDepth: cfg.Scan.MaxDepth,
+	}
+	if err := deps.startProgramWithOptions(repos, startProgramOptions{
+		Config: cfg,
+		ScanRepos: func() ([]scanner.Repo, error) {
+			return deps.scan(scanOptions)
+		},
+	}); err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
@@ -102,8 +117,14 @@ func fillRunDeps(deps runDeps) runDeps {
 	if deps.scan == nil {
 		deps.scan = scanner.Scan
 	}
-	if deps.startProgram == nil {
-		deps.startProgram = startProgram
+	if deps.startProgramWithOptions == nil {
+		if deps.startProgram != nil {
+			deps.startProgramWithOptions = func(repos []scanner.Repo, opts startProgramOptions) error {
+				return deps.startProgram(repos, opts.Config)
+			}
+		} else {
+			deps.startProgramWithOptions = startProgram
+		}
 	}
 	if deps.stdin == nil {
 		deps.stdin = os.Stdin
@@ -160,7 +181,8 @@ func runSessionHook(args []string, deps runDeps) error {
 	return err
 }
 
-func startProgram(repos []scanner.Repo, cfg config.Config) error {
+func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
+	cfg := opts.Config
 	artifactRoot := runtimeArtifactRoot(cfg)
 	sessionStore, err := sessions.NewStore(sessions.StoreOptions{
 		Root:               artifactRoot,
@@ -181,6 +203,7 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 		AgentCommand:       cfg.Agent.Command,
 		StartupMode:        ui.ModeFlows,
 		PlanPromptTemplate: cfg.Agent.PlanPrompt,
+		ScanRepos:          opts.ScanRepos,
 		SessionStateRoot:   sessionStore.Root(),
 		ListSessions:       sessionStore.List,
 		ReadTranscript:     sessionStore.ReadTranscript,

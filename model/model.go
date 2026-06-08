@@ -54,6 +54,8 @@ type Model struct {
 	activeWorktreeCreate      uint64
 	flowCreateSeq             uint64
 	activeFlowCreate          uint64
+	repoRefreshSeq            uint64
+	activeRepoRefresh         uint64
 	listRequests              [listRequestSlots]uint64
 	activePane                int // 0=left (repos), 1=right (content)
 	destructive               bool
@@ -66,6 +68,7 @@ type Model struct {
 	pendingWorktreeSelection  string
 	agentCommand              string
 	planPromptTemplate        string
+	scanRepos                 func() ([]scanner.Repo, error)
 	fetchRepo                 func(string) error
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
@@ -119,6 +122,7 @@ type Options struct {
 	AgentCommand         string
 	StartupMode          ui.Mode
 	PlanPromptTemplate   string
+	ScanRepos            func() ([]scanner.Repo, error)
 	FetchRepo            func(string) error
 	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
@@ -271,6 +275,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		mode:                 startupMode(opts.StartupMode),
 		agentCommand:         agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:   opts.PlanPromptTemplate,
+		scanRepos:            opts.ScanRepos,
 		fetchRepo:            fetchRepo,
 		listSessions:         listSessions,
 		readTranscript:       readTranscript,
@@ -708,6 +713,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleVisibleRepoFetchStatusFade(msg), nil
 	case VisibleRepoFetchStatusExpiredMsg:
 		return m.handleVisibleRepoFetchStatusExpired(msg), nil
+	case RepoRefreshResultMsg:
+		return m.handleRepoRefreshResult(msg)
+	case RepoRefreshFailedMsg:
+		return m.handleRepoRefreshFailed(msg), nil
 	case GitPulledMsg:
 		return m.handleGitPulled(msg)
 	case GitPullFailedMsg:
