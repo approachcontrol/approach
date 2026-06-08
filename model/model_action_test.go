@@ -20,8 +20,20 @@ import (
 
 // --- Worktree diff (enter key in ModeWorktrees) ---
 
-func TestModel_EnterOnDirtyWorktreeOpensDiffOverlay(t *testing.T) {
-	m := model.New(testRepos())
+func recordPageText(paged *[]string) func(string) (actions.TerminalLaunchSpec, error) {
+	return func(body string) (actions.TerminalLaunchSpec, error) {
+		*paged = append(*paged, body)
+		return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+	}
+}
+
+func TestModel_EnterOnDirtyWorktreeFetchesDiffWithoutOverlay(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			t.Fatalf("PageText should not run until the diff result arrives, got %q", body)
+			return actions.TerminalLaunchSpec{}, nil
+		},
+	})
 	m = inRightPane(m)
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true, Dirty: true, FilesChanged: 3},
@@ -30,8 +42,8 @@ func TestModel_EnterOnDirtyWorktreeOpensDiffOverlay(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayWorktreeDiff {
-		t.Errorf("expected OverlayWorktreeDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchWorktreeDiff cmd, got nil")
@@ -72,7 +84,7 @@ func TestModel_EnterOnStaleWorktreeIsNoOp(t *testing.T) {
 	}
 }
 
-func TestModel_EnterOnLockedDirtyWorktreeOpensDiffOverlay(t *testing.T) {
+func TestModel_EnterOnLockedDirtyWorktreeFetchesDiffWithoutOverlay(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	wts := []gitquery.Worktree{
@@ -81,8 +93,8 @@ func TestModel_EnterOnLockedDirtyWorktreeOpensDiffOverlay(t *testing.T) {
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayWorktreeDiff {
-		t.Errorf("expected OverlayWorktreeDiff for locked dirty worktree, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected no overlay for locked dirty worktree, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchWorktreeDiff cmd for locked dirty worktree")
@@ -335,22 +347,31 @@ func TestModel_WorktreeMovePendingSelectionClampsWhenPathMissing(t *testing.T) {
 	}
 }
 
-func TestModel_WorktreeDiffResultStoresDiff(t *testing.T) {
-	m := model.New(testRepos())
+func TestModel_WorktreeDiffResultPagesDiff(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
 	m = inRightPane(m)
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.WorktreeDiffResultMsg{
+	m, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
 		DiffRequest:  1,
 		Diff:         "diff --git a/f.txt",
 	})
-	if m.OverlayDiff() != "diff --git a/f.txt" {
-		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
+	if cmd == nil {
+		t.Fatal("expected pager launch command")
+	}
+	if len(paged) != 1 || paged[0] != "diff --git a/f.txt" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
@@ -362,8 +383,8 @@ func TestModel_WorktreeDiffFetchFailureCarriesIdentity(t *testing.T) {
 	}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayWorktreeDiff {
-		t.Fatalf("expected OverlayWorktreeDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected diff fetch command")
@@ -383,8 +404,14 @@ func TestModel_WorktreeDiffFetchFailureCarriesIdentity(t *testing.T) {
 	}
 }
 
-func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutOverwritingOverlay(t *testing.T) {
-	m := model.New(testRepos())
+func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutPaging(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
@@ -400,11 +427,8 @@ func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutOverwritingOver
 		WorktreePath: "/dev/alpha",
 	})
 
-	if m.Overlay() != ui.OverlayWorktreeDiff {
-		t.Fatalf("expected overlay to remain open, got %d", m.Overlay())
-	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected fetch failure not to overwrite overlay diff, got %q", m.OverlayDiff())
+	if len(paged) != 0 {
+		t.Fatalf("fetch failure should not page text, got %#v", paged)
 	}
 	if !strings.Contains(m.View(), "failed to load diff: boom") {
 		t.Fatal("expected matching diff fetch failure in status bar")
@@ -433,26 +457,36 @@ func TestModel_StaleWorktreeDiffFetchFailureIgnored(t *testing.T) {
 	if strings.Contains(m.View(), "old diff failure") {
 		t.Fatal("expected stale same-target diff failure to be ignored")
 	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected stale failure not to overwrite overlay diff, got %q", m.OverlayDiff())
-	}
 }
 
 func TestModel_StaleWorktreeDiffResultDiscarded(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
 	m = selectBravo(m)
-	m, _ = update(m, model.WorktreeDiffResultMsg{
+	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
 		Diff:         "stale",
 	})
-	if m.OverlayDiff() != "" {
-		t.Errorf("expected stale worktree diff discarded, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected stale worktree diff discarded, cmd=%T paged=%#v", cmd, paged)
 	}
 }
 
 func TestModel_WorktreeDiffResultDiscardedIfWorktreePathChanged(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 		{Path: "/dev/alpha-feat", BranchName: "feat", Dirty: true},
@@ -460,18 +494,25 @@ func TestModel_WorktreeDiffResultDiscardedIfWorktreePathChanged(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, model.WorktreeDiffResultMsg{
+	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
 		Diff:         "wrong worktree",
 	})
-	if m.OverlayDiff() != "" {
-		t.Errorf("expected diff discarded for wrong worktree path, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected wrong-target diff discarded, cmd=%T paged=%#v", cmd, paged)
 	}
 }
 
-func TestModel_WorktreeDiffResultAfterClosedOverlayIgnored(t *testing.T) {
-	m := model.New(testRepos())
+func TestModel_WorktreeDiffResultAfterEscapeStillPages(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
@@ -479,23 +520,29 @@ func TestModel_WorktreeDiffResultAfterClosedOverlayIgnored(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
 
-	m, _ = update(m, model.WorktreeDiffResultMsg{
+	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
 		DiffRequest:  1,
-		Diff:         "stale worktree diff",
+		Diff:         "worktree diff",
 	})
 
-	if m.Overlay() != ui.OverlayNone {
-		t.Fatalf("expected overlay to remain closed, got %d", m.Overlay())
+	if cmd == nil {
+		t.Fatal("expected pager launch command")
 	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected closed overlay to ignore stale diff, got %q", m.OverlayDiff())
+	if len(paged) != 1 || paged[0] != "worktree diff" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
 func TestModel_WorktreeDiffResultFromOlderRequestIgnoredAfterReopen(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
+			paged = append(paged, body)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
@@ -504,21 +551,49 @@ func TestModel_WorktreeDiffResultFromOlderRequestIgnoredAfterReopen(t *testing.T
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape}) // close before result arrives
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})  // request 2 for same target
 
-	m, _ = update(m, model.WorktreeDiffResultMsg{
+	m, firstCmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
 		DiffRequest:  2,
 		Diff:         "new diff",
 	})
-	m, _ = update(m, model.WorktreeDiffResultMsg{
+	m, staleCmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha",
 		DiffRequest:  1,
 		Diff:         "stale old diff",
 	})
 
-	if m.OverlayDiff() != "new diff" {
-		t.Fatalf("expected stale request ignored after reopen, got %q", m.OverlayDiff())
+	if firstCmd == nil {
+		t.Fatal("expected latest request to launch pager")
+	}
+	if staleCmd != nil {
+		t.Fatalf("expected stale request to return nil command, got %T", staleCmd)
+	}
+	if len(paged) != 1 || paged[0] != "new diff" {
+		t.Fatalf("expected stale request ignored after reopen, paged=%#v", paged)
+	}
+}
+
+func TestModel_ViewResultAfterModeSwitchIgnored(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+
+	_, cmd := update(m, model.WorktreeDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
+		Diff:         "old worktree diff",
+	})
+
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected mode switch to invalidate old view result, cmd=%T paged=%#v", cmd, paged)
 	}
 }
 
@@ -1214,7 +1289,7 @@ func TestModel_EnterStillRequiresDirtyWorktree(t *testing.T) {
 	}
 }
 
-func TestModel_EnterOpensBranchDiffOverlayForDirtyWorktree(t *testing.T) {
+func TestModel_EnterFetchesBranchDiffWithoutOverlayForDirtyWorktree(t *testing.T) {
 	m := model.New(testRepos())
 	branches := []gitquery.Branch{
 		{
@@ -1229,8 +1304,8 @@ func TestModel_EnterOpensBranchDiffOverlayForDirtyWorktree(t *testing.T) {
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayBranchDiff {
-		t.Errorf("expected OverlayBranchDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchBranchDiff cmd, got nil")
@@ -1238,7 +1313,8 @@ func TestModel_EnterOpensBranchDiffOverlayForDirtyWorktree(t *testing.T) {
 }
 
 func TestModel_BranchDiffResultForWrongWorktreePathIgnored(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{
 		RepoPath: "/dev/alpha",
@@ -1253,36 +1329,39 @@ func TestModel_BranchDiffResultForWrongWorktreePathIgnored(t *testing.T) {
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	m, _ = update(m, model.BranchDiffResultMsg{
+	_, cmd := update(m, model.BranchDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		BranchName:  "feat",
 		DiffRequest: 1,
 		Diff:        "missing path diff",
 	})
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected missing worktree path diff ignored, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected missing worktree path diff ignored, cmd=%T paged=%#v", cmd, paged)
 	}
 
-	m, _ = update(m, model.BranchDiffResultMsg{
+	_, cmd = update(m, model.BranchDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		BranchName:   "feat",
 		WorktreePath: "/dev/elsewhere",
 		DiffRequest:  1,
 		Diff:         "wrong path diff",
 	})
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected wrong worktree path diff ignored, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected wrong worktree path diff ignored, cmd=%T paged=%#v", cmd, paged)
 	}
 
-	m, _ = update(m, model.BranchDiffResultMsg{
+	_, cmd = update(m, model.BranchDiffResultMsg{
 		RepoPath:     "/dev/alpha",
 		BranchName:   "feat",
 		WorktreePath: "/dev/alpha",
 		DiffRequest:  1,
 		Diff:         "matching path diff",
 	})
-	if m.OverlayDiff() != "matching path diff" {
-		t.Fatalf("expected matching worktree path diff stored, got %q", m.OverlayDiff())
+	if cmd == nil {
+		t.Fatal("expected matching branch diff to launch pager")
+	}
+	if len(paged) != 1 || paged[0] != "matching path diff" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
@@ -1337,9 +1416,6 @@ func TestModel_BranchDiffFetchFailureMatchesBranchAndWorktreePath(t *testing.T) 
 	if !strings.Contains(m.View(), "branch diff failed") {
 		t.Fatal("matching branch diff failure should show in status bar")
 	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("branch diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
-	}
 }
 
 func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
@@ -1372,11 +1448,11 @@ func modelInHistoryWithCommits() model.Model {
 	return m
 }
 
-func TestModel_EnterInHistoryOpensCommitDiffOverlay(t *testing.T) {
+func TestModel_EnterInHistoryFetchesCommitDiffWithoutOverlay(t *testing.T) {
 	m := modelInHistoryWithCommits()
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayCommitDiff {
-		t.Errorf("expected OverlayCommitDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchCommitDiff cmd, got nil")
@@ -1398,14 +1474,18 @@ func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
 }
 
 func TestModel_CommitDiffResultStoresDiff(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
-	if m.OverlayDiff() != "diff --git a/f.txt" {
-		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
+	_, cmd := update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
+	if cmd == nil {
+		t.Fatal("expected commit diff to launch pager")
+	}
+	if len(paged) != 1 || paged[0] != "diff --git a/f.txt" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
@@ -1413,9 +1493,6 @@ func TestModel_StaleCommitDiffResultDiscarded(t *testing.T) {
 	m := model.New(testRepos())
 	m = selectBravo(m)
 	m, _ = update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: "stale"})
-	if m.OverlayDiff() != "" {
-		t.Errorf("expected stale commit diff discarded, got %q", m.OverlayDiff())
-	}
 }
 
 func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
@@ -1456,9 +1533,6 @@ func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 	})
 	if !strings.Contains(m.View(), "commit diff failed") {
 		t.Fatal("matching commit diff failure should show in status bar")
-	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("commit diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
 	}
 }
 
@@ -1549,16 +1623,16 @@ func TestModel_CKeyInHistoryFiresCmd(t *testing.T) {
 	}
 }
 
-// --- Stash overlay ---
+// --- Stash view ---
 
-func TestModel_EnterOpensOverlay(t *testing.T) {
+func TestModel_EnterOnStashFetchesDiffWithoutOverlay(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayStashDiff {
-		t.Errorf("expected OverlayStashDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchStashDiff cmd, got nil")
@@ -1566,22 +1640,23 @@ func TestModel_EnterOpensOverlay(t *testing.T) {
 }
 
 func TestModel_StashDiffResultStoresDiff(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.StashDiffResultMsg{
+	_, cmd := update(m, model.StashDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		Index:       0,
 		DiffRequest: 1,
 		Diff:        "missing identity diff",
 	})
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected missing stash identity diff ignored, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected missing stash identity diff ignored, cmd=%T paged=%#v", cmd, paged)
 	}
 	stash := testStashes()[0]
-	m, _ = update(m, model.StashDiffResultMsg{
+	_, cmd = update(m, model.StashDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		Index:       stash.Index,
 		Date:        stash.Date,
@@ -1589,13 +1664,17 @@ func TestModel_StashDiffResultStoresDiff(t *testing.T) {
 		DiffRequest: 1,
 		Diff:        "diff --git a/f.txt",
 	})
-	if m.OverlayDiff() != "diff --git a/f.txt" {
-		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
+	if cmd == nil {
+		t.Fatal("expected matching stash diff to launch pager")
+	}
+	if len(paged) != 1 || paged[0] != "diff --git a/f.txt" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
-func TestModel_StaleStashDiffDoesNotPopulateCommitOverlay(t *testing.T) {
-	m := model.New(testRepos())
+func TestModel_StaleStashDiffDoesNotLaunchAfterModeChange(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
@@ -1605,18 +1684,16 @@ func TestModel_StaleStashDiffDoesNotPopulateCommitOverlay(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "stale stash diff"})
+	_, cmd := update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, DiffRequest: 1, Diff: "stale stash diff"})
 
-	if m.Overlay() != ui.OverlayCommitDiff {
-		t.Fatalf("expected commit diff overlay to remain open, got %d", m.Overlay())
-	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected stale stash diff ignored by commit overlay, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected stale stash diff ignored after mode change, cmd=%T paged=%#v", cmd, paged)
 	}
 }
 
 func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
@@ -1625,13 +1702,13 @@ func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	m, _ = update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, Diff: "old index diff"})
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected old-index stash diff ignored, got %q", m.OverlayDiff())
+	_, cmd := update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, DiffRequest: 1, Diff: "old index diff"})
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected old-index stash diff ignored, cmd=%T paged=%#v", cmd, paged)
 	}
 
 	currentStash := testStashes()[1]
-	m, _ = update(m, model.StashDiffResultMsg{
+	_, cmd = update(m, model.StashDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		Index:       currentStash.Index,
 		Date:        currentStash.Date,
@@ -1639,8 +1716,11 @@ func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
 		DiffRequest: 2,
 		Diff:        "current index diff",
 	})
-	if m.OverlayDiff() != "current index diff" {
-		t.Fatalf("expected current-index stash diff stored, got %q", m.OverlayDiff())
+	if cmd == nil {
+		t.Fatal("expected current-index stash diff to launch pager")
+	}
+	if len(paged) != 1 || paged[0] != "current index diff" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
@@ -1648,14 +1728,15 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 	oldStash := gitquery.Stash{Index: 0, Date: "2026-03-18 10:00:00 -0700", Message: "old stash"}
 	newStash := gitquery.Stash{Index: 0, Date: "2026-03-19 10:00:00 -0700", Message: "new stash"}
 
-	m := model.New(testRepos())
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
 
-	m, _ = update(m, model.StashDiffResultMsg{
+	_, cmd := update(m, model.StashDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		Index:       oldStash.Index,
 		Date:        oldStash.Date,
@@ -1663,11 +1744,11 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 		DiffRequest: 1,
 		Diff:        "old stash diff",
 	})
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected changed stash identity to reject stale diff, got %q", m.OverlayDiff())
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected changed stash identity to reject stale diff, cmd=%T paged=%#v", cmd, paged)
 	}
 
-	m, _ = update(m, model.StashDiffResultMsg{
+	_, cmd = update(m, model.StashDiffResultMsg{
 		RepoPath:    "/dev/alpha",
 		Index:       newStash.Index,
 		Date:        newStash.Date,
@@ -1675,8 +1756,11 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 		DiffRequest: 1,
 		Diff:        "new stash diff",
 	})
-	if m.OverlayDiff() != "new stash diff" {
-		t.Fatalf("expected matching stash identity diff stored, got %q", m.OverlayDiff())
+	if cmd == nil {
+		t.Fatal("expected matching stash identity diff to launch pager")
+	}
+	if len(paged) != 1 || paged[0] != "new stash diff" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
@@ -1729,94 +1813,6 @@ func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
 	})
 	if !strings.Contains(m.View(), "new stash diff failed") {
 		t.Fatal("matching stash identity failure should show in status bar")
-	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("stash diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
-	}
-}
-
-func TestModel_EscClosesOverlay(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	// Now close overlay with esc
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
-	if m.Overlay() != ui.OverlayNone {
-		t.Errorf("expected overlay closed, got %d", m.Overlay())
-	}
-	if cmd != nil {
-		msg := cmd()
-		if _, ok := msg.(tea.QuitMsg); ok {
-			t.Error("esc with overlay open should not quit")
-		}
-	}
-}
-
-func TestModel_QClosesOverlayNotQuit(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	// Close with q
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if m.Overlay() != ui.OverlayNone {
-		t.Errorf("expected overlay closed, got %d", m.Overlay())
-	}
-	if cmd != nil {
-		msg := cmd()
-		if _, ok := msg.(tea.QuitMsg); ok {
-			t.Error("q with overlay open should not quit")
-		}
-	}
-}
-
-func TestModel_OverlayScrollUpDown(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	scrollStash := testStashes()[0]
-	m, _ = update(m, model.StashDiffResultMsg{
-		RepoPath:    "/dev/alpha",
-		Index:       scrollStash.Index,
-		Date:        scrollStash.Date,
-		Message:     scrollStash.Message,
-		DiffRequest: 1,
-		Diff:        "line1\nline2\nline3",
-	})
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if m.OverlayScroll() != 1 {
-		t.Errorf("expected scroll 1, got %d", m.OverlayScroll())
-	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	if m.OverlayScroll() != 0 {
-		t.Errorf("expected scroll 0, got %d", m.OverlayScroll())
-	}
-	// Up at 0 stays 0
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	if m.OverlayScroll() != 0 {
-		t.Errorf("expected scroll clamped at 0, got %d", m.OverlayScroll())
-	}
-}
-
-func TestModel_ModeKeysIgnoredInOverlay(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	// Press "1" — should not change mode
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if m.Mode() != 3 {
-		t.Errorf("expected mode unchanged at 3 (stashes), got %d", m.Mode())
-	}
-	if m.Overlay() != ui.OverlayStashDiff {
-		t.Errorf("expected overlay still open, got %d", m.Overlay())
 	}
 }
 
@@ -1917,27 +1913,6 @@ func TestModel_ShiftDNoOpDuringConfirmOverlay(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 	if !m.Destructive() {
 		t.Error("expected destructive to remain true during confirm overlay")
-	}
-}
-
-func TestModel_ShiftDNoOpDuringDiffOverlay(t *testing.T) {
-	m := model.New(testRepos())
-	m = inBranchesMode(m)
-	m, _ = update(m, model.BranchResultMsg{
-		RepoPath: "/dev/alpha",
-		Branches: []gitquery.Branch{
-			{Name: "main", IsWorktree: true, Dirty: true, WorktreePaths: []string{"/dev/alpha"}},
-		},
-	})
-	// Open diff overlay
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() == ui.OverlayNone {
-		t.Fatal("expected a diff overlay")
-	}
-	// Not in destructive mode; Shift+D should be ignored
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	if m.Destructive() {
-		t.Error("expected destructive to remain false during diff overlay")
 	}
 }
 
@@ -3681,9 +3656,11 @@ func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 }
 
 func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
+	var paged []string
 	var gotProvider sessions.Provider
 	var gotSessionID string
 	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: recordPageText(&paged),
 		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
 			gotProvider = provider
 			gotSessionID = sessionID
@@ -3700,8 +3677,8 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlaySessionTranscript {
-		t.Fatalf("expected OverlaySessionTranscript, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected transcript fetch command")
@@ -3710,18 +3687,22 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected SessionTranscriptResultMsg, got %T", msg)
 	}
-	m, _ = update(m, msg)
+	m, cmd = update(m, msg)
+	if cmd == nil {
+		t.Fatal("expected transcript pager command")
+	}
 
 	if gotProvider != sessions.ProviderCodex || gotSessionID != "codex-1" {
 		t.Fatalf("reader got provider=%q session=%q", gotProvider, gotSessionID)
 	}
-	if diff := m.OverlayDiff(); !strings.Contains(diff, "user: Implement sessions") || !strings.Contains(diff, "assistant: Done") {
-		t.Fatalf("unexpected transcript overlay text: %q", diff)
+	if len(paged) != 1 || !strings.Contains(paged[0], "user: Implement sessions") || !strings.Contains(paged[0], "assistant: Done") {
+		t.Fatalf("unexpected paged transcript: %#v", paged)
 	}
 }
 
 func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
@@ -3729,19 +3710,17 @@ func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	if cmd != nil {
-		t.Fatalf("expected summary overlay to open without command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected summary pager command")
 	}
-	if m.Overlay() != ui.OverlayPlanText {
-		t.Fatalf("expected text overlay for session summary, got %d", m.Overlay())
-	}
-	if got := m.OverlayText(); got != "first line\nsecond line\nthird line" {
-		t.Fatalf("summary overlay text = %q", got)
+	if len(paged) != 1 || paged[0] != "first line\nsecond line\nthird line" {
+		t.Fatalf("paged summary = %#v", paged)
 	}
 }
 
 func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
@@ -3749,11 +3728,64 @@ func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	if cmd != nil {
-		t.Fatalf("expected summary overlay to open without command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected empty summary pager command")
 	}
-	if got := m.OverlayText(); got != "No summary" {
-		t.Fatalf("empty summary overlay text = %q", got)
+	if len(paged) != 1 || paged[0] != "No summary" {
+		t.Fatalf("paged empty summary = %#v", paged)
+	}
+}
+
+func TestModel_SKeySessionSummaryPagerFailureShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: func(string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("less not found")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "summary"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd != nil {
+		t.Fatalf("pager construction failure should not return launch command, got %T", cmd)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "less not found") {
+		t.Fatalf("status = %q, want pager failure", got)
+	}
+}
+
+func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PageText: recordPageText(&paged),
+		ReadTranscript: func(sessions.Provider, string) ([]sessions.TranscriptEvent, error) {
+			return []sessions.TranscriptEvent{{Role: "assistant", Text: "old transcript"}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "summary"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, transcriptCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if transcriptCmd == nil {
+		t.Fatal("expected transcript fetch command")
+	}
+	m, summaryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if summaryCmd == nil {
+		t.Fatal("expected summary pager command")
+	}
+	_, staleCmd := update(m, transcriptCmd())
+
+	if staleCmd != nil {
+		t.Fatalf("expected stale transcript result to return nil command, got %T", staleCmd)
+	}
+	if len(paged) != 1 || paged[0] != "summary" {
+		t.Fatalf("expected only summary to page, paged=%#v", paged)
 	}
 }
 
@@ -4105,8 +4137,8 @@ func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlaySessionTranscript {
-		t.Fatalf("expected transcript overlay, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected transcript fetch command")
@@ -4114,9 +4146,6 @@ func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
 	m, _ = update(m, cmd())
 	if !strings.Contains(m.View(), "missing transcript") {
 		t.Fatalf("expected missing transcript status, got:\n%s", m.View())
-	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("expected blank transcript overlay on error, got %q", m.OverlayDiff())
 	}
 }
 
@@ -4504,11 +4533,11 @@ func TestModel_YKeyNoOpWithNoReflogs(t *testing.T) {
 	}
 }
 
-func TestModel_EnterInReflogOpensReflogDiffOverlay(t *testing.T) {
+func TestModel_EnterInReflogFetchesDiffWithoutOverlay(t *testing.T) {
 	m := modelInReflogWithEntries()
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayReflogDiff {
-		t.Errorf("expected OverlayReflogDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Errorf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchReflogDiff cmd, got nil")
@@ -4516,11 +4545,18 @@ func TestModel_EnterInReflogOpensReflogDiffOverlay(t *testing.T) {
 }
 
 func TestModel_ReflogDiffResultStoresDiff(t *testing.T) {
-	m := modelInReflogWithEntries()
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
-	if m.OverlayDiff() != "diff --git a/f.txt" {
-		t.Errorf("expected diff stored, got %q", m.OverlayDiff())
+	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
+	if cmd == nil {
+		t.Fatal("expected reflog diff pager command")
+	}
+	if len(paged) != 1 || paged[0] != "diff --git a/f.txt" {
+		t.Fatalf("paged = %#v", paged)
 	}
 }
 
@@ -4528,9 +4564,6 @@ func TestModel_StaleReflogDiffResultDiscarded(t *testing.T) {
 	m := modelInReflogWithEntries()
 	m = selectBravo(m)
 	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", Diff: "stale"})
-	if m.OverlayDiff() != "" {
-		t.Errorf("expected stale reflog diff discarded, got %q", m.OverlayDiff())
-	}
 }
 
 func TestModel_TKeyNoOpInReflogMode(t *testing.T) {
@@ -4552,9 +4585,6 @@ func TestModel_CKeyNoOpInReflogMode(t *testing.T) {
 func TestModel_ReflogDiffResultWrongHashDiscarded(t *testing.T) {
 	m := modelInReflogWithEntries()
 	m, _ = update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "wrong", Diff: "wrong diff"})
-	if m.OverlayDiff() != "" {
-		t.Errorf("expected wrong-hash reflog diff discarded, got %q", m.OverlayDiff())
-	}
 }
 
 func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
@@ -4595,9 +4625,6 @@ func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 	})
 	if !strings.Contains(m.View(), "reflog diff failed") {
 		t.Fatal("matching reflog diff failure should show in status bar")
-	}
-	if m.OverlayDiff() != "" {
-		t.Fatalf("reflog diff failure should not overwrite overlay diff, got %q", m.OverlayDiff())
 	}
 }
 

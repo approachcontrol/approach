@@ -41,6 +41,9 @@ type Model struct {
 	selectedPlanPhaseID       string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
+	activeViewRequest         uint64
+	activeViewKind            FetchKind
+	activeViewMode            ui.Mode
 	listRequestSeq            uint64
 	worktreeCreateSeq         uint64
 	activeWorktreeCreate      uint64
@@ -71,6 +74,7 @@ type Model struct {
 	readPlan                  func(string) (string, error)
 	planMarkdownPath          func(string) (string, error)
 	copyToClipboard           func(string) error
+	pageText                  func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                 func(string) error
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
@@ -124,6 +128,7 @@ type Options struct {
 	ReadPlan             func(string) (string, error)
 	PlanMarkdownPath     func(planID string) (string, error)
 	CopyToClipboard      func(text string) error
+	PageText             func(body string) (actions.TerminalLaunchSpec, error)
 	SaveAgentCommand     func(string) error
 	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	FinalizeAgentSession func(actions.AgentLaunchContext) error
@@ -226,6 +231,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if copyToClipboard == nil {
 		copyToClipboard = actions.CopyToClipboard
 	}
+	pageText := opts.PageText
+	if pageText == nil {
+		pageText = actions.PageText
+	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
@@ -268,6 +277,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readPlan:             readPlan,
 		planMarkdownPath:     planMarkdownPath,
 		copyToClipboard:      copyToClipboard,
+		pageText:             pageText,
 		saveAgent:            saveAgent,
 		launchAgent:          launchAgent,
 		finalizeAgentSession: finalizeAgentSession,
@@ -605,16 +615,26 @@ func uiSelectItems(items []modal.SelectItem) []ui.SelectItem {
 	return out
 }
 
-func (m Model) openPlanText() Model {
+func (m Model) startViewRequest(kind FetchKind, mode ui.Mode) Model {
 	m.diffRequestSeq++
-	m.modal = modal.OpenText("").WithRequest(m.diffRequestSeq)
+	m.activeViewRequest = m.diffRequestSeq
+	m.activeViewKind = kind
+	m.activeViewMode = mode
 	return m
 }
 
-func (m Model) openDiff(kind modal.DiffKind) Model {
-	m.diffRequestSeq++
-	m.modal = modal.OpenDiff(kind, "").WithRequest(m.diffRequestSeq)
+func (m Model) invalidateViewRequest() Model {
+	m.activeViewRequest = 0
+	m.activeViewKind = FetchUnknown
+	m.activeViewMode = 0
 	return m
+}
+
+func (m Model) activeViewMatches(kind FetchKind, mode ui.Mode, request uint64) bool {
+	return request != 0 &&
+		request == m.activeViewRequest &&
+		kind == m.activeViewKind &&
+		mode == m.activeViewMode
 }
 
 // --- Update ---
@@ -632,9 +652,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StashResultMsg:
 		return m.handleStashResult(msg), nil
 	case StashDiffResultMsg:
-		return m.handleStashDiffResult(msg), nil
+		return m.handleStashDiffResult(msg)
 	case BranchDiffResultMsg:
-		return m.handleBranchDiffResult(msg), nil
+		return m.handleBranchDiffResult(msg)
 	case StashDroppedMsg:
 		return m.handleStashDropped(msg)
 	case BranchDeletedMsg:
@@ -686,19 +706,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SessionResultMsg:
 		return m.handleSessionResult(msg), nil
 	case SessionTranscriptResultMsg:
-		return m.handleSessionTranscriptResult(msg), nil
+		return m.handleSessionTranscriptResult(msg)
 	case PlanResultMsg:
 		return m.handlePlanResult(msg), nil
 	case FlowResultMsg:
 		return m.handleFlowResult(msg), nil
 	case PlanReadResultMsg:
-		return m.handlePlanReadResult(msg), nil
+		return m.handlePlanReadResult(msg)
 	case WorktreeDiffResultMsg:
-		return m.handleWorktreeDiffResult(msg), nil
+		return m.handleWorktreeDiffResult(msg)
 	case CommitDiffResultMsg:
-		return m.handleCommitDiffResult(msg), nil
+		return m.handleCommitDiffResult(msg)
 	case ReflogDiffResultMsg:
-		return m.handleReflogDiffResult(msg), nil
+		return m.handleReflogDiffResult(msg)
 	case ClipboardResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)

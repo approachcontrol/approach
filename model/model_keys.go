@@ -417,29 +417,29 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeWorktrees {
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
-			m = m.openDiff(modal.DiffWorktree)
+			m = m.startViewRequest(FetchWorktreeDiff, ui.ModeWorktrees)
 			return m, m.fetchWorktreeDiff()
 		}
 		return m, nil
 	}
 	if m.mode == ui.ModeBranches && m.isSelectedBranchDirtyWorktree() {
-		m = m.openDiff(modal.DiffBranch)
+		m = m.startViewRequest(FetchBranchDiff, ui.ModeBranches)
 		return m, m.fetchBranchDiff()
 	}
 	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 {
-		m = m.openDiff(modal.DiffStash)
+		m = m.startViewRequest(FetchStashDiff, ui.ModeStashes)
 		return m, m.fetchStashDiff()
 	}
 	if m.mode == ui.ModeHistory && len(m.filteredCommits()) > 0 {
-		m = m.openDiff(modal.DiffCommit)
+		m = m.startViewRequest(FetchCommitDiff, ui.ModeHistory)
 		return m, m.fetchCommitDiff()
 	}
 	if m.mode == ui.ModeReflog && len(m.filteredReflogs()) > 0 {
-		m = m.openDiff(modal.DiffReflog)
+		m = m.startViewRequest(FetchReflogDiff, ui.ModeReflog)
 		return m, m.fetchReflogDiff()
 	}
 	if m.mode == ui.ModeSessions && len(m.filteredSessions()) > 0 {
-		m = m.openDiff(modal.DiffSessionTranscript)
+		m = m.startViewRequest(FetchSessionTranscript, ui.ModeSessions)
 		return m, m.fetchSessionTranscript()
 	}
 	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
@@ -473,7 +473,7 @@ func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
 
 func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
-		m = m.openPlanText()
+		m = m.startViewRequest(FetchPlanText, ui.ModePlans)
 		return m, m.fetchPlanText()
 	}
 	return m, nil
@@ -491,7 +491,7 @@ func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, "Flow has no linked plan")
 		return m, nil
 	}
-	m = m.openPlanText()
+	m = m.startViewRequest(FetchPlanText, ui.ModeFlows)
 	return m, m.fetchPlanTextByID(record.PlanID, ui.ModeFlows)
 }
 
@@ -1390,6 +1390,37 @@ func (m Model) handleOpenCode() (tea.Model, tea.Cmd) {
 	return m.openAtPath(actions.OpenVSCode)
 }
 
+func (m Model) pageBody(body string) (Model, tea.Cmd) {
+	launch, err := m.pageText(body)
+	if err != nil {
+		return m.setStatus(statusOther, err.Error()), nil
+	}
+	return m, runTerminalLaunch(launch)
+}
+
+func runTerminalLaunch(launch actions.TerminalLaunchSpec) tea.Cmd {
+	if launch.Interactive {
+		return tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
+			if err != nil {
+				if launch.Cleanup != nil {
+					launch.Cleanup()
+				}
+				return TerminalResultMsg{Err: err.Error()}
+			}
+			return TerminalResultMsg{}
+		})
+	}
+	return func() tea.Msg {
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return TerminalResultMsg{Err: err.Error()}
+		}
+		return TerminalResultMsg{}
+	}
+}
+
 // --- Confirm dialogs ---
 
 func (m Model) confirmStashDrop() (tea.Model, tea.Cmd) {
@@ -1536,6 +1567,7 @@ func (m Model) resetModeCursors() Model {
 	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
 	m = m.setExpandedFlowID("")
+	m = m.invalidateViewRequest()
 	return m
 }
 
@@ -1552,6 +1584,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
 	m = m.setExpandedFlowID("")
+	m = m.invalidateViewRequest()
 	return m
 }
 

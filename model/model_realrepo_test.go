@@ -160,8 +160,8 @@ func TestModel_WorktreeDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ = update(m, m.Init()()) // load real worktrees (root is dirty)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayWorktreeDiff {
-		t.Fatalf("expected OverlayWorktreeDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchWorktreeDiff cmd, got nil")
@@ -188,8 +188,8 @@ func TestModel_BranchDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ = update(m, cmd()) // load real branches (root branch dirty)
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayBranchDiff {
-		t.Fatalf("expected OverlayBranchDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchBranchDiff cmd, got nil")
@@ -315,8 +315,8 @@ func TestModel_StashDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ = update(m, cmd()) // load real stashes
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayStashDiff {
-		t.Fatalf("expected OverlayStashDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchStashDiff cmd, got nil")
@@ -341,8 +341,8 @@ func TestModel_CommitDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ = update(m, cmd()) // load real commits
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayCommitDiff {
-		t.Fatalf("expected OverlayCommitDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchCommitDiff cmd, got nil")
@@ -370,8 +370,8 @@ func TestModel_ReflogDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ = update(m, cmd()) // load real reflog entries
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.Overlay() != ui.OverlayReflogDiff {
-		t.Fatalf("expected OverlayReflogDiff, got %d", m.Overlay())
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay, got %d", m.Overlay())
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchReflogDiff cmd, got nil")
