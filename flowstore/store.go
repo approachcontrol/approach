@@ -940,6 +940,20 @@ func phaseSatisfiesDownstreamGate(record FlowRecord, phase FlowPhase) bool {
 	return phase.Status == PhaseCompleted
 }
 
+// PhasePredecessorsSatisfied reports whether all phases before phaseID satisfy
+// the Flow gate rules used to derive downstream readiness.
+func PhasePredecessorsSatisfied(record FlowRecord, phaseID string) bool {
+	for _, phase := range OrderedPhases(record.Phases) {
+		if phase.PhaseID == phaseID {
+			return true
+		}
+		if !phaseSatisfiesDownstreamGate(record, phase) {
+			return false
+		}
+	}
+	return false
+}
+
 // HasPRTarget reports whether PR metadata contains enough target context for
 // downstream Autoreview work.
 func HasPRTarget(pr PullRequest) bool {

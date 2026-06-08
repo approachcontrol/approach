@@ -1110,6 +1110,92 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithRecoveryPrompt(t *testing.T) {
 	}
 }
 
+func TestModel_AKeyOnFlowDoesNotRelaunchAutoreviewWithoutPRTarget(t *testing.T) {
+	var launchAttempted bool
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddFlowPhaseLaunchID() should not run without PR metadata: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchAttempted = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-pr",
+		Branch:       "flow/pr",
+		Status:       flowstore.StatusBlocked,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseBlocked, Outcome: "blocked", Notes: "PR target missing."},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatal("flows-mode a should not launch blocked autoreview without PR metadata")
+	}
+	if launchAttempted {
+		t.Fatal("LaunchAgent() ran without PR metadata")
+	}
+	if got := m.TransientError(); got != "No ready Flow phase to launch" {
+		t.Fatalf("status = %q, want no ready phase message", got)
+	}
+}
+
+func TestModel_AKeyOnFlowDoesNotRelaunchAutoreviewWhenPredecessorsAreUnsatisfied(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddFlowPhaseLaunchID() should not run while predecessors are unsatisfied: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatalf("LaunchAgent() should not run while predecessors are unsatisfied: %#v", ctx)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-pr",
+		Branch:       "flow/pr",
+		Status:       flowstore.StatusBlocked,
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     115,
+			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			HeadBranch: "flow/pr",
+			BaseBranch: "main",
+			Status:     "open",
+		},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhasePending},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseBlocked, Outcome: "blocked", Notes: "Needs another review."},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatal("flows-mode a should not launch blocked autoreview while predecessors are unsatisfied")
+	}
+	if got := m.TransientError(); got != "No ready Flow phase to launch" {
+		t.Fatalf("status = %q, want no ready phase message", got)
+	}
+}
+
 func TestModel_AKeyOnFlowLaunchesMergeWithStructuredReportingPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{

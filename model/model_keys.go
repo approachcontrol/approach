@@ -1104,19 +1104,21 @@ func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, ph
 
 func readyFlowPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
 	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if flowPhaseCanLaunch(phase) {
+		if flowPhaseCanLaunch(record, phase) {
 			return phase, true
 		}
 	}
 	return flowstore.FlowPhase{}, false
 }
 
-func flowPhaseCanLaunch(phase flowstore.FlowPhase) bool {
+func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
 	if phase.Status == flowstore.PhaseReady {
 		return true
 	}
 	return phase.PhaseID == "autoreview" &&
-		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked)
+		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
+		flowstore.HasPRTarget(record.PR) &&
+		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
 }
 
 func flowNotReadyMessage(record flowstore.FlowRecord) string {
