@@ -78,6 +78,40 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	}
 }
 
+func TestModel_StartsInFlowsModeAndFetchesSelectedRepoFlows(t *testing.T) {
+	var gotFilter flowstore.FlowFilter
+	want := []flowstore.FlowRecord{
+		{FlowID: "flow-1", Title: "Default Flow mode", RepoPath: "/dev/alpha", Branch: "flow/default", Status: flowstore.StatusPending},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartupMode: ui.ModeFlows,
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			gotFilter = filter
+			return want, nil
+		},
+	})
+
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("startup mode = %d, want flows", m.Mode())
+	}
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("expected startup flows fetch command")
+	}
+	msg, ok := cmd().(model.FlowResultMsg)
+	if !ok {
+		t.Fatalf("startup command returned %T, want FlowResultMsg", msg)
+	}
+	m, _ = update(m, msg)
+
+	if gotFilter.RepoPath != "/dev/alpha" {
+		t.Fatalf("RepoPath filter = %q, want /dev/alpha", gotFilter.RepoPath)
+	}
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
+		t.Fatalf("Flows() = %#v, want %#v", got, want)
+	}
+}
+
 func TestModel_FlowPhasesCollapsedByDefaultAndToggleWithX(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})

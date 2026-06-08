@@ -46,9 +46,12 @@ are already implemented and should be treated as the baseline product:
 - Saved agent plans persisted through the `wtui plan` CLI and browsed in the
   plans pane with per-phase progress, phase expansion, plan-path copying, and
   editable launch instructions for whole-plan or selected-phase agent launch.
-- Flow records persisted through the `wtui flow` CLI and browsed in the flows
-  pane with derived status, phase progress, linked plan metadata, PR metadata,
-  repo-scoped filtering, and linked-plan body opening.
+- Flow records persisted through the `wtui flow` CLI and started from the
+  default flows pane with new-flow creation, ready-phase agent launch, derived
+  status, phase progress, linked plan metadata, PR metadata, repo-scoped
+  filtering, linked-plan body opening, and recoverable partial-state labels for
+  missing worktree metadata, pending session attachment, and launch/session
+  mismatch.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.
@@ -117,7 +120,7 @@ Goal: add context that helps users decide which worktree needs attention.
 | GitHub/GitLab provider config | Needed for PR creation, PR detection, and CI lookup without hardcoding one provider. | P2 |
 | Worktree notes, labels, or tags | Useful once users have many parallel branches, especially for review or agent-driven work. | P3 |
 | Agent session follow-ups | Add open-native-transcript actions and richer status when provider signals are reliable. | P3 |
-| Flow follow-ups | Add mutation/update commands or agent adapters for phase/session/PR/merge metadata after the browse-only v1 store is proven. | P3 |
+| Flow follow-ups | Add transcript shortcuts from expanded phase rows, manual recovery/retry actions for partial Flow states, and richer phase/session status once provider signals are reliable. | P3 |
 | Desktop notifications | Notify on long-running fetch/pull/batch completion only after the operation model is mature. | P3 |
 
 ### Phase 5: Release and Community Hygiene

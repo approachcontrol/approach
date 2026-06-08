@@ -1550,7 +1550,11 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		updated := flowUpdatedLabel(record)
 		branch := record.Branch
 		if branch == "" {
-			branch = filepath.Base(record.WorktreePath)
+			if record.WorktreePath != "" {
+				branch = filepath.Base(record.WorktreePath)
+			} else if flowMissingWorktree(record) {
+				branch = "missing-worktree"
+			}
 		}
 		line := formatFlowColumns("   ",
 			statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth)),
@@ -1587,10 +1591,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
 	}
 	rows := make([]string, 0, len(record.Phases))
 	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		state := phase.Status
-		if phase.Outcome != "" {
-			state = phase.Outcome
-		}
+		state := flowPhaseState(record, phase)
 		title := phase.Title
 		if phase.ParentPhaseID != "" {
 			title = "  " + title
@@ -1641,14 +1642,85 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 	if current.PhaseID == "" {
 		current = phases[len(phases)-1]
 	}
-	state := current.Status
-	if current.Outcome != "" {
-		state = current.Outcome
-	}
-	if current.PhaseID == "autoreview" && flowMissingPRTarget(record) {
-		state = "missing-pr"
-	}
+	state := flowSummaryPhaseState(record, current)
 	return fmt.Sprintf("%d/%d %s:%s", completed, len(phases), current.PhaseID, state)
+}
+
+func flowSummaryPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+	state := flowPhaseState(record, phase)
+	if flowMissingWorktree(record) && state == flowBasePhaseState(phase) {
+		return "recover-worktree"
+	}
+	return state
+}
+
+func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+	if flowPhaseSessionMismatch(phase) {
+		return "session-mismatch"
+	}
+	if phase.Status == flowstore.PhaseRunning && flowPhaseAwaitingSession(phase) {
+		return "await-session"
+	}
+	if phase.PhaseID == "autoreview" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
+		return "missing-pr"
+	}
+	return flowBasePhaseState(phase)
+}
+
+func phaseCanReportMissingPR(phase flowstore.FlowPhase) bool {
+	return phase.Status == flowstore.PhasePending || phase.Status == flowstore.PhaseReady
+}
+
+func flowBasePhaseState(phase flowstore.FlowPhase) string {
+	state := phase.Status
+	if phase.Outcome != "" {
+		state = phase.Outcome
+	}
+	return state
+}
+
+func flowMissingWorktree(record flowstore.FlowRecord) bool {
+	return record.WorktreePath == "" && record.Branch == ""
+}
+
+func flowPhaseAwaitingSession(phase flowstore.FlowPhase) bool {
+	latestLaunchID := ""
+	for i := len(phase.LaunchIDs) - 1; i >= 0; i-- {
+		if phase.LaunchIDs[i] != "" {
+			latestLaunchID = phase.LaunchIDs[i]
+			break
+		}
+	}
+	if latestLaunchID == "" {
+		return false
+	}
+	for _, session := range phase.Sessions {
+		if session.LaunchID == latestLaunchID {
+			return false
+		}
+	}
+	return true
+}
+
+func flowPhaseSessionMismatch(phase flowstore.FlowPhase) bool {
+	if len(phase.Sessions) == 0 {
+		return false
+	}
+	launches := make(map[string]struct{}, len(phase.LaunchIDs))
+	for _, launchID := range phase.LaunchIDs {
+		if launchID != "" {
+			launches[launchID] = struct{}{}
+		}
+	}
+	for _, session := range phase.Sessions {
+		if session.LaunchID == "" {
+			return true
+		}
+		if _, ok := launches[session.LaunchID]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func flowPlanLabel(record flowstore.FlowRecord) string {

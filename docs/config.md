@@ -208,16 +208,17 @@ skill directories.
 
 ## Flows
 
-Flow records are task-centric workflow records created explicitly through
-`wtui flow`. Each record is stored as
+Flow records are task-centric workflow records created by the TUI or explicitly
+through `wtui flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
-flows pane (mode `8`). The pane shows linked plan IDs when present; press `x`
-to expand or collapse read-only phase detail rows, `o` to open the linked plan
-body from the selected Flow, and `a` to launch the selected ready phase. Expanded
-rows group child implementation phases directly under Implementation. Launches
-record a launch ID and Flow/plan environment metadata for the agent. Other Flow
-mutation remains CLI/agent-driven in v1.
+flows pane (mode `8`), which is the startup default. The pane shows linked plan
+IDs when present; press `n` to create a new Flow, `x` to expand or collapse
+read-only phase detail rows, `o` to open the linked plan body from the selected
+Flow, and `a` to launch the selected ready phase. Expanded rows group child
+implementation phases directly under Implementation. Launches record a launch
+ID and Flow/plan environment metadata for the agent. Other Flow mutation remains
+CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
@@ -252,6 +253,14 @@ Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
 and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
 `needs_attention`, `completed`, `blocked`, and `skipped`.
+
+The flows pane distinguishes recoverable partial states from ordinary phase
+states. It shows `recover-worktree` when a saved Flow has no branch/worktree
+metadata, `await-session` when a running phase has a launch attempt but no
+attached provider session yet, `session-mismatch` when a phase's attached
+session launch ID does not match the phase launch IDs, and
+`autoreview:missing-pr` when PR Creation completed without structured PR
+metadata.
 
 The Plan Review phase gates Implementation. Plan Review completion must use
 `--outcome approved` or `--outcome approved_with_concerns`; the latter requires

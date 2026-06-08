@@ -18,6 +18,7 @@ import (
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
+	"github.com/brian-bell/wtui/ui"
 )
 
 func main() {
@@ -178,6 +179,7 @@ func startProgram(repos []scanner.Repo, cfg config.Config) error {
 	}
 	p := tea.NewProgram(model.NewWithOptions(repos, model.Options{
 		AgentCommand:       cfg.Agent.Command,
+		StartupMode:        ui.ModeFlows,
 		PlanPromptTemplate: cfg.Agent.PlanPrompt,
 		SessionStateRoot:   sessionStore.Root(),
 		ListSessions:       sessionStore.List,
