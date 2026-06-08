@@ -211,14 +211,11 @@ Flow records are task-centric workflow records created explicitly through
 `wtui flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
-flows pane (mode `8`). The pane shows selectable phase rows, linked plan IDs
-when present, and opens a linked plan body from a Flow row with `o`. Once Plan
-Review is approved and a plan/worktree are linked, `enter` on a Flow row or
-Implementation phase row starts or resumes the Implementation phase in the Flow
-worktree, recording a launch ID and Flow/plan environment metadata for the
-agent. Pressing `o` on the Implementation phase row opens the latest transcript
-attached to that exact phase. Other Flow mutation remains CLI/agent-driven in
-v1.
+flows pane (mode `8`). The pane shows linked plan IDs when present; press `x`
+to expand or collapse read-only phase detail rows, `o` to open the linked plan
+body from the selected Flow, and `a` to launch the selected ready phase. Launches
+record a launch ID and Flow/plan environment metadata for the agent. Other Flow
+mutation remains CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and

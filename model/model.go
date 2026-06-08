@@ -904,6 +904,34 @@ func (m Model) canScrollExpandedPlan(delta, viewHeight int) bool {
 	return false
 }
 
+func (m Model) canScrollExpandedFlow(delta, viewHeight int) bool {
+	if m.expandedFlowID == "" || m.selectedFlowID() != m.expandedFlowID {
+		return false
+	}
+	if viewHeight <= 0 {
+		viewHeight = 1
+	}
+	flows := m.filteredFlows()
+	selected := m.FlowSelected()
+	if selected < 0 || selected >= len(flows) {
+		return false
+	}
+
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += flowVisualHeight(flows[i], m.expandedFlowID)
+	}
+	height := flowVisualHeight(flows[selected], m.expandedFlowID)
+	scroll := m.FlowScroll()
+	if delta > 0 {
+		return line+height > scroll+viewHeight
+	}
+	if delta < 0 {
+		return scroll > line
+	}
+	return false
+}
+
 func (m Model) reflowExpandedPlan() Model {
 	plans := m.filteredPlans()
 	selected := m.PlanSelected()
@@ -929,6 +957,35 @@ func (m Model) reflowExpandedPlan() Model {
 	}
 	if target != scroll {
 		m.plans = m.plans.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+	}
+	return m
+}
+
+func (m Model) reflowExpandedFlow() Model {
+	flows := m.filteredFlows()
+	selected := m.FlowSelected()
+	if selected < 0 || selected >= len(flows) {
+		return m
+	}
+
+	viewHeight := m.flowContentHeight()
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += flowVisualHeight(flows[i], m.expandedFlowID)
+	}
+	height := flowVisualHeight(flows[selected], m.expandedFlowID)
+	scroll := m.FlowScroll()
+	target := scroll
+	if scroll > line {
+		target = line
+	}
+	if height <= viewHeight && line+height > target+viewHeight {
+		target = line + height - viewHeight
+	} else if height > viewHeight && line+1 >= target+viewHeight {
+		target = line
+	}
+	if target != scroll {
+		m.flows = m.flows.ScrollBy(target-scroll, viewHeight, m.contentWidth())
 	}
 	return m
 }
@@ -1070,6 +1127,9 @@ func (m Model) reflowPlans() Model {
 
 func (m Model) reflowFlows() Model {
 	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
+	if m.expandedFlowID != "" {
+		return m.reflowExpandedFlow()
+	}
 	return m
 }
 

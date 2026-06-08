@@ -125,6 +125,70 @@ func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
 	}
 }
 
+func TestModel_ExpandedFlowAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.FlowID = "flow-6"
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{
+		{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "First flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-3", RepoPath: "/dev/alpha", Title: "Third flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-4", RepoPath: "/dev/alpha", Title: "Fourth flow", Status: flowstore.StatusPending},
+		{FlowID: "flow-5", RepoPath: "/dev/alpha", Title: "Fifth flow", Status: flowstore.StatusPending},
+		flow,
+	})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12})
+	for i := 0; i < 5; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if got := m.FlowScroll(); got != 3 {
+		t.Fatalf("flow scroll = %d, want 3", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "implementation:ready") {
+		t.Fatalf("expanded flow should scroll phase detail rows into view:\n%s", view)
+	}
+}
+
+func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.Phases = append(flow.Phases,
+		flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop", Status: flowstore.PhasePending},
+		flowstore.FlowPhase{PhaseID: "pr-creation", Title: "PR Creation", Status: flowstore.PhasePending},
+		flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
+	)
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if got := m.FlowSelected(); got != 0 {
+		t.Fatalf("single expanded flow should remain selected, got %d", got)
+	}
+	if got := m.FlowScroll(); got != 1 {
+		t.Fatalf("flow scroll = %d, want 1", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "review-loop:pending") {
+		t.Fatalf("expanded flow should scroll within phase detail rows:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if got := m.FlowScroll(); got != 3 {
+		t.Fatalf("flow scroll should stay at bottom after extra down, got %d", got)
+	}
+	view = m.View()
+	if !strings.Contains(view, "autoreview:pending") {
+		t.Fatalf("expanded flow should stay scrolled to the last phase:\n%s", view)
+	}
+}
+
 func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 	var filters []flowstore.FlowFilter
 	m := model.NewWithOptions(testRepos(), model.Options{

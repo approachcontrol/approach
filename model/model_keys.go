@@ -395,6 +395,13 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedPlanID("")
 		}
 	case ui.ModeFlows:
+		if m.canScrollExpandedFlow(delta, h) {
+			m.flows = m.flows.ScrollBy(delta, h, w)
+			return m
+		}
+		if m.flows.Len() <= 1 {
+			return m
+		}
 		before := m.selectedFlowID()
 		m.flows = m.flows.Move(delta, h, w)
 		if after := m.selectedFlowID(); before != "" && after != before {
