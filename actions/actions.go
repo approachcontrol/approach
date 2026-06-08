@@ -825,11 +825,10 @@ func envWithOverrides(overrides ...envVar) []string {
 }
 
 func agentEnvironment(command string, overrides ...envVar) []string {
-	filter := keepEnvVar
 	if command == agent.CommandCodex {
-		filter = keepCodexChildEnvVar
+		return envWithOverridesMatching(keepCodexChildEnvVar, overrides...)
 	}
-	return envWithOverridesMatching(filter, overrides...)
+	return envWithOverridesMatching(nil, overrides...)
 }
 
 func envWithOverridesMatching(keep func(string) bool, overrides ...envVar) []string {
@@ -857,11 +856,10 @@ func envWithOverridesMatching(keep func(string) bool, overrides ...envVar) []str
 	return env
 }
 
-func keepEnvVar(string) bool {
-	return true
-}
-
 func keepCodexChildEnvVar(key string) bool {
+	// These are known parent Codex runtime/session markers. A wtui launch
+	// should start a fresh interactive Codex CLI that reads user config; other
+	// CODEX_* variables are intentionally preserved for user config/auth.
 	switch key {
 	case "CODEX_CI", "CODEX_SANDBOX", "CODEX_SHELL", "CODEX_THREAD_ID":
 		return false

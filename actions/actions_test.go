@@ -1803,7 +1803,10 @@ func TestAgentCommandCodexScrubsParentRuntimeEnvironment(t *testing.T) {
 		"CODEX_SANDBOX_MODE":                 "workspace-write",
 		"CODEX_SHELL":                        "1",
 		"CODEX_THREAD_ID":                    "parent-thread",
+		"CODEX_USER_SETTING":                 "keep-me",
+		"HOME":                               "/home/user",
 		"OPENAI_API_KEY":                     "api-key",
+		"PATH":                               "/user/bin:/bin",
 	} {
 		t.Setenv(key, value)
 	}
@@ -1832,10 +1835,13 @@ func TestAgentCommandCodexScrubsParentRuntimeEnvironment(t *testing.T) {
 		}
 	}
 	for key, want := range map[string]string{
-		"CODEX_HOME":     "/user/codex-home",
-		"OPENAI_API_KEY": "api-key",
-		"WTUI_AGENT":     "codex",
-		"WTUI_LAUNCH_ID": "launch-1",
+		"CODEX_HOME":         "/user/codex-home",
+		"CODEX_USER_SETTING": "keep-me",
+		"HOME":               "/home/user",
+		"OPENAI_API_KEY":     "api-key",
+		"PATH":               "/user/bin:/bin",
+		"WTUI_AGENT":         "codex",
+		"WTUI_LAUNCH_ID":     "launch-1",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -1844,7 +1850,16 @@ func TestAgentCommandCodexScrubsParentRuntimeEnvironment(t *testing.T) {
 }
 
 func TestAgentCommandClaudeKeepsCodexEnvironment(t *testing.T) {
-	t.Setenv("CODEX_THREAD_ID", "parent-thread")
+	for key, value := range map[string]string{
+		"CODEX_CI":                           "1",
+		"CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+		"CODEX_SANDBOX":                      "restricted",
+		"CODEX_SANDBOX_MODE":                 "workspace-write",
+		"CODEX_SHELL":                        "1",
+		"CODEX_THREAD_ID":                    "parent-thread",
+	} {
+		t.Setenv(key, value)
+	}
 
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:      "claude",
@@ -1856,8 +1871,18 @@ func TestAgentCommandClaudeKeepsCodexEnvironment(t *testing.T) {
 		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if got := envMap(cmd.Env)["CODEX_THREAD_ID"]; got != "parent-thread" {
-		t.Fatalf("CODEX_THREAD_ID = %q, want inherited parent-thread in %#v", got, cmd.Env)
+	env := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"CODEX_CI":                           "1",
+		"CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+		"CODEX_SANDBOX":                      "restricted",
+		"CODEX_SANDBOX_MODE":                 "workspace-write",
+		"CODEX_SHELL":                        "1",
+		"CODEX_THREAD_ID":                    "parent-thread",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want inherited %q in %#v", key, env[key], want, cmd.Env)
+		}
 	}
 }
 

@@ -414,6 +414,17 @@ func TestClaudeSessionHookSettingsEncodesJSONString(t *testing.T) {
 }
 
 func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
+	for key, value := range map[string]string{
+		"CODEX_CI":                           "1",
+		"CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+		"CODEX_SANDBOX":                      "restricted",
+		"CODEX_SANDBOX_MODE":                 "workspace-write",
+		"CODEX_SHELL":                        "1",
+		"CODEX_THREAD_ID":                    "parent-thread",
+		"CODEX_USER_SETTING":                 "keep-me",
+	} {
+		t.Setenv(key, value)
+	}
 	t.Setenv("WTUI_LAUNCH_ID", "inherited-launch")
 	launch, err := agentLaunch(AgentLaunchContext{
 		Command:       "codex-app",
@@ -430,6 +441,20 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 		t.Fatalf("expected open command to have no working dir, got %q", launch.Cmd.Dir)
 	}
 	assertNoWTUIEnv(t, launch.Cmd.Environ())
+	env := envMapInternal(launch.Cmd.Environ())
+	for key, want := range map[string]string{
+		"CODEX_CI":                           "1",
+		"CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+		"CODEX_SANDBOX":                      "restricted",
+		"CODEX_SANDBOX_MODE":                 "workspace-write",
+		"CODEX_SHELL":                        "1",
+		"CODEX_THREAD_ID":                    "parent-thread",
+		"CODEX_USER_SETTING":                 "keep-me",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want inherited %q in %#v", key, env[key], want, launch.Cmd.Environ())
+		}
+	}
 	if !reflect.DeepEqual(launch.Cmd.Args[:1], []string{"open"}) {
 		t.Fatalf("unexpected codex-app args: %#v", launch.Cmd.Args)
 	}
@@ -670,4 +695,15 @@ func assertNoWTUIEnv(t *testing.T, env []string) {
 			t.Fatalf("expected codex-app open command to scrub WTUI env, found %q in %#v", key, env)
 		}
 	}
+}
+
+func envMapInternal(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
 }
