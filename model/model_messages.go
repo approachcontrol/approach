@@ -233,6 +233,7 @@ type FlowResultMsg struct {
 type PlanReadResultMsg struct {
 	RepoPath    string
 	PlanID      string
+	Mode        ui.Mode
 	DiffRequest uint64
 	Text        string
 }
@@ -273,6 +274,7 @@ type AgentResultMsg struct {
 
 type PlanLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
+	Request       uint64
 }
 
 type FlowTitleSubmittedMsg struct {
@@ -288,6 +290,7 @@ type FlowCreateFailedMsg struct {
 	RepoPath string
 	Title    string
 	Err      string
+	Request  uint64
 }
 
 type DeleteFailedMsg struct {
@@ -943,7 +946,7 @@ func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) Mod
 
 func (m Model) handlePlanReadResult(msg PlanReadResultMsg) Model {
 	if m.isCurrentRepo(msg.RepoPath) {
-		if record, ok := m.selectedPlan(); ok && record.PlanID == msg.PlanID {
+		if m.currentPlanTextTargetMatches(msg.Mode, msg.PlanID) {
 			m.modal = m.modal.SetTextForRequest(msg.DiffRequest, msg.Text)
 		}
 	}
@@ -1034,8 +1037,20 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 		if m.modal.View().Request != msg.DiffRequest {
 			return false
 		}
+		return m.currentPlanTextTargetMatches(msg.Mode, msg.PlanID)
+	default:
+		return false
+	}
+}
+
+func (m Model) currentPlanTextTargetMatches(mode ui.Mode, planID string) bool {
+	switch mode {
+	case ui.ModePlans:
 		record, ok := m.selectedPlan()
-		return ok && record.PlanID == msg.PlanID
+		return ok && record.PlanID == planID
+	case ui.ModeFlows:
+		record, ok := m.selectedFlow()
+		return ok && record.PlanID == planID
 	default:
 		return false
 	}

@@ -209,7 +209,8 @@ Flow records are task-centric workflow records created explicitly through
 `wtui flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
-flows pane (mode `8`), which is browse/filter only in v1.
+flows pane (mode `8`). The pane is browse/filter only for mutation in v1, shows
+linked plan IDs when present, and opens a linked plan body with `o`.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
@@ -225,6 +226,7 @@ wtui flow create --title "Ship saved plans" \
 
 wtui flow list [--repo-path PATH] [--state-root PATH] --json
 wtui flow read --flow-id ID [--state-root PATH]
+wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
 ```
 
 Flow IDs use the same safe single-path-segment shape as plans:
@@ -251,7 +253,7 @@ such as Codex or Claude; for Codex, a typical target is
 `~/.codex/skills/wtui-flow`. The skill activates when `WTUI_FLOW_ID` and
 `WTUI_FLOW_PHASE_ID` are present, reads the active flow with
 `wtui flow read --flow-id "$WTUI_FLOW_ID"`, and documents the implemented
-`wtui flow` / `wtui plan` commands for phase persistence.
+`wtui flow` / `wtui plan` commands for phase persistence and saved-plan linkage.
 
 ### `[bootstrap]`
 

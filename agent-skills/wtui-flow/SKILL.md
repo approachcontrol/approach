@@ -61,8 +61,8 @@ the user. These persistence failures must not be treated as successful phase
 progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
-The current Flow CLI exposes `create`, `list`, `read`, and `phase set`.
-Dedicated structured commands for child phases, plan links, PR metadata, and
+The current Flow CLI exposes `create`, `list`, `read`, `phase set`, and
+`plan set`. Dedicated structured commands for child phases, PR metadata, and
 merge metadata are not part of the implemented contract yet. Until those
 commands exist, record the best available details in the current phase
 `--summary`, `--outcome`, and `--notes`, and explicitly tell the user that the
@@ -74,8 +74,9 @@ Goal: produce a saved wtui plan artifact.
 
 1. Read the flow.
 2. Save or update the plan through `wtui plan save`.
-3. Record plan progress with `wtui plan phase set` when the plan has phases.
-4. Complete or block the Flow phase with `wtui flow phase set`.
+3. Link the saved plan artifact back to the Flow with `wtui flow plan set`.
+4. Record plan progress with `wtui plan phase set` when the plan has phases.
+5. Complete or block the Flow phase with `wtui flow phase set`.
 
 ```bash
 if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | wtui plan save \
@@ -91,6 +92,20 @@ if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | wtui plan save \
     --status blocked \
     --outcome "plan_save_failed" \
     --notes "wtui plan save failed; report the command error to the user." \
+    "${FLOW_STATE_ARGS[@]}"
+  exit 1
+fi
+
+if ! wtui flow plan set \
+    --flow-id "$WTUI_FLOW_ID" \
+    --plan-id "$PLAN_ID" \
+    "${FLOW_STATE_ARGS[@]}"; then
+  wtui flow phase set \
+    --flow-id "$WTUI_FLOW_ID" \
+    --phase-id plan \
+    --status blocked \
+    --outcome "plan_link_failed" \
+    --notes "wtui flow plan set failed for saved plan $PLAN_ID; report the command error to the user." \
     "${FLOW_STATE_ARGS[@]}"
   exit 1
 fi
@@ -128,7 +143,7 @@ wtui flow phase set \
   --phase-id plan \
   --status completed \
   --outcome "plan_saved" \
-  --summary "Saved plan $PLAN_ID." \
+  --summary "Saved and linked plan $PLAN_ID." \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
@@ -142,16 +157,28 @@ Goal: review the saved plan before implementation.
 Allowed outcomes are `approved`, `approved_with_concerns`,
 `changes_requested`, and `blocked`.
 
-Read the Flow first. Use `WTUI_PLAN_ID` when present. If it is absent, inspect
-the Plan phase summary or notes from the flow you just read; the current CLI
-does not expose a first-class plan link command yet. If you cannot recover a
-plan ID, mark Plan Review `needs_attention` or `blocked` instead of running
-`wtui plan read --plan-id ""`.
+Read the Flow first. Use `WTUI_PLAN_ID` when present; otherwise read the
+`plan_id` field from `wtui flow read --flow-id "$WTUI_FLOW_ID"`. If you cannot
+recover a plan ID, mark Plan Review `needs_attention` or `blocked` instead of
+running `wtui plan read --plan-id ""`.
 
 ```bash
-if ! wtui flow read --flow-id "$WTUI_FLOW_ID" "${FLOW_STATE_ARGS[@]}" >/dev/null; then
+if ! FLOW_JSON=$(wtui flow read --flow-id "$WTUI_FLOW_ID" "${FLOW_STATE_ARGS[@]}"); then
   echo "wtui flow read failed; report the command error to the user." >&2
   exit 1
+fi
+
+if [ -z "$WTUI_PLAN_ID" ]; then
+  if ! WTUI_PLAN_ID=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("plan_id", ""))'); then
+    wtui flow phase set \
+      --flow-id "$WTUI_FLOW_ID" \
+      --phase-id plan-review \
+      --status blocked \
+      --outcome "plan_review_read_failed" \
+      --notes "wtui flow read returned JSON that could not be parsed for plan_id; report the command error to the user." \
+      "${FLOW_STATE_ARGS[@]}"
+    exit 1
+  fi
 fi
 
 if [ -z "$WTUI_PLAN_ID" ]; then

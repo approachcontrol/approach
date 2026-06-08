@@ -28,6 +28,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextWorktreeCreateRequest()
 			cmd = tagWorktreeCreateRequest(cmd, request)
+		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateInput(view) {
+			var request uint64
+			m, request = m.nextFlowCreateRequest()
+			cmd = tagFlowCreateRequest(cmd, request)
 		}
 		return m, cmd
 	}
@@ -85,6 +89,10 @@ func isWorktreeCreateInput(view modal.View) bool {
 	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
 }
 
+func isFlowCreateInput(view modal.View) bool {
+	return view.Kind == modal.Input && view.Placeholder == ui.FlowBaseRefInputPlaceholder
+}
+
 func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
@@ -100,6 +108,26 @@ func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 			}
 			return msg
 		case WorktreeBootstrapFailedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		default:
+			return msg
+		}
+	}
+}
+
+func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		switch msg := msg.(type) {
+		case PlanLaunchRequestedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		case FlowCreateFailedMsg:
 			if msg.Request == 0 {
 				msg.Request = request
 			}
@@ -286,6 +314,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleOpenPlanText()
 		}
+		if m.mode == ui.ModeFlows {
+			return m.handleOpenFlowPlanText()
+		}
 	case "m":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
@@ -415,6 +446,22 @@ func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
 		return m, m.fetchPlanText()
 	}
 	return m, nil
+}
+
+func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok {
+		return m, nil
+	}
+	if record.PlanID == "" {
+		m = m.setStatus(statusOther, "Flow has no linked plan")
+		return m, nil
+	}
+	m = m.openPlanText()
+	return m, m.fetchPlanTextByID(record.PlanID, ui.ModeFlows)
 }
 
 func (m Model) handleDelete() (tea.Model, tea.Cmd) {
@@ -558,9 +605,10 @@ func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg)
 }
 
 func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
 		return m, nil
 	}
+	m = m.clearFlowCreateRequest(msg.Request)
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to create flow"

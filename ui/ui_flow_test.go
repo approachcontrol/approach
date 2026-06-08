@@ -22,6 +22,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/add-flow-mode",
 			WorktreePath: "/dev/wtui-worktrees/flow-add-flow-mode",
+			PlanID:       "plan-1",
 			PR:           flowstore.PullRequest{Number: 123, URL: "https://github.com/brian-bell/wtui/pull/123"},
 			UpdatedAt:    time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
 			Phases: []flowstore.FlowPhase{
@@ -33,7 +34,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 		FlowSelected: 0,
 	})
 
-	for _, want := range []string{"[8] flows", "Status", "Branch", "Phase", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "#123", "2026-06-07", "Add Flow mode"} {
+	for _, want := range []string{"[8] flows", "Status", "Branch", "Phase", "Plan", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "plan-1", "#123", "2026-06-07", "Add Flow mode"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("flows view missing %q:\n%s", want, view)
 		}

@@ -43,6 +43,8 @@ type Model struct {
 	listRequestSeq            uint64
 	worktreeCreateSeq         uint64
 	activeWorktreeCreate      uint64
+	flowCreateSeq             uint64
+	activeFlowCreate          uint64
 	listRequests              [listRequestSlots]uint64
 	activePane                int // 0=left (repos), 1=right (content)
 	destructive               bool
@@ -693,6 +695,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
+		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
+			return m, nil
+		}
+		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchFlows()
@@ -790,6 +796,13 @@ func (m Model) selectedPlan() (planstore.PlanRecord, bool) {
 		return planstore.PlanRecord{}, false
 	}
 	return m.plans.Selected()
+}
+
+func (m Model) selectedFlow() (flowstore.FlowRecord, bool) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return flowstore.FlowRecord{}, false
+	}
+	return m.flows.Selected()
 }
 
 func (m Model) selectedPlanID() string {

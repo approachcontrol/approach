@@ -45,9 +45,9 @@ Goal: add context that helps users decide which worktree needs attention.
 - [ ] P3 - Worktree notes, labels, or tags: help users manage many parallel branches, especially for review or agent-driven work.
 - [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, show normalized transcripts in mode 6, resume selected sessions, and copy raw provider session IDs.
 - [x] P3 - Saved plans (skill-first v1): persist agent plans via the `wtui plan` CLI and the `wtui-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with a plain-text overlay, phase expansion, per-phase progress, plan-path copying, and launch instructions for whole-plan or selected-phase agent launch.
-- [x] P3 - Flow records (browse-only v1): persist task-centric Flow records via the `wtui flow` CLI into `<sessions root>/flows/...`, and browse them in mode 8 with derived status, phase progress, PR metadata, and repo-scoped filtering.
+- [x] P3 - Flow records (browse-only v1): persist task-centric Flow records via the `wtui flow` CLI into `<sessions root>/flows/...`, and browse them in mode 8 with derived status, phase progress, linked plan metadata, PR metadata, repo-scoped filtering, and linked-plan body opening.
 - [ ] P3 - Plans follow-ups: optional Claude Code `plan-hook` adapter (`ExitPlanMode` PreToolUse/PostToolUse), automatic phase extraction, and TUI editing/deletion (see plan appendix).
-- [ ] P3 - Flow follow-ups: add update/mutation commands or agent adapters for phase/session/PR/merge metadata once the v1 store shape is proven.
+- [ ] P3 - Flow follow-ups: add update/mutation commands or agent adapters for child phase/session/PR/merge metadata once the v1 store shape is proven.
 - [ ] P3 - Agent session follow-ups: add open-native-transcript actions and richer status when provider signals are reliable.
 - [ ] P3 - Desktop notifications: notify on long-running fetch, pull, or batch completion after the operation model is mature.
 

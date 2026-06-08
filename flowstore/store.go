@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/brian-bell/wtui/planstore"
 )
 
 const schemaVersion = 1
@@ -147,6 +149,13 @@ type PhaseUpdate struct {
 	Outcome string
 	Notes   string
 	Summary string
+}
+
+// PlanLinkUpdate links a saved wtui plan artifact to an existing Flow.
+type PlanLinkUpdate struct {
+	FlowID   string
+	PlanID   string
+	PlanPath string
 }
 
 // StartMetadataUpdate adds launch-start metadata that is only known after a
@@ -334,6 +343,48 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return record, nil
+}
+
+// SetPlanLink validates and persists the saved plan artifact linked to a Flow.
+func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	planID := strings.TrimSpace(update.PlanID)
+	if planID == "" {
+		return FlowRecord{}, fmt.Errorf("plan id is required")
+	}
+	planPath, err := planstore.MarkdownPath(s.root, planID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	if supplied := strings.TrimSpace(update.PlanPath); supplied != "" {
+		if !filepath.IsAbs(supplied) {
+			return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", supplied)
+		}
+		if filepath.Clean(supplied) != planPath {
+			return FlowRecord{}, fmt.Errorf("flow plan path %q does not match plan %q path %q", filepath.Clean(supplied), planID, planPath)
+		}
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: s.root})
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	if !planStore.HasPlan(planID) {
+		return FlowRecord{}, fmt.Errorf("plan %q not found", planID)
+	}
+	if _, err := planStore.ReadPlan(planID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.PlanID == planID && record.PlanPath == planPath {
+			return record, nil
+		}
+		record.PlanID = planID
+		record.PlanPath = planPath
+		record.UpdatedAt = now
+		return record, nil
+	})
 }
 
 // SetStartMetadata persists branch/worktree/plan metadata discovered while

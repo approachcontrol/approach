@@ -99,6 +99,23 @@ func (m Model) clearWorktreeCreateRequest(request uint64) Model {
 	return m
 }
 
+func (m Model) nextFlowCreateRequest() (Model, uint64) {
+	m.flowCreateSeq++
+	m.activeFlowCreate = m.flowCreateSeq
+	return m, m.activeFlowCreate
+}
+
+func (m Model) isCurrentFlowCreateRequest(request uint64) bool {
+	return request == m.activeFlowCreate
+}
+
+func (m Model) clearFlowCreateRequest(request uint64) Model {
+	if request != 0 && request == m.activeFlowCreate {
+		m.activeFlowCreate = 0
+	}
+	return m
+}
+
 func (m Model) startFetchWorktrees() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModeWorktrees)
 	return m, m.fetchWorktrees(request)
@@ -453,7 +470,7 @@ func flowPlanPrompt(flow flowstore.FlowRecord, worktree actions.FlowWorktreeCrea
 	var b strings.Builder
 	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)
-	b.WriteString("\n\nCreate and persist the plan, then report Flow persistence failures explicitly before ending.")
+	b.WriteString("\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.")
 	return b.String()
 }
 
@@ -786,15 +803,18 @@ func (m Model) fetchSessionTranscript() tea.Cmd {
 }
 
 func (m Model) fetchPlanText() tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
 	record, ok := m.selectedPlan()
 	if !ok {
 		return nil
 	}
-	planID := record.PlanID
+	return m.fetchPlanTextByID(record.PlanID, ui.ModePlans)
+}
+
+func (m Model) fetchPlanTextByID(planID string, mode ui.Mode) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok || planID == "" {
+		return nil
+	}
 	diffRequest := m.modal.View().Request
 	return func() tea.Msg {
 		body, err := m.readPlan(planID)
@@ -804,7 +824,7 @@ func (m Model) fetchPlanText() tea.Cmd {
 				Pane:        "plan",
 				Err:         fmt.Sprintf("failed to load plan: %v", err),
 				Kind:        FetchPlanText,
-				Mode:        ui.ModePlans,
+				Mode:        mode,
 				DiffRequest: diffRequest,
 				PlanID:      planID,
 			}
@@ -812,6 +832,7 @@ func (m Model) fetchPlanText() tea.Cmd {
 		return PlanReadResultMsg{
 			RepoPath:    repoPath,
 			PlanID:      planID,
+			Mode:        mode,
 			DiffRequest: diffRequest,
 			Text:        body,
 		}
