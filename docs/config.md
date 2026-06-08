@@ -214,7 +214,8 @@ Flow records are task-centric workflow records created explicitly through
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
 flows pane (mode `8`). The pane shows linked plan IDs when present; press `x`
 to expand or collapse read-only phase detail rows, `o` to open the linked plan
-body from the selected Flow, and `a` to launch the selected ready phase. Launches
+body from the selected Flow, and `a` to launch the selected ready phase. Expanded
+rows group child implementation phases directly under Implementation. Launches
 record a launch ID and Flow/plan environment metadata for the agent. Other Flow
 mutation remains CLI/agent-driven in v1.
 
@@ -234,6 +235,8 @@ wtui flow list [--repo-path PATH] [--state-root PATH] --json
 wtui flow read --flow-id ID [--state-root PATH]
 wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
+wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
+    --phase-id ID --title TITLE --order N [--state-root PATH]
 wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
 ```
 
@@ -255,6 +258,14 @@ The Plan Review phase gates Implementation. Plan Review completion must use
 --notes ...` for missing inputs or external blockers. Implementation becomes
 ready only after approved Plan Review outcomes, or after an explicit
 skipped-with-notes Plan Review override.
+
+Implementation can be split into ordered child phases with
+`wtui flow phase add-child`. Child phase IDs are stable: re-running the command
+updates the same child instead of duplicating it. Child phases currently belong
+under `implementation`; they gate review loop and PR creation until completed or
+skipped with notes. The review-loop phase records the first-level implementation
+review with `wtui flow phase set --phase-id review-loop --status completed`,
+`needs_attention`, or `blocked`.
 
 The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >

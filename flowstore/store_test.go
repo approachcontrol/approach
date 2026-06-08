@@ -1112,6 +1112,275 @@ func TestStoreSetPhaseChildPhasesGateDownstreamReadiness(t *testing.T) {
 	}
 }
 
+func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(t *testing.T) {
+	root := t.TempDir()
+	times := []time.Time{
+		time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 1, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 2, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 3, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 4, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 5, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 6, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 7, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 8, 0, time.UTC),
+	}
+	i := 0
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now: func() time.Time {
+			tm := times[i]
+			i++
+			return tm
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Child phases",
+		Instructions: "split implementation",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(plan completed) error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan-review", Status: flowstore.PhaseCompleted, Outcome: "approved"})
+	if err != nil {
+		t.Fatalf("SetPhase(plan-review approved) error = %v", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "implementation", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	}
+	if got := phaseByID(t, record, "review-loop").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop before child = %q, want ready", got)
+	}
+
+	added, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "implementation-api",
+		Title:         "API integration",
+		Order:         10,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase() error = %v", err)
+	}
+	child := phaseByID(t, added, "implementation-api")
+	if child.ParentPhaseID != "implementation" ||
+		child.Title != "API integration" ||
+		child.Kind != "implementation_child" ||
+		child.Status != flowstore.PhaseReady ||
+		child.Order != 10 ||
+		child.CreatedAt != times[5] ||
+		child.UpdatedAt != times[5] {
+		t.Fatalf("child phase = %#v", child)
+	}
+	if got := phaseByID(t, added, "review-loop").Status; got != flowstore.PhasePending {
+		t.Fatalf("review-loop after child add = %q, want pending", got)
+	}
+	if got := phaseByID(t, added, "pr-creation").Status; got != flowstore.PhasePending {
+		t.Fatalf("pr-creation after child add = %q, want pending", got)
+	}
+
+	repeated, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "implementation-api",
+		Title:         "API integration",
+		Order:         10,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase(repeated) error = %v", err)
+	}
+	if repeated.UpdatedAt != added.UpdatedAt {
+		t.Fatalf("idempotent add changed flow UpdatedAt from %s to %s", added.UpdatedAt, repeated.UpdatedAt)
+	}
+	if got := phaseByID(t, repeated, "implementation-api").UpdatedAt; got != child.UpdatedAt {
+		t.Fatalf("idempotent add changed child UpdatedAt from %s to %s", child.UpdatedAt, got)
+	}
+
+	completed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation-api",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "API integration finished.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(child completed) error = %v", err)
+	}
+	if got := phaseByID(t, completed, "review-loop").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop after child completion = %q, want ready", got)
+	}
+	if got := phaseByID(t, completed, "pr-creation").Status; got != flowstore.PhasePending {
+		t.Fatalf("pr-creation after child completion = %q, want pending until review-loop is done", got)
+	}
+
+	reviewed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "review-loop",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: "completed",
+		Summary: "Review loop passed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(review-loop completed) error = %v", err)
+	}
+	if got := phaseByID(t, reviewed, "pr-creation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("pr-creation after review-loop completion = %q, want ready", got)
+	}
+}
+
+func TestStoreAddChildImplementationPhaseOrdersAndUpdatesExistingChildren(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Ordered children",
+		Instructions: "split implementation",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "implementation-api",
+		Title:         "API integration",
+		Order:         20,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase(api) error = %v", err)
+	}
+	record, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "implementation-cli",
+		Title:         "CLI integration",
+		Order:         10,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase(cli) error = %v", err)
+	}
+
+	assertPhaseOrder(t, record, []string{"implementation", "implementation-cli", "implementation-api", "review-loop"})
+
+	updated, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "implementation-api",
+		Title:         "API and store integration",
+		Order:         5,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase(update api) error = %v", err)
+	}
+	assertPhaseOrder(t, updated, []string{"implementation", "implementation-api", "implementation-cli", "review-loop"})
+	if child := phaseByID(t, updated, "implementation-api"); child.Title != "API and store integration" || child.Order != 5 {
+		t.Fatalf("updated child = %#v", child)
+	}
+	count := 0
+	for _, phase := range updated.Phases {
+		if phase.PhaseID == "implementation-api" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("updated child duplicated implementation-api %d times: %#v", count, updated.Phases)
+	}
+}
+
+func TestStoreReadDoesNotGateDownstreamOnSkippedChildWithoutNotes(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "skipped-child-without-notes",
+		Title:        "Skipped child",
+		Instructions: "normalize imported child phase",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseSkipped, Order: 10, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 4, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseReady, Order: 5, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "review-loop").Status; got != flowstore.PhasePending {
+		t.Fatalf("review-loop status = %q, want pending when skipped child has no notes", got)
+	}
+	if got := phaseByID(t, read, "pr-creation").Status; got != flowstore.PhasePending {
+		t.Fatalf("pr-creation status = %q, want pending when skipped child has no notes", got)
+	}
+}
+
+func TestStoreReadOrdersChildrenBeforeDerivingReadiness(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "out-of-order-child",
+		Title:        "Out of order child",
+		Instructions: "normalize child order before gates",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 4, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseReady, Order: 10, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseReady, Order: 5, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	assertPhaseOrder(t, read, []string{"implementation", "implementation-api", "review-loop"})
+	if got := phaseByID(t, read, "implementation-api").Status; got != flowstore.PhaseReady {
+		t.Fatalf("child status = %q, want ready", got)
+	}
+	if got := phaseByID(t, read, "review-loop").Status; got != flowstore.PhasePending {
+		t.Fatalf("review-loop status = %q, want pending behind ready child", got)
+	}
+	if got := phaseByID(t, read, "pr-creation").Status; got != flowstore.PhasePending {
+		t.Fatalf("pr-creation status = %q, want pending behind ready child", got)
+	}
+}
+
 func TestStoreDerivesFlowStatusFromPhasesAndMerge(t *testing.T) {
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	base := flowstore.FlowRecord{
@@ -1210,4 +1479,18 @@ func phaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowst
 	}
 	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
 	return flowstore.FlowPhase{}
+}
+
+func assertPhaseOrder(t *testing.T, record flowstore.FlowRecord, phaseIDs []string) {
+	t.Helper()
+	cursor := 0
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseIDs[cursor] {
+			cursor++
+			if cursor == len(phaseIDs) {
+				return
+			}
+		}
+	}
+	t.Fatalf("phase order missing sequence %#v in %#v", phaseIDs, record.Phases)
 }

@@ -1103,7 +1103,7 @@ func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, ph
 }
 
 func readyFlowPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
-	for _, phase := range record.Phases {
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
 		if phase.Status == flowstore.PhaseReady {
 			return phase, true
 		}
@@ -1135,6 +1135,8 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 		return flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case "implementation":
 		return flowImplementationPrompt(record, phase, planPath, planBody)
+	case "review-loop":
+		return flowReviewLoopPrompt(record, phase, planPath, planBody)
 	default:
 		return flowGenericPhasePrompt(record, phase, planPath, planBody)
 	}
@@ -1164,6 +1166,24 @@ func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowP
 		writeFlowPhaseContext(&b, review)
 	}
 	b.WriteString("\nImplement the approved plan in the Flow worktree, verify the target behavior, and complete the phase with `wtui flow phase set --status completed --outcome implemented --summary \"...\"`.")
+	return b.String()
+}
+
+func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Use the review-loop skill for this first-level implementation review.\n\n")
+	b.WriteString("Review the implementation work completed for this wtui Flow, including child implementation phases, then record exactly one outcome.\n")
+	writeFlowPromptHeader(&b, record, planPath)
+	writeFlowPromptPlanContext(&b, record, planBody)
+	b.WriteString("\nImplementation phase context:\n")
+	for _, candidate := range record.Phases {
+		if candidate.PhaseID == "implementation" || candidate.ParentPhaseID == "implementation" {
+			writeFlowPhaseContext(&b, candidate)
+		}
+	}
+	fmt.Fprintf(&b, "\ncompleted:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome completed --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "needs_attention:\nwtui flow phase set --flow-id %s --phase-id %s --status needs_attention --outcome needs_attention --notes \"...\" --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"", record.FlowID, phase.PhaseID)
 	return b.String()
 }
 
@@ -1217,6 +1237,11 @@ func writeFlowPromptPlanContext(b *strings.Builder, record flowstore.FlowRecord,
 }
 
 func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
+	if phase.PhaseID != "" {
+		b.WriteString("- Phase: ")
+		b.WriteString(phase.PhaseID)
+		b.WriteString("\n")
+	}
 	if phase.Title != "" {
 		b.WriteString("- Title: ")
 		b.WriteString(phase.Title)

@@ -98,6 +98,44 @@ func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Child phases",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/children",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Order: 2},
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3},
+				{PhaseID: "review-loop", Title: "Review Loop", Status: flowstore.PhasePending, Order: 4},
+				{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseReady, Order: 10},
+			},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	implementation := strings.Index(view, "implementation:completed")
+	child := strings.LastIndex(view, "implementation-api:ready")
+	review := strings.Index(view, "review-loop:pending")
+	if implementation < 0 || child < 0 || review < 0 {
+		t.Fatalf("expanded flows view missing expected phases:\n%s", view)
+	}
+	if !(implementation < child && child < review) {
+		t.Fatalf("child phase should render under implementation before review-loop:\n%s", view)
+	}
+	if !strings.Contains(view, "  API integration") {
+		t.Fatalf("child title should be visibly indented:\n%s", view)
+	}
+}
+
 func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

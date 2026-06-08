@@ -491,6 +491,133 @@ func TestModel_AKeyOnFlowExplainsWhyImplementationIsNotReady(t *testing.T) {
 	}
 }
 
+func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		ReadPlan: func(planID string) (string, error) {
+			if planID != "plan-1" {
+				t.Fatalf("ReadPlan called with %q", planID)
+			}
+			return "# Saved plan\n\nImplement issue 114 with children.\n", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-review-loop",
+		Branch:       "flow/review-loop",
+		Title:        "Review implementation",
+		Instructions: "Custom flow instructions from the user.",
+		Status:       flowstore.StatusInProgress,
+		PlanID:       "plan-1",
+		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Summary: "Implemented the main slice."},
+			{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseCompleted, Summary: "Added child API."},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare a review-loop launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	m, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if launched.FlowID != "flow-1" || launched.FlowPhaseID != "review-loop" || launched.PlanID != "plan-1" {
+		t.Fatalf("launch context = %#v", launched)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{
+		"use the review-loop skill",
+		"first-level implementation review",
+		"implementation-api",
+		"api integration",
+		"# saved plan",
+		"wtui flow phase set --flow-id flow-1 --phase-id review-loop",
+		"--status completed",
+		"--status needs_attention",
+		"--status blocked",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review-loop prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+}
+
+func TestModel_AKeyOnFlowUsesChildPhaseOrderingForReadyLaunch(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReadPlan: func(planID string) (string, error) {
+			return "# Saved plan\n", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-child",
+		PlanID:       "plan-1",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 4},
+			{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseReady, Order: 10},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare a child phase launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	if launchUpdate.PhaseID != "implementation-api" {
+		t.Fatalf("launched phase = %q, want child phase before review-loop", launchUpdate.PhaseID)
+	}
+}
+
 func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
