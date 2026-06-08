@@ -3119,7 +3119,7 @@ func TestModel_NewWithOptionsStoresCodexAppAgent(t *testing.T) {
 	}
 }
 
-func TestModel_ShiftAOpensAgentInputFromBothPanes(t *testing.T) {
+func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 	for _, setup := range []struct {
 		name string
 		fn   func(model.Model) model.Model
@@ -3130,20 +3130,51 @@ func TestModel_ShiftAOpensAgentInputFromBothPanes(t *testing.T) {
 		t.Run(setup.name, func(t *testing.T) {
 			m := setup.fn(model.New(testRepos()))
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-			if m.Overlay() != ui.OverlayWorktreeInput {
-				t.Fatalf("expected agent input overlay, got %d", m.Overlay())
+			if m.Overlay() != ui.OverlayAgentSelect {
+				t.Fatalf("expected agent select overlay, got %d", m.Overlay())
 			}
-			if !strings.Contains(m.View(), "codex, codex-app, or claude") {
-				t.Fatalf("expected agent prompt in view")
+			view := m.View()
+			for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("expected agent select view to contain %q", want)
+				}
 			}
 			if cmd != nil {
-				t.Fatalf("expected nil cmd opening agent input, got %T", cmd)
+				t.Fatalf("expected nil cmd opening agent select, got %T", cmd)
 			}
 		})
 	}
 }
 
-func TestModel_AgentInputSavesAndSetsCodex(t *testing.T) {
+func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		agent     string
+		wantCodex bool
+	}{
+		{name: "unset", wantCodex: true},
+		{name: "invalid", agent: "codex-app", wantCodex: true},
+		{name: "claude", agent: "claude", wantCodex: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: tt.agent})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			view := m.View()
+
+			if tt.wantCodex {
+				if !strings.Contains(view, "> codex") {
+					t.Fatalf("expected codex selected in view:\n%s", view)
+				}
+				return
+			}
+			if !strings.Contains(view, "> claude") {
+				t.Fatalf("expected claude selected in view:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestModel_AgentSelectSavesAndSetsCodex(t *testing.T) {
 	var saved string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SaveAgentCommand: func(command string) error {
@@ -3152,7 +3183,6 @@ func TestModel_AgentInputSavesAndSetsCodex(t *testing.T) {
 		},
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("codex")})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected overlay closed, got %d", m.Overlay())
@@ -3169,10 +3199,10 @@ func TestModel_AgentInputSavesAndSetsCodex(t *testing.T) {
 	}
 }
 
-func TestModel_AgentInputSavesAndSetsClaude(t *testing.T) {
+func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("claude")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
@@ -3183,7 +3213,7 @@ func TestModel_AgentInputSavesAndSetsClaude(t *testing.T) {
 	}
 }
 
-func TestModel_AgentInputSavesAndSetsCodexApp(t *testing.T) {
+func TestModel_AgentSelectUpWrapSavesAndSetsClaude(t *testing.T) {
 	var saved string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SaveAgentCommand: func(command string) error {
@@ -3192,17 +3222,43 @@ func TestModel_AgentInputSavesAndSetsCodexApp(t *testing.T) {
 		},
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" CoDeX-App ")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")
 	}
 	m, _ = update(m, cmd())
-	if saved != "codex-app" {
-		t.Fatalf("expected saved codex-app, got %q", saved)
+	if saved != "claude" {
+		t.Fatalf("expected saved claude, got %q", saved)
 	}
-	if m.AgentCommand() != "codex-app" {
-		t.Fatalf("expected session agent codex-app, got %q", m.AgentCommand())
+	if m.AgentCommand() != "claude" {
+		t.Fatalf("expected session agent claude, got %q", m.AgentCommand())
+	}
+}
+
+func TestModel_AgentSelectEscCancelsWithoutSaving(t *testing.T) {
+	saveCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "claude",
+		SaveAgentCommand: func(string) error {
+			saveCalled = true
+			return nil
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
+
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for cancel, got %T", cmd)
+	}
+	if saveCalled {
+		t.Fatal("cancel should not call SaveAgentCommand")
+	}
+	if m.AgentCommand() != "claude" {
+		t.Fatalf("expected agent unchanged, got %q", m.AgentCommand())
 	}
 }
 
@@ -3211,7 +3267,6 @@ func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
 		SaveAgentCommand: func(string) error { return errors.New("disk full") },
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("codex")})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save-agent command")

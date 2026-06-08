@@ -12,6 +12,7 @@ const (
 	None Kind = iota
 	Confirm
 	Input
+	Select
 	Diff
 	Text
 )
@@ -36,6 +37,11 @@ const (
 	Cancelled
 )
 
+type SelectItem struct {
+	Label string
+	Value string
+}
+
 // Modal is the single in-process state machine for transient modal UI. Its
 // zero value is closed.
 type Modal struct {
@@ -48,6 +54,8 @@ type Modal struct {
 	inputErr    string
 	validate    func(string) error
 	submit      func(string) tea.Cmd
+	selectItems []SelectItem
+	selectIndex int
 	diffKind    DiffKind
 	diff        string
 	text        string
@@ -62,6 +70,8 @@ type View struct {
 	Force       bool
 	Input       string
 	InputErr    string
+	SelectItems []SelectItem
+	SelectIndex int
 	DiffKind    DiffKind
 	Diff        string
 	Text        string
@@ -84,6 +94,20 @@ func OpenInput(prompt, placeholder, initial string, validate func(string) error,
 		placeholder: placeholder,
 		input:       initial,
 		validate:    validate,
+		submit:      submit,
+	}
+}
+
+func OpenSelect(prompt string, items []SelectItem, selectedIndex int, submit func(string) tea.Cmd) Modal {
+	if selectedIndex < 0 || selectedIndex >= len(items) {
+		selectedIndex = 0
+	}
+	copiedItems := append([]SelectItem(nil), items...)
+	return Modal{
+		kind:        Select,
+		prompt:      prompt,
+		selectItems: copiedItems,
+		selectIndex: selectedIndex,
 		submit:      submit,
 	}
 }
@@ -146,6 +170,8 @@ func (m Modal) View() View {
 		Force:       m.force,
 		Input:       m.input,
 		InputErr:    m.inputErr,
+		SelectItems: append([]SelectItem(nil), m.selectItems...),
+		SelectIndex: m.selectIndex,
 		DiffKind:    m.diffKind,
 		Diff:        m.diff,
 		Text:        m.text,
@@ -160,6 +186,8 @@ func (m Modal) Update(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		return m.updateConfirm(msg)
 	case Input:
 		return m.updateInput(msg)
+	case Select:
+		return m.updateSelect(msg)
 	case Diff:
 		return m.updateDiff(msg)
 	case Text:
@@ -225,6 +253,48 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		}
 		return m, Consumed, nil
 	}
+}
+
+func (m Modal) updateSelect(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		if len(m.selectItems) == 0 {
+			return Modal{}, Accepted, nil
+		}
+		cmd := deferSubmit(m.submit, m.selectItems[m.selectIndex].Value)
+		if cmd == nil {
+			return Modal{}, Accepted, nil
+		}
+		return Modal{}, Accepted, cmd
+	case "esc", "ctrl+c":
+		return Modal{}, Cancelled, nil
+	case "down", "j":
+		m.selectIndex = nextSelectIndex(m.selectIndex, len(m.selectItems))
+		return m, Consumed, nil
+	case "up", "k":
+		m.selectIndex = previousSelectIndex(m.selectIndex, len(m.selectItems))
+		return m, Consumed, nil
+	default:
+		return m, Consumed, nil
+	}
+}
+
+func nextSelectIndex(index, length int) int {
+	if length == 0 {
+		return 0
+	}
+	return (index + 1) % length
+}
+
+func previousSelectIndex(index, length int) int {
+	if length == 0 {
+		return 0
+	}
+	index--
+	if index < 0 {
+		return length - 1
+	}
+	return index
 }
 
 func deferAction(action func() tea.Cmd) tea.Cmd {

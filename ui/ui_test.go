@@ -521,6 +521,18 @@ func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
 	}
 }
 
+func TestStatusBar_AgentSelectOverlayShowsSelectHints(t *testing.T) {
+	bar := RenderStatusBar(120, 1, OverlayAgentSelect, 1, false, false, false)
+	for _, hint := range []string{"up/down select", "enter: confirm", "esc: cancel"} {
+		if !strings.Contains(bar, hint) {
+			t.Errorf("expected hint %q in agent select overlay bar %q", hint, bar)
+		}
+	}
+	if strings.Contains(bar, "backspace: delete") {
+		t.Fatalf("agent select status should not show text-input hint: %q", bar)
+	}
+}
+
 func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
@@ -1954,21 +1966,25 @@ func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testi
 	}
 }
 
-func TestRender_AgentInputDialogUsesExplicitPlaceholder(t *testing.T) {
+func TestRender_AgentSelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    80,
-		Height:                   24,
-		Mode:                     1,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      "Choose interactive helper",
-		WorktreeInputPlaceholder: AgentInputPlaceholder,
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          80,
+		Height:         24,
+		Mode:           1,
+		Overlay:        OverlayAgentSelect,
+		SelectPrompt:   "Choose interactive helper",
+		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
+		SelectSelected: 1,
 	})
-	if !strings.Contains(view, "Choose interactive helper:") {
-		t.Error("agent input dialog should show caller-provided prompt")
+	stripped := ansi.Strip(view)
+	for _, want := range []string{"Choose interactive helper", "codex", "claude"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("agent select dialog should show %q:\n%s", want, stripped)
+		}
 	}
-	if !strings.Contains(view, AgentInputPlaceholder) {
-		t.Error("agent input dialog should show caller-provided placeholder")
+	if !strings.Contains(stripped, "> claude") {
+		t.Fatalf("agent select dialog should mark selected choice:\n%s", stripped)
 	}
 }
 
