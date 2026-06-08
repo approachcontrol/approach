@@ -1794,6 +1794,73 @@ func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 	}
 }
 
+func TestAgentCommandCodexScrubsParentRuntimeEnvironment(t *testing.T) {
+	for key, value := range map[string]string{
+		"CODEX_CI":                           "1",
+		"CODEX_HOME":                         "/user/codex-home",
+		"CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+		"CODEX_SANDBOX":                      "restricted",
+		"CODEX_SANDBOX_MODE":                 "workspace-write",
+		"CODEX_SHELL":                        "1",
+		"CODEX_THREAD_ID":                    "parent-thread",
+		"OPENAI_API_KEY":                     "api-key",
+	} {
+		t.Setenv(key, value)
+	}
+
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-1",
+		RepoPath:     "/repo",
+		WorktreePath: "/repo/worktree",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	env := envMap(cmd.Env)
+	for _, key := range []string{
+		"CODEX_CI",
+		"CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+		"CODEX_SANDBOX",
+		"CODEX_SANDBOX_MODE",
+		"CODEX_SHELL",
+		"CODEX_THREAD_ID",
+	} {
+		if _, found := env[key]; found {
+			t.Fatalf("codex child env should scrub %s, got %#v", key, cmd.Env)
+		}
+	}
+	for key, want := range map[string]string{
+		"CODEX_HOME":     "/user/codex-home",
+		"OPENAI_API_KEY": "api-key",
+		"WTUI_AGENT":     "codex",
+		"WTUI_LAUNCH_ID": "launch-1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
+		}
+	}
+}
+
+func TestAgentCommandClaudeKeepsCodexEnvironment(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "parent-thread")
+
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:      "claude",
+		LaunchID:     "launch-1",
+		RepoPath:     "/repo",
+		WorktreePath: "/repo/worktree",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	if got := envMap(cmd.Env)["CODEX_THREAD_ID"]; got != "parent-thread" {
+		t.Fatalf("CODEX_THREAD_ID = %q, want inherited parent-thread in %#v", got, cmd.Env)
+	}
+}
+
 func TestAgentCommandClaudeAddsPromptAsFinalArg(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:       "claude",

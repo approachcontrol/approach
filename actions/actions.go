@@ -699,7 +699,7 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		{key: "WTUI_FLOW_ID", value: ctx.FlowID},
 		{key: "WTUI_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
 	}
-	cmd.Env = envWithOverrides(overrides...)
+	cmd.Env = agentEnvironment(command, overrides...)
 	return cmd, overrides, nil
 }
 
@@ -821,6 +821,18 @@ func envWithoutPrefix(prefix string) []string {
 }
 
 func envWithOverrides(overrides ...envVar) []string {
+	return envWithOverridesMatching(nil, overrides...)
+}
+
+func agentEnvironment(command string, overrides ...envVar) []string {
+	filter := keepEnvVar
+	if command == agent.CommandCodex {
+		filter = keepCodexChildEnvVar
+	}
+	return envWithOverridesMatching(filter, overrides...)
+}
+
+func envWithOverridesMatching(keep func(string) bool, overrides ...envVar) []string {
 	overrideKeys := make(map[string]struct{}, len(overrides))
 	for _, item := range overrides {
 		overrideKeys[item.key] = struct{}{}
@@ -833,6 +845,9 @@ func envWithOverrides(overrides ...envVar) []string {
 			if _, found := overrideKeys[key]; found {
 				continue
 			}
+			if keep != nil && !keep(key) {
+				continue
+			}
 		}
 		env = append(env, entry)
 	}
@@ -840,6 +855,19 @@ func envWithOverrides(overrides ...envVar) []string {
 		env = append(env, item.key+"="+item.value)
 	}
 	return env
+}
+
+func keepEnvVar(string) bool {
+	return true
+}
+
+func keepCodexChildEnvVar(key string) bool {
+	switch key {
+	case "CODEX_CI", "CODEX_SANDBOX", "CODEX_SHELL", "CODEX_THREAD_ID":
+		return false
+	}
+	return !strings.HasPrefix(key, "CODEX_INTERNAL_") &&
+		!strings.HasPrefix(key, "CODEX_SANDBOX_")
 }
 
 // ResolveWorktreeCommit returns HEAD for path, or "" when path is not a git
