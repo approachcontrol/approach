@@ -76,7 +76,7 @@ filter matches, or a load failure with details in the status bar.
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | View diff (dirty worktree, dirty branch, stash, commit, or reflog entry), session transcript, or expand/collapse plan phases |
+| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page session transcript, or expand/collapse plan phases |
 | `n` | Create a new worktree in worktrees view, or a new branch in branches view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
@@ -92,12 +92,12 @@ filter matches, or a load failure with details in the status bar.
 | `c` | Open VSCode at worktree path |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), or plan Markdown path (plans view) |
 | `r` | Resume selected agent session (sessions view) |
-| `s` | Show selected agent session summary (sessions view) |
-| `o` | Open selected plan Markdown in a plain-text overlay (plans view), or the linked plan body (flows view) |
+| `s` | Page selected agent session summary (sessions view) |
+| `o` | Page selected plan Markdown (plans view), or the linked plan body (flows view) |
 | `i` | Edit launch instructions and launch the selected plan or selected plan phase (plans view) |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
-| `q`/`esc` | Close overlay or quit |
+| `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
 switch between worktrees, branches, stashes, history, reflog, sessions, plans,
@@ -148,7 +148,7 @@ Status indicators stack on each branch:
 Branches ahead of upstream show up to 5 unpushed commit messages, with overflow
 count. Press `n` to create a new branch from the selected branch, without
 checking it out or creating a worktree. When the root branch is dirty, `enter`
-opens a full-screen diff overlay. `t` opens or attaches to a tmux/Zellij
+opens the diff in `less -R`. `t` opens or attaches to a tmux/Zellij
 session, `c` opens VSCode at the worktree path, and `a` launches the selected
 coding agent for checked-out branch rows only. `f` runs `git fetch --prune`,
 and `F` runs `git pull --ff-only` for branches that have a checked-out
@@ -157,23 +157,23 @@ failure. Deletion requires destructive mode to be enabled first (`D`).
 
 ### Stashes view (mode 3)
 
-Browse stashes for the selected repo. Long stash messages wrap to two lines (date + message start, then indented continuation). Use `↑`/`↓` to select a stash, `enter` to view its diff in a full-screen overlay, `d` to drop the selected stash (with confirmation, requires destructive mode). The stash list scrolls when entries exceed the pane height.
+Browse stashes for the selected repo. Long stash messages wrap to two lines (date + message start, then indented continuation). Use `↑`/`↓` to select a stash, `enter` to page its diff in `less -R`, `d` to drop the selected stash (with confirmation, requires destructive mode). The stash list scrolls when entries exceed the pane height.
 
 ### History view (mode 4)
 
-Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to view the full commit diff, `y` to copy the commit hash to clipboard, `t` to open or attach to a tmux/Zellij session, and `c` to open VSCode at the repo root.
+Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to page the full commit diff in `less -R`, `y` to copy the commit hash to clipboard, `t` to open or attach to a tmux/Zellij session, and `c` to open VSCode at the repo root.
 
 ### Reflog view (mode 5)
 
-Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the abbreviated hash, selector (e.g. `HEAD@{0}`), relative date, and subject. Use `enter` to view the diff for that entry — checkout entries with no tree changes show "No changes at this reflog entry". Use `y` to copy the entry hash to clipboard.
+Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the abbreviated hash, selector (e.g. `HEAD@{0}`), relative date, and subject. Use `enter` to page the diff for that entry in `less -R` -- checkout entries with no tree changes page "No changes at this reflog entry". Use `y` to copy the entry hash to clipboard.
 
 ### Sessions view (mode 6)
 
 Browse captured Claude Code and Codex sessions associated with the selected
 repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
 filter sessions by provider, session ID, launch ID, branch, worktree, model,
-status, or summary. Press `enter` to open the normalized transcript overlay,
-`s` to show the selected summary, `r` to resume the selected provider session,
+status, or summary. Press `enter` to page the normalized transcript in `less -R`,
+`s` to page the selected summary, `r` to resume the selected provider session,
 or `y` to copy the raw provider session ID.
 
 Session data is stored under the user state directory by default:
@@ -192,8 +192,8 @@ Browse saved agent plans for the selected repo. Rows show status, branch, phase
 progress (`completed/total`), the updated date, and the title. Use `/` to filter
 plans by title, summary, status, branch, worktree basename, provider, session
 ID, launch ID, and phase titles/statuses. Press `enter` to expand or collapse
-the selected plan's phase rows, `o` to open the plan Markdown in a plain-text
-overlay, and `y` to copy the plan Markdown path. Press `i` to edit launch
+the selected plan's phase rows, `o` to page the plan Markdown in `less -R`,
+and `y` to copy the plan Markdown path. Press `i` to edit launch
 instructions for the selected plan or selected phase, then `enter` to launch
 the selected agent or `esc` to cancel; blank instructions are rejected.
 
@@ -247,7 +247,7 @@ ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
 `x` to expand or collapse phase detail rows for the selected Flow. Press `o` to
-open the linked plan body in a plain-text overlay; wtui shows a status message
+page the linked plan body in `less -R`; wtui shows a status message
 when the selected Flow has no linked plan. Press `a` on a Flow with a ready phase
 to launch the configured agent for that phase. When Implementation is still
 gated by Plan Review, wtui reports the Plan Review state and notes instead of

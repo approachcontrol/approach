@@ -572,7 +572,7 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 		worktreePath = repoPath
 	}
 	branchName := row.Branch.Name
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 
 	return func() tea.Msg {
 		diff, err := gitquery.BranchDiff(worktreePath)
@@ -608,7 +608,7 @@ func (m Model) fetchWorktreeDiff() tea.Cmd {
 		return nil
 	}
 	worktreePath := wt.Path
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 	return func() tea.Msg {
 		diff, err := gitquery.BranchDiff(worktreePath)
 		if err != nil {
@@ -643,7 +643,7 @@ func (m Model) fetchStashDiff() tea.Cmd {
 	index := stash.Index
 	stashDate := stash.Date
 	stashMessage := stash.Message
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 	return func() tea.Msg {
 		diff, err := gitquery.StashDiff(repoPath, index)
 		if err != nil {
@@ -750,7 +750,7 @@ func (m Model) fetchReflogDiff() tea.Cmd {
 		return nil
 	}
 	hash := entry.Hash
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 	return func() tea.Msg {
 		diff, err := gitquery.ReflogDiff(repoPath, hash)
 		if err != nil {
@@ -777,7 +777,7 @@ func (m Model) fetchSessionTranscript() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 	return func() tea.Msg {
 		events, err := m.readTranscript(record.Provider, record.SessionID)
 		if err != nil {
@@ -815,7 +815,7 @@ func (m Model) fetchPlanTextByID(planID string, mode ui.Mode) tea.Cmd {
 	if !ok || planID == "" {
 		return nil
 	}
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 	return func() tea.Msg {
 		body, err := m.readPlan(planID)
 		if err != nil {
@@ -861,7 +861,7 @@ func (m Model) fetchCommitDiff() tea.Cmd {
 		return nil
 	}
 	hash := commit.Hash
-	diffRequest := m.modal.View().Request
+	diffRequest := m.activeViewRequest
 	return func() tea.Msg {
 		diff, err := gitquery.CommitDiff(repoPath, hash)
 		if err != nil {

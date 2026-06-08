@@ -759,31 +759,31 @@ func (m Model) handleStashResult(msg StashResultMsg) Model {
 	return m
 }
 
-func (m Model) handleStashDiffResult(msg StashDiffResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handleStashDiffResult(msg StashDiffResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchStashDiff, ui.ModeStashes, msg.DiffRequest) {
 		if stash, ok := m.selectedStash(); ok && stashMatchesDiffResult(stash, msg) {
-			m.modal = m.modal.SetDiffForRequest(modal.DiffStash, msg.DiffRequest, msg.Diff)
+			return m.pageBody(msg.Diff)
 		}
 	}
-	return m
+	return m, nil
 }
 
-func (m Model) handleWorktreeDiffResult(msg WorktreeDiffResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handleWorktreeDiffResult(msg WorktreeDiffResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchWorktreeDiff, ui.ModeWorktrees, msg.DiffRequest) {
 		if wt, ok := m.selectedWorktree(); ok && wt.Path == msg.WorktreePath {
-			m.modal = m.modal.SetDiffForRequest(modal.DiffWorktree, msg.DiffRequest, msg.Diff)
+			return m.pageBody(msg.Diff)
 		}
 	}
-	return m
+	return m, nil
 }
 
-func (m Model) handleBranchDiffResult(msg BranchDiffResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handleBranchDiffResult(msg BranchDiffResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchBranchDiff, ui.ModeBranches, msg.DiffRequest) {
 		if row, ok := m.selectedRow(); ok && branchMatchesDiffResult(row, msg) {
-			m.modal = m.modal.SetDiffForRequest(modal.DiffBranch, msg.DiffRequest, msg.Diff)
+			return m.pageBody(msg.Diff)
 		}
 	}
-	return m
+	return m, nil
 }
 
 func (m Model) handleStashDropped(msg StashDroppedMsg) (tea.Model, tea.Cmd) {
@@ -936,40 +936,44 @@ func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 	return m
 }
 
-func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchSessionTranscript, ui.ModeSessions, msg.DiffRequest) {
 		if record, ok := m.selectedSession(); ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID {
-			m.modal = m.modal.SetDiffForRequest(modal.DiffSessionTranscript, msg.DiffRequest, msg.Transcript)
+			return m.pageBody(msg.Transcript)
 		}
 	}
-	return m
+	return m, nil
 }
 
-func (m Model) handlePlanReadResult(msg PlanReadResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handlePlanReadResult(msg PlanReadResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchPlanText, msg.Mode, msg.DiffRequest) {
 		if m.currentPlanTextTargetMatches(msg.Mode, msg.PlanID) {
-			m.modal = m.modal.SetTextForRequest(msg.DiffRequest, msg.Text)
+			return m.pageBody(msg.Text)
 		}
 	}
-	return m
+	return m, nil
 }
 
-func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchCommitDiff, ui.ModeHistory, msg.DiffRequest) {
 		if commit, ok := m.selectedCommit(); ok && commit.Hash == msg.Hash {
-			m.modal = m.modal.SetDiffForRequest(modal.DiffCommit, msg.DiffRequest, msg.Diff)
+			return m.pageBody(msg.Diff)
 		}
 	}
-	return m
+	return m, nil
 }
 
-func (m Model) handleReflogDiffResult(msg ReflogDiffResultMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+func (m Model) handleReflogDiffResult(msg ReflogDiffResultMsg) (Model, tea.Cmd) {
+	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchReflogDiff, ui.ModeReflog, msg.DiffRequest) {
 		if entry, ok := m.selectedReflog(); ok && entry.Hash == msg.Hash {
-			m.modal = m.modal.SetDiffForRequest(modal.DiffReflog, msg.DiffRequest, msg.Diff)
+			body := msg.Diff
+			if body == "" {
+				body = "No changes at this reflog entry"
+			}
+			return m.pageBody(body)
 		}
 	}
-	return m
+	return m, nil
 }
 
 func stashMatchesDiffResult(stash gitquery.Stash, msg StashDiffResultMsg) bool {
@@ -999,43 +1003,43 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 	case FetchList:
 		return msg.Mode == m.mode && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
 	case FetchWorktreeDiff:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchWorktreeDiff, ui.ModeWorktrees, msg.DiffRequest) {
 			return false
 		}
 		wt, ok := m.selectedWorktree()
 		return ok && wt.Path == msg.WorktreePath
 	case FetchBranchDiff:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchBranchDiff, ui.ModeBranches, msg.DiffRequest) {
 			return false
 		}
 		row, ok := m.selectedRow()
 		return ok && branchMatchesDiffError(row, msg)
 	case FetchStashDiff:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchStashDiff, ui.ModeStashes, msg.DiffRequest) {
 			return false
 		}
 		stash, ok := m.selectedStash()
 		return ok && stashMatchesDiffError(stash, msg)
 	case FetchCommitDiff:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchCommitDiff, ui.ModeHistory, msg.DiffRequest) {
 			return false
 		}
 		commit, ok := m.selectedCommit()
 		return ok && commit.Hash == msg.Hash
 	case FetchReflogDiff:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchReflogDiff, ui.ModeReflog, msg.DiffRequest) {
 			return false
 		}
 		entry, ok := m.selectedReflog()
 		return ok && entry.Hash == msg.Hash
 	case FetchSessionTranscript:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchSessionTranscript, ui.ModeSessions, msg.DiffRequest) {
 			return false
 		}
 		record, ok := m.selectedSession()
 		return ok && record.Provider == msg.Provider && record.SessionID == msg.SessionID
 	case FetchPlanText:
-		if m.modal.View().Request != msg.DiffRequest {
+		if !m.activeViewMatches(FetchPlanText, msg.Mode, msg.DiffRequest) {
 			return false
 		}
 		return m.currentPlanTextTargetMatches(msg.Mode, msg.PlanID)
@@ -1150,6 +1154,6 @@ func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(summary) == "" {
 		summary = "No summary"
 	}
-	m.modal = modal.OpenText(summary)
-	return m, nil
+	m = m.invalidateViewRequest()
+	return m.pageBody(summary)
 }
