@@ -191,6 +191,44 @@ func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "merged-flow",
+			Title:  "Merged flow",
+			Status: flowstore.StatusMerged,
+			Branch: "flow/merged",
+			PlanID: "plan-merged",
+			PR:     flowstore.PullRequest{Number: 116, URL: "https://github.com/brian-bell/wtui/pull/116"},
+			Merge: flowstore.Merge{
+				Status:   flowstore.MergeMerged,
+				Commit:   "0123456789abcdef",
+				MergedAt: &mergedAt,
+			},
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseCompleted, Outcome: "passed"},
+				{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseCompleted, Outcome: "merged"},
+			},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "merged-flow",
+	})
+
+	for _, want := range []string{"merged", "flow/merged", "3/3", "plan-merged", "#116", "Merged flow", "merge:merged", "Merge"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("merged flows view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

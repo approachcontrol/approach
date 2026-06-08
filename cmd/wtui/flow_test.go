@@ -317,6 +317,117 @@ func TestRunFlowPRSetValidatesRequiredInputs(t *testing.T) {
 	}
 }
 
+func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "Merge metadata",
+		"--instructions", "merge deliberately",
+		"--repo-path", repoPath,
+		"--branch", "flow/merge-metadata",
+		"--json",
+		"--state-root", root,
+	})
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+		outcome := ""
+		if phaseID == "plan-review" {
+			outcome = flowstore.OutcomeApproved
+		}
+		mustSetFlowPhase(t, root, created.FlowID, phaseID, flowstore.PhaseCompleted, outcome, "", "")
+	}
+	mustRunFlow(t, []string{
+		"wtui", "flow", "pr", "set",
+		"--flow-id", created.FlowID,
+		"--provider", "github",
+		"--number", "116",
+		"--url", "https://github.com/brian-bell/wtui/pull/116",
+		"--head", "flow/merge-metadata",
+		"--base", "main",
+		"--status", "open",
+		"--state-root", root,
+	})
+	mustSetFlowPhase(t, root, created.FlowID, "autoreview", flowstore.PhaseCompleted, "passed", "", "")
+	mustSetFlowPhase(t, root, created.FlowID, "merge", flowstore.PhaseCompleted, "merged", "", "")
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "merge", "set",
+		"--flow-id", created.FlowID,
+		"--status", "merged",
+		"--commit", "0123456789abcdef",
+		"--merged-at", "2026-06-08T15:04:05Z",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var updated flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if updated.Status != flowstore.StatusMerged ||
+		updated.Merge.Status != flowstore.MergeMerged ||
+		updated.Merge.Commit != "0123456789abcdef" ||
+		updated.Merge.MergedAt == nil ||
+		updated.Merge.MergedAt.Format(time.RFC3339) != "2026-06-08T15:04:05Z" {
+		t.Fatalf("updated merge record = %#v", updated)
+	}
+}
+
+func TestRunFlowMergeSetValidatesInputs(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "Merge validation",
+		"--instructions", "validate merge input",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--branch", "flow/merge-validation",
+		"--json",
+		"--state-root", root,
+	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing status",
+			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--commit", "abc123", "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
+			want: "requires --status",
+		},
+		{
+			name: "missing commit",
+			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
+			want: "requires --commit",
+		},
+		{
+			name: "missing merged at",
+			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--commit", "abc123", "--state-root", root},
+			want: "requires --merged-at",
+		},
+		{
+			name: "bad merged at",
+			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--commit", "abc123", "--merged-at", "not-a-time", "--state-root", root},
+			want: "invalid --merged-at",
+		},
+		{
+			name: "missing flow",
+			args: []string{"wtui", "flow", "merge", "set", "--flow-id", "missing-flow", "--status", flowstore.MergeMerged, "--commit", "abc123", "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
+			want: `flow "missing-flow" not found`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {

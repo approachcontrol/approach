@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/brian-bell/wtui/flowstore"
 )
@@ -15,7 +16,7 @@ import (
 // the artifact root but must never scan repositories or start the TUI.
 func runFlow(args []string, deps runDeps) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr> [flags]")
+		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -30,6 +31,8 @@ func runFlow(args []string, deps runDeps) error {
 		return runFlowPlan(args[3:], deps)
 	case "pr":
 		return runFlowPR(args[3:], deps)
+	case "merge":
+		return runFlowMerge(args[3:], deps)
 	default:
 		return fmt.Errorf("unknown flow subcommand %q", args[2])
 	}
@@ -347,6 +350,60 @@ func runFlowPRSet(args []string, deps runDeps) error {
 		HeadBranch: *head,
 		BaseBranch: *base,
 		Status:     *status,
+	})
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func runFlowMerge(args []string, deps runDeps) error {
+	if len(args) < 1 || args[0] != "set" {
+		return fmt.Errorf("usage: wtui flow merge set [flags]")
+	}
+	return runFlowMergeSet(args[1:], deps)
+}
+
+func runFlowMergeSet(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow merge set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flowID := flags.String("flow-id", "", "flow id")
+	status := flags.String("status", "", "merge status")
+	commit := flags.String("commit", "", "merge commit")
+	mergedAt := flags.String("merged-at", "", "merge timestamp")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow merge set requires --flow-id")
+	}
+	if *status == "" {
+		return fmt.Errorf("flow merge set requires --status")
+	}
+	var parsedMergedAt time.Time
+	if *status == flowstore.MergeMerged {
+		if strings.TrimSpace(*commit) == "" {
+			return fmt.Errorf("flow merge set --status merged requires --commit")
+		}
+		if strings.TrimSpace(*mergedAt) == "" {
+			return fmt.Errorf("flow merge set --status merged requires --merged-at")
+		}
+		var err error
+		parsedMergedAt, err = time.Parse(time.RFC3339, strings.TrimSpace(*mergedAt))
+		if err != nil {
+			return fmt.Errorf("invalid --merged-at: %w", err)
+		}
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetMerge(flowstore.MergeUpdate{
+		FlowID:   *flowID,
+		Status:   *status,
+		Commit:   *commit,
+		MergedAt: parsedMergedAt,
 	})
 	if err != nil {
 		return err
