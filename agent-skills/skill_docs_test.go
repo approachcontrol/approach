@@ -103,7 +103,6 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 
 	for _, unimplementedCommand := range []string{
-		"wtui flow phase add-child",
 		"wtui flow pr set",
 		"wtui flow merge set",
 		"wtui flow session attach",

@@ -320,6 +320,47 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 	}
 }
 
+func TestRunFlowPhaseAddChildCreatesIdempotentImplementationChild(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Children", "--instructions", "split implementation", "--repo-path", repoPath, "--json", "--state-root", root})
+	mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+	mustSetFlowPhase(t, root, created.FlowID, "plan-review", flowstore.PhaseCompleted, "approved", "", "")
+
+	var firstUpdatedAt string
+	for i := 0; i < 2; i++ {
+		var stdout bytes.Buffer
+		err := run([]string{
+			"wtui", "flow", "phase", "add-child",
+			"--flow-id", created.FlowID,
+			"--parent-phase-id", "implementation",
+			"--phase-id", "implementation-api",
+			"--title", "API integration",
+			"--order", "10",
+			"--state-root", root,
+		}, noScanDeps(t, runDeps{stdout: &stdout}))
+		if err != nil {
+			t.Fatalf("run returned error on attempt %d: %v", i+1, err)
+		}
+		var updated flowstore.FlowRecord
+		if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+			t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+		}
+		child := phaseByID(updated, "implementation-api")
+		if child.ParentPhaseID != "implementation" ||
+			child.Kind != "implementation_child" ||
+			child.Title != "API integration" ||
+			child.Order != 10 {
+			t.Fatalf("child phase = %#v", child)
+		}
+		if i == 0 {
+			firstUpdatedAt = updated.UpdatedAt.Format(time.RFC3339Nano)
+		} else if got := updated.UpdatedAt.Format(time.RFC3339Nano); got != firstUpdatedAt {
+			t.Fatalf("idempotent retry changed UpdatedAt from %s to %s", firstUpdatedAt, got)
+		}
+	}
+}
+
 func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

@@ -29,6 +29,7 @@ const maxIDCollisionAttempts = 1000
 const defaultLockTimeout = 5 * time.Second
 
 var flowIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var phaseIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 const (
 	StatusPending        = "pending"
@@ -156,6 +157,15 @@ type PhaseUpdate struct {
 	Outcome string
 	Notes   string
 	Summary string
+}
+
+// ChildPhaseUpdate creates or updates a stable child phase under Implementation.
+type ChildPhaseUpdate struct {
+	FlowID        string
+	ParentPhaseID string
+	PhaseID       string
+	Title         string
+	Order         int
 }
 
 // PlanLinkUpdate links a saved wtui plan artifact to an existing Flow.
@@ -353,6 +363,58 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return record, nil
+}
+
+// AddChildPhase creates or updates a stable child phase under Implementation.
+func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
+	if err := validateChildPhaseUpdate(update); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		parentIndex := phaseIndexByID(record.Phases, update.ParentPhaseID)
+		if parentIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("parent phase %q not found in flow %q", update.ParentPhaseID, update.FlowID)
+		}
+		if record.Phases[parentIndex].PhaseID != "implementation" {
+			return FlowRecord{}, fmt.Errorf("child phases can only be added under implementation")
+		}
+		childIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if childIndex >= 0 {
+			child := record.Phases[childIndex]
+			if child.ParentPhaseID != update.ParentPhaseID {
+				return FlowRecord{}, fmt.Errorf("phase %q already belongs to parent %q", update.PhaseID, child.ParentPhaseID)
+			}
+			if child.Title == strings.TrimSpace(update.Title) &&
+				child.Kind == "implementation_child" &&
+				child.Order == update.Order {
+				return record, nil
+			}
+			child.Title = strings.TrimSpace(update.Title)
+			child.Kind = "implementation_child"
+			child.Order = update.Order
+			child.UpdatedAt = now
+			record.Phases[childIndex] = child
+			record.UpdatedAt = now
+			record.Phases = orderImplementationChildren(record.Phases, update.ParentPhaseID)
+			record = refreshPhaseReadiness(record, now)
+			return record, nil
+		}
+		child := FlowPhase{
+			PhaseID:       update.PhaseID,
+			ParentPhaseID: update.ParentPhaseID,
+			Title:         strings.TrimSpace(update.Title),
+			Kind:          "implementation_child",
+			Status:        PhasePending,
+			Order:         update.Order,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		record.Phases = append(record.Phases, child)
+		record.Phases = orderImplementationChildren(record.Phases, update.ParentPhaseID)
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		return record, nil
+	})
 }
 
 func clearsPhaseOutcome(status string) bool {
@@ -682,7 +744,33 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 	return fmt.Errorf("invalid phase transition %s -> %s", current.Status, update.Status)
 }
 
+func validateChildPhaseUpdate(update ChildPhaseUpdate) error {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return err
+	}
+	if err := validatePhaseID(update.ParentPhaseID); err != nil {
+		return fmt.Errorf("invalid parent phase id: %w", err)
+	}
+	if update.ParentPhaseID != "implementation" {
+		return fmt.Errorf("child phases can only be added under implementation")
+	}
+	if err := validatePhaseID(update.PhaseID); err != nil {
+		return err
+	}
+	if update.PhaseID == update.ParentPhaseID {
+		return fmt.Errorf("child phase id must differ from parent phase id")
+	}
+	if strings.TrimSpace(update.Title) == "" {
+		return fmt.Errorf("child phase title is required")
+	}
+	if update.Order < 1 {
+		return fmt.Errorf("child phase order must be positive")
+	}
+	return nil
+}
+
 func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
+	record.Phases = OrderedPhases(record.Phases)
 	predecessorsSatisfied := true
 	resetBlockedDownstream := false
 	for i := range record.Phases {
@@ -711,6 +799,56 @@ func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 	return record
 }
 
+func orderImplementationChildren(phases []FlowPhase, parentPhaseID string) []FlowPhase {
+	if phaseIndexByID(phases, parentPhaseID) < 0 {
+		return phases
+	}
+	return OrderedPhases(phases)
+}
+
+// OrderedPhases returns phases with child phases grouped directly below their
+// parent, sorting siblings by Order and then phase id. Top-level phase order is
+// otherwise preserved for backward compatibility with existing records.
+func OrderedPhases(phases []FlowPhase) []FlowPhase {
+	if len(phases) == 0 {
+		return nil
+	}
+	childrenByParent := make(map[string][]FlowPhase)
+	for _, phase := range phases {
+		if phase.ParentPhaseID != "" {
+			childrenByParent[phase.ParentPhaseID] = append(childrenByParent[phase.ParentPhaseID], phase)
+		}
+	}
+	for parentID := range childrenByParent {
+		sort.SliceStable(childrenByParent[parentID], func(i, j int) bool {
+			left := childrenByParent[parentID][i]
+			right := childrenByParent[parentID][j]
+			if left.Order == right.Order {
+				return left.PhaseID < right.PhaseID
+			}
+			return left.Order < right.Order
+		})
+	}
+	out := make([]FlowPhase, 0, len(phases))
+	insertedChildren := make(map[string]bool)
+	for _, phase := range phases {
+		if phase.ParentPhaseID != "" {
+			continue
+		}
+		out = append(out, phase)
+		if children := childrenByParent[phase.PhaseID]; len(children) > 0 {
+			out = append(out, children...)
+			insertedChildren[phase.PhaseID] = true
+		}
+	}
+	for _, phase := range phases {
+		if phase.ParentPhaseID != "" && !insertedChildren[phase.ParentPhaseID] {
+			out = append(out, phase)
+		}
+	}
+	return out
+}
+
 func shouldResetBlockedDownstreamPhase(phase FlowPhase, resetBlocked bool) bool {
 	switch phase.Status {
 	case PhaseReady, PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseSkipped:
@@ -733,7 +871,10 @@ func phaseSatisfiesDownstreamGate(phase FlowPhase) bool {
 			return false
 		}
 	}
-	return phase.Status == PhaseCompleted || phase.Status == PhaseSkipped
+	if phase.Status == PhaseSkipped {
+		return strings.TrimSpace(phase.Notes) != ""
+	}
+	return phase.Status == PhaseCompleted
 }
 
 func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {
@@ -963,6 +1104,13 @@ func validateFlowID(flowID string) error {
 	return nil
 }
 
+func validatePhaseID(phaseID string) error {
+	if !phaseIDPattern.MatchString(phaseID) || phaseID == "." || phaseID == ".." {
+		return fmt.Errorf("invalid phase id %q", phaseID)
+	}
+	return nil
+}
+
 func matchesFilter(record FlowRecord, filter FlowFilter) bool {
 	if filter.RepoPath != "" && filepath.Clean(record.RepoPath) != filepath.Clean(filter.RepoPath) {
 		return false
@@ -1004,12 +1152,16 @@ func normalizePlanReviewOutcomes(record FlowRecord) FlowRecord {
 }
 
 func hasPhase(record FlowRecord, phaseID string) bool {
-	for _, phase := range record.Phases {
+	return phaseIndexByID(record.Phases, phaseID) >= 0
+}
+
+func phaseIndexByID(phases []FlowPhase, phaseID string) int {
+	for i, phase := range phases {
 		if phase.PhaseID == phaseID {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 func writeFileAtomic(path string, data []byte) error {
