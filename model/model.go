@@ -60,6 +60,11 @@ type Model struct {
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	createFlow                func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	createFlowWorktree        func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
+	setFlowStartMetadata      func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
+	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	readPlan                  func(string) (string, error)
 	planMarkdownPath          func(string) (string, error)
 	copyToClipboard           func(string) error
@@ -108,6 +113,11 @@ type Options struct {
 	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	ListPlans            func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	ListFlows            func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	CreateFlow           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	CreateFlowWorktree   func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
+	SetFlowStartMetadata func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
+	SetFlowPhase         func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	AddFlowPhaseLaunchID func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ReadPlan             func(string) (string, error)
 	PlanMarkdownPath     func(planID string) (string, error)
 	CopyToClipboard      func(text string) error
@@ -149,6 +159,54 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listFlows := opts.ListFlows
 	if listFlows == nil {
 		listFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
+	}
+	createFlow := opts.CreateFlow
+	if createFlow == nil {
+		root := opts.SessionStateRoot
+		createFlow = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.Create(record)
+		}
+	}
+	createFlowWorktree := opts.CreateFlowWorktree
+	if createFlowWorktree == nil {
+		createFlowWorktree = actions.CreateFlowWorktree
+	}
+	setFlowStartMetadata := opts.SetFlowStartMetadata
+	if setFlowStartMetadata == nil {
+		root := opts.SessionStateRoot
+		setFlowStartMetadata = func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetStartMetadata(update)
+		}
+	}
+	setFlowPhase := opts.SetFlowPhase
+	if setFlowPhase == nil {
+		root := opts.SessionStateRoot
+		setFlowPhase = func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetPhase(update)
+		}
+	}
+	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
+	if addFlowPhaseLaunchID == nil {
+		root := opts.SessionStateRoot
+		addFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.AddPhaseLaunchID(update)
+		}
 	}
 	readPlan := opts.ReadPlan
 	if readPlan == nil {
@@ -199,6 +257,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readTranscript:       readTranscript,
 		listPlans:            listPlans,
 		listFlows:            listFlows,
+		createFlow:           createFlow,
+		createFlowWorktree:   createFlowWorktree,
+		setFlowStartMetadata: setFlowStartMetadata,
+		setFlowPhase:         setFlowPhase,
+		addFlowPhaseLaunchID: addFlowPhaseLaunchID,
 		readPlan:             readPlan,
 		planMarkdownPath:     planMarkdownPath,
 		copyToClipboard:      copyToClipboard,
@@ -630,7 +693,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
-		return m.launchAgentWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
+		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
+			next, fetchCmd := next.startFetchFlows()
+			return next, tea.Batch(fetchCmd, launchCmd)
+		}
+		return next, launchCmd
+	case FlowTitleSubmittedMsg:
+		return m.handleFlowTitleSubmitted(msg), nil
+	case FlowInstructionsSubmittedMsg:
+		return m.handleFlowInstructionsSubmitted(msg), nil
+	case FlowCreateFailedMsg:
+		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:
 		resultErr := msg.Err
 		// Detached launches only start the agent in an external
@@ -646,7 +720,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if resultErr != "" {
+			m, resultErr = m.markFlowLaunchNeedsAttention(msg.LaunchContext, resultErr)
 			m = m.setStatus(statusOther, resultErr)
+			if msg.LaunchContext.FlowID != "" && m.mode == ui.ModeFlows {
+				return m.startFetchFlows()
+			}
 		} else if msg.Detached {
 			m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
 		}

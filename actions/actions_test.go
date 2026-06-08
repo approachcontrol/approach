@@ -776,6 +776,54 @@ func TestCreateWorktree_FromTag(t *testing.T) {
 	}
 }
 
+func TestCreateFlowWorktree_AllocatesPairedBranchAndPath(t *testing.T) {
+	repoPath := setupRepo(t)
+	baseCommit := runOutput(t, repoPath, "git", "rev-parse", "HEAD")
+
+	result, err := actions.CreateFlowWorktree(repoPath, "Add Flow Mode", "HEAD")
+	if err != nil {
+		t.Fatalf("CreateFlowWorktree returned error: %v", err)
+	}
+
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "flow-add-flow-mode")
+	if result.WorktreePath != expectedPath {
+		t.Fatalf("worktree path = %q, want %q", result.WorktreePath, expectedPath)
+	}
+	if result.Branch != "flow/add-flow-mode" {
+		t.Fatalf("branch = %q, want flow/add-flow-mode", result.Branch)
+	}
+	if got := runOutput(t, result.WorktreePath, "git", "branch", "--show-current"); got != result.Branch {
+		t.Fatalf("worktree branch = %q, want %q", got, result.Branch)
+	}
+	if got := runOutput(t, result.WorktreePath, "git", "rev-parse", "HEAD"); got != baseCommit {
+		t.Fatalf("worktree commit = %q, want %q", got, baseCommit)
+	}
+}
+
+func TestCreateFlowWorktree_IncrementsBranchAndPathTogetherOnCollision(t *testing.T) {
+	repoPath := setupRepo(t)
+	mustRun(t, repoPath, "git", "branch", "flow/add-flow-mode")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "flow-add-flow-mode-2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := actions.CreateFlowWorktree(repoPath, "Add Flow Mode", "")
+	if err != nil {
+		t.Fatalf("CreateFlowWorktree returned error: %v", err)
+	}
+
+	if result.Branch != "flow/add-flow-mode-3" {
+		t.Fatalf("branch = %q, want flow/add-flow-mode-3", result.Branch)
+	}
+	expectedPath := filepath.Join(filepath.Dir(repoPath), "repo-worktrees", "flow-add-flow-mode-3")
+	if result.WorktreePath != expectedPath {
+		t.Fatalf("worktree path = %q, want %q", result.WorktreePath, expectedPath)
+	}
+	if got := runOutput(t, result.WorktreePath, "git", "branch", "--show-current"); got != result.Branch {
+		t.Fatalf("worktree branch = %q, want %q", got, result.Branch)
+	}
+}
+
 func TestCreatePullRequestWorktree_FromNumber(t *testing.T) {
 	localPath, upstreamPath, _ := setupRemoteRepo(t)
 	mustRun(t, upstreamPath, "git", "commit", "--allow-empty", "-m", "pr change")
@@ -1591,6 +1639,38 @@ func TestAgentCommandAddsSessionMetadataEnvironment(t *testing.T) {
 		"WTUI_COMMIT":             "abcdef",
 		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
 		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
+		}
+	}
+}
+
+func TestAgentCommandAddsFlowEnvironment(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "flow/add-flow-mode",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanID:           "plan-1",
+		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPhaseID:      "plan",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "plan",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	env := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_FLOW_ID":         "flow-1",
+		"WTUI_FLOW_PHASE_ID":   "plan",
+		"WTUI_FLOW_STATE_ROOT": "/state/wtui/sessions/v1",
+		"WTUI_PLAN_ID":         "plan-1",
+		"WTUI_PLAN_PHASE_ID":   "plan",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)

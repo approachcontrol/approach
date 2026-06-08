@@ -10,6 +10,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/config"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/internal/version"
 	"github.com/brian-bell/wtui/scanner"
 )
@@ -236,6 +237,12 @@ func TestRunSessionHookPersistsPlanEnvironment(t *testing.T) {
 				return "plan-1"
 			case "WTUI_PLAN_PATH":
 				return planPath
+			case "WTUI_FLOW_ID":
+				return "flow-1"
+			case "WTUI_FLOW_PHASE_ID":
+				return "plan"
+			case "WTUI_FLOW_STATE_ROOT":
+				return root
 			default:
 				return ""
 			}
@@ -250,10 +257,62 @@ func TestRunSessionHookPersistsPlanEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read metadata: %v", err)
 	}
-	for _, want := range []string{`"plan_id": "plan-1"`, `"plan_path": ` + quoteJSON(planPath)} {
+	for _, want := range []string{`"plan_id": "plan-1"`, `"plan_path": ` + quoteJSON(planPath), `"flow_id": "flow-1"`, `"flow_phase_id": "plan"`} {
 		if !strings.Contains(string(meta), want) {
 			t.Fatalf("metadata missing %s:\n%s", want, meta)
 		}
+	}
+}
+
+func TestRunSessionHookAttachesFlowFromPlanStateRoot(t *testing.T) {
+	planRoot := t.TempDir()
+	sessionRoot := t.TempDir()
+	repoPath := filepath.Join(planRoot, "repo")
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: planRoot})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flow, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Title:        "Plan Root Flow",
+		Instructions: "attach the session",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	err = run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", sessionRoot}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{}, nil
+		},
+		getenv: func(key string) string {
+			switch key {
+			case "WTUI_PLAN_STATE_ROOT":
+				return planRoot
+			case "WTUI_FLOW_ID":
+				return flow.FlowID
+			case "WTUI_FLOW_PHASE_ID":
+				return "plan"
+			default:
+				return ""
+			}
+		},
+		stdin: strings.NewReader(`{"session_id":"codex-flow-plan-root","cwd":"/repo/worktree"}`),
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	read, err := flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if len(read.Phases) == 0 || len(read.Phases[0].Sessions) != 1 {
+		t.Fatalf("attached sessions = %#v, want one on first phase", read.Phases)
+	}
+	if got := read.Phases[0].Sessions[0].SessionID; got != "codex-flow-plan-root" {
+		t.Fatalf("attached session ID = %q, want codex-flow-plan-root", got)
 	}
 }
 

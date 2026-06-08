@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/brian-bell/wtui/flowstore"
 )
 
 type IngestOptions struct {
@@ -62,6 +64,7 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	if err := store.Upsert(record); err != nil {
 		return SessionRecord{}, err
 	}
+	attachFlowSession(record, opts)
 	return record, nil
 }
 
@@ -117,6 +120,12 @@ func applyEnvMetadata(record *SessionRecord, env map[string]string) {
 	}
 	if record.PlanPath == "" {
 		record.PlanPath = env["WTUI_PLAN_PATH"]
+	}
+	if record.FlowID == "" {
+		record.FlowID = env["WTUI_FLOW_ID"]
+	}
+	if record.FlowPhaseID == "" {
+		record.FlowPhaseID = env["WTUI_FLOW_PHASE_ID"]
 	}
 	if record.Branch == "" {
 		record.Branch = env["WTUI_BRANCH"]
@@ -177,6 +186,39 @@ func resolveGitMetadata(record *SessionRecord) {
 			record.Commit = out
 		}
 	}
+}
+
+func attachFlowSession(record SessionRecord, opts IngestOptions) {
+	if record.FlowID == "" || record.FlowPhaseID == "" || record.SessionID == "" {
+		return
+	}
+	root := opts.Env["WTUI_FLOW_STATE_ROOT"]
+	if root == "" {
+		root = opts.Env["WTUI_PLAN_STATE_ROOT"]
+	}
+	if root == "" {
+		root = opts.StateRoot
+	}
+	if root == "" {
+		root = opts.Env["WTUI_SESSION_STATE_ROOT"]
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		return
+	}
+	_, _ = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: record.FlowPhaseID,
+		Session: flowstore.Session{
+			Provider:       string(record.Provider),
+			SessionID:      record.SessionID,
+			LaunchID:       record.LaunchID,
+			Status:         record.Status,
+			StartedAt:      record.StartedAt,
+			EndedAt:        record.EndedAt,
+			TranscriptPath: record.TranscriptPath,
+		},
+	})
 }
 
 func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {

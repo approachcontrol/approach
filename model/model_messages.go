@@ -275,6 +275,21 @@ type PlanLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 }
 
+type FlowTitleSubmittedMsg struct {
+	Title string
+}
+
+type FlowInstructionsSubmittedMsg struct {
+	Title        string
+	Instructions string
+}
+
+type FlowCreateFailedMsg struct {
+	RepoPath string
+	Title    string
+	Err      string
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)

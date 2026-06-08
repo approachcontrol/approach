@@ -121,6 +121,24 @@ func TestInputEditsValidatesAndSubmitsTrimmedValue(t *testing.T) {
 	}
 }
 
+func TestInputAcceptsSpaceKey(t *testing.T) {
+	m := modal.OpenInput(
+		"Instructions",
+		"task instructions",
+		"",
+		nil,
+		nil,
+	)
+
+	m, _, _ = m.Update(keyRunes("Build"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m, _, _ = m.Update(keyRunes("flow"))
+
+	if got := m.View().Input; got != "Build flow" {
+		t.Fatalf("input = %q, want space preserved", got)
+	}
+}
+
 func TestInputInvalidSubmitStaysOpenWithError(t *testing.T) {
 	m := modal.OpenInput(
 		"New worktree",

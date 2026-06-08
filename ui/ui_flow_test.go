@@ -40,6 +40,13 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
+	bar := RenderStatusBar(120, ModeFlows, OverlayNone, 1, false, false, false)
+	if !strings.Contains(bar, "n: new flow") {
+		t.Fatalf("expected new flow hint in flows mode, got %q", bar)
+	}
+}
+
 func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

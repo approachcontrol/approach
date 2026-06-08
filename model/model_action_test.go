@@ -3821,6 +3821,10 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 			CWD:          "/dev/alpha-worktrees/feat/subdir",
 			Branch:       "feat",
 			Commit:       "abc123",
+			PlanID:       "plan-1",
+			PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+			FlowID:       "flow-1",
+			FlowPhaseID:  "review-loop",
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
@@ -3846,7 +3850,11 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		got.WorkingDir != "/dev/alpha-worktrees/feat/subdir" ||
 		got.Branch != "feat" ||
 		got.Commit != "abc123" ||
-		got.SessionStateRoot != "/state/wtui/sessions/v1" {
+		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.PlanID != "plan-1" ||
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
+		got.FlowID != "flow-1" ||
+		got.FlowPhaseID != "review-loop" {
 		t.Fatalf("unexpected resume launch context: %#v", got)
 	}
 	if got.LaunchID == "" || got.LaunchID == "old-launch" {

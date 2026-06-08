@@ -32,10 +32,16 @@ const (
 )
 
 const BranchPrompt = "New branch"
+const FlowTitlePrompt = "New flow title"
+const FlowInstructionsPrompt = "New flow instructions"
+const FlowBaseRefPrompt = "New flow base ref"
 const LaunchInstructionsPrompt = "Launch instructions"
 const WorktreeMovePrompt = "Move worktree to"
 const PRWorktreePrompt = "PR worktree"
 const WorktreeInputPlaceholder = "branch, tag, or new branch name"
+const FlowTitleInputPlaceholder = "flow title"
+const FlowInstructionsInputPlaceholder = "task instructions"
+const FlowBaseRefInputPlaceholder = "optional base ref"
 const WorktreeMoveInputPlaceholder = "new path or sibling name"
 const BranchInputPlaceholder = "branch name"
 const PRWorktreeInputPlaceholder = "PR number or URL"
@@ -818,6 +824,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				shortcutHint{Key: "i", Label: implementLabel},
 				shortcutHint{Key: "y", Label: "copy path"},
 			)
+		}
+	case ModeFlows:
+		if sp.ActivePane == 1 && sp.RepoSelected {
+			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {

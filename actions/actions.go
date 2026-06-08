@@ -45,12 +45,15 @@ type WorktreeCreateKind int
 const (
 	WorktreeCreateGeneric WorktreeCreateKind = iota
 	WorktreeCreatePullRequest
+	WorktreeCreateFlow
 )
 
 func (k WorktreeCreateKind) String() string {
 	switch k {
 	case WorktreeCreatePullRequest:
 		return "pull_request"
+	case WorktreeCreateFlow:
+		return "flow"
 	default:
 		return "generic"
 	}
@@ -318,6 +321,80 @@ func CreateWorktree(repoPath, ref string) (string, error) {
 	return worktreePath, nil
 }
 
+// FlowWorktreeCreateResult describes the branch/worktree allocated for a Flow.
+type FlowWorktreeCreateResult struct {
+	WorktreePath string
+	Branch       string
+}
+
+// CreateFlowWorktree creates a deterministic Flow branch/worktree pair:
+// flow/<slug> at <repo>-worktrees/flow-<slug>. Branch and path suffixes move
+// together on collision so the pair remains easy to recognize.
+func CreateFlowWorktree(repoPath, title, baseRef string) (FlowWorktreeCreateResult, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return FlowWorktreeCreateResult{}, fmt.Errorf("flow title cannot be empty")
+	}
+	baseRef = strings.TrimSpace(baseRef)
+	slug := slugPathPart(title)
+	for i := 1; i < 1000; i++ {
+		suffix := ""
+		if i > 1 {
+			suffix = fmt.Sprintf("-%d", i)
+		}
+		branch := "flow/" + slug + suffix
+		worktreePath := filepath.Join(filepath.Dir(repoPath), repoWorktreeDirName(repoPath), "flow-"+slug+suffix)
+		if flowBranchOrPathExists(repoPath, branch, worktreePath) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			return FlowWorktreeCreateResult{}, err
+		}
+		args := []string{"-C", repoPath, "worktree", "add", "-b", branch, worktreePath}
+		if baseRef != "" {
+			args = append(args, baseRef)
+		}
+		out, err := exec.Command("git", args...).CombinedOutput()
+		if err != nil {
+			msg := strings.TrimSpace(string(out))
+			if isFlowWorktreeCollisionError(msg) {
+				continue
+			}
+			if msg == "" {
+				return FlowWorktreeCreateResult{}, err
+			}
+			return FlowWorktreeCreateResult{}, fmt.Errorf("%s: %w", msg, err)
+		}
+		return FlowWorktreeCreateResult{WorktreePath: worktreePath, Branch: branch}, nil
+	}
+	return FlowWorktreeCreateResult{}, fmt.Errorf("could not allocate a unique flow worktree for %q after %d attempts", title, 999)
+}
+
+func flowBranchOrPathExists(repoPath, branch, worktreePath string) bool {
+	if refExists(repoPath, branch) {
+		return true
+	}
+	if _, err := os.Stat(worktreePath); err == nil {
+		return true
+	}
+	return false
+}
+
+func isFlowWorktreeCollisionError(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "is already checked out") ||
+		strings.Contains(msg, "missing but already registered")
+}
+
+func repoWorktreeDirName(repoPath string) string {
+	base := filepath.Base(repoPath)
+	if isBareRepo(repoPath) {
+		base = strings.TrimSuffix(base, ".git")
+	}
+	return base + "-worktrees"
+}
+
 // CreateBranch creates a new branch without checking it out. When startPoint is
 // empty, git creates the branch at HEAD.
 func CreateBranch(repoPath, name, startPoint string) error {
@@ -475,6 +552,8 @@ type AgentLaunchContext struct {
 	PlanPhaseID      string
 	PlanPhaseTitle   string
 	PlanPhaseStatus  string
+	FlowID           string
+	FlowPhaseID      string
 	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
@@ -611,11 +690,14 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		{key: "WTUI_COMMIT", value: commit},
 		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
 		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
 		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
 		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
+		{key: "WTUI_FLOW_ID", value: ctx.FlowID},
+		{key: "WTUI_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
 	}
 	cmd.Env = envWithOverrides(overrides...)
 	return cmd, overrides, nil
@@ -640,6 +722,9 @@ func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
 	}
 
 	path := ctx.WorkingDir
+	if path == "" && ctx.FlowID != "" && ctx.RepoPath != "" {
+		path = ctx.RepoPath
+	}
 	if path == "" {
 		path = ctx.WorktreePath
 	}
@@ -670,33 +755,27 @@ func codexAppLaunchPrompt(ctx AgentLaunchContext) string {
 
 func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	if ctx.LaunchID == "" &&
-		ctx.RepoPath == "" &&
 		ctx.WorktreePath == "" &&
-		ctx.Branch == "" &&
-		ctx.Commit == "" &&
 		ctx.SessionStateRoot == "" &&
 		ctx.PlanID == "" &&
 		ctx.PlanPath == "" &&
 		ctx.PlanPhaseID == "" &&
-		ctx.PlanPhaseTitle == "" &&
-		ctx.PlanPhaseStatus == "" {
+		ctx.FlowID == "" &&
+		ctx.FlowPhaseID == "" {
 		return ""
 	}
 
 	items := []envVar{
-		{key: "WTUI_AGENT", value: agent.CommandCodexApp},
 		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
-		{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
 		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
-		{key: "WTUI_BRANCH", value: ctx.Branch},
-		{key: "WTUI_COMMIT", value: ctx.Commit},
 		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "WTUI_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
 		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
 		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
 		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
-		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
-		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
+		{key: "WTUI_FLOW_ID", value: ctx.FlowID},
+		{key: "WTUI_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
 	}
 
 	var kept []envVar
@@ -720,7 +799,7 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	if ctx.SessionStateRoot != "" {
 		b.WriteString("\nWhen running wtui plan commands for this launch, pass `--state-root ")
 		b.WriteString(shellQuote(ctx.SessionStateRoot))
-		b.WriteString("` or export WTUI_PLAN_STATE_ROOT/WTUI_SESSION_STATE_ROOT with that value.")
+		b.WriteString("` or export WTUI_FLOW_STATE_ROOT/WTUI_PLAN_STATE_ROOT/WTUI_SESSION_STATE_ROOT with that value.")
 	}
 	return b.String()
 }
@@ -1253,6 +1332,31 @@ func sanitizePathPart(s string) string {
 		return "worktree"
 	}
 	return s
+}
+
+func slugPathPart(s string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 48 {
+		out = strings.Trim(out[:48], "-")
+	}
+	if out == "" {
+		return "flow"
+	}
+	return out
 }
 
 const tmuxSwitchScript = `

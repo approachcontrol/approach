@@ -213,6 +213,11 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		m.inputErr = ""
 		return m, Consumed, nil
 	default:
+		if msg.Type == tea.KeySpace {
+			m.input += " "
+			m.inputErr = ""
+			return m, Consumed, nil
+		}
 		if msg.Type == tea.KeyRunes {
 			m.input += string(msg.Runes)
 			m.inputErr = ""
