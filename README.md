@@ -77,12 +77,12 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`h`/`→`/`l` | Cycle through modes |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page session transcript, or expand/collapse plan phases |
-| `n` | Create a new worktree in worktrees view, or a new branch in branches view |
+| `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `a` | Launch the selected coding agent in the selected worktree |
+| `a` | Launch the selected coding agent in the selected worktree, or launch the selected ready Flow phase |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -109,7 +109,9 @@ list captured when the key is pressed.
 
 ### Worktrees view (mode 1)
 
-The default view. Shows all worktree checkouts for the selected repo. The main (root) worktree always appears first with a blue `[root]` annotation.
+Shows all worktree checkouts for the selected repo. The main (root) worktree
+always appears first with a blue `[root]` annotation. wtui now starts in Flow
+mode by default, but worktrees remain mode `1` and keep the same numeric access.
 
 Each row shows the branch name (or `(detached)` for detached HEAD), status indicators, and the worktree path:
 
@@ -246,15 +248,22 @@ or worktree basename, phase progress plus the current phase state, linked plan
 ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
-`x` to expand or collapse phase detail rows for the selected Flow. Press `o` to
-page the linked plan body in `less -R`; wtui shows a status message
-when the selected Flow has no linked plan. Press `a` on a Flow with a ready phase
-to launch the configured agent for that phase. When Implementation is still
-gated by Plan Review, wtui reports the Plan Review state and notes instead of
-launching. When PR Creation is complete but structured PR metadata is missing,
-Autoreview remains pending and the Flow row shows `autoreview:missing-pr`.
+`n` to create a new Flow, `x` to expand or collapse phase detail rows for the
+selected Flow, and `o` to page the linked plan body in `less -R`; wtui shows a
+status message when the selected Flow has no linked plan. Press `a` on a Flow
+with a ready phase to launch the configured agent for that phase. When
+Implementation is still gated by Plan Review, wtui reports the Plan Review state
+and notes instead of launching. When PR Creation is complete but structured PR
+metadata is missing, Autoreview remains pending and the Flow row shows
+`autoreview:missing-pr`.
 Expanded phase rows group child implementation phases directly under
 Implementation.
+
+Flow rows also surface recoverable partial states so they are not confused with
+ordinary empty or pending work. A saved Flow with no branch/worktree metadata
+shows `recover-worktree`, a running phase with a recorded launch but no attached
+session yet shows `await-session`, and a phase with an attached session whose
+launch ID does not match the phase's launch attempts shows `session-mismatch`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and

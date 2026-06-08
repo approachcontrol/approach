@@ -292,6 +292,154 @@ func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   14,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{
+			{
+				FlowID: "missing-worktree",
+				Title:  "Saved flow needs worktree metadata",
+				Status: flowstore.StatusBlocked,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseBlocked, LaunchIDs: []string{"launch-1"}},
+				},
+			},
+			{
+				FlowID:       "awaiting-session",
+				Title:        "Launch has not attached a session",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/awaiting-session",
+				WorktreePath: "/dev/wtui-worktrees/flow-awaiting-session",
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, LaunchIDs: []string{"launch-2"}},
+				},
+			},
+			{
+				FlowID:       "mismatched-session",
+				Title:        "Session launch mismatch",
+				Status:       flowstore.StatusNeedsAttention,
+				Branch:       "flow/session-mismatch",
+				WorktreePath: "/dev/wtui-worktrees/flow-session-mismatch",
+				Phases: []flowstore.FlowPhase{
+					{
+						PhaseID:   "review-loop",
+						Title:     "Review Loop",
+						Status:    flowstore.PhaseNeedsAttention,
+						LaunchIDs: []string{"launch-3"},
+						Sessions: []flowstore.Session{
+							{Provider: "codex", SessionID: "codex-1", LaunchID: "other-launch", Status: "ended"},
+						},
+					},
+				},
+			},
+		},
+		ActivePane: 1,
+	})
+
+	for _, want := range []string{"plan:recover-worktree", "implementation:await-session", "review-loop:session-mismatch"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("recovery view missing %q:\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "missing-worktree") {
+		t.Fatalf("flow with missing worktree metadata should show a recoverable branch marker:\n%s", view)
+	}
+}
+
+func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
+	flow := flowstore.FlowRecord{
+		FlowID: "missing-worktree-with-history",
+		Title:  "Missing worktree with history",
+		Status: flowstore.StatusNeedsAttention,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
+			{PhaseID: "pr-creation", Title: "PR Creation", Status: flowstore.PhaseCompleted, Order: 2},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending, Order: 3},
+		},
+	}
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:       0,
+		Width:          240,
+		Height:         12,
+		Mode:           ModeFlows,
+		Flows:          []flowstore.FlowRecord{flow},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: flow.FlowID,
+	})
+
+	for _, want := range []string{"autoreview:missing-pr", "plan:completed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("recovery precedence view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "plan:recover-worktree") {
+		t.Fatalf("expanded phase history should not be overwritten by flow-level recovery:\n%s", view)
+	}
+
+	flow.Phases[2].Status = flowstore.PhaseCompleted
+	view = Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:       0,
+		Width:          240,
+		Height:         12,
+		Mode:           ModeFlows,
+		Flows:          []flowstore.FlowRecord{flow},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: flow.FlowID,
+	})
+	if !strings.Contains(view, "autoreview:completed") || strings.Contains(view, "autoreview:missing-pr") {
+		t.Fatalf("completed autoreview history should not be overwritten by missing PR recovery:\n%s", view)
+	}
+}
+
+func TestFlowRecoveryLabelsDoNotFlagHealthySessionOrBranchOnlyRecord(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID: "branch-only",
+		Title:  "Branch-only fixture",
+		Status: flowstore.StatusNeedsAttention,
+		Branch: "flow/branch-only",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "review-loop",
+			Title:     "Review Loop",
+			Status:    flowstore.PhaseNeedsAttention,
+			LaunchIDs: []string{"launch-1"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-1", LaunchID: "launch-1", Status: "ended"},
+			},
+		}},
+	}
+
+	got := flowPhaseProgress(record)
+	if got != "0/1 review-loop:needs_attention" {
+		t.Fatalf("phase progress = %q, want healthy session and branch-only state preserved", got)
+	}
+	view := Render(RenderParams{
+		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:     0,
+		Width:        240,
+		Height:       10,
+		Mode:         ModeFlows,
+		Flows:        []flowstore.FlowRecord{record},
+		ActivePane:   1,
+		FlowSelected: 0,
+	})
+	if !strings.Contains(view, "review-loop:needs_attention") {
+		t.Fatalf("rendered branch-only healthy session should preserve phase state:\n%s", view)
+	}
+	for _, notWant := range []string{"session-mismatch", "recover-worktree"} {
+		if strings.Contains(view, notWant) {
+			t.Fatalf("rendered branch-only healthy session should not contain %q:\n%s", notWant, view)
+		}
+	}
+}
+
 func TestFlowPhaseProgressShowsDashWhenNoPhases(t *testing.T) {
 	got := flowPhaseProgress(flowstore.FlowRecord{})
 	if got != "-" {

@@ -114,6 +114,7 @@ type visibleRepoFetchState struct {
 // simple for tests.
 type Options struct {
 	AgentCommand         string
+	StartupMode          ui.Mode
 	PlanPromptTemplate   string
 	FetchRepo            func(string) error
 	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
@@ -261,7 +262,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessions:             newSessionPane(),
 		plans:                newPlanPane(),
 		flows:                newFlowPane(),
-		mode:                 ui.ModeWorktrees,
+		mode:                 startupMode(opts.StartupMode),
 		agentCommand:         agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:   opts.PlanPromptTemplate,
 		fetchRepo:            fetchRepo,
@@ -290,6 +291,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
 	return m
+}
+
+func startupMode(mode ui.Mode) ui.Mode {
+	if mode >= ui.ModeWorktrees && mode <= ui.ModeFlows {
+		return mode
+	}
+	return ui.ModeWorktrees
 }
 
 func newLaunchID() string {
