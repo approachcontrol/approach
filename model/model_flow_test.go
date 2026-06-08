@@ -246,10 +246,8 @@ func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
-			if planID != "plan-1" {
-				t.Fatalf("ReadPlan called with %q", planID)
-			}
-			return "# Saved Plan\n\nImplement issue 112 with tests.\n", nil
+			t.Fatalf("Plan Review launch should pass the plan path without pre-reading %q", planID)
+			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
@@ -309,19 +307,29 @@ func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
-		"plan review",
-		"custom flow instructions from the user",
-		"# saved plan",
-		"implement issue 112 with tests",
-		"saved and linked plan-1",
-		"plan author noted a migration risk",
-		"wtui flow phase set",
+		"use the review-loop skill",
+		"/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"flow-1",
+		"plan-review",
+		"wtui flow phase set --flow-id flow-1 --phase-id plan-review",
+		"approved",
 		"approved_with_concerns",
 		"changes_requested",
 		"blocked",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("launch prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{
+		"custom flow instructions from the user",
+		"# saved plan",
+		"implement issue 112 with tests",
+		"saved and linked plan-1",
+		"plan author noted a migration risk",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("minimum reliable prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
@@ -384,66 +392,6 @@ func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 		phaseUpdate.Status != flowstore.PhaseBlocked ||
 		phaseUpdate.Outcome != flowstore.OutcomeBlocked ||
 		!strings.Contains(phaseUpdate.Notes, "terminal failed") {
-		t.Fatalf("phase update = %#v", phaseUpdate)
-	}
-}
-
-func TestModel_AKeyOnPlanReviewBlocksFlowWhenLinkedPlanCannotBeRead(t *testing.T) {
-	var phaseUpdate flowstore.PhaseUpdate
-	listed := false
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
-		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			listed = true
-			return []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: filter.RepoPath, Status: flowstore.StatusBlocked}}, nil
-		},
-		ReadPlan: func(planID string) (string, error) {
-			if planID != "plan-1" {
-				t.Fatalf("ReadPlan called with %q", planID)
-			}
-			return "", errors.New("plan missing")
-		},
-		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdate = update
-			return flowstore.FlowRecord{}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
-		FlowID:       "flow-1",
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/flow-review",
-		Title:        "Review saved plan",
-		Status:       flowstore.StatusInProgress,
-		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
-		Phases: []flowstore.FlowPhase{
-			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
-			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseReady},
-			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
-		},
-	}})
-
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	if cmd == nil {
-		t.Fatal("expected launch preparation command")
-	}
-	msg := cmd()
-	if failed, ok := msg.(model.ActionFailedMsg); !ok || !strings.Contains(failed.Err, "plan missing") {
-		t.Fatalf("command returned %#v, want ActionFailedMsg mentioning plan missing", msg)
-	}
-	m, refreshCmd := update(m, msg)
-	if refreshCmd == nil {
-		t.Fatal("expected flow refresh command after launch preparation failure")
-	}
-	_ = refreshCmd()
-	if !listed {
-		t.Fatal("expected ListFlows to refresh stale flows view")
-	}
-	if phaseUpdate.FlowID != "flow-1" ||
-		phaseUpdate.PhaseID != "plan-review" ||
-		phaseUpdate.Status != flowstore.PhaseBlocked ||
-		phaseUpdate.Outcome != flowstore.OutcomeBlocked ||
-		!strings.Contains(phaseUpdate.Notes, "plan missing") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
 }

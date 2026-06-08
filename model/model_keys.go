@@ -866,21 +866,9 @@ func (m Model) handleLaunchFlowPhase() (tea.Model, tea.Cmd) {
 func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
 	return func() tea.Msg {
 		planBody := ""
-		if record.PlanID != "" {
+		if record.PlanID != "" && phase.PhaseID != "plan-review" {
 			body, err := m.readPlan(record.PlanID)
 			if err != nil {
-				if phase.PhaseID == "plan-review" {
-					notes := fmt.Sprintf("Plan Review launch failed: could not read linked plan %s: %v", record.PlanID, err)
-					if _, phaseErr := m.setFlowPhase(flowstore.PhaseUpdate{
-						FlowID:  record.FlowID,
-						PhaseID: phase.PhaseID,
-						Status:  flowstore.PhaseBlocked,
-						Outcome: flowstore.OutcomeBlocked,
-						Notes:   notes,
-					}); phaseErr != nil {
-						return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to read linked plan %s: %v; update flow phase: %v", record.PlanID, err, phaseErr)}
-					}
-				}
 				return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to read linked plan %s: %v", record.PlanID, err)}
 			}
 			planBody = body
@@ -1109,16 +1097,14 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 
 func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
-	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
-	b.WriteString("Flow phase: Plan Review (plan-review).\n")
-	writeFlowPromptHeader(&b, record, planPath)
-	writeFlowPromptPlanContext(&b, record, planBody)
-	b.WriteString("\nReview the linked plan before implementation. Record exactly one of these outcomes with `wtui flow phase set`:\n")
-	b.WriteString("- Approved: `--status completed --outcome approved --summary \"Plan is ready for implementation.\"`\n")
-	b.WriteString("- Approved with concerns: `--status completed --outcome approved_with_concerns --notes \"...\" --summary \"Plan can proceed with noted concerns.\"`\n")
-	b.WriteString("- Changes requested: `--status needs_attention --outcome changes_requested --notes \"...\"`\n")
-	b.WriteString("- Blocked: `--status blocked --outcome blocked --notes \"...\"`\n")
-	b.WriteString("\nDo not mark Implementation ready yourself; wtui derives readiness from the Plan Review outcome.")
+	b.WriteString("Use the review-loop skill to review this saved plan:\n\n")
+	b.WriteString(planPath)
+	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "This is the Plan Review phase for wtui Flow %s. After review, update the Flow with exactly one outcome:\n\n", record.FlowID)
+	fmt.Fprintf(&b, "approved:\nwtui flow phase set --flow-id %s --phase-id plan-review --status completed --outcome approved --summary \"...\"\n\n", record.FlowID)
+	fmt.Fprintf(&b, "approved_with_concerns:\nwtui flow phase set --flow-id %s --phase-id plan-review --status completed --outcome approved_with_concerns --notes \"...\" --summary \"...\"\n\n", record.FlowID)
+	fmt.Fprintf(&b, "changes_requested:\nwtui flow phase set --flow-id %s --phase-id plan-review --status needs_attention --outcome changes_requested --notes \"...\"\n\n", record.FlowID)
+	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id plan-review --status blocked --outcome blocked --notes \"...\"", record.FlowID)
 	return b.String()
 }
 
