@@ -66,9 +66,7 @@ type Model struct {
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	createFlow                func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
-	createFlowWorktree        func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
-	setFlowStartMetadata      func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
+	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	readPlan                  func(string) (string, error)
@@ -121,9 +119,7 @@ type Options struct {
 	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	ListPlans            func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	ListFlows            func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	CreateFlow           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
-	CreateFlowWorktree   func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
-	SetFlowStartMetadata func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
+	StartFlowPlan        func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase         func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ReadPlan             func(string) (string, error)
@@ -168,32 +164,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listFlows := opts.ListFlows
 	if listFlows == nil {
 		listFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
-	}
-	createFlow := opts.CreateFlow
-	if createFlow == nil {
-		root := opts.SessionStateRoot
-		createFlow = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			return store.Create(record)
-		}
-	}
-	createFlowWorktree := opts.CreateFlowWorktree
-	if createFlowWorktree == nil {
-		createFlowWorktree = actions.CreateFlowWorktree
-	}
-	setFlowStartMetadata := opts.SetFlowStartMetadata
-	if setFlowStartMetadata == nil {
-		root := opts.SessionStateRoot
-		setFlowStartMetadata = func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			return store.SetStartMetadata(update)
-		}
 	}
 	setFlowPhase := opts.SetFlowPhase
 	if setFlowPhase == nil {
@@ -248,6 +218,36 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	startFlowPlan := opts.StartFlowPlan
+	if startFlowPlan == nil {
+		root := opts.SessionStateRoot
+		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.Create(record)
+		}
+		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetStartMetadata(update)
+		}
+		starter := NewFlowStarter(FlowStarterOptions{
+			CreateFlow:           createFlow,
+			CreateWorktree:       actions.CreateFlowWorktree,
+			SetStartMetadata:     setFlowStartMetadata,
+			SetPhase:             setFlowPhase,
+			AddPhaseLaunchID:     addFlowPhaseLaunchID,
+			BootstrapHookForRepo: bootstrapHookForRepo,
+			RunBootstrapHook:     runBootstrapHook,
+			ResolveCommit:        actions.ResolveWorktreeCommit,
+			NewLaunchID:          newLaunchID,
+		})
+		startFlowPlan = starter.StartPlan
+	}
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
@@ -270,9 +270,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readTranscript:       readTranscript,
 		listPlans:            listPlans,
 		listFlows:            listFlows,
-		createFlow:           createFlow,
-		createFlowWorktree:   createFlowWorktree,
-		setFlowStartMetadata: setFlowStartMetadata,
+		startFlowPlan:        startFlowPlan,
 		setFlowPhase:         setFlowPhase,
 		addFlowPhaseLaunchID: addFlowPhaseLaunchID,
 		readPlan:             readPlan,
