@@ -474,8 +474,56 @@ func TestCodexAppLaunchUsesWorkingDirForNewThreadPath(t *testing.T) {
 	if got := gotURL.Query().Get("path"); got != "/repo/worktree/subdir" {
 		t.Fatalf("path query = %q, want working dir", got)
 	}
-	if got := gotURL.Query().Get("prompt"); got != "" {
-		t.Fatalf("prompt query = %q, want empty", got)
+	prompt := gotURL.Query().Get("prompt")
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo/worktree")) {
+		t.Fatalf("prompt should carry worktree metadata:\n%s", prompt)
+	}
+}
+
+func TestCodexAppLaunchUsesRepoProjectPathForWorktreeLaunch(t *testing.T) {
+	launch, err := agentLaunch(AgentLaunchContext{
+		Command:       "codex-app",
+		RepoPath:      "/repo",
+		WorktreePath:  "/repo-worktrees/feature",
+		InitialPrompt: "Fix the bug.",
+	}, "darwin", fakeGetenv(nil), fakeLookPath())
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+
+	gotURL, err := url.Parse(launch.Cmd.Args[1])
+	if err != nil {
+		t.Fatalf("parse launch URL: %v", err)
+	}
+	if got := gotURL.Query().Get("path"); got != "/repo" {
+		t.Fatalf("path query = %q, want repo project path", got)
+	}
+	prompt := gotURL.Query().Get("prompt")
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo-worktrees/feature")) {
+		t.Fatalf("prompt should still carry worktree metadata:\n%s", prompt)
+	}
+}
+
+func TestCodexAppLaunchIncludesWorktreeMetadataWithoutInitialPrompt(t *testing.T) {
+	launch, err := agentLaunch(AgentLaunchContext{
+		Command:      "codex-app",
+		RepoPath:     "/repo",
+		WorktreePath: "/repo-worktrees/feature",
+	}, "darwin", fakeGetenv(nil), fakeLookPath())
+	if err != nil {
+		t.Fatalf("agentLaunch returned error: %v", err)
+	}
+
+	gotURL, err := url.Parse(launch.Cmd.Args[1])
+	if err != nil {
+		t.Fatalf("parse launch URL: %v", err)
+	}
+	if got := gotURL.Query().Get("path"); got != "/repo" {
+		t.Fatalf("path query = %q, want repo project path", got)
+	}
+	prompt := gotURL.Query().Get("prompt")
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo-worktrees/feature")) {
+		t.Fatalf("prompt should carry worktree metadata without an initial prompt:\n%s", prompt)
 	}
 }
 
@@ -565,29 +613,6 @@ func TestCodexAppFlowLaunchUsesRepoProjectPath(t *testing.T) {
 	}
 }
 
-func TestCodexAppFlowImplementationLaunchUsesWorkingDirPath(t *testing.T) {
-	launch, err := agentLaunch(AgentLaunchContext{
-		Command:       "codex-app",
-		RepoPath:      "/repo",
-		WorktreePath:  "/repo-worktrees/flow-implementation",
-		WorkingDir:    "/repo-worktrees/flow-implementation",
-		FlowID:        "flow-1",
-		FlowPhaseID:   "implementation",
-		InitialPrompt: "Use wtui-flow.",
-	}, "darwin", fakeGetenv(nil), fakeLookPath())
-	if err != nil {
-		t.Fatalf("agentLaunch returned error: %v", err)
-	}
-
-	gotURL, err := url.Parse(launch.Cmd.Args[1])
-	if err != nil {
-		t.Fatalf("parse launch URL: %v", err)
-	}
-	if got := gotURL.Query().Get("path"); got != "/repo-worktrees/flow-implementation" {
-		t.Fatalf("path query = %q, want flow worktree", got)
-	}
-}
-
 func TestCodexAppLaunchOpensResumeDeepLink(t *testing.T) {
 	t.Setenv("WTUI_SESSION_STATE_ROOT", "/inherited/state")
 	launch, err := agentLaunch(AgentLaunchContext{
@@ -612,7 +637,7 @@ func TestCodexAppLaunchRejectsMissingNewThreadPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing path error")
 	}
-	if !strings.Contains(err.Error(), "requires a worktree path or working directory") {
+	if !strings.Contains(err.Error(), "requires a repo path, working directory, or worktree path") {
 		t.Fatalf("unexpected missing path error: %v", err)
 	}
 }

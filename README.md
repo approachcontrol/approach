@@ -230,8 +230,9 @@ filled first from `WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`,
 `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT`; for new plans, and for
 updates that provide a repo or worktree location, wtui also resolves best-effort
 repo, worktree, branch, and commit metadata from git. `codex-app` launches use
-macOS `open`, so they do not inherit `WTUI_*`; wtui includes equivalent metadata
-in the launch prompt, and agents should pass the listed `--state-root` when
+macOS `open`, so they do not inherit `WTUI_*`; wtui uses the repo path as the
+deep-link project path and includes worktree, state-root, plan, and flow
+metadata in the launch prompt. Agents should pass the listed `--state-root` when
 running `wtui plan` commands. The `wtui-plan-persist` skill instructs agents on
 when and how to save plans. Its canonical source lives in
 `agent-skills/wtui-plan-persist/`, which is intentionally outside Codex and
@@ -241,30 +242,21 @@ skill dirs for use across repos. v1 has no TUI plan editing or deletion.
 ### Flows view (mode 8)
 
 Browse persisted Flow records for the selected repo. Rows show status, branch
-or worktree basename, phase progress (`completed/total`, counting skipped phases
-as done), linked plan ID when present, PR number or label, updated date, and
-title. Use `/` to filter by title, instructions, status, branch, worktree
-basename, plan metadata, PR metadata, phase titles/statuses/summaries, and
-linked session metadata. Flow phase rows are selectable beneath each Flow row.
-Press `enter` on a ready Implementation phase, or on a Flow row whose
-Implementation phase is ready, to start or resume Implementation in the Flow
-worktree. wtui requires an approved Plan Review, a linked plan, and a Flow
-worktree before launch; each attempt records a fresh launch ID and sets
-`WTUI_FLOW_ID`, `WTUI_FLOW_PHASE_ID`, `WTUI_PLAN_ID`, `WTUI_PLAN_PATH`, and the
-shared artifact roots for the agent. If the selected Implementation phase has a
-captured session for the configured agent, wtui resumes the newest eligible
-session first; otherwise it launches a new session.
-
-Press `o` on a Flow row to open the linked plan body in a plain-text overlay;
-wtui shows a status message when the selected Flow has no linked plan. Press
-`o` on the Implementation phase row to open the latest transcript attached to
-that exact phase.
+or worktree basename, phase progress plus the current phase state, linked plan
+ID when present, PR number or label, updated date, and title. Use `/` to filter
+by title, instructions, status, branch, worktree basename, plan metadata, PR
+metadata, phase titles/statuses/summaries, and linked session metadata. Press
+`x` to expand or collapse phase detail rows for the selected Flow. Press `o` to
+open the linked plan body in a plain-text overlay; wtui shows a status message
+when the selected Flow has no linked plan. Press `a` on a Flow with a ready phase
+to launch the configured agent for that phase. When Implementation is still
+gated by Plan Review, wtui reports the Plan Review state and notes instead of
+launching.
 
 Flows are task-centric workflow records stored beside sessions and plans under
-`<sessions root>/flows/<flow-id>/meta.json`. The TUI can create new Flows,
-launch/resume the Plan and Implementation phases, and record launch attempts;
-create, read, list, update arbitrary phase state, and link saved plans with the
-`wtui flow` CLI:
+`<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and
+can record a launch for the selected ready phase; agents still perform normal
+phase progression through the `wtui flow` CLI:
 
 ```bash
 # Create a flow; --repo-path must be absolute and --json is required in v1.
@@ -278,6 +270,12 @@ wtui flow read --flow-id "$FLOW_ID"
 
 # Link a saved plan artifact back to a flow.
 wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+
+# Record Plan Review. approved_with_concerns, changes_requested, and blocked
+# require --notes. Implementation becomes ready only after approved review
+# outcomes, or after an explicit skipped-with-notes Plan Review override.
+wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review \
+  --status completed --outcome approved
 ```
 
 The flow state root is resolved with this precedence: `--state-root` >
@@ -347,7 +345,9 @@ automatically: wtui passes Claude Code or Codex a session-end hook that calls
 the current wtui binary, and it includes `WTUI_*` metadata so hook records can
 be associated with the repo, worktree, branch, and launch. `codex-app` opens via
 macOS deep link instead; wtui scrubs inherited `WTUI_*` from `open` and includes
-launch metadata in the prompt when a prompt is provided.
+launch metadata in the prompt. New `codex-app` threads use the repo path for
+Codex App project identity when wtui knows it, while the selected worktree
+remains available in the prompt metadata.
 
 For manual agent sessions that are not launched by wtui, configure Claude Code
 or Codex hooks to call wtui:

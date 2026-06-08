@@ -13,7 +13,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
-		Width:    180,
+		Width:    230,
 		Height:   10,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
@@ -39,6 +39,9 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 			t.Fatalf("flows view missing %q:\n%s", want, view)
 		}
 	}
+	if strings.Contains(view, "Review loop") {
+		t.Fatalf("flow phase detail rows should be collapsed by default:\n%s", view)
+	}
 }
 
 func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
@@ -48,12 +51,59 @@ func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        120,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+	})
+	if !strings.Contains(bar, "x: phases") {
+		t.Fatalf("expected phase toggle hint for selected flow, got %q", bar)
+	}
+}
+
+func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Add Flow mode",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/add-flow-mode",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Order: 1},
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 2},
+			},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	for _, want := range []string{"plan-review:completed", "Plan Review", "implementation:ready", "Implementation"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expanded flows view missing %q:\n%s", want, view)
+		}
+	}
+	for _, clipped := range []string{"plan-re ", "impleme "} {
+		if strings.Contains(view, clipped) {
+			t.Fatalf("expanded phase ID appears clipped as %q:\n%s", clipped, view)
+		}
+	}
+}
+
 func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
-		Width:    180,
-		Height:   18,
+		Width:    230,
+		Height:   12,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{
 			{
@@ -99,6 +149,37 @@ func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("updated flows view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "review-flow",
+			Title:  "Plan needs revision",
+			Status: flowstore.StatusNeedsAttention,
+			Branch: "flow/review",
+			PlanID: "plan-1",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseNeedsAttention, Outcome: "changes_requested"},
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
+			},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		AgentAvailable: true,
+	})
+
+	for _, want := range []string{"plan-review", "changes_requested", "1/3", "a", "launch phase"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("flows gate view missing %q:\n%s", want, view)
 		}
 	}
 }

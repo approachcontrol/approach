@@ -204,8 +204,8 @@ type RenderParams struct {
 	FlowSelected             int
 	FlowScroll               int
 	ExpandedPlanID           string
+	ExpandedFlowID           string
 	SelectedPlanPhaseID      string
-	SelectedFlowPhaseID      string
 	OverlayText              string
 	TransientError           string
 	TransientErrorFadeStep   int
@@ -382,7 +382,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	case p.Mode == ModeFlows && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.SelectedFlowPhaseID)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -830,10 +830,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 			if sp.FlowSelected {
-				actions = append(actions,
-					shortcutHint{Key: "enter", Label: "implement"},
-					shortcutHint{Key: "o", Label: "open"},
-				)
+				actions = append(actions, shortcutHint{Key: "x", Label: "phases"})
+			}
+			if sp.AgentAvailable {
+				actions = append(actions, shortcutHint{Key: "a", Label: "launch phase"})
 			}
 		}
 	}
@@ -1515,13 +1515,13 @@ func planUpdatedLabel(record planstore.PlanRecord) string {
 const (
 	flowStatusWidth  = 15
 	flowBranchWidth  = 20
-	flowPhaseWidth   = 7
+	flowPhaseWidth   = 34
 	flowPlanWidth    = 12
 	flowPRWidth      = 8
 	flowUpdatedWidth = 10
 )
 
-func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, selectedPhaseID string) []string {
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1563,38 +1563,32 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			line = stashSelStyle.Width(width).Render(selectedLine)
 		}
 		rows = append(rows, truncateToWidth(line, width))
-		rows = append(rows, renderFlowPhaseRows(record, width, i == selected, selectedPhaseID)...)
+		if record.FlowID == expandedFlowID {
+			rows = append(rows, renderFlowPhaseRows(record, width)...)
+		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedFlow bool, selectedPhaseID string) []string {
+func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
 	if len(record.Phases) == 0 {
-		return nil
+		return []string{truncateToWidth("      No phases", width)}
 	}
 	rows := make([]string, 0, len(record.Phases))
 	for _, phase := range record.Phases {
+		state := phase.Status
+		if phase.Outcome != "" {
+			state = phase.Outcome
+		}
 		line := formatFlowColumns("      ",
 			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
 			"",
-			diffHdrStyle.Render(fitSessionColumn(phase.PhaseID, flowPhaseWidth)),
+			diffHdrStyle.Render(fitSessionColumn(phase.PhaseID+":"+state, flowPhaseWidth)),
 			"",
 			"",
 			"",
 			stashMsgStyle.Render(phase.Title),
 		)
-		if selectedFlow && phase.PhaseID == selectedPhaseID {
-			selectedLine := truncateToWidth(formatFlowColumns(" > ",
-				phase.Status,
-				"",
-				phase.PhaseID,
-				"",
-				"",
-				"",
-				phase.Title,
-			), width)
-			line = stashSelStyle.Width(width).Render(selectedLine)
-		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return rows
@@ -1618,12 +1612,24 @@ func flowPhaseProgress(record flowstore.FlowRecord) string {
 		return "-"
 	}
 	completed := 0
+	current := flowstore.FlowPhase{}
 	for _, phase := range record.Phases {
 		if phase.Status == flowstore.PhaseCompleted || phase.Status == flowstore.PhaseSkipped {
 			completed++
+			continue
+		}
+		if current.PhaseID == "" {
+			current = phase
 		}
 	}
-	return fmt.Sprintf("%d/%d", completed, len(record.Phases))
+	if current.PhaseID == "" {
+		current = record.Phases[len(record.Phases)-1]
+	}
+	state := current.Status
+	if current.Outcome != "" {
+		state = current.Outcome
+	}
+	return fmt.Sprintf("%d/%d %s:%s", completed, len(record.Phases), current.PhaseID, state)
 }
 
 func flowPlanLabel(record flowstore.FlowRecord) string {

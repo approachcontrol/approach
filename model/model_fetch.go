@@ -796,44 +796,6 @@ func (m Model) fetchSessionTranscript() tea.Cmd {
 			RepoPath:    repoPath,
 			Provider:    record.Provider,
 			SessionID:   record.SessionID,
-			Mode:        ui.ModeSessions,
-			DiffRequest: diffRequest,
-			Transcript:  formatTranscript(events),
-		}
-	}
-}
-
-func (m Model) fetchFlowPhaseTranscript(record flowstore.FlowRecord, phase flowstore.FlowPhase, session flowstore.Session) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	provider := sessions.Provider(session.Provider)
-	sessionID := session.SessionID
-	diffRequest := m.modal.View().Request
-	return func() tea.Msg {
-		events, err := m.readTranscript(provider, sessionID)
-		if err != nil {
-			return FetchErrorMsg{
-				RepoPath:    repoPath,
-				Pane:        "flow phase transcript",
-				Err:         fmt.Sprintf("failed to load transcript: %v", err),
-				Kind:        FetchSessionTranscript,
-				Mode:        ui.ModeFlows,
-				DiffRequest: diffRequest,
-				Provider:    provider,
-				SessionID:   sessionID,
-				FlowID:      record.FlowID,
-				FlowPhaseID: phase.PhaseID,
-			}
-		}
-		return SessionTranscriptResultMsg{
-			RepoPath:    repoPath,
-			Provider:    provider,
-			SessionID:   sessionID,
-			Mode:        ui.ModeFlows,
-			FlowID:      record.FlowID,
-			FlowPhaseID: phase.PhaseID,
 			DiffRequest: diffRequest,
 			Transcript:  formatTranscript(events),
 		}

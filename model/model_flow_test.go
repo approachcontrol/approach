@@ -13,7 +13,6 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -24,6 +23,21 @@ func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecor
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: records, ListRequest: m.ListRequest(ui.ModeFlows)})
 	return m
+}
+
+func flowWithPhaseDetails() flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Flow with phases",
+		Status:   flowstore.StatusInProgress,
+		Branch:   "flow/with-phases",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}
 }
 
 func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
@@ -61,6 +75,53 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	got := m.Flows()
 	if len(got) != 1 || got[0].FlowID != "flow-1" {
 		t.Fatalf("Flows() = %#v, want %#v", got, want)
+	}
+}
+
+func TestModel_FlowPhasesCollapsedByDefaultAndToggleWithX(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+
+	if m.ExpandedFlowID() != "" {
+		t.Fatalf("expanded flow = %q, want collapsed by default", m.ExpandedFlowID())
+	}
+	if strings.Contains(m.View(), "plan-review:approved") {
+		t.Fatalf("collapsed flow should not render phase detail rows:\n%s", m.View())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("toggle phases returned command %T, want nil", cmd)
+	}
+	if got := m.ExpandedFlowID(); got != flow.FlowID {
+		t.Fatalf("expanded flow = %q, want %q", got, flow.FlowID)
+	}
+	if !strings.Contains(m.View(), "plan-review:approved") {
+		t.Fatalf("expanded flow should render phase detail rows:\n%s", m.View())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.ExpandedFlowID() != "" || strings.Contains(m.View(), "plan-review:approved") {
+		t.Fatalf("second toggle should collapse phase detail rows:\n%s", m.View())
+	}
+}
+
+func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{
+		flowWithPhaseDetails(),
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending, Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhasePending}}},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.ExpandedFlowID() == "" {
+		t.Fatal("expected selected flow to expand")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("flow selection = %d, want second flow", got)
+	}
+	if m.ExpandedFlowID() != "" {
+		t.Fatalf("expanded flow = %q, want collapsed after selecting another flow", m.ExpandedFlowID())
 	}
 }
 
@@ -240,13 +301,16 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 	}
 }
 
-func TestModel_EnterOnFlowRowLaunchesReadyImplementation(t *testing.T) {
+func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
-	flow := readyImplementationFlow()
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/wtui/sessions/v1",
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("Plan Review launch should pass the plan path without pre-reading %q", planID)
+			return "", nil
+		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -256,299 +320,141 @@ func TestModel_EnterOnFlowRowLaunchesReadyImplementation(t *testing.T) {
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-review",
+		Branch:       "flow/review",
+		Commit:       "abc123",
+		Title:        "Review saved plan",
+		Instructions: "Custom flow instructions from the user.",
+		Status:       flowstore.StatusInProgress,
+		PlanID:       "plan-1",
+		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		UpdatedAt:    time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Outcome: "plan_saved", Summary: "Saved and linked plan-1.", Notes: "Plan author noted a migration risk."},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseReady},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
+		},
+	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
-		t.Fatal("expected implementation launch preparation command")
+		t.Fatal("flows-mode a should prepare a plan-review launch")
 	}
-	msg, ok := cmd().(model.FlowImplementationLaunchRequestedMsg)
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
 	if !ok {
-		t.Fatalf("launch preparation returned %T, want FlowImplementationLaunchRequestedMsg", msg)
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
 	}
-	m, cmd = update(m, msg)
+	m, cmd = update(m, launchMsg)
 	if cmd == nil {
-		t.Fatal("expected agent launch command")
+		t.Fatal("expected agent result command")
 	}
+	_ = cmd()
 
-	if launchUpdate.FlowID != flow.FlowID || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID == "" {
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "plan-review" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
 	}
-	if launched.Command != "codex" ||
-		launched.FlowID != flow.FlowID ||
-		launched.FlowPhaseID != "implementation" ||
-		launched.PlanID != flow.PlanID ||
-		launched.PlanPath != flow.PlanPath ||
-		launched.WorktreePath != flow.WorktreePath ||
-		launched.WorkingDir != flow.WorktreePath ||
-		launched.RepoPath != flow.RepoPath ||
-		launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
-		launched.LaunchID != launchUpdate.LaunchID {
+	if launched.FlowID != "flow-1" ||
+		launched.FlowPhaseID != "plan-review" ||
+		launched.PlanID != "plan-1" ||
+		launched.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		launched.WorktreePath != "/dev/alpha-worktrees/flow-review" ||
+		launched.Branch != "flow/review" ||
+		launched.Commit != "abc123" ||
+		launched.SessionStateRoot != "/state/wtui/sessions/v1" {
 		t.Fatalf("launch context = %#v", launched)
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "approved flow plan", "custom implementation instructions", "wtui flow phase set --flow-id", "--phase-id implementation", "completed", "needs_attention", "blocked"} {
+	for _, want := range []string{
+		"use the review-loop skill",
+		"/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"flow-1",
+		"plan-review",
+		"wtui flow phase set --flow-id flow-1 --phase-id plan-review",
+		"approved",
+		"approved_with_concerns",
+		"changes_requested",
+		"blocked",
+	} {
 		if !strings.Contains(prompt, want) {
-			t.Fatalf("implementation prompt missing %q:\n%s", want, launched.InitialPrompt)
+			t.Fatalf("launch prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{
+		"custom flow instructions from the user",
+		"# saved plan",
+		"implement issue 112 with tests",
+		"saved and linked plan-1",
+		"plan author noted a migration risk",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("minimum reliable prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
 
-func TestModel_EnterOnImplementationPhaseRowLaunchesExactPhase(t *testing.T) {
-	var launchUpdate flowstore.PhaseLaunchUpdate
-	flow := readyImplementationFlow()
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+func TestModel_AKeyOnFlowExplainsWhyImplementationIsNotReady(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-review",
+		Title:        "Review requested changes",
+		Status:       flowstore.StatusNeedsAttention,
+		PlanID:       "plan-1",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseNeedsAttention, Outcome: "changes_requested", Notes: "Clarify rollout steps."},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
 		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	for m.SelectedFlowPhaseID() != "implementation" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}})
+	if view := m.View(); !strings.Contains(view, "launch phase") {
+		t.Fatalf("gated flow view should still expose launch/status action:\n%s", view)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected implementation phase launch command")
-	}
-	msg := cmd()
-	intent, ok := msg.(model.FlowImplementationLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("launch preparation returned %T, want FlowImplementationLaunchRequestedMsg", msg)
-	}
-	_, _ = update(m, intent)
-	if launchUpdate.PhaseID != "implementation" {
-		t.Fatalf("launched phase = %q, want implementation", launchUpdate.PhaseID)
-	}
-}
-
-func TestModel_EnterOnImplementationPhaseRejectsUnapprovedPlanReview(t *testing.T) {
-	flow := readyImplementationFlow()
-	for i := range flow.Phases {
-		if flow.Phases[i].PhaseID == "plan-review" {
-			flow.Phases[i].Outcome = "changes_requested"
-		}
-	}
-	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"}), []flowstore.FlowRecord{flow})
-	for m.SelectedFlowPhaseID() != "implementation" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	}
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd != nil {
-		t.Fatalf("unapproved implementation returned command %T, want nil", cmd)
+		t.Fatalf("not-ready flow launch returned command %T, want nil", cmd)
 	}
-	if got := m.TransientError(); !strings.Contains(got, "approved Plan Review") {
-		t.Fatalf("status = %q, want plan-review gate message", got)
-	}
-}
-
-func TestModel_EnterOnImplementationResumesLatestEligibleSession(t *testing.T) {
-	flow := readyImplementationFlow()
-	for i := range flow.Phases {
-		if flow.Phases[i].PhaseID == "implementation" {
-			flow.Phases[i].Status = flowstore.PhaseRunning
-			flow.Phases[i].Sessions = []flowstore.Session{
-				{Provider: "claude", SessionID: "claude-old", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC), CWD: "/tmp/claude"},
-				{Provider: "codex", SessionID: "codex-old", StartedAt: time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC), CWD: "/tmp/old"},
-				{Provider: "codex", SessionID: "codex-new", EndedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC), CWD: "/tmp/new"},
-				{Provider: "codex", SessionID: "codex-active", LastSeenAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC), CWD: "/tmp/active"},
-			}
+	status := m.TransientError()
+	for _, want := range []string{"Implementation is not ready", "Plan Review", "changes_requested", "Clarify rollout steps"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("status missing %q: %q", want, status)
 		}
 	}
-	var launched actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex-app",
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			launched = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected implementation resume command")
-	}
-	_, _ = update(m, cmd())
-
-	if launched.Command != "codex-app" ||
-		launched.ResumeSessionID != "codex-active" ||
-		launched.WorkingDir != "/tmp/active" ||
-		launched.WorktreePath != flow.WorktreePath ||
-		launched.FlowPhaseID != "implementation" ||
-		launched.LaunchID == "" {
-		t.Fatalf("resume launch context = %#v", launched)
-	}
 }
 
-func TestModel_OKeyOnImplementationPhaseOpensLatestPhaseTranscript(t *testing.T) {
-	flow := readyImplementationFlow()
-	for i := range flow.Phases {
-		switch flow.Phases[i].PhaseID {
-		case "plan-review":
-			flow.Phases[i].Sessions = []flowstore.Session{{Provider: "codex", SessionID: "review", TranscriptPath: "/state/review.jsonl", EndedAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)}}
-		case "implementation":
-			flow.Phases[i].Sessions = []flowstore.Session{
-				{Provider: "codex", SessionID: "impl-old", TranscriptPath: "/state/old.jsonl", EndedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
-				{Provider: "codex", SessionID: "impl-new", TranscriptPath: "/state/new.jsonl", EndedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
-				{Provider: "codex", SessionID: "impl-active", TranscriptPath: "/state/active.jsonl", LastSeenAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)},
-			}
-		}
-	}
-	var gotProvider sessions.Provider
-	var gotSessionID string
-	m := model.NewWithOptions(testRepos(), model.Options{
-		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
-			gotProvider = provider
-			gotSessionID = sessionID
-			return []sessions.TranscriptEvent{{Role: "assistant", Text: "implemented the flow"}}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	for m.SelectedFlowPhaseID() != "implementation" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	}
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	if cmd == nil {
-		t.Fatal("expected transcript read command")
-	}
-	if m.Overlay() != ui.OverlaySessionTranscript {
-		t.Fatalf("overlay = %d, want transcript", m.Overlay())
-	}
-	m, _ = update(m, cmd())
-
-	if gotProvider != sessions.ProviderCodex || gotSessionID != "impl-active" {
-		t.Fatalf("read transcript target = %s/%s, want codex/impl-active", gotProvider, gotSessionID)
-	}
-	if !strings.Contains(m.View(), "implemented the flow") {
-		t.Fatalf("transcript overlay missing event:\n%s", m.View())
-	}
-}
-
-func TestModel_ImplementationLaunchRequestIgnoredAfterRepoChange(t *testing.T) {
-	launched := false
-	addLaunchCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
-		},
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			addLaunchCalled = true
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			launched = true
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{readyImplementationFlow()})
-
-	_, launchPrep := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if launchPrep == nil {
-		t.Fatal("expected implementation launch preparation command")
-	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	msg := launchPrep()
-	m, cmd := update(m, msg)
-
-	if cmd != nil {
-		t.Fatalf("stale implementation launch returned command %T, want nil", cmd)
-	}
-	if launched {
-		t.Fatal("stale implementation launch should not start an agent")
-	}
-	if addLaunchCalled {
-		t.Fatal("stale implementation launch should not record a launch ID")
-	}
-}
-
-func TestModel_PhaseRowImplementationLaunchIgnoredAfterPhaseChange(t *testing.T) {
-	launched := false
-	addLaunchCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			addLaunchCalled = true
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			launched = true
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{readyImplementationFlow()})
-	for m.SelectedFlowPhaseID() != "implementation" {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	}
-
-	_, launchPrep := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if launchPrep == nil {
-		t.Fatal("expected implementation launch preparation command")
-	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
-	msg := launchPrep()
-	m, cmd := update(m, msg)
-
-	if cmd != nil {
-		t.Fatalf("stale phase-row launch returned command %T, want nil", cmd)
-	}
-	if launched {
-		t.Fatal("stale phase-row implementation launch should not start an agent")
-	}
-	if addLaunchCalled {
-		t.Fatal("stale phase-row implementation launch should not record a launch ID")
-	}
-}
-
-func TestModel_ImplementationLaunchFailureMarksImplementationNeedsAttention(t *testing.T) {
+func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return []flowstore.FlowRecord{readyImplementationFlow()}, nil
-		},
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: filter.RepoPath, Title: "T", Status: flowstore.StatusBlocked}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdate = update
 			return flowstore.FlowRecord{}, nil
 		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			return actions.TerminalLaunchSpec{}, errors.New("agent unavailable")
-		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{readyImplementationFlow()})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "T"}})
 
-	_, launchPrep := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if launchPrep == nil {
-		t.Fatal("expected implementation launch preparation command")
-	}
-	m, cmd := update(m, launchPrep())
+	m, cmd := update(m, model.AgentResultMsg{
+		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "plan-review", RepoPath: "/dev/alpha"},
+		Err:           "terminal failed",
+	})
 	if cmd == nil {
-		t.Fatal("expected flow refresh after failed implementation launch")
+		t.Fatal("expected flow refresh command")
 	}
+	_ = cmd()
 
 	if phaseUpdate.FlowID != "flow-1" ||
-		phaseUpdate.PhaseID != "implementation" ||
-		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
-		!strings.Contains(phaseUpdate.Notes, "agent unavailable") {
+		phaseUpdate.PhaseID != "plan-review" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		phaseUpdate.Outcome != flowstore.OutcomeBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "terminal failed") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
-	}
-	if got := m.TransientError(); !strings.Contains(got, "agent unavailable") {
-		t.Fatalf("status = %q, want launch failure", got)
 	}
 }
 
@@ -1116,25 +1022,4 @@ func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, base
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
 	}
 	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
-}
-
-func readyImplementationFlow() flowstore.FlowRecord {
-	return flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		Title:        "Implement Flow phase",
-		Instructions: "Custom implementation instructions",
-		Status:       flowstore.StatusInProgress,
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
-		Branch:       "flow/implementation",
-		Commit:       "abc123",
-		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
-		Phases: []flowstore.FlowPhase{
-			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
-			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Order: 2},
-			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 3},
-			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4},
-		},
-	}
 }

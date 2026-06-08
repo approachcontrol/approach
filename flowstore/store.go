@@ -56,6 +56,13 @@ const (
 	MergeBlocked = "blocked"
 )
 
+const (
+	OutcomeApproved             = "approved"
+	OutcomeApprovedWithConcerns = "approved_with_concerns"
+	OutcomeChangesRequested     = "changes_requested"
+	OutcomeBlocked              = "blocked"
+)
+
 // Store reads and writes flow records under an artifact root.
 type Store struct {
 	root        string
@@ -93,9 +100,7 @@ type Session struct {
 	SessionID      string    `json:"session_id,omitempty"`
 	LaunchID       string    `json:"launch_id,omitempty"`
 	Status         string    `json:"status,omitempty"`
-	CWD            string    `json:"cwd,omitempty"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
-	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
 	EndedAt        time.Time `json:"ended_at,omitempty"`
 	TranscriptPath string    `json:"transcript_path,omitempty"`
 }
@@ -174,10 +179,9 @@ type StartMetadataUpdate struct {
 
 // PhaseLaunchUpdate records one agent launch attempt against a Flow phase.
 type PhaseLaunchUpdate struct {
-	FlowID                    string
-	PhaseID                   string
-	LaunchID                  string
-	RequirePlanReviewApproved bool
+	FlowID   string
+	PhaseID  string
+	LaunchID string
 }
 
 // SessionAttachUpdate attaches a captured provider session to a Flow phase.
@@ -328,8 +332,11 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	phase.Status = update.Status
-	if update.Outcome != "" {
-		phase.Outcome = update.Outcome
+	if clearsPhaseOutcome(update.Status) {
+		phase.Outcome = ""
+	}
+	if outcome := strings.TrimSpace(update.Outcome); outcome != "" {
+		phase.Outcome = outcome
 	}
 	if update.Notes != "" {
 		phase.Notes = update.Notes
@@ -346,6 +353,10 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return record, nil
+}
+
+func clearsPhaseOutcome(status string) bool {
+	return status == PhaseRunning
 }
 
 // SetPlanLink validates and persists the saved plan artifact linked to a Flow.
@@ -450,38 +461,21 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
-		if update.RequirePlanReviewApproved && !implementationGateSatisfied(record) {
-			return FlowRecord{}, fmt.Errorf("implementation requires an approved plan review")
-		}
 		if err := validatePhaseUpdate(phase, PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}); err != nil {
 			return FlowRecord{}, err
 		}
 		phase.Status = PhaseRunning
+		if clearsPhaseOutcome(phase.Status) {
+			phase.Outcome = ""
+		}
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
 		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
-}
-
-func implementationGateSatisfied(record FlowRecord) bool {
-	for _, phase := range record.Phases {
-		if phase.PhaseID != "plan-review" {
-			continue
-		}
-		switch phase.Status {
-		case PhaseCompleted:
-			outcome := strings.TrimSpace(phase.Outcome)
-			return outcome == "approved" || outcome == "approved_with_concerns"
-		case PhaseSkipped:
-			return strings.TrimSpace(phase.Notes) != ""
-		default:
-			return false
-		}
-	}
-	return false
 }
 
 // AttachSession records a provider session against a phase. Re-attaching the
@@ -651,6 +645,9 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 	if update.Status == PhaseSkipped && strings.TrimSpace(update.Notes) == "" {
 		return fmt.Errorf("skipped phase requires notes")
 	}
+	if err := validatePlanReviewUpdate(current, update); err != nil {
+		return err
+	}
 	if current.Status == update.Status {
 		return nil
 	}
@@ -687,24 +684,111 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 
 func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 	predecessorsSatisfied := true
+	resetBlockedDownstream := false
 	for i := range record.Phases {
 		phase := record.Phases[i]
-		if phase.Status == PhasePending || phase.Status == PhaseReady {
+		if predecessorsSatisfied && (phase.Status == PhasePending || phase.Status == PhaseReady) {
 			nextStatus := PhasePending
-			if predecessorsSatisfied {
-				nextStatus = PhaseReady
-			}
+			nextStatus = PhaseReady
 			if phase.Status != nextStatus {
 				phase.Status = nextStatus
 				phase.UpdatedAt = now
 				record.Phases[i] = phase
 			}
+		} else if !predecessorsSatisfied && shouldResetBlockedDownstreamPhase(phase, resetBlockedDownstream) {
+			phase.Status = PhasePending
+			phase.Outcome = ""
+			phase.UpdatedAt = now
+			record.Phases[i] = phase
 		}
-		if phase.Status != PhaseCompleted && phase.Status != PhaseSkipped {
+		if !phaseSatisfiesDownstreamGate(phase) {
 			predecessorsSatisfied = false
+			if phase.PhaseID == "plan-review" {
+				resetBlockedDownstream = true
+			}
 		}
 	}
 	return record
+}
+
+func shouldResetBlockedDownstreamPhase(phase FlowPhase, resetBlocked bool) bool {
+	switch phase.Status {
+	case PhaseReady, PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseSkipped:
+		return true
+	case PhaseBlocked:
+		return resetBlocked
+	default:
+		return false
+	}
+}
+
+func phaseSatisfiesDownstreamGate(phase FlowPhase) bool {
+	if phase.PhaseID == "plan-review" {
+		switch phase.Status {
+		case PhaseSkipped:
+			return strings.TrimSpace(phase.Notes) != ""
+		case PhaseCompleted:
+			return phase.Outcome == OutcomeApproved || phase.Outcome == OutcomeApprovedWithConcerns
+		default:
+			return false
+		}
+	}
+	return phase.Status == PhaseCompleted || phase.Status == PhaseSkipped
+}
+
+func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {
+	if current.PhaseID != "plan-review" {
+		return nil
+	}
+	if current.Status == PhasePending && update.Status != PhaseSkipped {
+		return nil
+	}
+	outcome := strings.TrimSpace(update.Outcome)
+	notes := strings.TrimSpace(update.Notes)
+	if outcome == "" {
+		switch update.Status {
+		case PhaseCompleted:
+			return fmt.Errorf("plan-review completed requires outcome approved or approved_with_concerns")
+		case PhaseNeedsAttention:
+			return fmt.Errorf("plan-review needs_attention requires outcome changes_requested")
+		case PhaseBlocked:
+			return fmt.Errorf("plan-review blocked requires outcome blocked")
+		}
+		return nil
+	}
+	if update.Status == PhaseBlocked && outcome != OutcomeBlocked {
+		return fmt.Errorf("plan-review blocked requires outcome blocked")
+	}
+	switch outcome {
+	case OutcomeApproved:
+		if update.Status != PhaseCompleted {
+			return fmt.Errorf("plan-review outcome approved requires completed status")
+		}
+	case OutcomeApprovedWithConcerns:
+		if update.Status != PhaseCompleted {
+			return fmt.Errorf("plan-review outcome approved_with_concerns requires completed status")
+		}
+		if notes == "" {
+			return fmt.Errorf("plan-review approved_with_concerns requires notes")
+		}
+	case OutcomeChangesRequested:
+		if update.Status != PhaseNeedsAttention {
+			return fmt.Errorf("plan-review outcome changes_requested requires needs_attention status")
+		}
+		if notes == "" {
+			return fmt.Errorf("plan-review changes_requested requires notes")
+		}
+	case OutcomeBlocked:
+		if update.Status != PhaseBlocked {
+			return fmt.Errorf("plan-review blocked requires outcome blocked")
+		}
+		if notes == "" {
+			return fmt.Errorf("plan-review blocked requires notes")
+		}
+	default:
+		return fmt.Errorf("invalid plan-review outcome %q", outcome)
+	}
+	return nil
 }
 
 // DeriveStatus computes the flow-level status from phase and merge state.
@@ -897,7 +981,35 @@ func normalizeRecord(record FlowRecord) FlowRecord {
 	if record.Merge.Status == "" {
 		record.Merge.Status = MergePending
 	}
+	if hasPhase(record, "plan-review") {
+		record = normalizePlanReviewOutcomes(record)
+		record = refreshPhaseReadiness(record, record.UpdatedAt)
+	}
 	return record
+}
+
+func normalizePlanReviewOutcomes(record FlowRecord) FlowRecord {
+	for i := range record.Phases {
+		phase := record.Phases[i]
+		if phase.PhaseID != "plan-review" {
+			continue
+		}
+		phase.Outcome = strings.TrimSpace(phase.Outcome)
+		if phase.Status == PhaseCompleted && phase.Outcome == "" {
+			phase.Outcome = OutcomeApproved
+		}
+		record.Phases[i] = phase
+	}
+	return record
+}
+
+func hasPhase(record FlowRecord, phaseID string) bool {
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return true
+		}
+	}
+	return false
 }
 
 func writeFileAtomic(path string, data []byte) error {

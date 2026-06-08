@@ -289,6 +289,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
+	case "x":
+		if m.mode == ui.ModeFlows {
+			return m.handleToggleFlowPhases()
+		}
 	case "tab":
 		m.activePane = 0
 		if m.mode == ui.ModePlans {
@@ -391,11 +395,11 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedPlanID("")
 		}
 	case ui.ModeFlows:
-		if next, ok := m.moveSelectedFlowPhase(delta); ok {
-			return next
-		}
+		before := m.selectedFlowID()
 		m.flows = m.flows.Move(delta, h, w)
-		m = m.clearSelectedFlowPhase()
+		if after := m.selectedFlowID(); before != "" && after != before {
+			m = m.setExpandedFlowID("")
+		}
 	}
 	return m
 }
@@ -441,8 +445,21 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.mode == ui.ModeFlows && len(m.filteredFlows()) > 0 {
-		return m.handleFlowEnter()
+	return m, nil
+}
+
+func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+		return m, nil
+	}
+	flowID := m.selectedFlowID()
+	if flowID == "" {
+		return m, nil
+	}
+	if m.expandedFlowID == flowID {
+		m = m.setExpandedFlowID("")
+	} else {
+		m = m.setExpandedFlowID(flowID)
 	}
 	return m, nil
 }
@@ -458,9 +475,6 @@ func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
 func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
 		return m, nil
-	}
-	if _, ok := m.selectedFlowPhase(); ok {
-		return m.handleOpenFlowPhaseTranscript()
 	}
 	record, ok := m.selectedFlow()
 	if !ok {
@@ -760,6 +774,10 @@ func (m Model) canLaunchAgent() bool {
 	if m.activePane != 1 {
 		return false
 	}
+	if m.mode == ui.ModeFlows {
+		_, ok := m.selectedFlow()
+		return ok
+	}
 	_, ok := m.agentTargetPath()
 	return ok
 }
@@ -812,6 +830,9 @@ func (m Model) pathForOpenAction() (string, bool) {
 }
 
 func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
+	if m.mode == ui.ModeFlows {
+		return m.handleLaunchFlowPhase()
+	}
 	path, ok := m.agentTargetPath()
 	if !ok {
 		return m, nil
@@ -821,6 +842,83 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.launchAgentAtPath(path)
+}
+
+func (m Model) handleLaunchFlowPhase() (tea.Model, tea.Cmd) {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return m, nil
+	}
+	phase, ok := readyFlowPhase(record)
+	if !ok {
+		m = m.setStatus(statusOther, flowNotReadyMessage(record))
+		return m, nil
+	}
+	if m.agentCommand == "" {
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	worktreePath := record.WorktreePath
+	if worktreePath == "" {
+		worktreePath = repoPath
+	}
+	if worktreePath == "" {
+		m = m.setStatus(statusOther, "Cannot determine launch path for this flow")
+		return m, nil
+	}
+	planPath := record.PlanPath
+	if record.PlanID != "" && planPath == "" {
+		var err error
+		planPath, err = m.planMarkdownPath(record.PlanID)
+		if err != nil {
+			m = m.setStatus(statusOther, err.Error())
+			return m, nil
+		}
+	}
+	if phase.PhaseID == "plan-review" && record.PlanID == "" {
+		m = m.setStatus(statusOther, "Plan Review needs a linked plan before launch")
+		return m, nil
+	}
+	launchID := newLaunchID()
+	return m, m.prepareFlowPhaseLaunch(record, phase, repoPath, worktreePath, planPath, launchID)
+}
+
+func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return func() tea.Msg {
+		planBody := ""
+		if record.PlanID != "" && phase.PhaseID != "plan-review" {
+			body, err := m.readPlan(record.PlanID)
+			if err != nil {
+				return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to read linked plan %s: %v", record.PlanID, err)}
+			}
+			planBody = body
+		}
+		if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+			FlowID:   record.FlowID,
+			PhaseID:  phase.PhaseID,
+			LaunchID: launchID,
+		}); err != nil {
+			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
+		}
+		return PlanLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			Command:          m.agentCommand,
+			LaunchID:         launchID,
+			RepoPath:         repoPath,
+			WorktreePath:     worktreePath,
+			Branch:           record.Branch,
+			Commit:           record.Commit,
+			SessionStateRoot: m.sessionStateRoot,
+			PlanID:           record.PlanID,
+			PlanPath:         planPath,
+			FlowID:           record.FlowID,
+			FlowPhaseID:      phase.PhaseID,
+			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody),
+		}}
+	}
 }
 
 func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
@@ -983,6 +1081,155 @@ func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, ph
 	return fmt.Sprintf("Implement only the selected phase of the saved wtui plan %q (ID: %s) at %s. Selected phase: %s (%q), status %s. Read the plan file, then begin implementation of only that phase.", title, plan.PlanID, planPath, phase.PhaseID, phaseTitle, phaseStatus)
 }
 
+func readyFlowPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
+	for _, phase := range record.Phases {
+		if phase.Status == flowstore.PhaseReady {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func flowNotReadyMessage(record flowstore.FlowRecord) string {
+	impl, hasImplementation := flowPhaseByID(record, "implementation")
+	review, hasReview := flowPhaseByID(record, "plan-review")
+	if hasImplementation && impl.Status == flowstore.PhasePending && hasReview {
+		detail := review.Status
+		if review.Outcome != "" {
+			detail = detail + " / " + review.Outcome
+		}
+		if review.Notes != "" {
+			detail = detail + ": " + review.Notes
+		} else if review.Summary != "" {
+			detail = detail + ": " + review.Summary
+		}
+		return "Implementation is not ready; Plan Review is " + detail
+	}
+	return "No ready Flow phase to launch"
+}
+
+func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	switch phase.PhaseID {
+	case "plan-review":
+		return flowPlanReviewPrompt(record, phase, planPath, planBody)
+	case "implementation":
+		return flowImplementationPrompt(record, phase, planPath, planBody)
+	default:
+		return flowGenericPhasePrompt(record, phase, planPath, planBody)
+	}
+}
+
+func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Use the review-loop skill to review this saved plan:\n\n")
+	b.WriteString(planPath)
+	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "This is the Plan Review phase for wtui Flow %s. After review, update the Flow with exactly one outcome:\n\n", record.FlowID)
+	fmt.Fprintf(&b, "approved:\nwtui flow phase set --flow-id %s --phase-id plan-review --status completed --outcome approved --summary \"...\"\n\n", record.FlowID)
+	fmt.Fprintf(&b, "approved_with_concerns:\nwtui flow phase set --flow-id %s --phase-id plan-review --status completed --outcome approved_with_concerns --notes \"...\" --summary \"...\"\n\n", record.FlowID)
+	fmt.Fprintf(&b, "changes_requested:\nwtui flow phase set --flow-id %s --phase-id plan-review --status needs_attention --outcome changes_requested --notes \"...\"\n\n", record.FlowID)
+	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id plan-review --status blocked --outcome blocked --notes \"...\"", record.FlowID)
+	return b.String()
+}
+
+func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
+	b.WriteString("Flow phase: Implementation (implementation).\n")
+	writeFlowPromptHeader(&b, record, planPath)
+	writeFlowPromptPlanContext(&b, record, planBody)
+	if review, ok := flowPhaseByID(record, "plan-review"); ok {
+		b.WriteString("\nPlan Review gate:\n")
+		writeFlowPhaseContext(&b, review)
+	}
+	b.WriteString("\nImplement the approved plan in the Flow worktree, verify the target behavior, and complete the phase with `wtui flow phase set --status completed --outcome implemented --summary \"...\"`.")
+	return b.String()
+}
+
+func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+	var b strings.Builder
+	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
+	b.WriteString("Flow phase: ")
+	if phase.Title != "" {
+		b.WriteString(phase.Title)
+	} else {
+		b.WriteString(phase.PhaseID)
+	}
+	b.WriteString(" (")
+	b.WriteString(phase.PhaseID)
+	b.WriteString(").\n")
+	writeFlowPromptHeader(&b, record, planPath)
+	writeFlowPromptPlanContext(&b, record, planBody)
+	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
+	return b.String()
+}
+
+func writeFlowPromptHeader(b *strings.Builder, record flowstore.FlowRecord, planPath string) {
+	if record.Instructions != "" {
+		b.WriteString("\nCustom instructions:\n")
+		b.WriteString(record.Instructions)
+		b.WriteString("\n")
+	}
+	if record.PlanID != "" {
+		b.WriteString("\nLinked plan: ")
+		b.WriteString(record.PlanID)
+		if planPath != "" {
+			b.WriteString(" at ")
+			b.WriteString(planPath)
+		}
+		b.WriteString("\n")
+	}
+}
+
+func writeFlowPromptPlanContext(b *strings.Builder, record flowstore.FlowRecord, planBody string) {
+	if plan, ok := flowPhaseByID(record, "plan"); ok {
+		b.WriteString("\nPrior Plan context:\n")
+		writeFlowPhaseContext(b, plan)
+	}
+	if planBody != "" {
+		b.WriteString("\nSaved plan body:\n")
+		b.WriteString(planBody)
+		if !strings.HasSuffix(planBody, "\n") {
+			b.WriteString("\n")
+		}
+	}
+}
+
+func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
+	if phase.Title != "" {
+		b.WriteString("- Title: ")
+		b.WriteString(phase.Title)
+		b.WriteString("\n")
+	}
+	b.WriteString("- Status: ")
+	b.WriteString(phase.Status)
+	b.WriteString("\n")
+	if phase.Outcome != "" {
+		b.WriteString("- Outcome: ")
+		b.WriteString(phase.Outcome)
+		b.WriteString("\n")
+	}
+	if phase.Summary != "" {
+		b.WriteString("- Summary: ")
+		b.WriteString(phase.Summary)
+		b.WriteString("\n")
+	}
+	if phase.Notes != "" {
+		b.WriteString("- Notes: ")
+		b.WriteString(phase.Notes)
+		b.WriteString("\n")
+	}
+}
+
+func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
 func (m Model) launchAgentAtPath(path string) (Model, tea.Cmd) {
 	ctx := m.agentLaunchContext(path)
 	return m.launchAgentWithContext(ctx)
@@ -1039,10 +1286,17 @@ func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errT
 	if errText != "" {
 		notes += ": " + errText
 	}
+	status := flowstore.PhaseNeedsAttention
+	outcome := ""
+	if ctx.FlowPhaseID == "plan-review" {
+		status = flowstore.PhaseBlocked
+		outcome = flowstore.OutcomeBlocked
+	}
 	if _, err := m.setFlowPhase(flowstore.PhaseUpdate{
 		FlowID:  ctx.FlowID,
 		PhaseID: ctx.FlowPhaseID,
-		Status:  flowstore.PhaseNeedsAttention,
+		Status:  status,
+		Outcome: outcome,
 		Notes:   notes,
 	}); err != nil && errText != "" {
 		return m, errText + "; update flow phase: " + err.Error()
@@ -1260,7 +1514,7 @@ func (m Model) resetModeCursors() Model {
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
-	m = m.clearSelectedFlowPhase()
+	m = m.setExpandedFlowID("")
 	return m
 }
 
@@ -1276,7 +1530,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
-	m = m.clearSelectedFlowPhase()
+	m = m.setExpandedFlowID("")
 	return m
 }
 
