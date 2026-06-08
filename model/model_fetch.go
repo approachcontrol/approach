@@ -22,48 +22,11 @@ const visibleRepoFetchStatusTTL = 3 * time.Second
 const visibleRepoFetchFadeStepDuration = 1 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
-	switch m.mode {
-	case ui.ModeWorktrees:
-		return m.startFetchWorktrees()
-	case ui.ModeBranches:
-		return m.startFetchBranches()
-	case ui.ModeStashes:
-		return m.startFetchStashes()
-	case ui.ModeHistory:
-		return m.startFetchCommits()
-	case ui.ModeReflog:
-		return m.startFetchReflog()
-	case ui.ModeSessions:
-		return m.startFetchSessions()
-	case ui.ModePlans:
-		return m.startFetchPlans()
-	case ui.ModeFlows:
-		return m.startFetchFlows()
-	}
-	return m, nil
+	return m.startFetchMode(m.mode)
 }
 
 func (m Model) fetchForMode() tea.Cmd {
-	request := m.currentListRequest(m.mode)
-	switch m.mode {
-	case ui.ModeWorktrees:
-		return m.fetchWorktrees(request)
-	case ui.ModeBranches:
-		return m.fetchBranches(request)
-	case ui.ModeStashes:
-		return m.fetchStashes(request)
-	case ui.ModeHistory:
-		return m.fetchCommits(request)
-	case ui.ModeReflog:
-		return m.fetchReflog(request)
-	case ui.ModeSessions:
-		return m.fetchSessions(request)
-	case ui.ModePlans:
-		return m.fetchPlans(request)
-	case ui.ModeFlows:
-		return m.fetchFlows(request)
-	}
-	return nil
+	return m.fetchMode(m.mode, m.currentListRequest(m.mode))
 }
 
 func (m Model) currentListRequest(mode ui.Mode) uint64 {
@@ -116,47 +79,6 @@ func (m Model) clearFlowCreateRequest(request uint64) Model {
 	return m
 }
 
-func (m Model) startFetchWorktrees() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeWorktrees)
-	return m, m.fetchWorktrees(request)
-}
-
-func (m Model) startFetchBranches() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeBranches)
-	return m, m.fetchBranches(request)
-}
-
-func (m Model) startFetchStashes() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeStashes)
-	return m, m.fetchStashes(request)
-}
-
-func (m Model) startFetchCommits() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeHistory)
-	return m, m.fetchCommits(request)
-}
-
-func (m Model) startFetchReflog() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeReflog)
-	return m, m.fetchReflog(request)
-}
-
-func (m Model) startFetchSessions() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeSessions)
-	return m, m.fetchSessions(request)
-}
-
-func (m Model) startFetchPlans() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModePlans)
-	m = m.setExpandedPlanID("")
-	return m, m.fetchPlans(request)
-}
-
-func (m Model) startFetchFlows() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeFlows)
-	return m, m.fetchFlows(request)
-}
-
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
 	if m.visibleRepoFetch.Request != 0 {
 		return m, nil
@@ -195,6 +117,169 @@ func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
 		CapturedPaths: capturedPaths,
 	}
 	return m, tea.Batch(cmds...)
+}
+
+type listFetchDescriptor struct {
+	mode        ui.Mode
+	pane        string
+	errorPrefix string
+	load        func(Model, string, uint64) (tea.Msg, error)
+	beforeStart func(Model) Model
+}
+
+func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
+	switch mode {
+	case ui.ModeWorktrees:
+		return listFetchDescriptor{
+			mode:        ui.ModeWorktrees,
+			pane:        "worktrees",
+			errorPrefix: "failed to load worktrees",
+			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
+				worktrees, err := gitquery.ListWorktrees(repoPath)
+				if err != nil {
+					return nil, err
+				}
+				return WorktreeResultMsg{RepoPath: repoPath, Worktrees: worktrees, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModeBranches:
+		return listFetchDescriptor{
+			mode:        ui.ModeBranches,
+			pane:        "branches",
+			errorPrefix: "failed to load branches",
+			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
+				branches, err := gitquery.ListBranches(repoPath)
+				if err != nil {
+					return nil, err
+				}
+				return BranchResultMsg{RepoPath: repoPath, Branches: branches, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModeStashes:
+		return listFetchDescriptor{
+			mode:        ui.ModeStashes,
+			pane:        "stashes",
+			errorPrefix: "failed to load stashes",
+			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
+				stashes, err := gitquery.ListStashes(repoPath)
+				if err != nil {
+					return nil, err
+				}
+				return StashResultMsg{RepoPath: repoPath, Stashes: stashes, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModeHistory:
+		return listFetchDescriptor{
+			mode:        ui.ModeHistory,
+			pane:        "history",
+			errorPrefix: "failed to load commits",
+			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
+				commits, err := gitquery.ListCommits(repoPath)
+				if err != nil {
+					return nil, err
+				}
+				return CommitResultMsg{RepoPath: repoPath, Commits: commits, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModeReflog:
+		return listFetchDescriptor{
+			mode:        ui.ModeReflog,
+			pane:        "reflog",
+			errorPrefix: "failed to load reflog",
+			load: func(_ Model, repoPath string, request uint64) (tea.Msg, error) {
+				reflogs, err := gitquery.ListReflog(repoPath)
+				if err != nil {
+					return nil, err
+				}
+				return ReflogResultMsg{RepoPath: repoPath, Reflogs: reflogs, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModeSessions:
+		return listFetchDescriptor{
+			mode:        ui.ModeSessions,
+			pane:        "sessions",
+			errorPrefix: "failed to load sessions",
+			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+				records, err := m.listSessions(sessions.SessionFilter{RepoPath: repoPath})
+				if err != nil {
+					return nil, err
+				}
+				return SessionResultMsg{RepoPath: repoPath, Sessions: records, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModePlans:
+		return listFetchDescriptor{
+			mode:        ui.ModePlans,
+			pane:        "plans",
+			errorPrefix: "failed to load plans",
+			beforeStart: func(m Model) Model {
+				return m.setExpandedPlanID("")
+			},
+			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+				records, err := m.listPlans(planstore.PlanFilter{RepoPath: repoPath})
+				if err != nil {
+					return nil, err
+				}
+				return PlanResultMsg{RepoPath: repoPath, Plans: records, ListRequest: request}, nil
+			},
+		}, true
+	case ui.ModeFlows:
+		return listFetchDescriptor{
+			mode:        ui.ModeFlows,
+			pane:        "flows",
+			errorPrefix: "failed to load flows",
+			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+				records, err := m.listFlows(flowstore.FlowFilter{RepoPath: repoPath})
+				if err != nil {
+					return nil, err
+				}
+				return FlowResultMsg{RepoPath: repoPath, Flows: records, ListRequest: request}, nil
+			},
+		}, true
+	default:
+		return listFetchDescriptor{}, false
+	}
+}
+
+func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
+	desc, ok := listFetchDescriptorForMode(mode)
+	if !ok {
+		return m, nil
+	}
+	m, request := m.nextListFetchRequest(desc.mode)
+	if desc.beforeStart != nil {
+		m = desc.beforeStart(m)
+	}
+	return m, m.fetchList(desc, request)
+}
+
+func (m Model) fetchMode(mode ui.Mode, request uint64) tea.Cmd {
+	desc, ok := listFetchDescriptorForMode(mode)
+	if !ok {
+		return nil
+	}
+	return m.fetchList(desc, request)
+}
+
+func (m Model) fetchList(desc listFetchDescriptor, request uint64) tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, err := desc.load(m, repoPath, request)
+		if err != nil {
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        desc.pane,
+				Err:         fmt.Sprintf("%s: %v", desc.errorPrefix, err),
+				Kind:        FetchList,
+				Mode:        desc.mode,
+				ListRequest: request,
+			}
+		}
+		return msg
+	}
 }
 
 func (m Model) canFetch() bool {
@@ -444,48 +529,6 @@ func createdWorktreeBranch(worktreePath, ref string, kind actions.WorktreeCreate
 	return ""
 }
 
-func (m Model) fetchWorktrees(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		worktrees, err := gitquery.ListWorktrees(repoPath)
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "worktrees", Err: fmt.Sprintf("failed to load worktrees: %v", err), Kind: FetchList, Mode: ui.ModeWorktrees, ListRequest: request}
-		}
-		return WorktreeResultMsg{RepoPath: repoPath, Worktrees: worktrees, ListRequest: request}
-	}
-}
-
-func (m Model) fetchBranches(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		branches, err := gitquery.ListBranches(repoPath)
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "branches", Err: fmt.Sprintf("failed to load branches: %v", err), Kind: FetchList, Mode: ui.ModeBranches, ListRequest: request}
-		}
-		return BranchResultMsg{RepoPath: repoPath, Branches: branches, ListRequest: request}
-	}
-}
-
-func (m Model) fetchStashes(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		stashes, err := gitquery.ListStashes(repoPath)
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "stashes", Err: fmt.Sprintf("failed to load stashes: %v", err), Kind: FetchList, Mode: ui.ModeStashes, ListRequest: request}
-		}
-		return StashResultMsg{RepoPath: repoPath, Stashes: stashes, ListRequest: request}
-	}
-}
-
 func (m Model) fetchBranchDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
@@ -595,76 +638,6 @@ func (m Model) fetchStashDiff() tea.Cmd {
 			DiffRequest: diffRequest,
 			Diff:        diff,
 		}
-	}
-}
-
-func (m Model) fetchCommits(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		commits, err := gitquery.ListCommits(repoPath)
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "history", Err: fmt.Sprintf("failed to load commits: %v", err), Kind: FetchList, Mode: ui.ModeHistory, ListRequest: request}
-		}
-		return CommitResultMsg{RepoPath: repoPath, Commits: commits, ListRequest: request}
-	}
-}
-
-func (m Model) fetchReflog(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		reflogs, err := gitquery.ListReflog(repoPath)
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "reflog", Err: fmt.Sprintf("failed to load reflog: %v", err), Kind: FetchList, Mode: ui.ModeReflog, ListRequest: request}
-		}
-		return ReflogResultMsg{RepoPath: repoPath, Reflogs: reflogs, ListRequest: request}
-	}
-}
-
-func (m Model) fetchSessions(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		records, err := m.listSessions(sessions.SessionFilter{RepoPath: repoPath})
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "sessions", Err: fmt.Sprintf("failed to load sessions: %v", err), Kind: FetchList, Mode: ui.ModeSessions, ListRequest: request}
-		}
-		return SessionResultMsg{RepoPath: repoPath, Sessions: records, ListRequest: request}
-	}
-}
-
-func (m Model) fetchPlans(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		records, err := m.listPlans(planstore.PlanFilter{RepoPath: repoPath})
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "plans", Err: fmt.Sprintf("failed to load plans: %v", err), Kind: FetchList, Mode: ui.ModePlans, ListRequest: request}
-		}
-		return PlanResultMsg{RepoPath: repoPath, Plans: records, ListRequest: request}
-	}
-}
-
-func (m Model) fetchFlows(request uint64) tea.Cmd {
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		records, err := m.listFlows(flowstore.FlowFilter{RepoPath: repoPath})
-		if err != nil {
-			return FetchErrorMsg{RepoPath: repoPath, Pane: "flows", Err: fmt.Sprintf("failed to load flows: %v", err), Kind: FetchList, Mode: ui.ModeFlows, ListRequest: request}
-		}
-		return FlowResultMsg{RepoPath: repoPath, Flows: records, ListRequest: request}
 	}
 }
 

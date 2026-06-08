@@ -407,6 +407,13 @@ func (m Model) isCurrentListRequest(mode ui.Mode, request uint64) bool {
 	return m.listRequests[int(mode)] == request
 }
 
+func (m Model) acceptListResult(repoPath string, mode ui.Mode, request uint64) (Model, bool) {
+	if !m.isCurrentRepo(repoPath) || !m.isCurrentListRequest(mode, request) {
+		return m, false
+	}
+	return m.clearFetchListStatus(mode), true
+}
+
 func (m Model) clearAnyStatus() Model {
 	m.status = statusError{}
 	return m
@@ -429,10 +436,11 @@ func (m Model) visibleStatusFadeStep() int {
 }
 
 func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeWorktrees, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeWorktrees, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
 	if m.pendingWorktreeSelection != "" {
 		pendingPath := m.pendingWorktreeSelection
@@ -453,7 +461,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 		m.worktrees = m.worktrees.Move(-1, m.worktreeContentHeight(), m.contentWidth())
 	}
 	if msg.BranchName == "" {
-		return m.startFetchWorktrees()
+		return m.startFetchMode(ui.ModeWorktrees)
 	}
 	repoPath := msg.RepoPath
 	branchName := msg.BranchName
@@ -470,7 +478,7 @@ func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd
 			return WorktreeDeleteCompletedMsg{RepoPath: repoPath}
 		}
 	})
-	return m.startFetchWorktrees()
+	return m.startFetchMode(ui.ModeWorktrees)
 }
 
 func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) {
@@ -478,7 +486,7 @@ func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) 
 		if m.WorktreeSelected() >= len(m.Worktrees())-1 && m.WorktreeSelected() > 0 {
 			m.worktrees = m.worktrees.Move(-1, m.worktreeContentHeight(), m.contentWidth())
 		}
-		return m.startFetchWorktrees()
+		return m.startFetchMode(ui.ModeWorktrees)
 	}
 	return m, nil
 }
@@ -486,7 +494,7 @@ func (m Model) handleWorktreePruned(msg WorktreePrunedMsg) (tea.Model, tea.Cmd) 
 func (m Model) handleWorktreeUnlocked(msg WorktreeUnlockedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m = m.clearStatus(statusOther)
-		return m.startFetchWorktrees()
+		return m.startFetchMode(ui.ModeWorktrees)
 	}
 	return m, nil
 }
@@ -596,7 +604,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	m = m.clearWorktreeCreateRequest(msg.Request)
 	m.mode = ui.ModeWorktrees
 	m.worktrees = m.worktrees.ResetSelection()
-	m, fetchCmd := m.startFetchWorktrees()
+	m, fetchCmd := m.startFetchMode(ui.ModeWorktrees)
 	if !msg.LaunchAgent {
 		return m, fetchCmd
 	}
@@ -618,7 +626,7 @@ func (m Model) handleWorktreeBootstrapFailed(msg WorktreeBootstrapFailedMsg) (te
 	m.mode = ui.ModeWorktrees
 	m.worktrees = m.worktrees.ResetSelection()
 	m = m.setStatus(statusGitMutation, errText)
-	return m.startFetchWorktrees()
+	return m.startFetchMode(ui.ModeWorktrees)
 }
 
 func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
@@ -657,7 +665,7 @@ func (m Model) handleWorktreeMoved(msg WorktreeMovedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.pendingWorktreeSelection = msg.NewPath
 	m = m.clearStatus(statusOther)
-	return m.startFetchWorktrees()
+	return m.startFetchMode(ui.ModeWorktrees)
 }
 
 func (m Model) handleWorktreeMoveFailed(msg WorktreeMoveFailedMsg) Model {
@@ -696,10 +704,11 @@ func (m Model) handleAgentSetFailed(msg AgentSetFailedMsg) Model {
 }
 
 func (m Model) handleBranchResult(msg BranchResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeBranches, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeBranches, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeBranches)
 	repo, _ := m.currentRepo()
 	m.rows = m.rows.SetItems(branchRowsForRepo(repo, msg.Branches))
 	if m.pendingBranchSelection != "" {
@@ -750,10 +759,11 @@ func canonicalPath(path string) string {
 }
 
 func (m Model) handleStashResult(msg StashResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeStashes, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeStashes, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeStashes)
 	m.stashes = m.stashes.SetItems(msg.Stashes)
 	m = m.clampSelectionsAfterFilter()
 	return m
@@ -791,14 +801,14 @@ func (m Model) handleStashDropped(msg StashDroppedMsg) (tea.Model, tea.Cmd) {
 		if m.StashSelected() >= len(m.Stashes())-1 && m.StashSelected() > 0 {
 			m.stashes = m.stashes.Move(-1, m.stashContentHeight(), m.contentWidth())
 		}
-		return m.startFetchStashes()
+		return m.startFetchMode(ui.ModeStashes)
 	}
 	return m, nil
 }
 
 func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		return m.startFetchBranches()
+		return m.startFetchMode(ui.ModeBranches)
 	}
 	return m, nil
 }
@@ -808,7 +818,7 @@ func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
 		m.mode = ui.ModeBranches
 		m.rows = m.rows.SetQuery("")
 		m.pendingBranchSelection = msg.Name
-		return m.startFetchBranches()
+		return m.startFetchMode(ui.ModeBranches)
 	}
 	return m, nil
 }
@@ -885,40 +895,44 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
 }
 
 func (m Model) handleCommitResult(msg CommitResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeHistory, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeHistory, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeHistory)
 	m.commits = m.commits.SetItems(msg.Commits)
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
 func (m Model) handleReflogResult(msg ReflogResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeReflog, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeReflog, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeReflog)
 	m.reflogs = m.reflogs.SetItems(msg.Reflogs)
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
 func (m Model) handleSessionResult(msg SessionResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeSessions, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeSessions, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeSessions)
 	m.sessions = m.sessions.SetItems(msg.Sessions)
 	m = m.clampSelectionsAfterFilter()
 	return m
 }
 
 func (m Model) handlePlanResult(msg PlanResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModePlans, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModePlans, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModePlans)
 	m.plans = m.plans.SetItems(msg.Plans)
 	m = m.setExpandedPlanID("")
 	m = m.clampSelectionsAfterFilter()
@@ -926,10 +940,11 @@ func (m Model) handlePlanResult(msg PlanResultMsg) Model {
 }
 
 func (m Model) handleFlowResult(msg FlowResultMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentListRequest(ui.ModeFlows, msg.ListRequest) {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeFlows, msg.ListRequest)
+	if !ok {
 		return m
 	}
-	m = m.clearFetchListStatus(ui.ModeFlows)
 	m.flows = m.flows.SetItems(msg.Flows)
 	m = m.setExpandedFlowID("")
 	m = m.clampSelectionsAfterFilter()
