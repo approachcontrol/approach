@@ -130,42 +130,6 @@ const FlowContentOverhead = BranchContentOverhead + TableHeaderRows
 // indent/cursor (3) + date (10) + separator (2).
 const StashPrefixWidth = 15
 
-// ANSI palette codes used below (8-/16-color + 256-color grays):
-//
-//	5   = magenta        6   = cyan          9   = bright red
-//	10  = bright green   11  = bright yellow  12  = bright blue
-//	14  = bright cyan    15  = bright white   238 = dark gray
-//	241 = medium gray
-var (
-	repoStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
-	selectedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Reverse(true) // 10 = bright green
-	placeholderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)            // 241 = medium gray
-	statusStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	branchStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	cleanStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))                          // 10 = bright green
-	commitStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	activeModeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	inactiveModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	shortcutTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)               // 15 = bright white
-	shortcutModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
-	shortcutGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)               // 14 = bright cyan
-	shortcutKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)               // 12 = bright blue
-	shortcutTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))                         // 250 = light gray
-	stashDateStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                         // 241 = medium gray
-	stashMsgStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))                          // 15 = bright white
-	stashSelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Reverse(true) // 15 = bright white
-	branchSelStyle     = lipgloss.NewStyle().Bold(true).Reverse(true)
-	rootStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 12 = bright blue
-	lockedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
-	noUpstreamStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // 5 = magenta
-	aheadBehindStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 11 = bright yellow
-	mergedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))  // 6 = cyan
-	dirtyRedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
-	diffAddStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 10 = bright green
-	diffDelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 9 = bright red
-	diffHdrStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 14 = bright cyan
-)
-
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
 	Repos                    []scanner.Repo
@@ -316,10 +280,10 @@ func Render(p RenderParams) string {
 	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, innerHeight, status)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
 
-	// Border colors based on active pane
-	activeBorderColor := lipgloss.Color("12")
-	inactiveBorderColor := lipgloss.Color("238")
-	destructiveBorderColor := lipgloss.Color("9")
+	// Border colors based on active pane.
+	activeBorderColor := clearDarkTheme.activeBorder
+	inactiveBorderColor := clearDarkTheme.inactiveBorder
+	destructiveBorderColor := clearDarkTheme.destructiveBorder
 
 	leftBorderColor := inactiveBorderColor
 	rightBorderColor := inactiveBorderColor
@@ -902,9 +866,9 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 func transientStatusStyle(fadeStep int) lipgloss.Style {
 	switch fadeStep {
 	case 1:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+		return lipgloss.NewStyle().Foreground(clearDarkTheme.palette.muted)
 	case 2:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+		return lipgloss.NewStyle().Foreground(clearDarkTheme.palette.borderMuted)
 	default:
 		return dirtyRedStyle
 	}
@@ -1221,7 +1185,7 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 		line := "   " + branch + indicators + locationLabel
 		if i == selected {
-			line = branchSelStyle.Render(" > " + strings.TrimPrefix(line, "   "))
+			line = renderSelectedBranchRow(row, repoPath, width)
 		}
 		content = append(content, line)
 
@@ -1241,6 +1205,40 @@ func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width
 
 	truncateLines(content, width)
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderSelectedBranchRow(row gitquery.BranchRow, repoPath string, width int) string {
+	b := row.Branch
+	line := selectedStyle.Render(" > ") + selectedSegment(branchStyle, b.Name)
+
+	var indicators string
+	if b.Ahead > 0 || b.Behind > 0 {
+		indicators += selectedSegment(aheadBehindStyle, " ●")
+		indicators += selectedStyle.Render(fmt.Sprintf(" +%d/-%d", b.Ahead, b.Behind))
+	}
+	if b.Dirty {
+		indicators += renderSelectedDirtyIndicator(b.FilesChanged, b.LinesAdded, b.LinesDeleted)
+	}
+	if !b.HasUpstream || b.UpstreamGone {
+		indicators += selectedSegment(noUpstreamStyle, " ●")
+	}
+	if b.Merged {
+		indicators += selectedSegment(mergedStyle, " merged")
+	}
+	if indicators == "" {
+		indicators = selectedSegment(cleanStyle, " ✔")
+	}
+	line += indicators
+
+	if row.WorktreePath != "" {
+		line += selectedStyle.Render(" ")
+		if repoPath != "" && row.WorktreePath == repoPath {
+			line += selectedSegment(rootStyle, "[root]")
+		} else {
+			line += selectedSegment(commitStyle, fmt.Sprintf("[%s]", row.WorktreePath))
+		}
+	}
+	return renderSelectedRow(line, width)
 }
 
 // StashLineCount returns the number of visual lines a stash entry occupies
@@ -1821,13 +1819,48 @@ func renderWorktreePane(worktrees []gitquery.Worktree, selected, scroll, width, 
 
 		line := "   " + name + indicators + rootLabel + path
 		if i == selected {
-			line = branchSelStyle.Render(" > " + strings.TrimPrefix(line, "   "))
+			line = renderSelectedWorktreeRow(wt, width)
 		}
 		content = append(content, line)
 	}
 
 	truncateLines(content, width)
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
+	name := wt.BranchName
+	if wt.Detached {
+		name = "(detached)"
+	}
+	line := selectedStyle.Render(" > ") + selectedSegment(branchStyle, name)
+
+	if wt.Locked {
+		line += renderSelectedLockedIndicator(wt.LockReason)
+		if !wt.Stale {
+			if wt.Dirty {
+				line += renderSelectedDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
+			} else {
+				line += selectedSegment(cleanStyle, " ✔")
+			}
+		}
+	} else if wt.Stale {
+		line += selectedSegment(dirtyRedStyle, " ✗")
+		line += selectedStyle.Render(" ")
+		line += selectedSegment(dirtyRedStyle, "stale")
+	} else if wt.Dirty {
+		line += renderSelectedDirtyIndicator(wt.FilesChanged, wt.LinesAdded, wt.LinesDeleted)
+	} else {
+		line += selectedSegment(cleanStyle, " ✔")
+	}
+
+	if wt.IsMain {
+		line += selectedStyle.Render(" ")
+		line += selectedSegment(rootStyle, "[root]")
+	}
+	line += selectedStyle.Render(" ")
+	line += selectedSegment(commitStyle, wt.Path)
+	return renderSelectedRow(line, width)
 }
 
 func renderOverlay(p RenderParams) string {
@@ -2064,7 +2097,7 @@ func renderLaunchInstructionsDialog(promptText, placeholder, input, errText stri
 	}
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("12")).
+		BorderForeground(clearDarkTheme.activeBorder).
 		Width(contentWidth + 2).
 		Render(strings.Join(content, "\n"))
 	panelLines := strings.Split(panel, "\n")
@@ -2169,12 +2202,7 @@ func truncateToWidth(s string, maxWidth int) string {
 	if lipgloss.Width(s) <= maxWidth {
 		return s
 	}
-	// Strip ANSI, truncate runes, re-measure. Crude but correct for our use.
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes)) > maxWidth {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes)
+	return ansi.Truncate(s, maxWidth, "")
 }
 
 // scrollAndPad applies a scroll offset to content and returns a zero-padded
@@ -2206,6 +2234,15 @@ func renderDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
 	return s
 }
 
+func renderSelectedDirtyIndicator(filesChanged, linesAdded, linesDeleted int) string {
+	s := selectedSegment(dirtyRedStyle, " ●")
+	s += selectedStyle.Render(fmt.Sprintf(" %d files ", filesChanged))
+	s += selectedSegment(diffAddStyle, fmt.Sprintf("+%d", linesAdded))
+	s += selectedStyle.Render("/")
+	s += selectedSegment(diffDelStyle, fmt.Sprintf("-%d", linesDeleted))
+	return s
+}
+
 // MaxLockReasonWidth caps the visible width of a lock reason in the worktree
 // pane so a long reason cannot push the path off the end of the line.
 const MaxLockReasonWidth = 40
@@ -2216,6 +2253,29 @@ func renderLockedIndicator(reason string) string {
 		s += " " + lockedStyle.Render(truncateReason(reason, MaxLockReasonWidth))
 	}
 	return s
+}
+
+func renderSelectedLockedIndicator(reason string) string {
+	s := selectedSegment(lockedStyle, " 🔒")
+	s += selectedStyle.Render(" ")
+	s += selectedSegment(lockedStyle, "locked")
+	if reason != "" {
+		s += selectedStyle.Render(" ")
+		s += selectedSegment(lockedStyle, truncateReason(reason, MaxLockReasonWidth))
+	}
+	return s
+}
+
+func selectedSegment(style lipgloss.Style, text string) string {
+	return style.Background(clearDarkTheme.palette.selectionBg).Bold(true).Render(text)
+}
+
+func renderSelectedRow(line string, width int) string {
+	line = truncateToWidth(line, width)
+	if padding := width - lipgloss.Width(line); padding > 0 {
+		line += selectedStyle.Render(strings.Repeat(" ", padding))
+	}
+	return line
 }
 
 func truncateReason(s string, max int) string {
