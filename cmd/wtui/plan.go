@@ -16,6 +16,10 @@ import (
 // runPlan handles `wtui plan ...` subcommands. It may load config to resolve the
 // artifact root but must never scan repositories or start the TUI.
 func runPlan(args []string, deps runDeps) error {
+	if len(args) == 3 && isHelpArg(args[2]) {
+		printPlanHelp(deps.stdout)
+		return nil
+	}
 	if len(args) < 3 {
 		return fmt.Errorf("usage: wtui plan <save|list|read|phase> [flags]")
 	}
@@ -29,9 +33,34 @@ func runPlan(args []string, deps runDeps) error {
 	case "phase":
 		return runPlanPhase(args[3:], deps)
 	default:
-		return fmt.Errorf("unknown plan subcommand %q", args[2])
+		return unknownCommandError(args[2], []string{"save", "list", "read", "phase"}, planHelpText)
 	}
 }
+
+func printPlanHelp(w io.Writer) {
+	io.WriteString(w, planHelpText)
+}
+
+const planHelpText = `Usage: wtui plan <save|list|read|phase> [flags]
+
+Persist saved plan artifacts under the wtui agent-artifact root.
+
+Commands:
+  save       Save or update a Markdown plan; prints only the plan id.
+  list       List saved plans as JSON.
+  read       Print a saved plan's Markdown.
+  phase set  Create or update a saved-plan phase row.
+
+Examples:
+  printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" --status draft
+  wtui plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
+  wtui plan read --plan-id "$PLAN_ID"
+  wtui plan list --repo-path "$REPO" --json
+  wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+
+Most commands accept:
+  --state-root PATH  Override the artifact state root after the leaf command.
+`
 
 // resolvePlanRoot applies the documented precedence:
 // --state-root > WTUI_PLAN_STATE_ROOT > WTUI_SESSION_STATE_ROOT >
@@ -64,6 +93,7 @@ func newPlanStore(stateRoot string, deps runDeps) (*planstore.Store, error) {
 func runPlanSave(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("plan save", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printPlanSaveHelp(deps.stdout) }
 	title := flags.String("title", "", "plan title")
 	summary := flags.String("summary", "", "plan summary")
 	planID := flags.String("plan-id", "", "reuse an existing plan id")
@@ -78,7 +108,10 @@ func runPlanSave(args []string, deps runDeps) error {
 	commit := flags.String("commit", "", "commit hash")
 	file := flags.String("file", "", "read markdown from file instead of stdin")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if strings.TrimSpace(*title) == "" {
@@ -121,13 +154,71 @@ func runPlanSave(args []string, deps runDeps) error {
 	return nil
 }
 
+func printPlanSaveHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui plan save [flags]
+
+Save or update a Markdown plan. Markdown is read from stdin unless --file is set.
+
+Required flags:
+  --title TITLE
+
+Common flags:
+  --plan-id ID       Update an existing plan id.
+  --status STATUS    Plan status, such as draft.
+  --file PATH        Read Markdown from a file.
+  --repo-path PATH   Repository path metadata.
+  --state-root PATH  Override the artifact state root.
+
+Examples:
+  printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" --status draft
+  wtui plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
+`)
+}
+
+func printPlanListHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui plan list [flags]
+
+List saved plans as JSON.
+
+Required flags:
+  --json
+
+Common flags:
+  --repo-path PATH   Filter by repository path.
+  --state-root PATH  Override the artifact state root.
+
+Example:
+  wtui plan list --repo-path "$REPO" --json
+`)
+}
+
+func printPlanReadHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui plan read [flags]
+
+Print a saved plan's Markdown.
+
+Required flags:
+  --plan-id PLAN_ID
+
+Common flags:
+  --state-root PATH  Override the artifact state root.
+
+Example:
+  wtui plan read --plan-id "$PLAN_ID"
+`)
+}
+
 func runPlanList(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("plan list", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printPlanListHelp(deps.stdout) }
 	repoPath := flags.String("repo-path", "", "filter by repository path")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	asJSON := flags.Bool("json", false, "emit JSON output")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if !*asJSON {
@@ -155,9 +246,13 @@ func runPlanList(args []string, deps runDeps) error {
 func runPlanRead(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("plan read", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printPlanReadHelp(deps.stdout) }
 	planID := flags.String("plan-id", "", "plan id")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *planID == "" {
@@ -176,18 +271,29 @@ func runPlanRead(args []string, deps runDeps) error {
 }
 
 func runPlanPhase(args []string, deps runDeps) error {
-	if len(args) < 1 || args[0] != "set" {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printPlanPhaseHelp(deps.stdout)
+		return nil
+	}
+	if len(args) < 1 {
 		return fmt.Errorf("usage: wtui plan phase set [flags]")
+	}
+	if args[0] != "set" {
+		return unknownCommandError(args[0], []string{"set"}, planPhaseHelpText)
 	}
 	flags := flag.NewFlagSet("plan phase set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printPlanPhaseSetHelp(deps.stdout) }
 	planID := flags.String("plan-id", "", "plan id")
 	phaseID := flags.String("phase-id", "", "phase id")
 	title := flags.String("title", "", "phase title")
 	status := flags.String("status", "", "phase status")
 	order := flags.Int("order", 0, "phase order")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args[1:]); err != nil {
+	if help, err := parseCommandFlags(flags, args[1:]); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *planID == "" || *phaseID == "" {
@@ -203,6 +309,38 @@ func runPlanPhase(args []string, deps runDeps) error {
 		Status:  *status,
 		Order:   *order,
 	})
+}
+
+func printPlanPhaseHelp(w io.Writer) {
+	io.WriteString(w, planPhaseHelpText)
+}
+
+const planPhaseHelpText = `Usage: wtui plan phase set [flags]
+
+Update a saved-plan phase row.
+
+Example:
+  wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+`
+
+func printPlanPhaseSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui plan phase set [flags]
+
+Create or update a saved-plan phase row.
+
+Required flags:
+  --plan-id PLAN_ID
+  --phase-id PHASE_ID
+
+Common flags:
+  --title TITLE
+  --status STATUS
+  --order N
+  --state-root PATH
+
+Example:
+  wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+`)
 }
 
 func readPlanInput(file string, stdin io.Reader) (string, error) {

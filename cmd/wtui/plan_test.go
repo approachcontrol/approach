@@ -33,6 +33,165 @@ func noScanDeps(t *testing.T, deps runDeps) runDeps {
 	return deps
 }
 
+func TestRunPlanHelpPrintsUsageAndExamples(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "plan", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for plan help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui plan <save|list|read|phase> [flags]",
+		"wtui plan save --title",
+		"wtui plan read --plan-id",
+		"wtui plan phase set --plan-id",
+	})
+}
+
+func TestRunPlanSaveHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "plan", "save", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for plan save help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if strings.Contains(stdout.String(), "flag: help requested") {
+		t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui plan save [flags]",
+		"--title TITLE",
+		"--file PATH",
+		"--state-root PATH",
+	})
+}
+
+func TestRunPlanLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		wants []string
+	}{
+		{
+			name: "list",
+			args: []string{"wtui", "plan", "list", "--help"},
+			wants: []string{
+				"Usage: wtui plan list [flags]",
+				"--json",
+				"--repo-path PATH",
+			},
+		},
+		{
+			name: "read",
+			args: []string{"wtui", "plan", "read", "--help"},
+			wants: []string{
+				"Usage: wtui plan read [flags]",
+				"--plan-id PLAN_ID",
+				"wtui plan read --plan-id",
+			},
+		},
+		{
+			name: "phase set",
+			args: []string{"wtui", "plan", "phase", "set", "--help"},
+			wants: []string{
+				"Usage: wtui plan phase set [flags]",
+				"--plan-id PLAN_ID",
+				"--phase-id PHASE_ID",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := run(tc.args, noScanDeps(t, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run for plan leaf help")
+					return config.Config{}, nil
+				},
+				stdout: &stdout,
+			}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			if strings.Contains(stdout.String(), "flag: help requested") {
+				t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+			}
+			requireContainsAll(t, stdout.String(), tc.wants)
+		})
+	}
+}
+
+func TestRunPlanSaveAllowsHelpAsFlagValue(t *testing.T) {
+	root := t.TempDir()
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "plan", "save",
+		"--title", "help",
+		"--plan-id", "help-title",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run with explicit state root")
+			return config.Config{}, nil
+		},
+		stdin:  strings.NewReader("body"),
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != "help-title" {
+		t.Fatalf("expected saved plan id, got %q", stdout.String())
+	}
+	record := readPlanRecord(t, root, "help-title")
+	if record.Title != "help" {
+		t.Fatalf("title = %q, want help", record.Title)
+	}
+}
+
+func TestRunPlanUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
+	err := run([]string{"wtui", "plan", "reed"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown plan subcommand")
+			return config.Config{}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("expected unknown subcommand error")
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "reed"; did you mean "read"?`,
+		"Usage: wtui plan <save|list|read|phase> [flags]",
+	})
+}
+
+func TestRunPlanPhaseUnknownSubcommandSuggestsSet(t *testing.T) {
+	err := run([]string{"wtui", "plan", "phase", "sete"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown plan phase subcommand")
+			return config.Config{}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("expected unknown subcommand error")
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "sete"; did you mean "set"?`,
+		"Usage: wtui plan phase set [flags]",
+	})
+}
+
 func TestRunPlanSaveFromStdinPrintsPlanID(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer
