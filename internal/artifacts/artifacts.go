@@ -140,6 +140,13 @@ func IsSafeID(id string) bool {
 	return safeIDPattern.MatchString(id) && id != "." && id != ".."
 }
 
+// NormalizePhaseID canonicalizes a phase identifier so superficially different
+// spellings of the same logical phase (case or surrounding whitespace) compare
+// equal and upsert in place instead of duplicating rows.
+func NormalizePhaseID(id string) string {
+	return strings.ToLower(strings.TrimSpace(id))
+}
+
 // AllocateTimestampedID returns a timestamp+slug ID that does not already have
 // a record directory in the configured collection.
 func AllocateTimestampedID(opts IDOptions) (string, error) {

@@ -206,7 +206,10 @@ wtui plan read --plan-id ID [--state-root PATH]                # prints Markdown
 
 Plan statuses: `draft`, `approved`, `in_progress`, `completed`, `blocked`,
 `superseded`. Phase statuses: `pending`, `in_progress`, `completed`, `blocked`,
-`skipped`. `plan_id` must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`; when
+`skipped`. Phase IDs are normalized (trimmed and lowercased) before matching,
+so re-running `phase set` with the same logical `--phase-id` -- including case
+or whitespace variants -- updates that phase in place instead of adding a
+duplicate row, and repairs records that already contain duplicates. `plan_id` must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`; when
 omitted, wtui generates `YYYYMMDDTHHMMSSZ-<title-slug>` with a `-2`, `-3`, …
 suffix on collision.
 
@@ -300,8 +303,11 @@ ready only after approved Plan Review outcomes, or after an explicit
 skipped-with-notes Plan Review override.
 
 Implementation can be split into ordered child phases with
-`wtui flow phase add-child`. Child phase IDs are stable: re-running the command
-updates the same child instead of duplicating it. Child phases currently belong
+`wtui flow phase add-child`. Child phase IDs are stable and normalized (trimmed
+and lowercased): re-running the command with the same logical id -- including
+case or whitespace variants -- updates the same child instead of duplicating
+it, and updates collapse duplicate rows left by older records. `wtui flow phase
+set` resolves phase ids the same way. Child phases currently belong
 under `implementation`; they gate review loop and PR creation until completed or
 skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
 Implementation point to the saved plan artifact, while Review Loop and PR

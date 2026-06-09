@@ -54,6 +54,78 @@ func TestSetPhaseCreatesAndUpdatesOrderedPhase(t *testing.T) {
 	}
 }
 
+func TestSetPhaseUpsertsNormalizedPhaseIDVariants(t *testing.T) {
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	savePlan(t, store, "phased")
+
+	if err := store.SetPhase("phased", planstore.PlanPhase{PhaseID: "phase-1", Title: "Phase 1", Status: "in_progress", Order: 1}); err != nil {
+		t.Fatalf("SetPhase(phase-1) error = %v", err)
+	}
+	// Completion commands that vary only by case or surrounding whitespace must
+	// update the same logical phase, not create a second row.
+	for _, variant := range []string{"Phase-1", " phase-1 ", "PHASE-1"} {
+		if err := store.SetPhase("phased", planstore.PlanPhase{PhaseID: variant, Title: "Phase 1", Status: "completed", Order: 1}); err != nil {
+			t.Fatalf("SetPhase(%q) error = %v", variant, err)
+		}
+	}
+
+	records, err := store.List(planstore.PlanFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	got := records[0]
+	if len(got.Phases) != 1 {
+		t.Fatalf("variant phase ids duplicated rows: %#v", got.Phases)
+	}
+	if got.Phases[0].PhaseID != "phase-1" {
+		t.Fatalf("stored phase id not normalized: %q", got.Phases[0].PhaseID)
+	}
+	if got.Phases[0].Status != "completed" {
+		t.Fatalf("phase not updated in place: %#v", got.Phases[0])
+	}
+}
+
+func TestSetPhaseCollapsesExistingDuplicateRows(t *testing.T) {
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// Records written before phase-id normalization may already hold duplicate
+	// rows for one logical phase; the next update must repair them.
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID: "dupes", Title: "T", Markdown: "b", Status: "draft",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "Phase-1", Title: "Phase 1", Status: "in_progress", Order: 1},
+			{PhaseID: "phase-1", Title: "Phase 1", Status: "pending", Order: 1},
+			{PhaseID: "phase-2", Title: "Phase 2", Status: "pending", Order: 2},
+		},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := store.SetPhase("dupes", planstore.PlanPhase{PhaseID: "phase-1", Title: "Phase 1", Status: "completed", Order: 1}); err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+
+	records, err := store.List(planstore.PlanFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	got := records[0]
+	if len(got.Phases) != 2 {
+		t.Fatalf("duplicate rows not collapsed: %#v", got.Phases)
+	}
+	if got.Phases[0].PhaseID != "phase-1" || got.Phases[0].Status != "completed" {
+		t.Fatalf("logical phase not updated in place: %#v", got.Phases[0])
+	}
+	if got.Phases[1].PhaseID != "phase-2" {
+		t.Fatalf("unrelated phase disturbed: %#v", got.Phases[1])
+	}
+}
+
 func TestSetPhasePreservesMarkdownBody(t *testing.T) {
 	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
 	if err != nil {

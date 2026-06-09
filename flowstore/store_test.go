@@ -2041,6 +2041,446 @@ func TestStoreAddChildImplementationPhaseOrdersAndUpdatesExistingChildren(t *tes
 	}
 }
 
+func TestStoreAddChildPhaseUpsertsNormalizedPhaseIDVariants(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Variant children",
+		Instructions: "split implementation",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "implementation-api",
+		Title:         "API integration",
+		Order:         10,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase() error = %v", err)
+	}
+	// Re-adding the same logical child with a case or whitespace variant of the
+	// phase id must update in place, not create a second row.
+	for _, variant := range []string{"Implementation-API", " implementation-api "} {
+		record, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{
+			FlowID:        record.FlowID,
+			ParentPhaseID: "implementation",
+			PhaseID:       variant,
+			Title:         "API integration updated",
+			Order:         10,
+		})
+		if err != nil {
+			t.Fatalf("AddChildPhase(%q) error = %v", variant, err)
+		}
+	}
+
+	count := 0
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID != "" {
+			count++
+			if phase.PhaseID != "implementation-api" {
+				t.Fatalf("stored child phase id not normalized: %q", phase.PhaseID)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("variant phase ids duplicated child rows: %#v", record.Phases)
+	}
+	if child := phaseByID(t, record, "implementation-api"); child.Title != "API integration updated" {
+		t.Fatalf("child not updated in place: %#v", child)
+	}
+}
+
+func TestStoreSetPhaseMatchesNormalizedPhaseIDVariants(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Variant set",
+		Instructions: "complete phases",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// Completing a phase with a case or whitespace variant of its id must
+	// resolve to the existing phase rather than failing or duplicating.
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: " Plan ", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(\" Plan \") error = %v", err)
+	}
+	if len(updated.Phases) != len(record.Phases) {
+		t.Fatalf("variant phase id changed phase count: %#v", updated.Phases)
+	}
+	if got := phaseByID(t, updated, "plan").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("plan status = %q, want completed", got)
+	}
+}
+
+func TestStoreSetPhaseCollapsesExistingDuplicatePhaseRows(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// Records written before phase-id normalization may already hold duplicate
+	// rows for one logical child phase; completing it must repair the record
+	// instead of leaving a second row behind.
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicated-children",
+		Title:        "Duplicated children",
+		Instructions: "complete child phase",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseReady, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhasePending, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "step-1", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(step-1 completed) error = %v", err)
+	}
+
+	count := 0
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+			if phase.Status != flowstore.PhaseCompleted {
+				t.Fatalf("surviving child not completed: %#v", phase)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child rows not collapsed on completion: %#v", record.Phases)
+	}
+}
+
+func TestStoreAddChildPhaseCollapsesExistingDuplicateRows(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicated-add-child",
+		Title:        "Duplicated add-child",
+		Instructions: "re-add child phase",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseReady, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhasePending, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "step-1",
+		Title:         "Step 1 updated",
+		Order:         10,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase() error = %v", err)
+	}
+
+	count := 0
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+			if phase.PhaseID != "step-1" || phase.Title != "Step 1 updated" {
+				t.Fatalf("surviving child not updated in place: %#v", phase)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child rows not collapsed on add-child: %#v", record.Phases)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDMatchesNormalizedPhaseIDVariants(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Variant launch",
+		Instructions: "launch phases",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: " Plan ", LaunchID: "launch-1"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(\" Plan \") error = %v", err)
+	}
+	plan := phaseByID(t, updated, "plan")
+	if plan.Status != flowstore.PhaseRunning {
+		t.Fatalf("plan status = %q, want running", plan.Status)
+	}
+	if len(plan.LaunchIDs) != 1 || plan.LaunchIDs[0] != "launch-1" {
+		t.Fatalf("plan launch ids = %#v", plan.LaunchIDs)
+	}
+}
+
+func TestStoreAttachSessionMatchesNormalizedPhaseIDVariants(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Variant attach",
+		Instructions: "attach sessions",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: " PLAN ",
+		Session: flowstore.Session{Provider: "claude", SessionID: "sess-1"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(\" PLAN \") error = %v", err)
+	}
+	plan := phaseByID(t, updated, "plan")
+	if len(plan.Sessions) != 1 || plan.Sessions[0].SessionID != "sess-1" {
+		t.Fatalf("plan sessions = %#v", plan.Sessions)
+	}
+}
+
+func TestStoreAttachSessionPrefersExactRowOverEarlierDuplicate(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// Legacy duplicates can leave a stale row ahead of the active one, e.g. a
+	// completed "Step-1" followed by the exact "step-1" row that is actually
+	// running. Attaching a session is metadata-only: it must target the exact
+	// row and keep its running status instead of collapsing into the stale row.
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "exact-row-attach",
+		Title:        "Exact row attach",
+		Instructions: "attach session to active duplicate",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseCompleted, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{
+				PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1",
+				Status: flowstore.PhaseRunning, Kind: "implementation_child", Order: 10,
+				LaunchIDs: []string{"launch-1"},
+				CreatedAt: now, UpdatedAt: now,
+			},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "step-1",
+		Session: flowstore.Session{Provider: "codex", SessionID: "sess-9"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(step-1) error = %v", err)
+	}
+
+	count := 0
+	var survivor flowstore.FlowPhase
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+			survivor = phase
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child rows not collapsed on attach: %#v", record.Phases)
+	}
+	if survivor.PhaseID != "step-1" {
+		t.Fatalf("survivor phase id = %q, want step-1", survivor.PhaseID)
+	}
+	if survivor.Status != flowstore.PhaseRunning {
+		t.Fatalf("survivor status = %q, want running; metadata-only attach must not change phase status", survivor.Status)
+	}
+	if len(survivor.LaunchIDs) != 1 || survivor.LaunchIDs[0] != "launch-1" {
+		t.Fatalf("launch ids lost in collapse: %#v", survivor.LaunchIDs)
+	}
+	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "sess-9" {
+		t.Fatalf("sessions = %#v, want attached sess-9", survivor.Sessions)
+	}
+}
+
+func TestStoreCollapseMergesLaunchAndSessionMetadataFromDuplicateRows(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// Legacy duplicates often split metadata across rows: one row carries
+	// launch/session history while the other carries status. Repair must keep
+	// both halves.
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "split-duplicates",
+		Title:        "Split duplicates",
+		Instructions: "complete child phase",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseReady, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{
+				PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1",
+				Status: flowstore.PhasePending, Kind: "implementation_child", Order: 10,
+				Notes:     "launched from TUI",
+				LaunchIDs: []string{"launch-1"},
+				Sessions:  []flowstore.Session{{Provider: "claude", SessionID: "sess-1"}},
+				CreatedAt: now, UpdatedAt: now,
+			},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "step-1", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase(step-1 completed) error = %v", err)
+	}
+
+	count := 0
+	var survivor flowstore.FlowPhase
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+			survivor = phase
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child rows not collapsed: %#v", record.Phases)
+	}
+	if survivor.Status != flowstore.PhaseCompleted {
+		t.Fatalf("survivor status = %q, want completed", survivor.Status)
+	}
+	if len(survivor.LaunchIDs) != 1 || survivor.LaunchIDs[0] != "launch-1" {
+		t.Fatalf("launch ids lost in collapse: %#v", survivor.LaunchIDs)
+	}
+	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "sess-1" {
+		t.Fatalf("sessions lost in collapse: %#v", survivor.Sessions)
+	}
+	if survivor.Notes != "launched from TUI" {
+		t.Fatalf("notes lost in collapse: %q", survivor.Notes)
+	}
+}
+
+func TestStoreAddChildPhaseIdempotentRerunStillCollapsesDuplicates(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// The first row already matches the incoming update exactly; the rerun must
+	// still repair the trailing duplicate row.
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "idempotent-duplicates",
+		Title:        "Idempotent duplicates",
+		Instructions: "re-add child phase",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseReady, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "step-1 ", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhasePending, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	created, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	record, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation",
+		PhaseID:       "step-1",
+		Title:         "Step 1",
+		Order:         10,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase() error = %v", err)
+	}
+
+	count := 0
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("idempotent rerun left duplicate child rows: %#v", record.Phases)
+	}
+	if record.UpdatedAt != created.UpdatedAt {
+		t.Fatalf("repair-only rerun bumped flow UpdatedAt from %s to %s", created.UpdatedAt, record.UpdatedAt)
+	}
+	if got := phaseByID(t, record, "step-1").UpdatedAt; got != now {
+		t.Fatalf("repair-only rerun bumped child UpdatedAt to %s", got)
+	}
+}
+
 func TestStoreReadDoesNotGateDownstreamOnSkippedChildWithoutNotes(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
