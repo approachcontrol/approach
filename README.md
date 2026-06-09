@@ -225,7 +225,8 @@ resolve the artifact root but never scan repositories or start the TUI):
 # prints only the plan_id.
 printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" --status draft
 
-# Record per-phase progress.
+# Record per-phase progress. Phase ids are trimmed and lowercased, so
+# re-running phase set with the same logical id updates the phase in place.
 wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
 
 # Read plans back.

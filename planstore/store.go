@@ -217,7 +217,8 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 	if strings.TrimSpace(phase.Title) == "" {
 		return fmt.Errorf("phase title is required")
 	}
-	if strings.TrimSpace(phase.PhaseID) == "" {
+	phase.PhaseID = artifacts.NormalizePhaseID(phase.PhaseID)
+	if phase.PhaseID == "" {
 		return fmt.Errorf("phase id is required")
 	}
 	record, ok := s.readRecord(planID)
@@ -226,13 +227,19 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 	}
 
 	updated := false
-	for i := range record.Phases {
-		if record.Phases[i].PhaseID == phase.PhaseID {
-			record.Phases[i] = phase
+	kept := record.Phases[:0]
+	for _, existing := range record.Phases {
+		if artifacts.NormalizePhaseID(existing.PhaseID) != phase.PhaseID {
+			kept = append(kept, existing)
+			continue
+		}
+		// Collapse every spelling of this logical phase into the one updated row.
+		if !updated {
+			kept = append(kept, phase)
 			updated = true
-			break
 		}
 	}
+	record.Phases = kept
 	if !updated {
 		record.Phases = append(record.Phases, phase)
 	}

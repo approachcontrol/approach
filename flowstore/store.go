@@ -304,6 +304,7 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 
 // SetPhase validates and persists one phase update on an existing flow.
 func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
@@ -321,13 +322,10 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if !ok {
 		return FlowRecord{}, fmt.Errorf("flow %q not found", update.FlowID)
 	}
-	phaseIndex := -1
-	for i, phase := range record.Phases {
-		if phase.PhaseID == update.PhaseID {
-			phaseIndex = i
-			break
-		}
-	}
+	// When a legacy record still holds duplicate rows for this logical phase,
+	// the first row wins: it is validated, updated, and kept, while the others
+	// are merged into it by collapseDuplicatePhaseRows below.
+	phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
 	if phaseIndex < 0 {
 		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 	}
@@ -350,8 +348,10 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if update.Summary != "" {
 		phase.Summary = update.Summary
 	}
+	phase.PhaseID = update.PhaseID
 	phase.UpdatedAt = now
 	record.Phases[phaseIndex] = phase
+	record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
 	if phase.PhaseID == "merge" && (phase.Status == PhaseRunning || phase.Status == PhaseSkipped) {
 		record.Merge = Merge{Status: MergePending}
 	}
@@ -366,6 +366,8 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 
 // AddChildPhase creates or updates a stable child phase under Implementation.
 func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	update.ParentPhaseID = artifacts.NormalizePhaseID(update.ParentPhaseID)
 	if err := validateChildPhaseUpdate(update); err != nil {
 		return FlowRecord{}, err
 	}
@@ -383,11 +385,18 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			if child.ParentPhaseID != update.ParentPhaseID {
 				return FlowRecord{}, fmt.Errorf("phase %q already belongs to parent %q", update.PhaseID, child.ParentPhaseID)
 			}
-			if child.Title == strings.TrimSpace(update.Title) &&
+			// Repair duplicate rows even when the surviving row already matches
+			// the update; the unchanged early return below must not skip it.
+			record.Phases = collapseDuplicatePhaseRows(record.Phases, childIndex)
+			childIndex = phaseIndexByID(record.Phases, update.PhaseID)
+			child = record.Phases[childIndex]
+			if child.PhaseID == update.PhaseID &&
+				child.Title == strings.TrimSpace(update.Title) &&
 				child.Kind == "implementation_child" &&
 				child.Order == update.Order {
 				return record, nil
 			}
+			child.PhaseID = update.PhaseID
 			child.Title = strings.TrimSpace(update.Title)
 			child.Kind = "implementation_child"
 			child.Order = update.Order
@@ -542,7 +551,8 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	if strings.TrimSpace(update.PhaseID) == "" {
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
 		return FlowRecord{}, fmt.Errorf("phase id is required")
 	}
 	launchID := strings.TrimSpace(update.LaunchID)
@@ -550,13 +560,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
-		phaseIndex := -1
-		for i, phase := range record.Phases {
-			if phase.PhaseID == update.PhaseID {
-				phaseIndex = i
-				break
-			}
-		}
+		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
@@ -576,8 +580,10 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			phase.Notes = launchPhaseUpdate.Notes
 		}
 		phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
+		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
 		if phase.PhaseID == "merge" && phase.Status == PhaseRunning {
 			record.Merge = Merge{Status: MergePending}
 		}
@@ -594,7 +600,8 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	if strings.TrimSpace(update.PhaseID) == "" {
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
 		return FlowRecord{}, fmt.Errorf("phase id is required")
 	}
 	if strings.TrimSpace(update.Session.Provider) == "" {
@@ -604,13 +611,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("session id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
-		phaseIndex := -1
-		for i, phase := range record.Phases {
-			if phase.PhaseID == update.PhaseID {
-				phaseIndex = i
-				break
-			}
-		}
+		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
@@ -618,7 +619,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		session := update.Session
 		replaced := false
 		for i, existing := range phase.Sessions {
-			if existing.Provider == session.Provider && existing.SessionID == session.SessionID {
+			if sameSession(existing, session) {
 				phase.Sessions[i] = session
 				replaced = true
 				break
@@ -627,8 +628,10 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		if !replaced {
 			phase.Sessions = append(phase.Sessions, session)
 		}
+		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
 		record.UpdatedAt = now
 		return record, nil
 	})
@@ -1320,9 +1323,60 @@ func hasPhase(record FlowRecord, phaseID string) bool {
 	return phaseIndexByID(record.Phases, phaseID) >= 0
 }
 
-func phaseIndexByID(phases []FlowPhase, phaseID string) int {
+// collapseDuplicatePhaseRows keeps the row at keepIndex and drops every other
+// row whose normalized phase id matches it, repairing records that duplicated
+// one logical phase before phase ids were normalized. Launch and session
+// history from dropped rows is merged into the survivor; dropped notes and
+// summaries are kept only when the survivor's own fields are empty.
+func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
+	survivor := phases[keepIndex]
+	want := artifacts.NormalizePhaseID(survivor.PhaseID)
+	kept := make([]FlowPhase, 0, len(phases))
+	survivorPos := -1
 	for i, phase := range phases {
-		if phase.PhaseID == phaseID {
+		if i == keepIndex {
+			survivorPos = len(kept)
+			kept = append(kept, phase)
+			continue
+		}
+		if artifacts.NormalizePhaseID(phase.PhaseID) != want {
+			kept = append(kept, phase)
+			continue
+		}
+		for _, launchID := range phase.LaunchIDs {
+			survivor.LaunchIDs = appendUnique(survivor.LaunchIDs, launchID)
+		}
+		for _, session := range phase.Sessions {
+			survivor.Sessions = appendUniqueSession(survivor.Sessions, session)
+		}
+		if survivor.Notes == "" {
+			survivor.Notes = phase.Notes
+		}
+		if survivor.Summary == "" {
+			survivor.Summary = phase.Summary
+		}
+	}
+	kept[survivorPos] = survivor
+	return kept
+}
+
+func sameSession(left, right Session) bool {
+	return left.Provider == right.Provider && left.SessionID == right.SessionID
+}
+
+func appendUniqueSession(sessions []Session, session Session) []Session {
+	for _, existing := range sessions {
+		if sameSession(existing, session) {
+			return sessions
+		}
+	}
+	return append(sessions, session)
+}
+
+func phaseIndexByID(phases []FlowPhase, phaseID string) int {
+	want := artifacts.NormalizePhaseID(phaseID)
+	for i, phase := range phases {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return i
 		}
 	}
