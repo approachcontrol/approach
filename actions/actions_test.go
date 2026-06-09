@@ -2011,6 +2011,39 @@ func TestAgentCommandBuildsClaudeResumeCommand(t *testing.T) {
 	}
 }
 
+func TestAgentCommandRejectsBlankResumeSessionID(t *testing.T) {
+	for _, command := range []string{"claude", "codex"} {
+		t.Run(command, func(t *testing.T) {
+			_, err := actions.AgentCommand(actions.AgentLaunchContext{
+				Command:         command,
+				WorktreePath:    "/repo/worktree",
+				ResumeSessionID: "   ",
+			})
+			if err == nil {
+				t.Fatal("AgentCommand() error = nil, want blank resume session ID rejected")
+			}
+			if !strings.Contains(err.Error(), "session ID") {
+				t.Fatalf("AgentCommand() error = %v, want mention of session ID", err)
+			}
+		})
+	}
+}
+
+func TestAgentCommandTrimsResumeSessionID(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:         "claude",
+		WorktreePath:    "/repo/worktree",
+		ResumeSessionID: " claude-session-1 ",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	args := cmd.Args
+	if args[len(args)-2] != "--resume" || args[len(args)-1] != "claude-session-1" {
+		t.Fatalf("unexpected resume args: %#v", args)
+	}
+}
+
 func TestAgentCommandResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",

@@ -218,6 +218,44 @@ func TestStoreMarksLaunchEnded(t *testing.T) {
 	}
 }
 
+func TestStoreMarkLaunchEndedSkipsLegacyBlankSessionIDRecords(t *testing.T) {
+	root := t.TempDir()
+	endedAt := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:  sessions.ProviderClaude,
+		SessionID: "claude-1",
+		LaunchID:  "launch-1",
+		Status:    "last_seen",
+		RepoPath:  "/repo",
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	legacyDir := filepath.Join(root, "sessions", "claude", "legacy-blank")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"schema_version":1,"provider":"claude","session_id":"   ","launch_id":"launch-1","status":"last_seen"}`)
+	if err := os.WriteFile(filepath.Join(legacyDir, "meta.json"), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.MarkLaunchEnded("launch-1", endedAt); err != nil {
+		t.Fatalf("MarkLaunchEnded() error = %v, want legacy blank-ID record skipped", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{RepoPath: "/repo"})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].Status != "ended" {
+		t.Fatalf("valid launch record was not ended: %#v", records)
+	}
+}
+
 func TestStoreMarkLaunchEndedPreservesProviderEndedAt(t *testing.T) {
 	root := t.TempDir()
 	providerEndedAt := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
@@ -282,6 +320,21 @@ func TestStoreRejectsRecordsWithoutProviderAndSessionID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "provider") || !strings.Contains(err.Error(), "session ID") {
 		t.Fatalf("Upsert() error = %q, want provider and session ID validation", err)
+	}
+}
+
+func TestStoreRejectsWhitespaceOnlySessionID(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	err = store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderClaude, SessionID: "   "})
+	if err == nil {
+		t.Fatal("Upsert() error = nil, want validation error for whitespace session ID")
+	}
+	if !strings.Contains(err.Error(), "session ID") {
+		t.Fatalf("Upsert() error = %q, want session ID validation", err)
 	}
 }
 

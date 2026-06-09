@@ -23,10 +23,14 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	if err := json.NewDecoder(input).Decode(&payload); err != nil {
 		return SessionRecord{}, fmt.Errorf("parse hook payload: %w", err)
 	}
+	sessionID := strings.TrimSpace(payload.SessionID)
+	if sessionID == "" {
+		return SessionRecord{}, fmt.Errorf("%s hook payload has no usable session ID; rejecting session capture", provider)
+	}
 	now := time.Now().UTC()
 	record := SessionRecord{
 		Provider:       provider,
-		SessionID:      payload.SessionID,
+		SessionID:      sessionID,
 		Status:         statusForPayload(provider, payload),
 		StartedAt:      payload.StartedAt,
 		EndedAt:        payload.EndedAt,
@@ -189,7 +193,7 @@ func resolveGitMetadata(record *SessionRecord) {
 }
 
 func attachFlowSession(record SessionRecord, opts IngestOptions) {
-	if record.FlowID == "" || record.FlowPhaseID == "" || record.SessionID == "" {
+	if record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.SessionID) == "" {
 		return
 	}
 	root := opts.Env["WTUI_FLOW_STATE_ROOT"]

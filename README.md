@@ -195,7 +195,11 @@ uses restrictive file permissions for created session files. Provider session ID
 are stored in hashed directory names instead of raw path components.
 When resuming a session, wtui runs the provider resume command from the recorded
 session `cwd` when present, falling back to the captured worktree path, while
-preserving the stored worktree metadata for subsequent hooks.
+preserving the stored worktree metadata for subsequent hooks. Sessions missing a
+provider session ID cannot be resumed; wtui reports this in the status line
+instead of starting a fresh provider session. Hook payloads without a usable
+session ID are rejected at capture time, so no unusable session records are
+stored.
 
 ### Plans view (mode 7)
 

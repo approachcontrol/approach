@@ -437,7 +437,15 @@ available; the selected worktree path is still included in the prompt metadata.
 Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with
 `claude ... --resume <session-id>`, while preserving the same wtui hook and
-metadata environment wiring as fresh launches.
+metadata environment wiring as fresh launches. The TUI refuses to resume a
+stored session whose provider session ID is blank (it reports this in the
+status line instead), and command construction trims resume session IDs and
+rejects whitespace-only ones, so a resume command never carries a blank
+`--resume` argument.
+
+Hook payloads whose `session_id` is blank or whitespace-only are rejected at
+ingest time: no session record is persisted and no Flow phase attachment is
+made.
 
 For Codex hook payloads with `hook_event_name = "Stop"`, wtui records the
 session as ended. Claude hook ingestion also records ended sessions, using the

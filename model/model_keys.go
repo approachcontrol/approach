@@ -1095,6 +1095,11 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, bool, Model) {
+	sessionID := strings.TrimSpace(record.SessionID)
+	if sessionID == "" {
+		m = m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed")
+		return actions.AgentLaunchContext{}, false, m
+	}
 	command := string(record.Provider)
 	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
 		command = agent.CommandCodexApp
@@ -1116,7 +1121,7 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		Branch:           record.Branch,
 		Commit:           record.Commit,
 		SessionStateRoot: m.sessionStateRoot,
-		ResumeSessionID:  record.SessionID,
+		ResumeSessionID:  sessionID,
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
 	}
