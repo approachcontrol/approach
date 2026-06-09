@@ -208,12 +208,91 @@ func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
 		t.Fatal("expected selected flow to expand")
 	}
 
+	for range flowstore.OrderedPhases(flowWithPhaseDetails().Phases) {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("flow selection = %d, want second flow", got)
 	}
 	if m.ExpandedFlowID() != "" {
 		t.Fatalf("expanded flow = %q, want collapsed after selecting another flow", m.ExpandedFlowID())
+	}
+}
+
+func TestModel_ExpandedFlowArrowKeysSelectPhaseRows(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if got := m.SelectedFlowPhaseID(); got != "" {
+		t.Fatalf("expanded flow should keep flow row selected, got phase %q", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 0 {
+		t.Fatalf("flow selection changed while entering phases: %d", got)
+	}
+	if got := m.SelectedFlowPhaseID(); got != "plan" {
+		t.Fatalf("selected flow phase = %q, want plan", got)
+	}
+	if view := m.View(); !strings.Contains(view, "> completed") {
+		t.Fatalf("selected phase row should be visually marked:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.SelectedFlowPhaseID(); got != "plan-review" {
+		t.Fatalf("selected flow phase = %q, want plan-review", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.SelectedFlowPhaseID(); got != "" {
+		t.Fatalf("up from first phase should return to flow row, got phase %q", got)
+	}
+}
+
+func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{
+		flowWithPhaseDetails(),
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending, Phases: []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhasePending}}},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.SelectedFlowPhaseID(); got == "" {
+		t.Fatal("expected selected flow phase before changing flows")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("flow selection = %d, want second flow", got)
+	}
+	if got := m.SelectedFlowPhaseID(); got != "" {
+		t.Fatalf("selected flow phase after changing flows = %q, want cleared", got)
+	}
+	if got := m.ExpandedFlowID(); got != "" {
+		t.Fatalf("expanded flow after changing flows = %q, want collapsed", got)
+	}
+}
+
+func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyTab},
+		{Type: tea.KeyRight},
+	} {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		if got := m.SelectedFlowPhaseID(); got == "" {
+			t.Fatal("expected selected flow phase before leaving right pane")
+		}
+
+		m, _ = update(m, key)
+		if got := m.SelectedFlowPhaseID(); got != "" {
+			t.Fatalf("%s left selected flow phase = %q, want cleared", key.String(), got)
+		}
 	}
 }
 
@@ -255,7 +334,9 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	for i := 0; i < 4; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
 
 	if got := m.FlowSelected(); got != 0 {
 		t.Fatalf("single expanded flow should remain selected, got %d", got)
@@ -278,6 +359,30 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 	view = m.View()
 	if !strings.Contains(view, "autoreview:pending") {
 		t.Fatalf("expanded flow should stay scrolled to the last phase:\n%s", view)
+	}
+}
+
+func TestModel_SelectedFlowPhaseStaysVisibleAfterResize(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.Phases = append(flow.Phases,
+		flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop", Status: flowstore.PhasePending},
+		flowstore.FlowPhase{PhaseID: "pr-creation", Title: "PR Creation", Status: flowstore.PhasePending},
+		flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
+	)
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	for i := 0; i < 6; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := m.SelectedFlowPhaseID(); got != "autoreview" {
+		t.Fatalf("selected flow phase = %q, want autoreview", got)
+	}
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
+
+	view := m.View()
+	if !strings.Contains(view, "autoreview:pending") {
+		t.Fatalf("selected flow phase should stay visible after resize:\n%s", view)
 	}
 }
 
@@ -488,6 +593,225 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 	}
 	if got := m.TransientError(); !strings.Contains(got, "Flow has no linked plan") {
 		t.Fatalf("status = %q, want missing linked plan message", got)
+	}
+}
+
+func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SessionStateRoot: "/state/wtui",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume sessions",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-sessions",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-sessions",
+		Commit:       "abc123",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-old", "launch-new"},
+			Sessions: []flowstore.Session{
+				{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
+				{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-new", Status: "ended", StartedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected selected Flow phase resume command")
+	}
+	msg, ok := cmd().(model.AgentResultMsg)
+	if !ok || msg.Err != "" {
+		t.Fatalf("expected successful AgentResultMsg from resume command, got %#v", msg)
+	}
+	if launched.Command != "codex" ||
+		launched.ResumeSessionID != "codex-new" ||
+		launched.FlowID != "flow-1" ||
+		launched.FlowPhaseID != "implementation" ||
+		launched.RepoPath != "/dev/alpha" ||
+		launched.WorktreePath != "/dev/alpha-worktrees/flow-resume-sessions" ||
+		launched.WorkingDir != "/dev/alpha-worktrees/flow-resume-sessions" ||
+		launched.Branch != "flow/resume-sessions" ||
+		launched.Commit != "abc123" ||
+		launched.SessionStateRoot != "/state/wtui" {
+		t.Fatalf("unexpected Flow phase resume context: %#v", launched)
+	}
+	if launched.LaunchID == "" || launched.LaunchID == "launch-new" {
+		t.Fatalf("expected fresh Flow phase resume launch id, got %#v", launched)
+	}
+}
+
+func TestModel_RKeyOnSelectedFlowPhaseUsesCodexAppPreferenceForCodexSession(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex-app",
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume codex app",
+		Status:       flowstore.StatusInProgress,
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-codex-app",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "implementation",
+			Title:   "Implementation",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: " CoDeX ", SessionID: "codex-new", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected selected Flow phase resume command")
+	}
+	msg, ok := cmd().(model.AgentResultMsg)
+	if !ok || msg.Err != "" {
+		t.Fatalf("expected successful AgentResultMsg from resume command, got %#v", msg)
+	}
+	if launched.Command != "codex-app" || launched.ResumeSessionID != "codex-new" {
+		t.Fatalf("unexpected Flow phase codex-app resume context: %#v", launched)
+	}
+}
+
+func TestModel_FlowPhaseWithUnsupportedProviderDoesNotAdvertiseResume(t *testing.T) {
+	launchRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Unsupported provider",
+		Status:       flowstore.StatusInProgress,
+		WorktreePath: "/dev/alpha-worktrees/flow-unsupported-provider",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "implementation",
+			Title:   "Implementation",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: "unsupported-agent", SessionID: "session-1", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if strings.Contains(m.View(), "r      resume") {
+		t.Fatalf("unsupported provider should not advertise Flow phase resume:\n%s", m.View())
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("unsupported provider should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("LaunchAgent ran for unsupported Flow phase provider")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "unsupported") {
+		t.Fatalf("status = %q, want unsupported provider validation", got)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *testing.T) {
+	launchRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Await latest",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/await-latest",
+		WorktreePath: "/dev/alpha-worktrees/flow-await-latest",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseRunning,
+			LaunchIDs: []string{"launch-old", "launch-new"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-old", LaunchID: "launch-old", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("awaiting latest session should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("LaunchAgent ran for stale Flow phase session")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "awaiting session") {
+		t.Fatalf("status = %q, want awaiting session", got)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeFailureDoesNotMarkPhaseNeedsAttention(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("immediate resume failure should not return command, got %T", cmd)
+	}
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("resume failure should not update Flow phase, got %#v", phaseUpdates)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "terminal unavailable") {
+		t.Fatalf("status = %q, want launch failure", got)
 	}
 }
 

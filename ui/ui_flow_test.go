@@ -64,6 +64,67 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Resumable flow",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseCompleted,
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "codex-1", Status: "ended"},
+				},
+			}},
+		}},
+		ActivePane:                 1,
+		FlowSelected:               0,
+		ExpandedFlowID:             "flow-1",
+		SelectedFlowPhaseID:        "implementation",
+		FlowPhaseResumableSelected: true,
+	})
+
+	if !strings.Contains(shortcutPaneText(view), "r      resume") {
+		t.Fatalf("resumable Flow phase should expose resume shortcut:\n%s", view)
+	}
+}
+
+func TestRender_FlowsModeHidesResumeShortcutWithoutResumableSelectedPhase(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Awaiting flow",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+			}},
+		}},
+		ActivePane:          1,
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "implementation",
+	})
+
+	if strings.Contains(shortcutPaneText(view), "r      resume") {
+		t.Fatalf("non-resumable Flow phase should not expose resume shortcut:\n%s", view)
+	}
+}
+
 func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
@@ -95,6 +156,82 @@ func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 		if strings.Contains(view, clipped) {
 			t.Fatalf("expanded phase ID appears clipped as %q:\n%s", clipped, view)
 		}
+	}
+}
+
+func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Flow sessions",
+			Status:       flowstore.StatusInProgress,
+			Branch:       "flow/sessions",
+			WorktreePath: "/dev/wtui-worktrees/flow-sessions",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Status:    flowstore.PhaseCompleted,
+				LaunchIDs: []string{"launch-1", "launch-2"},
+				Sessions: []flowstore.Session{
+					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-1", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
+					{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-2", Status: "ended", StartedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
+				},
+			}},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	for _, want := range []string{"implementation:completed", "2 sessions", "codex", "ended"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expanded phase session summary missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Legacy sessions",
+			Status:       flowstore.StatusNeedsAttention,
+			Branch:       "flow/legacy-sessions",
+			WorktreePath: "/dev/wtui-worktrees/flow-legacy-sessions",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "review-loop",
+				Title:     "Review loop",
+				Status:    flowstore.PhaseNeedsAttention,
+				LaunchIDs: []string{"launch-old", "launch-1"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", LaunchID: "launch-1", Status: "ended"},
+					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "ended", StartedAt: time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)},
+				},
+			}},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	if !strings.Contains(view, "review-loop:missing-session-id") {
+		t.Fatalf("malformed attached session should render missing-session-id:\n%s", view)
+	}
+	if strings.Contains(view, "1 session codex ended") {
+		t.Fatalf("malformed attached session should not render as resumable metadata:\n%s", view)
+	}
+	if strings.Contains(view, "1 session claude ended") {
+		t.Fatalf("malformed latest session should not render older session metadata:\n%s", view)
 	}
 }
 

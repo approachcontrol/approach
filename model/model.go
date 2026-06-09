@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +41,7 @@ type Model struct {
 	expandedPlanID            string
 	expandedFlowID            string
 	selectedPlanPhaseID       string
+	selectedFlowPhaseID       string
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -368,6 +370,7 @@ func (m Model) FlowSelected() int               { return m.flows.SelectedIndex()
 func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
 func (m Model) ExpandedFlowID() string          { return m.expandedFlowID }
 func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
+func (m Model) SelectedFlowPhaseID() string     { return m.selectedFlowPhaseID }
 func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
 func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
 func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
@@ -420,72 +423,74 @@ func (m Model) View() string {
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
-		Repos:                    repos,
-		Selected:                 selected,
-		Width:                    m.width,
-		Height:                   m.height,
-		Mode:                     m.mode,
-		Branches:                 rows,
-		Stashes:                  stashes,
-		BranchSelected:           branchSelected,
-		StashSelected:            stashSelected,
-		Overlay:                  m.overlayState(),
-		OverlayDiff:              modalView.Diff,
-		OverlayScroll:            modalView.Scroll,
-		ConfirmPrompt:            modalView.Prompt,
-		ConfirmForce:             modalView.Force,
-		WorktreeInputPrompt:      modalView.Prompt,
-		WorktreeInputPlaceholder: modalView.Placeholder,
-		WorktreeInput:            modalView.Input,
-		WorktreeInputErr:         modalView.InputErr,
-		SelectPrompt:             modalView.Prompt,
-		SelectItems:              uiSelectItems(modalView.SelectItems),
-		SelectSelected:           modalView.SelectIndex,
-		BranchScroll:             branchScroll,
-		RepoScroll:               repoScroll,
-		StashScroll:              stashScroll,
-		ActivePane:               m.activePane,
-		Destructive:              m.destructive,
-		Worktrees:                worktrees,
-		WorktreeSelected:         worktreeSelected,
-		WorktreeScroll:           worktreeScroll,
-		WorktreeSessions:         worktreeSessions,
-		WorktreeSessionSelected:  worktreeSessionSelected,
-		WorktreeSessionScroll:    worktreeSessionScroll,
-		InlineWorktreeSessions:   m.inlineWorktreeSessionPath != "",
-		Commits:                  commits,
-		CommitSelected:           commitSelected,
-		CommitScroll:             commitScroll,
-		Reflogs:                  reflogs,
-		ReflogSelected:           reflogSelected,
-		ReflogScroll:             reflogScroll,
-		Sessions:                 sessions,
-		SessionSelected:          sessionSelected,
-		SessionScroll:            sessionScroll,
-		Plans:                    plans,
-		PlanSelected:             planSelected,
-		PlanScroll:               planScroll,
-		Flows:                    flows,
-		FlowSelected:             flowSelected,
-		FlowScroll:               flowScroll,
-		ExpandedPlanID:           m.expandedPlanID,
-		ExpandedFlowID:           m.expandedFlowID,
-		SelectedPlanPhaseID:      m.selectedPlanPhaseID,
-		OverlayText:              modalView.Text,
-		TransientError:           m.visibleStatusText(),
-		TransientErrorFadeStep:   m.visibleStatusFadeStep(),
-		SearchActive:             m.searchActive,
-		RepoSearch:               m.repos.Query(),
-		ItemSearch:               m.activeItemPaneQuery(),
-		RepoEmptyMessage:         repoEmptyMessage,
-		RightEmptyMessage:        rightEmptyMessage,
-		FetchAvailable:           m.canFetch(),
-		FetchVisibleAvailable:    m.canFetchVisibleRepos(),
-		PullAvailable:            m.canPull(),
-		WorktreeMoveAvailable:    m.canMoveWorktree(),
-		WorktreeSessionsOpen:     m.inlineWorktreeSessionPath != "",
-		AgentAvailable:           m.canLaunchAgent(),
-		NewAgentAvailable:        m.canCreateAndLaunchAgent(),
+		Repos:                      repos,
+		Selected:                   selected,
+		Width:                      m.width,
+		Height:                     m.height,
+		Mode:                       m.mode,
+		Branches:                   rows,
+		Stashes:                    stashes,
+		BranchSelected:             branchSelected,
+		StashSelected:              stashSelected,
+		Overlay:                    m.overlayState(),
+		OverlayDiff:                modalView.Diff,
+		OverlayScroll:              modalView.Scroll,
+		ConfirmPrompt:              modalView.Prompt,
+		ConfirmForce:               modalView.Force,
+		WorktreeInputPrompt:        modalView.Prompt,
+		WorktreeInputPlaceholder:   modalView.Placeholder,
+		WorktreeInput:              modalView.Input,
+		WorktreeInputErr:           modalView.InputErr,
+		SelectPrompt:               modalView.Prompt,
+		SelectItems:                uiSelectItems(modalView.SelectItems),
+		SelectSelected:             modalView.SelectIndex,
+		BranchScroll:               branchScroll,
+		RepoScroll:                 repoScroll,
+		StashScroll:                stashScroll,
+		ActivePane:                 m.activePane,
+		Destructive:                m.destructive,
+		Worktrees:                  worktrees,
+		WorktreeSelected:           worktreeSelected,
+		WorktreeScroll:             worktreeScroll,
+		WorktreeSessions:           worktreeSessions,
+		WorktreeSessionSelected:    worktreeSessionSelected,
+		WorktreeSessionScroll:      worktreeSessionScroll,
+		InlineWorktreeSessions:     m.inlineWorktreeSessionPath != "",
+		Commits:                    commits,
+		CommitSelected:             commitSelected,
+		CommitScroll:               commitScroll,
+		Reflogs:                    reflogs,
+		ReflogSelected:             reflogSelected,
+		ReflogScroll:               reflogScroll,
+		Sessions:                   sessions,
+		SessionSelected:            sessionSelected,
+		SessionScroll:              sessionScroll,
+		Plans:                      plans,
+		PlanSelected:               planSelected,
+		PlanScroll:                 planScroll,
+		Flows:                      flows,
+		FlowSelected:               flowSelected,
+		FlowScroll:                 flowScroll,
+		ExpandedPlanID:             m.expandedPlanID,
+		ExpandedFlowID:             m.expandedFlowID,
+		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
+		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
+		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
+		OverlayText:                modalView.Text,
+		TransientError:             m.visibleStatusText(),
+		TransientErrorFadeStep:     m.visibleStatusFadeStep(),
+		SearchActive:               m.searchActive,
+		RepoSearch:                 m.repos.Query(),
+		ItemSearch:                 m.activeItemPaneQuery(),
+		RepoEmptyMessage:           repoEmptyMessage,
+		RightEmptyMessage:          rightEmptyMessage,
+		FetchAvailable:             m.canFetch(),
+		FetchVisibleAvailable:      m.canFetchVisibleRepos(),
+		PullAvailable:              m.canPull(),
+		WorktreeMoveAvailable:      m.canMoveWorktree(),
+		WorktreeSessionsOpen:       m.inlineWorktreeSessionPath != "",
+		AgentAvailable:             m.canLaunchAgent(),
+		NewAgentAvailable:          m.canCreateAndLaunchAgent(),
 	})
 }
 
@@ -941,8 +946,54 @@ func (m Model) selectedPlanPhaseIndex() (int, bool) {
 	return 0, false
 }
 
+func (m Model) selectedFlowPhase() (flowstore.FlowPhase, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
+		return flowstore.FlowPhase{}, false
+	}
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if phase.PhaseID == m.selectedFlowPhaseID {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func (m Model) selectedFlowPhaseIndex() (int, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
+		return 0, false
+	}
+	for i, phase := range flowstore.OrderedPhases(record.Phases) {
+		if phase.PhaseID == m.selectedFlowPhaseID {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (m Model) selectedFlowPhaseResumable() bool {
+	phase, ok := m.selectedFlowPhase()
+	if !ok || flowstore.PhaseAwaitingSession(phase) {
+		return false
+	}
+	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
+		return false
+	}
+	session, ok := flowstore.LatestPhaseSession(phase, true)
+	if !ok {
+		return false
+	}
+	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
+}
+
 func (m Model) clearSelectedPlanPhase() Model {
 	m.selectedPlanPhaseID = ""
+	return m
+}
+
+func (m Model) clearSelectedFlowPhase() Model {
+	m.selectedFlowPhaseID = ""
 	return m
 }
 
@@ -959,6 +1010,7 @@ func (m Model) setExpandedPlanID(planID string) Model {
 
 func (m Model) setExpandedFlowID(flowID string) Model {
 	m.expandedFlowID = flowID
+	m.selectedFlowPhaseID = ""
 	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
 	return m.reflowFlows()
 }
@@ -1116,6 +1168,46 @@ func (m Model) moveSelectedPlanPhase(delta int) (Model, bool) {
 	return m.ensureSelectedPlanPhaseVisible(), true
 }
 
+func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
+	if m.mode != ui.ModeFlows || m.expandedFlowID == "" || m.selectedFlowID() != m.expandedFlowID {
+		return m, false
+	}
+	record, ok := m.selectedFlow()
+	phases := flowstore.OrderedPhases(record.Phases)
+	if !ok || len(phases) == 0 {
+		return m, false
+	}
+
+	index, hasPhase := m.selectedFlowPhaseIndex()
+	if !hasPhase {
+		if delta > 0 {
+			m.selectedFlowPhaseID = phases[0].PhaseID
+			return m.ensureSelectedFlowPhaseVisible(), true
+		}
+		return m, false
+	}
+
+	nextIndex := index + delta
+	if nextIndex < 0 {
+		m = m.clearSelectedFlowPhase()
+		return m.reflowExpandedFlow(), true
+	}
+	if nextIndex >= len(phases) {
+		if m.flows.Len() <= 1 {
+			return m.ensureSelectedFlowPhaseVisible(), true
+		}
+		before := m.selectedFlowID()
+		m.flows = m.flows.Move(delta, m.contentHeightForMode(), m.contentWidth())
+		if after := m.selectedFlowID(); before != "" && after != before {
+			m = m.clearSelectedFlowPhase()
+			m = m.setExpandedFlowID("")
+		}
+		return m, true
+	}
+	m.selectedFlowPhaseID = phases[nextIndex].PhaseID
+	return m.ensureSelectedFlowPhaseVisible(), true
+}
+
 func (m Model) ensureSelectedPlanPhaseVisible() Model {
 	index, ok := m.selectedPlanPhaseIndex()
 	if !ok {
@@ -1144,6 +1236,34 @@ func (m Model) ensureSelectedPlanPhaseVisible() Model {
 	return m
 }
 
+func (m Model) ensureSelectedFlowPhaseVisible() Model {
+	index, ok := m.selectedFlowPhaseIndex()
+	if !ok {
+		return m.reflowExpandedFlow()
+	}
+	line, ok := m.selectedFlowVisualLine()
+	if !ok {
+		return m
+	}
+	line += 1 + index
+	viewHeight := m.flowContentHeight()
+	if viewHeight <= 0 {
+		viewHeight = 1
+	}
+	scroll := m.FlowScroll()
+	target := scroll
+	if line < target {
+		target = line
+	}
+	if line >= target+viewHeight {
+		target = line - viewHeight + 1
+	}
+	if target != scroll {
+		m.flows = m.flows.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+	}
+	return m
+}
+
 func (m Model) selectedPlanVisualLine() (int, bool) {
 	plans := m.filteredPlans()
 	selected := m.PlanSelected()
@@ -1153,6 +1273,19 @@ func (m Model) selectedPlanVisualLine() (int, bool) {
 	line := 0
 	for i := 0; i < selected; i++ {
 		line += planVisualHeight(plans[i], m.expandedPlanID)
+	}
+	return line, true
+}
+
+func (m Model) selectedFlowVisualLine() (int, bool) {
+	flows := m.filteredFlows()
+	selected := m.FlowSelected()
+	if selected < 0 || selected >= len(flows) {
+		return 0, false
+	}
+	line := 0
+	for i := 0; i < selected; i++ {
+		line += flowVisualHeight(flows[i], m.expandedFlowID)
 	}
 	return line, true
 }
@@ -1220,6 +1353,9 @@ func (m Model) reflowPlans() Model {
 
 func (m Model) reflowFlows() Model {
 	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
+	if m.selectedFlowPhaseID != "" {
+		return m.ensureSelectedFlowPhaseVisible()
+	}
 	if m.expandedFlowID != "" {
 		return m.reflowExpandedFlow()
 	}

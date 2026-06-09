@@ -132,72 +132,74 @@ const StashPrefixWidth = 15
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos                    []scanner.Repo
-	Selected                 int
-	Width                    int
-	Height                   int
-	Mode                     Mode
-	Branches                 []gitquery.BranchRow
-	Stashes                  []gitquery.Stash
-	BranchSelected           int
-	StashSelected            int
-	Overlay                  OverlayState
-	OverlayDiff              string
-	OverlayScroll            int
-	ConfirmPrompt            string
-	ConfirmForce             bool
-	WorktreeInputPrompt      string
-	WorktreeInputPlaceholder string
-	WorktreeInput            string
-	WorktreeInputErr         string
-	SelectPrompt             string
-	SelectItems              []SelectItem
-	SelectSelected           int
-	BranchScroll             int
-	RepoScroll               int
-	StashScroll              int
-	ActivePane               int
-	Destructive              bool
-	Worktrees                []gitquery.Worktree
-	WorktreeSelected         int
-	WorktreeScroll           int
-	WorktreeSessions         []sessions.SessionRecord
-	WorktreeSessionSelected  int
-	WorktreeSessionScroll    int
-	InlineWorktreeSessions   bool
-	Commits                  []gitquery.Commit
-	CommitSelected           int
-	CommitScroll             int
-	Reflogs                  []gitquery.ReflogEntry
-	ReflogSelected           int
-	ReflogScroll             int
-	Sessions                 []sessions.SessionRecord
-	SessionSelected          int
-	SessionScroll            int
-	Plans                    []planstore.PlanRecord
-	PlanSelected             int
-	PlanScroll               int
-	Flows                    []flowstore.FlowRecord
-	FlowSelected             int
-	FlowScroll               int
-	ExpandedPlanID           string
-	ExpandedFlowID           string
-	SelectedPlanPhaseID      string
-	OverlayText              string
-	TransientError           string
-	TransientErrorFadeStep   int
-	SearchActive             bool
-	RepoSearch               string
-	ItemSearch               string
-	RepoEmptyMessage         string
-	RightEmptyMessage        string
-	FetchAvailable           bool
-	FetchVisibleAvailable    bool
-	PullAvailable            bool
-	WorktreeMoveAvailable    bool
-	WorktreeSessionsOpen     bool
-	AgentAvailable           bool
-	NewAgentAvailable        bool
+	Repos                      []scanner.Repo
+	Selected                   int
+	Width                      int
+	Height                     int
+	Mode                       Mode
+	Branches                   []gitquery.BranchRow
+	Stashes                    []gitquery.Stash
+	BranchSelected             int
+	StashSelected              int
+	Overlay                    OverlayState
+	OverlayDiff                string
+	OverlayScroll              int
+	ConfirmPrompt              string
+	ConfirmForce               bool
+	WorktreeInputPrompt        string
+	WorktreeInputPlaceholder   string
+	WorktreeInput              string
+	WorktreeInputErr           string
+	SelectPrompt               string
+	SelectItems                []SelectItem
+	SelectSelected             int
+	BranchScroll               int
+	RepoScroll                 int
+	StashScroll                int
+	ActivePane                 int
+	Destructive                bool
+	Worktrees                  []gitquery.Worktree
+	WorktreeSelected           int
+	WorktreeScroll             int
+	WorktreeSessions           []sessions.SessionRecord
+	WorktreeSessionSelected    int
+	WorktreeSessionScroll      int
+	InlineWorktreeSessions     bool
+	Commits                    []gitquery.Commit
+	CommitSelected             int
+	CommitScroll               int
+	Reflogs                    []gitquery.ReflogEntry
+	ReflogSelected             int
+	ReflogScroll               int
+	Sessions                   []sessions.SessionRecord
+	SessionSelected            int
+	SessionScroll              int
+	Plans                      []planstore.PlanRecord
+	PlanSelected               int
+	PlanScroll                 int
+	Flows                      []flowstore.FlowRecord
+	FlowSelected               int
+	FlowScroll                 int
+	ExpandedPlanID             string
+	ExpandedFlowID             string
+	SelectedPlanPhaseID        string
+	SelectedFlowPhaseID        string
+	FlowPhaseResumableSelected bool
+	OverlayText                string
+	TransientError             string
+	TransientErrorFadeStep     int
+	SearchActive               bool
+	RepoSearch                 string
+	ItemSearch                 string
+	RepoEmptyMessage           string
+	RightEmptyMessage          string
+	FetchAvailable             bool
+	FetchVisibleAvailable      bool
+	PullAvailable              bool
+	WorktreeMoveAvailable      bool
+	WorktreeSessionsOpen       bool
+	AgentAvailable             bool
+	NewAgentAvailable          bool
 }
 
 // Render produces the full terminal view string.
@@ -245,44 +247,46 @@ func Render(p RenderParams) string {
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
+	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
 	planPhaseSelected := selectedPlanPhaseID != ""
 	status := statusBarParams{
-		Width:                     p.Width,
-		Mode:                      p.Mode,
-		Overlay:                   p.Overlay,
-		WorktreeInputPrompt:       p.WorktreeInputPrompt,
-		ActivePane:                p.ActivePane,
-		Destructive:               p.Destructive,
-		RepoSelected:              repoPath != "",
-		WorktreeSelected:          worktreeSelected,
-		StaleSelected:             staleSelected,
-		DirtySelected:             dirtySelected,
-		LockedSelected:            lockedSelected,
-		WorktreeDeletableSelected: worktreeDeletableSelected,
-		WorktreeOpenableSelected:  worktreeOpenableSelected,
-		WorktreeMoveSelected:      worktreeMoveSelected,
-		WorktreeSessionsOpen:      p.WorktreeSessionsOpen,
-		WorktreeSessionSelected:   worktreeSessionSelected,
-		BranchDirtySelected:       branchDirtySelected,
-		BranchDeletableSelected:   branchDeletableSelected,
-		BranchOpenableSelected:    branchOpenableSelected,
-		StashSelected:             stashSelected,
-		CommitSelected:            commitSelected,
-		ReflogSelected:            reflogSelected,
-		SessionSelected:           sessionSelected,
-		PlanSelected:              planSelected,
-		PlanPhaseSelected:         planPhaseSelected,
-		FlowSelected:              flowSelected,
-		TransientError:            p.TransientError,
-		TransientErrorFadeStep:    p.TransientErrorFadeStep,
-		SearchActive:              p.SearchActive,
-		RepoSearch:                p.RepoSearch,
-		ItemSearch:                p.ItemSearch,
-		FetchAvailable:            p.FetchAvailable,
-		FetchVisibleAvailable:     p.FetchVisibleAvailable,
-		PullAvailable:             p.PullAvailable,
-		AgentAvailable:            p.AgentAvailable,
-		NewAgent:                  p.NewAgentAvailable,
+		Width:                      p.Width,
+		Mode:                       p.Mode,
+		Overlay:                    p.Overlay,
+		WorktreeInputPrompt:        p.WorktreeInputPrompt,
+		ActivePane:                 p.ActivePane,
+		Destructive:                p.Destructive,
+		RepoSelected:               repoPath != "",
+		WorktreeSelected:           worktreeSelected,
+		StaleSelected:              staleSelected,
+		DirtySelected:              dirtySelected,
+		LockedSelected:             lockedSelected,
+		WorktreeDeletableSelected:  worktreeDeletableSelected,
+		WorktreeOpenableSelected:   worktreeOpenableSelected,
+		WorktreeMoveSelected:       worktreeMoveSelected,
+		WorktreeSessionsOpen:       p.WorktreeSessionsOpen,
+		WorktreeSessionSelected:    worktreeSessionSelected,
+		BranchDirtySelected:        branchDirtySelected,
+		BranchDeletableSelected:    branchDeletableSelected,
+		BranchOpenableSelected:     branchOpenableSelected,
+		StashSelected:              stashSelected,
+		CommitSelected:             commitSelected,
+		ReflogSelected:             reflogSelected,
+		SessionSelected:            sessionSelected,
+		PlanSelected:               planSelected,
+		PlanPhaseSelected:          planPhaseSelected,
+		FlowSelected:               flowSelected,
+		FlowPhaseResumableSelected: p.FlowPhaseResumableSelected,
+		TransientError:             p.TransientError,
+		TransientErrorFadeStep:     p.TransientErrorFadeStep,
+		SearchActive:               p.SearchActive,
+		RepoSearch:                 p.RepoSearch,
+		ItemSearch:                 p.ItemSearch,
+		FetchAvailable:             p.FetchAvailable,
+		FetchVisibleAvailable:      p.FetchVisibleAvailable,
+		PullAvailable:              p.PullAvailable,
+		AgentAvailable:             p.AgentAvailable,
+		NewAgent:                   p.NewAgentAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
 	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, innerHeight, status)
@@ -344,6 +348,7 @@ func Render(p RenderParams) string {
 		planSel = -1
 		flowSel = -1
 		selectedPlanPhaseID = ""
+		selectedFlowPhaseID = ""
 	}
 
 	var rightLines []string
@@ -363,7 +368,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	case p.Mode == ModeFlows && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -404,6 +409,22 @@ func scopedSelectedPlanPhaseID(p RenderParams, planSelected bool) string {
 	for _, phase := range plan.Phases {
 		if phase.PhaseID == p.SelectedPlanPhaseID {
 			return p.SelectedPlanPhaseID
+		}
+	}
+	return ""
+}
+
+func scopedSelectedFlowPhaseID(p RenderParams, flowSelected bool) string {
+	if !flowSelected || p.SelectedFlowPhaseID == "" {
+		return ""
+	}
+	flow := p.Flows[p.FlowSelected]
+	if p.ExpandedFlowID != flow.FlowID {
+		return ""
+	}
+	for _, phase := range flowstore.OrderedPhases(flow.Phases) {
+		if phase.PhaseID == p.SelectedFlowPhaseID {
+			return p.SelectedFlowPhaseID
 		}
 	}
 	return ""
@@ -473,42 +494,43 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 // statusBarParams groups the many fields the status-bar renderer needs,
 // avoiding a long and error-prone positional parameter list.
 type statusBarParams struct {
-	Width                     int
-	Mode                      Mode
-	Overlay                   OverlayState
-	WorktreeInputPrompt       string
-	ActivePane                int
-	Destructive               bool
-	RepoSelected              bool
-	WorktreeSelected          bool
-	StaleSelected             bool
-	DirtySelected             bool
-	LockedSelected            bool
-	WorktreeDeletableSelected bool
-	WorktreeOpenableSelected  bool
-	WorktreeMoveSelected      bool
-	WorktreeSessionsOpen      bool
-	WorktreeSessionSelected   bool
-	BranchDirtySelected       bool
-	BranchDeletableSelected   bool
-	BranchOpenableSelected    bool
-	StashSelected             bool
-	CommitSelected            bool
-	ReflogSelected            bool
-	SessionSelected           bool
-	PlanSelected              bool
-	PlanPhaseSelected         bool
-	FlowSelected              bool
-	TransientError            string
-	TransientErrorFadeStep    int
-	SearchActive              bool
-	RepoSearch                string
-	ItemSearch                string
-	FetchAvailable            bool
-	FetchVisibleAvailable     bool
-	PullAvailable             bool
-	AgentAvailable            bool
-	NewAgent                  bool
+	Width                      int
+	Mode                       Mode
+	Overlay                    OverlayState
+	WorktreeInputPrompt        string
+	ActivePane                 int
+	Destructive                bool
+	RepoSelected               bool
+	WorktreeSelected           bool
+	StaleSelected              bool
+	DirtySelected              bool
+	LockedSelected             bool
+	WorktreeDeletableSelected  bool
+	WorktreeOpenableSelected   bool
+	WorktreeMoveSelected       bool
+	WorktreeSessionsOpen       bool
+	WorktreeSessionSelected    bool
+	BranchDirtySelected        bool
+	BranchDeletableSelected    bool
+	BranchOpenableSelected     bool
+	StashSelected              bool
+	CommitSelected             bool
+	ReflogSelected             bool
+	SessionSelected            bool
+	PlanSelected               bool
+	PlanPhaseSelected          bool
+	FlowSelected               bool
+	FlowPhaseResumableSelected bool
+	TransientError             string
+	TransientErrorFadeStep     int
+	SearchActive               bool
+	RepoSearch                 string
+	ItemSearch                 string
+	FetchAvailable             bool
+	FetchVisibleAvailable      bool
+	PullAvailable              bool
+	AgentAvailable             bool
+	NewAgent                   bool
 }
 
 type shortcutHint struct {
@@ -834,6 +856,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 			if sp.FlowSelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "phases"})
+			}
+			if sp.FlowPhaseResumableSelected {
+				actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 			}
 			if sp.AgentAvailable {
 				actions = append(actions, shortcutHint{Key: "a", Label: "launch phase"})
@@ -1680,7 +1705,7 @@ const (
 	flowUpdatedWidth = 10
 )
 
-func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID string) []string {
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1713,7 +1738,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth)),
 			stashMsgStyle.Render(record.Title),
 		)
-		if i == selected {
+		if i == selected && selectedPhaseID == "" {
 			selectedLine := truncateToWidth(formatFlowColumns(" > ",
 				record.Status,
 				branch,
@@ -1727,22 +1752,26 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {
-			rows = append(rows, renderFlowPhaseRows(record, width)...)
+			rows = append(rows, renderFlowPhaseRows(record, width, selectedPhaseID)...)
 		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
+func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID string) []string {
 	if len(record.Phases) == 0 {
 		return []string{truncateToWidth("      No phases", width)}
 	}
 	rows := make([]string, 0, len(record.Phases))
 	for _, phase := range flowstore.OrderedPhases(record.Phases) {
 		state := flowPhaseState(record, phase)
+		sessionSummary := flowPhaseSessionSummary(phase)
 		title := phase.Title
 		if phase.ParentPhaseID != "" {
 			title = "  " + title
+		}
+		if sessionSummary != "" {
+			title += "  " + sessionSummary
 		}
 		line := formatFlowColumns("      ",
 			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
@@ -1753,6 +1782,18 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int) []string {
 			"",
 			stashMsgStyle.Render(title),
 		)
+		if phase.PhaseID == selectedPhaseID {
+			selectedLine := truncateToWidth(formatFlowColumns(" > ",
+				phase.Status,
+				"",
+				phase.PhaseID+":"+state,
+				"",
+				"",
+				"",
+				title,
+			), width)
+			line = stashSelStyle.Width(width).Render(selectedLine)
+		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return rows
@@ -1809,6 +1850,9 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if phase.Status == flowstore.PhaseRunning && flowPhaseAwaitingSession(phase) {
 		return "await-session"
 	}
+	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
+		return "missing-session-id"
+	}
 	if phase.PhaseID == "autoreview" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
 		return "missing-pr"
 	}
@@ -1832,22 +1876,7 @@ func flowMissingWorktree(record flowstore.FlowRecord) bool {
 }
 
 func flowPhaseAwaitingSession(phase flowstore.FlowPhase) bool {
-	latestLaunchID := ""
-	for i := len(phase.LaunchIDs) - 1; i >= 0; i-- {
-		if phase.LaunchIDs[i] != "" {
-			latestLaunchID = phase.LaunchIDs[i]
-			break
-		}
-	}
-	if latestLaunchID == "" {
-		return false
-	}
-	for _, session := range phase.Sessions {
-		if session.LaunchID == latestLaunchID {
-			return false
-		}
-	}
-	return true
+	return flowstore.PhaseAwaitingSession(phase)
 }
 
 func flowPhaseSessionMismatch(phase flowstore.FlowPhase) bool {
@@ -1869,6 +1898,37 @@ func flowPhaseSessionMismatch(phase flowstore.FlowPhase) bool {
 		}
 	}
 	return false
+}
+
+func flowPhaseSessionSummary(phase flowstore.FlowPhase) string {
+	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
+		return ""
+	}
+	session, ok := flowstore.LatestPhaseSession(phase, true)
+	if !ok {
+		return ""
+	}
+	count := 0
+	for _, session := range phase.Sessions {
+		if strings.TrimSpace(session.SessionID) != "" {
+			count++
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	label := "sessions"
+	if count == 1 {
+		label = "session"
+	}
+	parts := []string{fmt.Sprintf("%d %s", count, label)}
+	if session.Provider != "" {
+		parts = append(parts, session.Provider)
+	}
+	if session.Status != "" {
+		parts = append(parts, session.Status)
+	}
+	return strings.Join(parts, " ")
 }
 
 func flowPlanLabel(record flowstore.FlowRecord) string {
