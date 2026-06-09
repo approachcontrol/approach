@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -198,12 +199,14 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 	if *status == "" {
 		return fmt.Errorf("flow phase set requires --status")
 	}
-	switch *status {
-	case flowstore.PhaseRunning, flowstore.PhaseCompleted, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked, flowstore.PhaseSkipped:
-	case flowstore.PhaseReady:
+	// Early agent-facing validation; the store re-validates status and the
+	// transition against the canonical table.
+	if *status == flowstore.PhaseReady {
 		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
-	default:
-		return fmt.Errorf("unsupported agent-facing phase status %q", *status)
+	}
+	if !slices.Contains(flowstore.AgentSettablePhaseStatuses(), *status) {
+		return fmt.Errorf("unsupported agent-facing phase status %q; valid statuses: %s",
+			*status, strings.Join(flowstore.AgentSettablePhaseStatuses(), ", "))
 	}
 	store, err := newFlowStore(*stateRoot, deps)
 	if err != nil {
