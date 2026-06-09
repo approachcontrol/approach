@@ -189,7 +189,7 @@ func TestWtuiFlowSkillDocumentsPlanReviewGateOutcomes(t *testing.T) {
 		"approved_with_concerns",
 		"changes_requested",
 		"blocked",
-		"Implementation becomes ready only after",
+		"wtui derives all phase readiness",
 		`--status needs_attention --outcome "changes_requested"`,
 		`--status completed --outcome "approved_with_concerns" --notes "..."`,
 		`--status blocked --outcome "blocked" --notes "..."`,

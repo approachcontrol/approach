@@ -195,7 +195,11 @@ uses restrictive file permissions for created session files. Provider session ID
 are stored in hashed directory names instead of raw path components.
 When resuming a session, wtui runs the provider resume command from the recorded
 session `cwd` when present, falling back to the captured worktree path, while
-preserving the stored worktree metadata for subsequent hooks.
+preserving the stored worktree metadata for subsequent hooks. Sessions missing a
+provider session ID cannot be resumed; wtui reports this in the status line
+instead of starting a fresh provider session. Hook payloads without a usable
+session ID are rejected at capture time, so no unusable session records are
+stored.
 
 ### Plans view (mode 7)
 
@@ -272,8 +276,10 @@ Implementation.
 Flow rows also surface recoverable partial states so they are not confused with
 ordinary empty or pending work. A saved Flow with no branch/worktree metadata
 shows `recover-worktree`, a running phase with a recorded launch but no attached
-session yet shows `await-session`, and a phase with an attached session whose
-launch ID does not match the phase's launch attempts shows `session-mismatch`.
+session yet shows `await-session`, a phase with an attached session whose
+launch ID does not match the phase's launch attempts shows `session-mismatch`,
+and an attached session that lacks a provider session ID shows
+`missing-session-id`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and
@@ -341,7 +347,9 @@ agents must record both the Merge phase update and structured merge metadata
 through `wtui flow merge set`; `--status merged` requires existing PR metadata,
 a merge commit, and an RFC3339 merge timestamp. If merge is blocked, record a
 blocked Merge phase with notes before setting structured merge status to
-`blocked`.
+`blocked`. The canonical phase transition table, derived-readiness rules, and
+the on-disk compatibility story are documented in
+[docs/flow-phases.md](docs/flow-phases.md).
 
 The flow state root is resolved with this precedence: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >

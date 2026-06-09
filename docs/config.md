@@ -281,13 +281,16 @@ loop, PR creation, autoreview, and merge.
 Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
 and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
-`needs_attention`, `completed`, `blocked`, and `skipped`.
+`needs_attention`, `completed`, `blocked`, and `skipped`. The canonical phase
+transition table, derived-readiness gate rules, and the on-disk compatibility
+story live in [flow-phases.md](flow-phases.md).
 
 The flows pane distinguishes recoverable partial states from ordinary phase
 states. It shows `recover-worktree` when a saved Flow has no branch/worktree
 metadata, `await-session` when a running phase has a launch attempt but no
 attached provider session yet, `session-mismatch` when a phase's attached
-session launch ID does not match the phase launch IDs, and
+session launch ID does not match the phase launch IDs, `missing-session-id`
+when an attached session lacks a provider session ID, and
 `autoreview:missing-pr` when PR Creation completed without structured PR
 metadata.
 
@@ -443,7 +446,15 @@ available; the selected worktree path is still included in the prompt metadata.
 Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with
 `claude ... --resume <session-id>`, while preserving the same wtui hook and
-metadata environment wiring as fresh launches.
+metadata environment wiring as fresh launches. The TUI refuses to resume a
+stored session whose provider session ID is blank (it reports this in the
+status line instead), and command construction trims resume session IDs and
+rejects whitespace-only ones, so a resume command never carries a blank
+`--resume` argument.
+
+Hook payloads whose `session_id` is blank or whitespace-only are rejected at
+ingest time: no session record is persisted and no Flow phase attachment is
+made.
 
 For Codex hook payloads with `hook_event_name = "Stop"`, wtui records the
 session as ended. Claude hook ingestion also records ended sessions, using the

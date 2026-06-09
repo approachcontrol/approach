@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -757,11 +758,10 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 	if strings.TrimSpace(update.Status) == "" {
 		return fmt.Errorf("phase status is required")
 	}
-	switch update.Status {
-	case PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseBlocked, PhaseSkipped:
-	case PhaseReady:
+	if update.Status == PhaseReady {
 		return fmt.Errorf("cannot set phase status to ready; readiness is derived")
-	default:
+	}
+	if !slices.Contains(agentSettablePhaseStatuses, update.Status) {
 		return fmt.Errorf("invalid phase status %q", update.Status)
 	}
 	if update.Status == PhaseSkipped && strings.TrimSpace(update.Notes) == "" {
@@ -773,39 +773,25 @@ func validatePhaseUpdate(current FlowPhase, update PhaseUpdate) error {
 	if current.Status == update.Status {
 		return nil
 	}
-	switch current.Status {
-	case PhaseReady:
-		switch update.Status {
-		case PhaseRunning, PhaseCompleted, PhaseNeedsAttention, PhaseBlocked, PhaseSkipped:
-			return nil
-		}
-	case PhaseRunning:
-		switch update.Status {
-		case PhaseCompleted, PhaseNeedsAttention, PhaseBlocked, PhaseSkipped:
-			return nil
-		}
-	case PhaseNeedsAttention, PhaseBlocked:
-		switch update.Status {
-		case PhaseRunning, PhaseSkipped:
-			if update.Status == PhaseRunning && strings.TrimSpace(update.Notes) == "" {
-				return fmt.Errorf("restarting %s phase requires notes", current.Status)
-			}
-			return nil
-		}
-	case PhaseCompleted, PhaseSkipped:
-		if update.Status == PhaseRunning {
-			return nil
-		}
-	case PhasePending:
-		if update.Status == PhaseSkipped {
-			return nil
-		}
+	if !phaseTransitionAllowed(current.Status, update.Status) {
+		return invalidPhaseTransitionError(current.Status, update.Status)
 	}
-	return invalidPhaseTransitionError(current.Status, update.Status)
+	restarting := current.Status == PhaseNeedsAttention || current.Status == PhaseBlocked
+	if restarting && update.Status == PhaseRunning && strings.TrimSpace(update.Notes) == "" {
+		return fmt.Errorf("restarting %s phase requires notes", current.Status)
+	}
+	return nil
+}
+
+func phaseTransitionAllowed(currentStatus, nextStatus string) bool {
+	return slices.Contains(phaseTransitions[currentStatus], nextStatus)
 }
 
 func invalidPhaseTransitionError(currentStatus, nextStatus string) error {
 	message := fmt.Sprintf("invalid phase transition %s -> %s", currentStatus, nextStatus)
+	if allowed := AllowedNextPhaseStatuses(currentStatus); len(allowed) > 0 {
+		message += fmt.Sprintf("; allowed from %s: %s", currentStatus, strings.Join(allowed, ", "))
+	}
 	if (currentStatus == PhaseNeedsAttention || currentStatus == PhaseBlocked) && nextStatus == PhaseCompleted {
 		message += "; restart with --status running --notes before completing"
 	}
@@ -843,14 +829,10 @@ func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 	resetBlockedDownstream := false
 	for i := range record.Phases {
 		phase := record.Phases[i]
-		if predecessorsSatisfied && (phase.Status == PhasePending || phase.Status == PhaseReady) {
-			nextStatus := PhasePending
-			nextStatus = PhaseReady
-			if phase.Status != nextStatus {
-				phase.Status = nextStatus
-				phase.UpdatedAt = now
-				record.Phases[i] = phase
-			}
+		if predecessorsSatisfied && phase.Status == PhasePending {
+			phase.Status = PhaseReady
+			phase.UpdatedAt = now
+			record.Phases[i] = phase
 		} else if !predecessorsSatisfied && shouldResetBlockedDownstreamPhase(phase, resetBlockedDownstream) {
 			phase.Status = PhasePending
 			phase.Outcome = ""
@@ -1302,6 +1284,9 @@ func normalizeRecord(record FlowRecord) FlowRecord {
 	if record.Merge.Status == "" {
 		record.Merge.Status = MergePending
 	}
+	// Load-path normalization only: standard graphs (identified by a
+	// plan-review phase) self-heal here; phase-affecting mutations call
+	// refreshPhaseReadiness explicitly for every graph shape.
 	if hasPhase(record, "plan-review") {
 		record = normalizePlanReviewOutcomes(record)
 		record = refreshPhaseReadiness(record, record.UpdatedAt)

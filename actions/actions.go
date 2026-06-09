@@ -699,7 +699,11 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if command == agent.CommandCodexApp {
 		return nil, nil, fmt.Errorf("codex-app launches are URL-based; use AgentLaunch")
 	}
-	args := agentLaunchArgs(command, ctx.ResumeSessionID)
+	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	args := agentLaunchArgs(command, resumeSessionID)
 	if ctx.InitialPrompt != "" {
 		args = append(args, ctx.InitialPrompt)
 	}
@@ -747,9 +751,24 @@ func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, er
 	return TerminalLaunchSpec{Cmd: cmd}, nil
 }
 
+// resumeSessionIDForLaunch trims a resume session ID and rejects resume
+// requests whose session ID is blank, so a launch can never silently start a
+// fresh session (or run `--resume ""`) when the caller asked for a resume.
+func resumeSessionIDForLaunch(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if raw != "" && trimmed == "" {
+		return "", fmt.Errorf("resume requires a non-blank session ID")
+	}
+	return trimmed, nil
+}
+
 func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
-	if ctx.ResumeSessionID != "" {
-		return "codex://threads/" + url.PathEscape(ctx.ResumeSessionID), nil
+	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
+	if err != nil {
+		return "", err
+	}
+	if resumeSessionID != "" {
+		return "codex://threads/" + url.PathEscape(resumeSessionID), nil
 	}
 
 	path := ctx.RepoPath
