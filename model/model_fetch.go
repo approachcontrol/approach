@@ -46,10 +46,19 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 	}
 
 	cmds := []tea.Cmd{scanCmd}
-	if _, ok := m.currentRepoPath(); ok {
+	if repoPath, ok := m.currentRepoPath(); ok {
 		if _, ok := listFetchDescriptorForMode(m.mode); ok {
+			inlineWorktreePath := ""
+			if m.mode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
+				inlineWorktreePath = m.inlineWorktreeSessionPath
+			}
 			var fetchCmd tea.Cmd
 			m, fetchCmd = m.startFetchForMode()
+			if inlineWorktreePath != "" && fetchCmd != nil {
+				m.pendingInlineSessionRepo = repoPath
+				m.pendingInlineSessionPath = inlineWorktreePath
+				m.pendingInlineSessionList = m.currentListRequest(ui.ModeWorktrees)
+			}
 			if fetchCmd != nil {
 				cmds = append(cmds, fetchCmd)
 			}
@@ -95,6 +104,13 @@ func (m Model) isCurrentWorktreeSessionRequest(msg WorktreeSessionResultMsg) boo
 		msg.Request == m.activeWorktreeSessionReq &&
 		msg.RepoPath == m.inlineWorktreeSessionRepo &&
 		msg.WorktreePath == m.inlineWorktreeSessionPath
+}
+
+func (m Model) pendingInlineSessionRefresh(repoPath string, listRequest uint64) (string, bool) {
+	if m.pendingInlineSessionRepo != repoPath || m.pendingInlineSessionList != listRequest {
+		return "", false
+	}
+	return m.pendingInlineSessionPath, m.pendingInlineSessionPath != ""
 }
 
 func (m Model) nextWorktreeCreateRequest() (Model, uint64) {

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
@@ -181,6 +182,69 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 	}
 	if got := m.Sessions(); len(got) != 1 || got[0].SessionID != "existing" {
 		t.Fatalf("Sessions() after scan = %#v, want existing list while refresh fetch is pending", got)
+	}
+}
+
+func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *testing.T) {
+	var gotFilters []sessions.SessionFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartupMode: ui.ModeWorktrees,
+		ScanRepos: func() ([]scanner.Repo, error) {
+			return testRepos(), nil
+		},
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			gotFilters = append(gotFilters, filter)
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderCodex,
+				SessionID:    fmt.Sprintf("inline-refresh-%d", len(gotFilters)),
+				RepoPath:     filter.RepoPath,
+				WorktreePath: filter.WorktreePath,
+				Branch:       "feature/inline",
+			}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: m.ListRequest(ui.ModeWorktrees),
+		Worktrees: []gitquery.Worktree{
+			{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+			{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected initial inline session fetch")
+	}
+	m, _ = update(m, cmd())
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF5})
+	if cmd == nil {
+		t.Fatal("expected f5 refresh command")
+	}
+	refreshRequest := m.ListRequest(ui.ModeWorktrees)
+	m, followup := update(m, model.WorktreeResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: refreshRequest,
+		Worktrees: []gitquery.Worktree{
+			{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+			{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+		},
+	})
+	if followup == nil {
+		t.Fatal("expected refreshed worktree list to fetch inline sessions")
+	}
+	m, _ = update(m, followup())
+
+	if len(gotFilters) != 2 {
+		t.Fatalf("ListSessions called %d times, want initial open plus f5 refresh", len(gotFilters))
+	}
+	if got := gotFilters[1]; got.RepoPath != "/dev/alpha" || got.WorktreePath != "/dev/alpha-worktrees/inline" {
+		t.Fatalf("refreshed SessionFilter = %#v, want repo and inline worktree", got)
+	}
+	if got := m.WorktreeSessions(); len(got) != 1 || got[0].SessionID != "inline-refresh-2" {
+		t.Fatalf("WorktreeSessions() = %#v, want refreshed inline sessions", got)
 	}
 }
 

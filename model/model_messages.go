@@ -452,12 +452,13 @@ func (m Model) visibleStatusFadeStep() int {
 	return m.status.FadeStep
 }
 
-func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
+func (m Model) handleWorktreeResult(msg WorktreeResultMsg) (Model, tea.Cmd) {
 	var ok bool
 	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeWorktrees, msg.ListRequest)
 	if !ok {
-		return m
+		return m, nil
 	}
+	inlineRefreshPath, refreshInline := m.pendingInlineSessionRefresh(msg.RepoPath, msg.ListRequest)
 	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
 	m = m.clearInlineWorktreeSessions()
 	if m.pendingWorktreeSelection != "" {
@@ -467,8 +468,22 @@ func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 		})
 		m.pendingWorktreeSelection = ""
 	}
+	if refreshInline {
+		for _, wt := range m.filteredWorktrees() {
+			if wt.Path != inlineRefreshPath {
+				continue
+			}
+			m.worktrees = m.worktrees.SelectFunc(func(wt gitquery.Worktree) bool {
+				return wt.Path == inlineRefreshPath
+			})
+			var request uint64
+			m, request = m.nextWorktreeSessionRequest(msg.RepoPath, inlineRefreshPath)
+			m = m.clampSelectionsAfterFilter()
+			return m, m.fetchWorktreeSessions(inlineRefreshPath, request)
+		}
+	}
 	m = m.clampSelectionsAfterFilter()
-	return m
+	return m, nil
 }
 
 func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd) {

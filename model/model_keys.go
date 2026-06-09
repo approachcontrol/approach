@@ -1781,6 +1781,9 @@ func (m Model) clearInlineWorktreeSessions() Model {
 	m.activeWorktreeSessionReq = 0
 	m.inlineWorktreeSessionRepo = ""
 	m.inlineWorktreeSessionPath = ""
+	m.pendingInlineSessionRepo = ""
+	m.pendingInlineSessionPath = ""
+	m.pendingInlineSessionList = 0
 	m.worktreeSessions = newSessionPane()
 	return m
 }

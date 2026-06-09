@@ -50,6 +50,9 @@ type Model struct {
 	activeWorktreeSessionReq  uint64
 	inlineWorktreeSessionRepo string
 	inlineWorktreeSessionPath string
+	pendingInlineSessionRepo  string
+	pendingInlineSessionPath  string
+	pendingInlineSessionList  uint64
 	worktreeCreateSeq         uint64
 	activeWorktreeCreate      uint64
 	flowCreateSeq             uint64
@@ -692,7 +695,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BranchCreateFailedMsg:
 		return m.handleBranchCreateFailed(msg), nil
 	case WorktreeResultMsg:
-		return m.handleWorktreeResult(msg), nil
+		return m.handleWorktreeResult(msg)
 	case WorktreeRemovedMsg:
 		return m.handleWorktreeRemoved(msg)
 	case WorktreeDeleteCompletedMsg:
