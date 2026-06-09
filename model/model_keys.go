@@ -292,6 +292,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeSessions {
 			return m.handleCopySessionID()
 		}
+		if m.mode == ui.ModeFlows {
+			return m.handleCopyFlowID()
+		}
 		return m.handleCopyHash()
 	case "s":
 		return m.handleShowSessionSummary()
@@ -307,6 +310,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "x":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleToggleWorktreeSessions()
+		}
+		if m.mode == ui.ModePlans {
+			return m.handleTogglePlanPhases()
 		}
 		if m.mode == ui.ModeFlows {
 			return m.handleToggleFlowPhases()
@@ -336,6 +342,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleNewPullRequestWorktree()
 		}
 	case "o":
+		if m.mode == ui.ModeSessions {
+			return m.handleEnter()
+		}
 		if m.mode == ui.ModePlans {
 			return m.handleOpenPlanText()
 		}
@@ -351,6 +360,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleNewWorktree(true)
 		}
 	case "a":
+		if m.mode == ui.ModePlans {
+			return m.handleImplementPlan()
+		}
 		return m.handleOpenAgent()
 	case "d":
 		return m.handleDelete()
@@ -528,6 +540,22 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModePlans || len(m.filteredPlans()) == 0 {
+		return m, nil
+	}
+	planID := m.selectedPlanID()
+	if planID == "" {
+		return m, nil
+	}
+	if m.expandedPlanID == planID {
+		m = m.setExpandedPlanID("")
+	} else {
+		m = m.setExpandedPlanID(planID)
 	}
 	return m, nil
 }

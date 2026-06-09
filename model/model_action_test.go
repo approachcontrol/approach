@@ -3723,6 +3723,35 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 	}
 }
 
+func TestModel_OKeyOnSessionOpensTranscriptOverlay(t *testing.T) {
+	var gotProvider sessions.Provider
+	var gotSessionID string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
+			gotProvider = provider
+			gotSessionID = sessionID
+			return []sessions.TranscriptEvent{{Role: "user", Kind: "message", Text: "Implement sessions"}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if cmd == nil {
+		t.Fatal("expected transcript fetch command")
+	}
+	msg, ok := cmd().(model.SessionTranscriptResultMsg)
+	if !ok {
+		t.Fatalf("expected SessionTranscriptResultMsg, got %T", msg)
+	}
+	if gotProvider != sessions.ProviderCodex || gotSessionID != "codex-1" {
+		t.Fatalf("reader got provider=%q session=%q", gotProvider, gotSessionID)
+	}
+}
+
 func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})

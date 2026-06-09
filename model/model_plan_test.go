@@ -173,6 +173,43 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	}
 }
 
+func TestModel_AKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
+	var launched bool
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		PlanMarkdownPath: func(planID string) (string, error) {
+			if planID != "plan-1" {
+				t.Fatalf("resolver planID = %q, want plan-1", planID)
+			}
+			return "/state/plans/plan-1/plan.md", nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{{
+		PlanID:   "plan-1",
+		Title:    "Implement plans",
+		Status:   "approved",
+		RepoPath: "/dev/alpha",
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	if launched {
+		t.Fatal("opening launch instructions must not launch the agent")
+	}
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("expected launch instructions input overlay, got %d", m.Overlay())
+	}
+	if !strings.Contains(m.WorktreeInput(), "Implement the saved wtui plan") {
+		t.Fatalf("expected plan launch prompt, got %q", m.WorktreeInput())
+	}
+}
+
 func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:       "codex",
@@ -400,6 +437,81 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 		if !strings.Contains(launchPrompt, want) {
 			t.Fatalf("phase prompt missing %q: %q", want, got.InitialPrompt)
 		}
+	}
+}
+
+func TestModel_AKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		PlanMarkdownPath: func(string) (string, error) {
+			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{{
+		PlanID:       "plan-1",
+		Title:        "Implement plans",
+		Status:       "approved",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/plans",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "p1", Title: "Store tracer bullet", Status: "completed", Order: 1},
+			{PhaseID: "p2", Title: "CLI subcommands", Status: "pending", Order: 2},
+		},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if gotPhase := m.SelectedPlanPhaseID(); gotPhase != "p2" {
+		t.Fatalf("selected phase = %q, want p2", gotPhase)
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	_, launchCmd := update(m, cmd())
+	if launchCmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if got.PlanPhaseID != "p2" || got.PlanPhaseTitle != "CLI subcommands" || got.PlanPhaseStatus != "pending" {
+		t.Fatalf("unexpected phase launch context: %#v", got)
+	}
+}
+
+func TestModel_XKeyTogglesPlanPhaseRows(t *testing.T) {
+	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
+		PlanID: "plan-1",
+		Title:  "Implement plans",
+		Status: "approved",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "p1", Title: "Store tracer bullet", Status: "completed", Order: 1},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("toggle phases returned command %T, want nil", cmd)
+	}
+	if got := m.ExpandedPlanID(); got != "plan-1" {
+		t.Fatalf("expanded plan = %q, want plan-1", got)
+	}
+	if got := m.SelectedPlanPhaseID(); got != "" {
+		t.Fatalf("expanding plan should keep plan row selected, got phase %q", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if got := m.ExpandedPlanID(); got != "" {
+		t.Fatalf("second toggle expanded plan = %q, want collapsed", got)
 	}
 }
 

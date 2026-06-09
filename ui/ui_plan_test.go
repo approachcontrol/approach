@@ -85,13 +85,15 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 		PlanSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  phases", "o      open", "i      implement", "y      copy path"} {
+	for _, want := range []string{"x      phases", "o      open", "a      implement", "y      copy path"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("plans view should expose shortcut %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(pane, "a      agent") {
-		t.Fatalf("plans view should not expose normal agent shortcut:\n%s", view)
+	for _, old := range []string{"enter  phases", "i      implement"} {
+		if strings.Contains(pane, old) {
+			t.Fatalf("plans view should not advertise old shortcut %q:\n%s", old, view)
+		}
 	}
 }
 
@@ -116,10 +118,10 @@ func TestRender_PlansModeShowsPhaseShortcutWhenPhaseSelected(t *testing.T) {
 		SelectedPlanPhaseID: "p1",
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "i      implement phase") {
+	if !strings.Contains(pane, "a      implement phase") {
 		t.Fatalf("selected phase shortcut should expose phase implementation:\n%s", view)
 	}
-	if strings.Contains(pane, "i      implement\n") {
+	if strings.Contains(pane, "a      implement\n") {
 		t.Fatalf("selected phase shortcut should not expose whole-plan implementation:\n%s", view)
 	}
 }
@@ -145,10 +147,10 @@ func TestRender_PlansModeIgnoresStaleSelectedPhaseForShortcut(t *testing.T) {
 		SelectedPlanPhaseID: "missing",
 	})
 	pane := shortcutPaneText(view)
-	if strings.Contains(pane, "i      implement phase") {
+	if strings.Contains(pane, "a      implement phase") {
 		t.Fatalf("stale phase selection should not expose phase implementation:\n%s", view)
 	}
-	if !strings.Contains(pane, "i      implement") {
+	if !strings.Contains(pane, "a      implement") {
 		t.Fatalf("stale phase selection should fall back to whole-plan implementation:\n%s", view)
 	}
 }
@@ -164,7 +166,7 @@ func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
 	})
 
 	pane := shortcutPaneText(view)
-	for _, forbidden := range []string{"enter  phases", "o      open", "i      implement", "y      copy path", "a      agent"} {
+	for _, forbidden := range []string{"x      phases", "o      open", "a      implement", "y      copy path", "i      implement"} {
 		if strings.Contains(pane, forbidden) {
 			t.Fatalf("empty plans view should omit %q:\n%s", forbidden, view)
 		}
