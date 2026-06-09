@@ -191,6 +191,10 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "tab":
 		m.activePane = 1
+	case "left":
+		return m.handleHorizontalNavigation(-1)
+	case "right":
+		return m.handleHorizontalNavigation(1)
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
@@ -217,13 +221,17 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleCursorUp()
 	case "down", "j":
 		return m.handleCursorDown()
-	case "left", "h":
+	case "left":
+		return m.handleHorizontalNavigation(-1)
+	case "right":
+		return m.handleHorizontalNavigation(1)
+	case "h":
 		if m.mode > ui.ModeWorktrees {
 			m.mode--
 			m = m.resetModeCursors()
 			return m.startFetchForMode()
 		}
-	case "right", "l":
+	case "l":
 		if m.mode < ui.ModeFlows {
 			m.mode++
 			m = m.resetModeCursors()
@@ -356,6 +364,43 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
+	if direction == 0 {
+		return m, nil
+	}
+	if m.activePane == 0 {
+		m.activePane = 1
+		targetMode := ui.ModeWorktrees
+		if direction < 0 {
+			targetMode = ui.ModeFlows
+		}
+		if m.mode != targetMode {
+			m.mode = targetMode
+			m = m.resetModeCursors()
+			return m.startFetchForMode()
+		}
+		return m, nil
+	}
+
+	if direction > 0 {
+		if m.mode == ui.ModeFlows {
+			m.activePane = 0
+			return m, nil
+		}
+		m.mode++
+		m = m.resetModeCursors()
+		return m.startFetchForMode()
+	}
+
+	if m.mode == ui.ModeWorktrees {
+		m.activePane = 0
+		return m, nil
+	}
+	m.mode--
+	m = m.resetModeCursors()
+	return m.startFetchForMode()
 }
 
 // --- Cursor navigation ---
