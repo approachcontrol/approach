@@ -372,8 +372,12 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	}
 	if m.activePane == 0 {
 		m.activePane = 1
-		if direction < 0 && m.mode != ui.ModeFlows {
-			m.mode = ui.ModeFlows
+		targetMode := ui.ModeWorktrees
+		if direction < 0 {
+			targetMode = ui.ModeFlows
+		}
+		if m.mode != targetMode {
+			m.mode = targetMode
 			m = m.resetModeCursors()
 			return m.startFetchForMode()
 		}
