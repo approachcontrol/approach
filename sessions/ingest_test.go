@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -419,6 +420,101 @@ func TestIngestHookPersistsCodexStopSnapshotsInPlace(t *testing.T) {
 		got.Summary != "updated prompt" ||
 		!got.LastSeenAt.Equal(wantLastSeen) {
 		t.Fatalf("Codex snapshot mismatch: %#v", got)
+	}
+}
+
+func TestIngestHookRejectsPayloadWithBlankSessionID(t *testing.T) {
+	for _, provider := range []sessions.Provider{sessions.ProviderClaude, sessions.ProviderCodex} {
+		for name, sessionID := range map[string]string{
+			"empty":      "",
+			"whitespace": "   ",
+		} {
+			t.Run(string(provider)+"/"+name, func(t *testing.T) {
+				root := t.TempDir()
+				payload := []byte(`{
+					"session_id": ` + quoteJSON(sessionID) + `,
+					"cwd": "/tmp",
+					"hook_event_name": "SessionEnd"
+				}`)
+
+				_, err := sessions.IngestHook(provider, bytes.NewReader(payload), sessions.IngestOptions{StateRoot: root})
+				if err == nil {
+					t.Fatal("IngestHook() expected error for blank session ID")
+				}
+				if !strings.Contains(err.Error(), "session ID") {
+					t.Fatalf("IngestHook() error = %v, want mention of session ID", err)
+				}
+				assertNoSessionRecords(t, root)
+			})
+		}
+	}
+}
+
+func TestIngestHookRejectsMalformedPayload(t *testing.T) {
+	root := t.TempDir()
+	_, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{"session_id": `)), sessions.IngestOptions{StateRoot: root})
+	if err == nil {
+		t.Fatal("IngestHook() expected error for malformed payload")
+	}
+	assertNoSessionRecords(t, root)
+}
+
+func TestIngestHookBlankSessionIDLeavesFlowPhaseUntouched(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flow, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-blank-session",
+		Title:        "Blank session capture",
+		Instructions: "Plan the work",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader([]byte(`{
+		"session_id": "",
+		"cwd": "/tmp"
+	}`)), sessions.IngestOptions{
+		StateRoot: root,
+		Env: map[string]string{
+			"WTUI_FLOW_STATE_ROOT": root,
+			"WTUI_FLOW_ID":         flow.FlowID,
+			"WTUI_FLOW_PHASE_ID":   "plan",
+		},
+	})
+	if err == nil {
+		t.Fatal("IngestHook() expected error for blank session ID")
+	}
+
+	read, err := flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := flowPhaseByID(t, read, "plan")
+	if len(phase.Sessions) != 0 {
+		t.Fatalf("blank session ID must not attach to flow phase, got %#v", phase.Sessions)
+	}
+}
+
+func assertNoSessionRecords(t *testing.T, root string) {
+	t.Helper()
+	sessionsDir := filepath.Join(root, "sessions")
+	err := filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			t.Fatalf("expected no persisted session files, found %s", path)
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("walk session root: %v", err)
 	}
 }
 

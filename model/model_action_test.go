@@ -4166,6 +4166,68 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			called = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderClaude, SessionID: "   ", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("expected no command for blank session id, got %T", cmd)
+	}
+	if called {
+		t.Fatal("expected blank session id not to call launcher")
+	}
+	if !strings.Contains(m.View(), "Session has no provider session ID") {
+		t.Fatal("expected missing session id status")
+	}
+}
+
+func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderClaude,
+				SessionID:    "   ",
+				RepoPath:     filter.RepoPath,
+				WorktreePath: filter.WorktreePath,
+				Branch:       "feature/inline",
+			}}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			called = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-worktrees/inline", BranchName: "feature/inline"},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, cmd())
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("expected no command for blank inline session id, got %T", cmd)
+	}
+	if called {
+		t.Fatal("expected blank inline session id not to call launcher")
+	}
+	if !strings.Contains(m.View(), "Session has no provider session ID") {
+		t.Fatal("expected missing session id status")
+	}
+}
+
 func TestModel_XKeyOpensInlineSessionsForSelectedWorktree(t *testing.T) {
 	var gotFilter sessions.SessionFilter
 	m := model.NewWithOptions(testRepos(), model.Options{

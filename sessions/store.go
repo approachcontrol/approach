@@ -203,7 +203,9 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 			record.LastSeenAt = endedAt
 		}
 		if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
-			return err
+			// Legacy records with unusable keys cannot be rewritten in place;
+			// skip them rather than abort updates for the remaining records.
+			continue
 		}
 		if err := s.writeMetadata(record); err != nil {
 			return err
@@ -226,7 +228,7 @@ func safeSessionDirName(sessionID string) string {
 }
 
 func validateRecordKey(provider Provider, sessionID string) error {
-	if provider == "" || sessionID == "" {
+	if provider == "" || strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("session provider and session ID are required")
 	}
 	if !validProvider(provider) {
