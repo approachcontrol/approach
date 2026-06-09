@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/scanner"
@@ -3980,13 +3981,52 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
-		got.FlowID != "flow-1" ||
-		got.FlowPhaseID != "review-loop" {
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
 		t.Fatalf("unexpected resume launch context: %#v", got)
+	}
+	if got.FlowID != "" || got.FlowPhaseID != "" {
+		t.Fatalf("ordinary session resume should not export Flow metadata: %#v", got)
 	}
 	if got.LaunchID == "" || got.LaunchID == "old-launch" {
 		t.Fatalf("expected fresh launch id, got %#v", got)
+	}
+}
+
+func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("false"), Detached: true}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{
+			Provider:     sessions.ProviderCodex,
+			SessionID:    "codex-session-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/feat",
+			FlowID:       "flow-1",
+			FlowPhaseID:  "review-loop",
+		},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected session resume command")
+	}
+	result, ok := cmd().(model.AgentResultMsg)
+	if !ok || result.Err == "" {
+		t.Fatalf("expected failing AgentResultMsg, got %#v", result)
+	}
+	m, _ = update(m, result)
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("ordinary session resume should not update Flow phase, got %#v", phaseUpdates)
 	}
 }
 
@@ -4259,10 +4299,11 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
-		got.FlowID != "flow-1" ||
-		got.FlowPhaseID != "implementation" {
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
 		t.Fatalf("unexpected inline resume launch context: %#v", got)
+	}
+	if got.FlowID != "" || got.FlowPhaseID != "" {
+		t.Fatalf("inline session resume should not export Flow metadata: %#v", got)
 	}
 	if got.LaunchID == "" || got.LaunchID == "old-launch" {
 		t.Fatalf("expected fresh launch id, got %#v", got)

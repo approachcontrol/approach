@@ -296,6 +296,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "s":
 		return m.handleShowSessionSummary()
 	case "r":
+		if m.mode == ui.ModeFlows {
+			return m.handleResumeFlowPhaseSession()
+		}
 		return m.handleResumeSession()
 	case "i":
 		if m.mode == ui.ModePlans {
@@ -312,6 +315,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		m.activePane = 0
 		if m.mode == ui.ModePlans {
 			m = m.clearSelectedPlanPhase()
+		}
+		if m.mode == ui.ModeFlows {
+			m = m.clearSelectedFlowPhase()
 		}
 	case "enter":
 		return m.handleEnter()
@@ -387,6 +393,7 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	if direction > 0 {
 		if m.mode == ui.ModeFlows {
 			m.activePane = 0
+			m = m.clearSelectedFlowPhase()
 			return m, nil
 		}
 		m.mode++
@@ -451,6 +458,9 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedPlanID("")
 		}
 	case ui.ModeFlows:
+		if next, ok := m.moveSelectedFlowPhase(delta); ok {
+			return next
+		}
 		if m.canScrollExpandedFlow(delta, h) {
 			m.flows = m.flows.ScrollBy(delta, h, w)
 			return m
@@ -1044,6 +1054,46 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	return next.launchAgentWithContext(ctx)
 }
 
+func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
+		return m, nil
+	}
+	phase, ok := m.selectedFlowPhase()
+	if !ok {
+		return m, nil
+	}
+	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
+		m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
+		return m, nil
+	}
+	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
+		m = m.setStatus(statusOther, "Flow phase has missing session id")
+		return m, nil
+	}
+	session, ok := flowstore.LatestPhaseSession(phase, true)
+	if !ok {
+		m = m.setStatus(statusOther, "Flow phase has no session to resume")
+		return m, nil
+	}
+	ctx, ok, next := m.flowPhaseSessionResumeLaunchContext(record, phase, session)
+	if !ok {
+		return next, nil
+	}
+	if ctx.Command == agent.CommandCodexApp {
+		// Codex App resume deep links cannot carry wtui launch metadata, so treat
+		// them as app navigation instead of a tracked Flow launch attempt.
+		ctx.LaunchID = ""
+		ctx.FlowID = ""
+		ctx.FlowPhaseID = ""
+		return next.launchAgentWithContext(ctx)
+	}
+	return next.launchTrackedFlowPhaseResumeWithContext(ctx)
+}
+
 func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (actions.AgentLaunchContext, bool, Model) {
 	command := string(record.Provider)
 	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
@@ -1069,8 +1119,51 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		ResumeSessionID:  record.SessionID,
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
+	}
+	return ctx, true, m
+}
+
+func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, phase flowstore.FlowPhase, session flowstore.Session) (actions.AgentLaunchContext, bool, Model) {
+	command := agent.Normalize(strings.TrimSpace(session.Provider))
+	if command == "" {
+		m = m.setStatus(statusOther, "Flow phase session has no provider")
+		return actions.AgentLaunchContext{}, false, m
+	}
+	if command == agent.CommandCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
+		command = agent.CommandCodexApp
+	}
+	if err := agent.Validate(command); err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return actions.AgentLaunchContext{}, false, m
+	}
+	sessionID := strings.TrimSpace(session.SessionID)
+	if sessionID == "" {
+		m = m.setStatus(statusOther, "Flow phase has missing session id")
+		return actions.AgentLaunchContext{}, false, m
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	workingDir := record.WorktreePath
+	if workingDir == "" && command != agent.CommandCodexApp {
+		m = m.setStatus(statusOther, "Flow phase has no worktree path to resume from")
+		return actions.AgentLaunchContext{}, false, m
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:          command,
+		LaunchID:         newLaunchID(),
+		RepoPath:         repoPath,
+		WorktreePath:     record.WorktreePath,
+		WorkingDir:       workingDir,
+		Branch:           record.Branch,
+		Commit:           record.Commit,
+		SessionStateRoot: m.sessionStateRoot,
+		ResumeSessionID:  sessionID,
+		PlanID:           record.PlanID,
+		PlanPath:         record.PlanPath,
 		FlowID:           record.FlowID,
-		FlowPhaseID:      record.FlowPhaseID,
+		FlowPhaseID:      phase.PhaseID,
 	}
 	return ctx, true, m
 }
@@ -1504,6 +1597,35 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 		m = m.setStatus(statusOther, errText)
 		return m, nil
 	}
+	return m.runAgentLaunchWithContext(ctx, launch)
+}
+
+func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	ctx.FlowLaunchTracked = true
+	if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   ctx.FlowID,
+		PhaseID:  ctx.FlowPhaseID,
+		LaunchID: ctx.LaunchID,
+	}); err != nil {
+		m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", err))
+		return m, nil
+	}
+	launch, err := m.launchAgent(ctx)
+	if err != nil {
+		errText := err.Error()
+		m, errText = m.markFlowLaunchNeedsAttention(ctx, errText)
+		m = m.setStatus(statusOther, errText)
+		return m, nil
+	}
+	next, launchCmd := m.runAgentLaunchWithContext(ctx, launch)
+	if next.mode == ui.ModeFlows {
+		next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+		return next, tea.Batch(fetchCmd, launchCmd)
+	}
+	return next, launchCmd
+}
+
+func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
 	if launch.Interactive {
 		// wtui hands over the TTY until the launch command exits. Some launch
 		// commands are only terminal/multiplexer clients; launch.Detached records
@@ -1532,7 +1654,7 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 }
 
 func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errText string) (Model, string) {
-	if ctx.FlowID == "" || ctx.FlowPhaseID == "" {
+	if ctx.FlowID == "" || ctx.FlowPhaseID == "" || (ctx.ResumeSessionID != "" && !ctx.FlowLaunchTracked) {
 		return m, errText
 	}
 	notes := "Agent launch failed"
