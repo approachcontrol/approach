@@ -278,13 +278,16 @@ loop, PR creation, autoreview, and merge.
 Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
 and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
-`needs_attention`, `completed`, `blocked`, and `skipped`.
+`needs_attention`, `completed`, `blocked`, and `skipped`. The canonical phase
+transition table, derived-readiness gate rules, and the on-disk compatibility
+story live in [flow-phases.md](flow-phases.md).
 
 The flows pane distinguishes recoverable partial states from ordinary phase
 states. It shows `recover-worktree` when a saved Flow has no branch/worktree
 metadata, `await-session` when a running phase has a launch attempt but no
 attached provider session yet, `session-mismatch` when a phase's attached
-session launch ID does not match the phase launch IDs, and
+session launch ID does not match the phase launch IDs, `missing-session-id`
+when an attached session lacks a provider session ID, and
 `autoreview:missing-pr` when PR Creation completed without structured PR
 metadata.
 

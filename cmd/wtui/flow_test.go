@@ -629,7 +629,7 @@ func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 		want   string
 	}{
 		{name: "ready", status: flowstore.PhaseReady, want: "cannot set phase status to ready"},
-		{name: "bogus", status: "done", want: "unsupported agent-facing phase status"},
+		{name: "bogus", status: "done", want: `unsupported agent-facing phase status "done"; valid statuses: running, needs_attention, completed, blocked, skipped`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := run([]string{

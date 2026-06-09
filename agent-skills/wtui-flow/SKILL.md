@@ -37,16 +37,17 @@ Also use the launch metadata when present: `WTUI_FLOW_PHASE_ID`,
 `WTUI_PLAN_STATE_ROOT`.
 
 Agent-facing phase statuses are `running`, `needs_attention`, `completed`,
-`blocked`, and `skipped`. Agents cannot set `ready`; readiness is derived
-by wtui. Skipped phases require `--notes`, and restarting a blocked or
-needs-attention phase as `running` requires `--notes`.
+`blocked`, and `skipped`. Report only the status of your own phase honestly;
+wtui derives all phase readiness and ordering, so never reason about which
+phase becomes ready next. Agents cannot set `ready`. Skipped phases require
+`--notes`, and restarting a blocked or needs-attention phase as `running`
+requires `--notes`. Invalid transitions fail with the allowed next statuses;
+fix the reported state rather than retrying blindly.
 
 For the `plan-review` phase, wtui accepts only these review outcomes:
 `approved`, `approved_with_concerns`, `changes_requested`, and `blocked`.
 `approved_with_concerns`, `changes_requested`, and `blocked` require
-`--notes`. Implementation becomes ready only after `approved` or
-`approved_with_concerns`, or after an explicit skipped-with-notes Plan Review
-override.
+`--notes`.
 
 Use the current implemented phase update command:
 
@@ -246,8 +247,8 @@ wtui flow phase add-child \
 ```
 
 Re-running the same `phase add-child` command updates the existing child phase
-instead of duplicating it. Child phases gate review loop and PR creation until
-completed or skipped with notes.
+instead of duplicating it. Complete or skip (with notes) each child phase when
+its work is done.
 
 ```bash
 wtui flow phase set \
@@ -288,9 +289,9 @@ wtui flow phase set \
 Goal: commit, push, and open or update the pull request.
 
 After the PR exists, record the PR provider, positive PR number, URL, head
-branch, base branch, and status through `wtui flow pr set`. Autoreview remains
-blocked from becoming ready until this structured PR target metadata is
-persisted. The command currently supports `--provider github`; the PR head
+branch, base branch, and status through `wtui flow pr set`. Recording this
+structured PR metadata is a required part of PR Creation, not optional
+bookkeeping. The command currently supports `--provider github`; the PR head
 branch must match the Flow branch.
 
 ```bash
