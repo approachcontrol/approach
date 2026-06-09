@@ -90,6 +90,14 @@ func (m Model) nextListFetchRequest(mode ui.Mode) (Model, uint64) {
 	return m, request
 }
 
+func (m Model) invalidateListRequests() Model {
+	m.listRequestSeq++
+	for i := range m.listRequests {
+		m.listRequests[i] = m.listRequestSeq
+	}
+	return m
+}
+
 func (m Model) nextWorktreeSessionRequest(repoPath, worktreePath string) (Model, uint64) {
 	m.worktreeSessionRequestSeq++
 	m.activeWorktreeSessionReq = m.worktreeSessionRequestSeq

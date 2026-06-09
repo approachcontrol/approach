@@ -327,6 +327,96 @@ func TestModel_RepoRefreshKeepsFilterAndHandlesZeroVisibleRepos(t *testing.T) {
 	}
 }
 
+func TestModel_PlanResultPreservesSelectedPlanWhenResultsReorder(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{
+		RepoPath: "/dev/alpha",
+		Plans: []planstore.PlanRecord{
+			{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "One"},
+			{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Two"},
+		},
+		ListRequest: m.ListRequest(ui.ModePlans),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.Plans()[m.PlanSelected()].PlanID; got != "plan-2" {
+		t.Fatalf("selected plan before reorder = %q, want plan-2", got)
+	}
+
+	m, _ = update(m, model.PlanResultMsg{
+		RepoPath: "/dev/alpha",
+		Plans: []planstore.PlanRecord{
+			{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Two updated"},
+			{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "One"},
+		},
+		ListRequest: m.ListRequest(ui.ModePlans),
+	})
+
+	if got := m.Plans()[m.PlanSelected()].PlanID; got != "plan-2" {
+		t.Fatalf("selected plan after reorder = %q, want plan-2", got)
+	}
+	if got := m.PlanSelected(); got != 0 {
+		t.Fatalf("PlanSelected() after reorder = %d, want updated plan index 0", got)
+	}
+}
+
+func TestModel_FlowResultPreservesSelectedFlowWhenResultsReorder(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath: "/dev/alpha",
+		Flows: []flowstore.FlowRecord{
+			{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "One"},
+			{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Two"},
+		},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.Flows()[m.FlowSelected()].FlowID; got != "flow-2" {
+		t.Fatalf("selected flow before reorder = %q, want flow-2", got)
+	}
+
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath: "/dev/alpha",
+		Flows: []flowstore.FlowRecord{
+			{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Two updated"},
+			{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "One"},
+		},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	if got := m.Flows()[m.FlowSelected()].FlowID; got != "flow-2" {
+		t.Fatalf("selected flow after reorder = %q, want flow-2", got)
+	}
+	if got := m.FlowSelected(); got != 0 {
+		t.Fatalf("FlowSelected() after reorder = %d, want updated flow index 0", got)
+	}
+}
+
+func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	stalePlanRequest := m.ListRequest(ui.ModePlans)
+	stalePlan := model.PlanResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: stalePlanRequest,
+		Plans:       []planstore.PlanRecord{{PlanID: "stale-plan", RepoPath: "/dev/alpha", Title: "Stale"}},
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, stalePlan)
+
+	if got := m.Plans(); len(got) != 0 {
+		t.Fatalf("stale non-current plan result repopulated cleared pane: %#v", got)
+	}
+}
+
 func TestModel_StaleRepoRefreshResultAndFailureIgnored(t *testing.T) {
 	scans := 0
 	m := model.NewWithOptions(testRepos(), model.Options{

@@ -199,17 +199,30 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
-	p := tea.NewProgram(model.NewWithOptions(repos, model.Options{
+	p := tea.NewProgram(model.NewWithOptions(repos, modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)), tea.WithAltScreen())
+	_, err = p.Run()
+	return err
+}
+
+func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {
+	launchOpts := actions.LaunchOptions{TerminalCommand: cfg.Terminal.Command}
+	return model.Options{
 		AgentCommand:       cfg.Agent.Command,
 		StartupMode:        ui.ModeFlows,
 		PlanPromptTemplate: cfg.Agent.PlanPrompt,
-		ScanRepos:          opts.ScanRepos,
+		ScanRepos:          scanRepos,
 		SessionStateRoot:   sessionStore.Root(),
 		ListSessions:       sessionStore.List,
 		ReadTranscript:     sessionStore.ReadTranscript,
 		ListPlans:          planStore.List,
 		ListFlows:          flowStore.List,
 		ReadPlan:           planStore.ReadPlan,
+		LaunchTerminal: func(path string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchWithOptions(path, launchOpts)
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.AgentLaunchWithOptions(ctx, launchOpts)
+		},
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			return sessionStore.MarkLaunchEnded(ctx.LaunchID, time.Now().UTC())
 		},
@@ -218,9 +231,7 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 		SaveAgentCommand: func(command string) error {
 			return config.SaveAgentCommand(command)
 		},
-	}), tea.WithAltScreen())
-	_, err = p.Run()
-	return err
+	}
 }
 
 func runtimeArtifactRoot(cfg config.Config) string {

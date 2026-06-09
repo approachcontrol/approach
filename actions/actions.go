@@ -549,6 +549,12 @@ type TerminalLaunchSpec struct {
 	Cleanup  func()
 }
 
+// LaunchOptions customizes external terminal transports without changing
+// multiplexer/session selection.
+type LaunchOptions struct {
+	TerminalCommand string
+}
+
 // AgentLaunchContext carries metadata wtui knows at launch time so provider
 // hooks can associate later session records with the selected repo/worktree.
 type AgentLaunchContext struct {
@@ -578,10 +584,20 @@ type AgentLaunchContext struct {
 // over the wtui TTY. Detached transports leave the wtui TUI usable; only
 // transports that genuinely need the current TTY are returned as interactive.
 func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
-	return agentLaunch(ctx, runtime.GOOS, os.Getenv, exec.LookPath)
+	return AgentLaunchWithOptions(ctx, LaunchOptions{})
+}
+
+// AgentLaunchWithOptions is AgentLaunch with configurable terminal transport
+// selection.
+func AgentLaunchWithOptions(ctx AgentLaunchContext, opts LaunchOptions) (TerminalLaunchSpec, error) {
+	return agentLaunchWithOptions(ctx, runtime.GOOS, os.Getenv, exec.LookPath, opts)
 }
 
 func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
+	return agentLaunchWithOptions(ctx, goos, getenv, lookPath, LaunchOptions{})
+}
+
+func agentLaunchWithOptions(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPath lookPathFunc, opts LaunchOptions) (TerminalLaunchSpec, error) {
 	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
 		return TerminalLaunchSpec{}, err
@@ -611,7 +627,7 @@ func agentLaunch(ctx AgentLaunchContext, goos string, getenv getenvFunc, lookPat
 	if err != nil {
 		return TerminalLaunchSpec{}, err
 	}
-	launch, err := terminalLaunch(cmd.Dir, goos, getenv, lookPath, termCommand)
+	launch, err := terminalLaunchWithOptions(cmd.Dir, goos, getenv, lookPath, termCommand, opts)
 	if err != nil {
 		termCommand.cleanup()
 		return TerminalLaunchSpec{}, err
@@ -1033,19 +1049,30 @@ func isShellIdentifier(s string) bool {
 // session for path. It adapts to the current environment:
 //   - inside Zellij: switch to a Zellij session with the worktree name
 //   - inside tmux: create the tmux session if needed, then switch-client
-//   - outside a multiplexer: prefer tmux, Zellij, $TERMINAL, then a platform/shell fallback
+//   - outside a multiplexer: prefer $TERMINAL, configured terminal, tmux/Zellij, then a platform/shell fallback
 func TerminalLaunch(path string) (TerminalLaunchSpec, error) {
-	return terminalLaunch(path, runtime.GOOS, os.Getenv, exec.LookPath, nil)
+	return TerminalLaunchWithOptions(path, LaunchOptions{})
+}
+
+// TerminalLaunchWithOptions is TerminalLaunch with configurable terminal
+// transport selection.
+func TerminalLaunchWithOptions(path string, opts LaunchOptions) (TerminalLaunchSpec, error) {
+	return terminalLaunchWithOptions(path, runtime.GOOS, os.Getenv, exec.LookPath, nil, opts)
 }
 
 // terminalLaunch chooses a transport for path. When command is nil it opens a
 // plain shell/terminal session (the `t` shortcut). When command is non-nil it
 // runs that command inside the chosen session instead.
 func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc, command *terminalCommand) (TerminalLaunchSpec, error) {
+	return terminalLaunchWithOptions(path, goos, getenv, lookPath, command, LaunchOptions{})
+}
+
+func terminalLaunchWithOptions(path, goos string, getenv getenvFunc, lookPath lookPathFunc, command *terminalCommand, opts LaunchOptions) (TerminalLaunchSpec, error) {
 	sessionName := WorktreeSessionName(path)
 	if command != nil && command.session != "" {
 		sessionName = command.session
 	}
+	preference := selectTerminalPreference(getenv("TERMINAL"), opts.TerminalCommand, lookPath)
 
 	switch {
 	case getenv("ZELLIJ") != "" && commandExists("zellij", lookPath):
@@ -1065,12 +1092,22 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 			Cmd:      tmuxSwitchCommand(sessionName, path, command),
 			Detached: command != nil,
 		}, nil
+	}
+
+	if preference.kind != terminalPreferenceNone {
+		return terminalLaunchFromPreference(goos, path, lookPath, preference, command)
+	}
+
+	switch {
 	case commandExists("tmux", lookPath):
-		if goos == "darwin" && commandExists("osascript", lookPath) {
-			return TerminalLaunchSpec{
-				Cmd:      externalTerminalCommand(tmuxAttachCommand(sessionName, path, command)),
-				Detached: command != nil,
-			}, nil
+		if goos == "darwin" {
+			launch, err := macOSScriptLaunch(path, lookPath, preference, tmuxAttachCommand(sessionName, path, command), command != nil)
+			if err == nil {
+				return launch, nil
+			}
+			if preference.kind != terminalPreferenceNone {
+				return TerminalLaunchSpec{}, err
+			}
 		}
 		return TerminalLaunchSpec{
 			Cmd:         tmuxNewSessionCommand(sessionName, path, command),
@@ -1078,20 +1115,19 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 			Detached:    command != nil,
 		}, nil
 	case commandExists("zellij", lookPath):
-		if goos == "darwin" && commandExists("osascript", lookPath) {
-			return TerminalLaunchSpec{
-				Cmd:      externalTerminalCommand(zellijAttachCommand(sessionName, path, command)),
-				Detached: command != nil,
-			}, nil
+		if goos == "darwin" {
+			launch, err := macOSScriptLaunch(path, lookPath, preference, zellijAttachCommand(sessionName, path, command), command != nil)
+			if err == nil {
+				return launch, nil
+			}
+			if preference.kind != terminalPreferenceNone {
+				return TerminalLaunchSpec{}, err
+			}
 		}
 		return TerminalLaunchSpec{
 			Cmd:         zellijAttachLocalCommand(sessionName, path, command),
 			Interactive: true,
 		}, nil
-	}
-
-	if terminal := strings.TrimSpace(getenv("TERMINAL")); terminal != "" {
-		return terminalLaunchFromEnv(goos, terminal, path, lookPath, command)
 	}
 
 	if goos == "darwin" && commandExists("open", lookPath) {
@@ -1100,12 +1136,12 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 				return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in Terminal")
 			}
 			return TerminalLaunchSpec{
-				Cmd:      externalTerminalCommand(command.shellCommand()),
+				Cmd:      macOSTerminalScriptCommand("Terminal", command.shellCommand()),
 				Detached: true,
 			}, nil
 		}
 		return TerminalLaunchSpec{
-			Cmd: exec.Command("open", "-a", "Terminal", path),
+			Cmd: macOSTerminalOpenCommand("Terminal", path),
 		}, nil
 	}
 
@@ -1126,6 +1162,170 @@ func terminalLaunch(path, goos string, getenv getenvFunc, lookPath lookPathFunc,
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
 }
 
+type terminalPreferenceKind int
+
+const (
+	terminalPreferenceNone terminalPreferenceKind = iota
+	terminalPreferenceGUIApp
+	terminalPreferenceCLICommand
+	terminalPreferenceUnsupportedGUIApp
+)
+
+type terminalPreference struct {
+	source string
+	raw    string
+	kind   terminalPreferenceKind
+	app    string
+	argv   []string
+	reason string
+}
+
+func selectTerminalPreference(envTerminal, configuredTerminal string, lookPath lookPathFunc) terminalPreference {
+	if terminal := strings.TrimSpace(envTerminal); terminal != "" {
+		return parseTerminalPreference("TERMINAL", terminal, lookPath)
+	}
+	if terminal := strings.TrimSpace(configuredTerminal); terminal != "" {
+		return parseTerminalPreference("[terminal].command", terminal, lookPath)
+	}
+	return terminalPreference{kind: terminalPreferenceNone}
+}
+
+func parseTerminalPreference(source, terminal string, lookPath lookPathFunc) terminalPreference {
+	fields := strings.Fields(terminal)
+	if len(fields) == 0 {
+		return terminalPreference{source: source, raw: terminal, kind: terminalPreferenceNone}
+	}
+	if app, ok := normalizeMacOSGUIAppAlias(fields[0]); ok {
+		if len(fields) > 1 {
+			return terminalPreference{
+				source: source,
+				raw:    terminal,
+				kind:   terminalPreferenceUnsupportedGUIApp,
+				app:    fields[0],
+				reason: fmt.Sprintf("%s %q uses supported macOS GUI app %q with unsupported arguments", source, terminal, fields[0]),
+			}
+		}
+		return terminalPreference{source: source, raw: terminal, kind: terminalPreferenceGUIApp, app: app}
+	}
+	if commandExists(fields[0], lookPath) {
+		return terminalPreference{source: source, raw: terminal, kind: terminalPreferenceCLICommand, argv: fields}
+	}
+	return terminalPreference{source: source, raw: terminal, kind: terminalPreferenceUnsupportedGUIApp, app: fields[0]}
+}
+
+func normalizeMacOSGUIAppAlias(value string) (string, bool) {
+	switch strings.ToLower(value) {
+	case "terminal", "terminal.app":
+		return "Terminal", true
+	case "iterm", "iterm.app", "iterm2", "iterm2.app":
+		return "iTerm", true
+	default:
+		return "", false
+	}
+}
+
+func terminalLaunchFromPreference(goos, path string, lookPath lookPathFunc, pref terminalPreference, command *terminalCommand) (TerminalLaunchSpec, error) {
+	switch pref.kind {
+	case terminalPreferenceCLICommand:
+		return cliTerminalLaunch(pref.argv, path, command)
+	case terminalPreferenceGUIApp:
+		if goos != "darwin" {
+			return TerminalLaunchSpec{}, missingTerminalCommandError(pref)
+		}
+		if command != nil {
+			if !commandExists("osascript", lookPath) {
+				return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in %s", pref.app)
+			}
+			return TerminalLaunchSpec{
+				Cmd:      macOSTerminalScriptCommand(pref.app, command.shellCommand()),
+				Detached: true,
+			}, nil
+		}
+		if pref.app == "Terminal" && !commandExists("open", lookPath) {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch terminal: open is required to open Terminal")
+		}
+		if pref.app == "iTerm" && !commandExists("osascript", lookPath) {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch terminal: osascript is required to open iTerm")
+		}
+		return TerminalLaunchSpec{Cmd: macOSTerminalOpenCommand(pref.app, path)}, nil
+	case terminalPreferenceUnsupportedGUIApp:
+		if pref.reason != "" {
+			return TerminalLaunchSpec{}, fmt.Errorf("%s", pref.reason)
+		}
+		if command != nil {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: %s %q must be a supported macOS terminal app or a command on PATH that accepts -e", pref.source, pref.raw)
+		}
+		if goos == "darwin" {
+			if !commandExists("open", lookPath) {
+				return TerminalLaunchSpec{}, fmt.Errorf("cannot launch terminal: open is required to open %s", pref.app)
+			}
+			return TerminalLaunchSpec{Cmd: exec.Command("open", "-a", pref.app, path)}, nil
+		}
+		return TerminalLaunchSpec{}, missingTerminalCommandError(pref)
+	default:
+		return TerminalLaunchSpec{}, fmt.Errorf("%s is empty", pref.source)
+	}
+}
+
+func cliTerminalLaunch(argv []string, path string, command *terminalCommand) (TerminalLaunchSpec, error) {
+	if len(argv) == 0 {
+		return TerminalLaunchSpec{}, fmt.Errorf("terminal command is empty")
+	}
+	args := append([]string(nil), argv[1:]...)
+	if command != nil {
+		args = append(args, "-e", "sh", "-c", command.shellCommand())
+	}
+	cmd := exec.Command(argv[0], args...)
+	cmd.Dir = path
+	return TerminalLaunchSpec{Cmd: cmd, Detached: command != nil}, nil
+}
+
+func macOSScriptLaunch(path string, lookPath lookPathFunc, pref terminalPreference, shellCommand string, detached bool) (TerminalLaunchSpec, error) {
+	switch pref.kind {
+	case terminalPreferenceNone:
+		if !commandExists("osascript", lookPath) {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in Terminal")
+		}
+		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand("Terminal", shellCommand), Detached: detached}, nil
+	case terminalPreferenceGUIApp:
+		if !commandExists("osascript", lookPath) {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: osascript is required to run a command in %s", pref.app)
+		}
+		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand(pref.app, shellCommand), Detached: detached}, nil
+	case terminalPreferenceCLICommand:
+		cmd, err := cliTerminalLaunchForShell(pref.argv, path, shellCommand)
+		if err != nil {
+			return TerminalLaunchSpec{}, err
+		}
+		return TerminalLaunchSpec{Cmd: cmd, Detached: detached}, nil
+	case terminalPreferenceUnsupportedGUIApp:
+		if pref.reason != "" {
+			return TerminalLaunchSpec{}, fmt.Errorf("%s", pref.reason)
+		}
+		return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: %s %q must be a supported macOS terminal app or a command on PATH that accepts -e", pref.source, pref.raw)
+	default:
+		return TerminalLaunchSpec{}, fmt.Errorf("terminal preference is invalid")
+	}
+}
+
+func cliTerminalLaunchForShell(argv []string, path, shellCommand string) (*exec.Cmd, error) {
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("terminal command is empty")
+	}
+	args := append([]string(nil), argv[1:]...)
+	args = append(args, "-e", "sh", "-c", shellCommand)
+	cmd := exec.Command(argv[0], args...)
+	cmd.Dir = path
+	return cmd, nil
+}
+
+func missingTerminalCommandError(pref terminalPreference) error {
+	if pref.source == "TERMINAL" {
+		return fmt.Errorf("TERMINAL is set to %q, but that command was not found", pref.raw)
+	}
+	return fmt.Errorf("%s is set to %q, but that command was not found", pref.source, pref.raw)
+}
+
 // resolveShell returns a runnable shell path. It accepts shell only if it is a
 // regular file with an executable bit, or resolves via lookPath; otherwise it
 // falls back to /bin/sh.
@@ -1141,37 +1341,6 @@ func resolveShell(shell string, lookPath lookPathFunc) string {
 		return shell
 	}
 	return fallback
-}
-
-func terminalLaunchFromEnv(goos, terminal, path string, lookPath lookPathFunc, command *terminalCommand) (TerminalLaunchSpec, error) {
-	fields := strings.Fields(terminal)
-	if len(fields) == 0 {
-		return TerminalLaunchSpec{}, fmt.Errorf("TERMINAL is empty")
-	}
-
-	name := fields[0]
-	args := fields[1:]
-	if commandExists(name, lookPath) {
-		if command != nil {
-			// Best-effort: most terminals accept `-e <command>` to run a
-			// command instead of an interactive shell.
-			args = append(append([]string{}, args...), "-e", "sh", "-c", command.shellCommand())
-		}
-		cmd := exec.Command(name, args...)
-		cmd.Dir = path
-		return TerminalLaunchSpec{Cmd: cmd, Detached: command != nil}, nil
-	}
-
-	if goos == "darwin" {
-		if command != nil {
-			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch agent: TERMINAL %q must be on PATH to run a command; run inside tmux/zellij or use a terminal that accepts -e", terminal)
-		}
-		return TerminalLaunchSpec{
-			Cmd: exec.Command("open", "-a", name, path),
-		}, nil
-	}
-
-	return TerminalLaunchSpec{}, fmt.Errorf("TERMINAL is set to %q, but that command was not found", terminal)
 }
 
 func selectClipboardCommand(goos string, lookPath lookPathFunc) (commandSpec, error) {
@@ -1426,18 +1595,40 @@ func commandExists(name string, lookPath lookPathFunc) bool {
 	return err == nil
 }
 
-// externalTerminalCommand opens macOS Terminal running shellCommand. shellCommand
-// is embedded via Go %q, which escapes the AppleScript string; untrusted values
-// inside it are already single-quoted by shellQuote, so they cannot break out of
-// either the AppleScript string or the shell. Exotic control characters (bell,
-// vtab) are assumed absent from paths/branches/prompts; they would be mangled by
-// the AppleScript layer but cannot inject.
-func externalTerminalCommand(shellCommand string) *exec.Cmd {
+func macOSTerminalOpenCommand(app, path string) *exec.Cmd {
+	if app == "iTerm" {
+		return macOSTerminalScriptCommand("iTerm", "cd "+shellQuote(path)+" && exec ${SHELL:-/bin/sh}")
+	}
+	return exec.Command("open", "-a", "Terminal", path)
+}
+
+// macOSTerminalScriptCommand opens a supported macOS GUI terminal running
+// shellCommand. shellCommand is embedded via Go %q, which escapes the
+// AppleScript string; untrusted values inside it are already single-quoted by
+// shellQuote, so they cannot break out of either the AppleScript string or the
+// shell. Exotic control characters (bell, vtab) are assumed absent from
+// paths/branches/prompts; they would be mangled by the AppleScript layer but
+// cannot inject.
+func macOSTerminalScriptCommand(app, shellCommand string) *exec.Cmd {
+	if app == "iTerm" {
+		return exec.Command(
+			"osascript",
+			"-e", `tell application "iTerm"`,
+			"-e", `activate`,
+			"-e", `set newWindow to (create window with default profile)`,
+			"-e", fmt.Sprintf(`tell current session of newWindow to write text %q`, shellCommand),
+			"-e", `end tell`,
+		)
+	}
 	return exec.Command(
 		"osascript",
 		"-e", fmt.Sprintf(`tell application "Terminal" to do script %q`, shellCommand),
 		"-e", `tell application "Terminal" to activate`,
 	)
+}
+
+func externalTerminalCommand(shellCommand string) *exec.Cmd {
+	return macOSTerminalScriptCommand("Terminal", shellCommand)
 }
 
 func tmuxAttachCommand(sessionName, path string, command *terminalCommand) string {

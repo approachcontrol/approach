@@ -22,7 +22,7 @@ exist:
 | Setting | Highest precedence | Config fallback | Built-in default |
 |---------|--------------------|-----------------|------------------|
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
-| Terminal command | `TERMINAL` | none; `[terminal].command` is parsed but unused | platform fallback |
+| Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
@@ -101,12 +101,36 @@ VS Code with `code`.
 
 ### `[terminal]`
 
-Parsed for future terminal-launch settings. The current terminal action still
-uses tmux/Zellij detection, then `TERMINAL`, then platform fallbacks.
+Configures the external terminal fallback used by the `t` action and by
+detached agent-launch scripts. Active tmux/Zellij sessions still take
+precedence, and `TERMINAL` still overrides this setting.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | string | Future terminal command setting. |
+| `command` | string | Terminal command or supported macOS GUI app alias. |
+
+Examples:
+
+```toml
+[terminal]
+command = "wezterm start"
+
+[terminal]
+command = "iTerm"
+```
+
+On macOS, supported GUI aliases are `Terminal`, `Terminal.app`, `iTerm`,
+`iTerm.app`, `iTerm2`, and `iTerm2.app`. Terminal aliases use the built-in
+Terminal transport. iTerm aliases use AppleScript so both plain worktree
+terminals and detached agent scripts open in iTerm.
+
+Other command values are treated as whitespace-separated CLI terminal commands
+when the first field exists on `PATH`; configured arguments are preserved as
+separate argv entries and agent launches append `-e sh -c <script>`. Shell
+quoting is not interpreted in this setting. On macOS, an unsupported GUI app
+name can open a plain worktree terminal with `open -a <app> <path>`, but it
+cannot run detached agent scripts. Use a supported GUI alias or a CLI terminal
+command for agent launches.
 
 ### `[provider]`
 

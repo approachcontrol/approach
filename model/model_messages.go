@@ -1013,7 +1013,13 @@ func (m Model) handlePlanResult(msg PlanResultMsg) Model {
 	if !ok {
 		return m
 	}
+	selectedPlanID := m.selectedPlanID()
 	m.plans = m.plans.SetItems(msg.Plans)
+	if selectedPlanID != "" {
+		m.plans = m.plans.SelectFunc(func(record planstore.PlanRecord) bool {
+			return record.PlanID == selectedPlanID
+		})
+	}
 	m = m.setExpandedPlanID("")
 	m = m.clampSelectionsAfterFilter()
 	return m
@@ -1025,7 +1031,13 @@ func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 	if !ok {
 		return m
 	}
+	selectedFlowID := m.selectedFlowID()
 	m.flows = m.flows.SetItems(msg.Flows)
+	if selectedFlowID != "" {
+		m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool {
+			return record.FlowID == selectedFlowID
+		})
+	}
 	m = m.setExpandedFlowID("")
 	m = m.clampSelectionsAfterFilter()
 	return m

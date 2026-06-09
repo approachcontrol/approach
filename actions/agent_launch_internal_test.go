@@ -154,6 +154,34 @@ func TestAgentLaunch_DarwinExternalTerminalRunsAgent(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchWithOptions_DarwinConfiguredITermRunsGeneratedScript(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	launch, err := agentLaunchWithOptions(planAgentContext(), "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "iTerm2.app",
+	})
+	if err != nil {
+		t.Fatalf("agentLaunchWithOptions returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("iTerm agent launch should be detached")
+	}
+	if launch.Cleanup == nil {
+		t.Fatal("expected cleanup to be wired")
+	}
+	joined := strings.Join(launch.Cmd.Args, "\n")
+	for _, want := range []string{`tell application "iTerm"`, "activate", "write text", "exec sh '/"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected iTerm agent args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+	for _, unwanted := range []string{"Read the plan and begin implementation.", "WTUI_PLAN_ID", "codex --config"} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("agent details leaked into AppleScript args: %q in %#v", unwanted, launch.Cmd.Args)
+		}
+	}
+	requireScriptContains(t, agentLaunchScript(t), "Read the plan and begin implementation.")
+}
+
 func TestAgentLaunch_TerminalEnvRunsAgentWithDashE(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
@@ -201,6 +229,36 @@ func TestAgentLaunch_TerminalEnvDarwinUnsupportedReturnsError(t *testing.T) {
 	_, err := agentLaunch(planAgentContext(), "darwin", env, fakeLookPath("open"))
 	if err == nil {
 		t.Fatal("expected error when a GUI-only TERMINAL cannot run an agent command")
+	}
+}
+
+func TestAgentLaunchWithOptions_DarwinUnsupportedConfiguredGUIReturnsError(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	_, err := agentLaunchWithOptions(planAgentContext(), "darwin", fakeGetenv(nil), fakeLookPath("open"), LaunchOptions{
+		TerminalCommand: "GhostTerminal",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported configured GUI error")
+	}
+	for _, want := range []string{"[terminal].command", "GhostTerminal", "supported macOS terminal app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
+		}
+	}
+}
+
+func TestAgentLaunchWithOptions_NonDarwinMissingConfiguredCommandNamesConfig(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	_, err := agentLaunchWithOptions(planAgentContext(), "linux", fakeGetenv(nil), fakeLookPath(), LaunchOptions{
+		TerminalCommand: "ghostterm",
+	})
+	if err == nil {
+		t.Fatal("expected missing configured terminal error")
+	}
+	for _, want := range []string{"[terminal].command", "ghostterm"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
+		}
 	}
 }
 
@@ -382,6 +440,47 @@ func TestAgentLaunch_OsascriptEscapesShellCommand(t *testing.T) {
 	}
 }
 
+func TestAgentLaunchWithOptions_ITermOsascriptEscapesShellCommand(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	ctx := planAgentContext()
+	const prompt = `"; do shell script "touch /tmp/PWNED"; echo "`
+	ctx.InitialPrompt = prompt
+	launch, err := agentLaunchWithOptions(ctx, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "iTerm",
+	})
+	if err != nil {
+		t.Fatalf("agentLaunchWithOptions returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
+	}
+
+	const prefix = `tell current session of newWindow to write text `
+	var writeText string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) {
+			writeText = strings.TrimPrefix(arg, prefix)
+		}
+	}
+	if writeText == "" {
+		t.Fatalf("no iTerm write-text argument found in %#v", launch.Cmd.Args)
+	}
+	if strings.Contains(strings.Join(launch.Cmd.Args, "\n"), "current session of current window") {
+		t.Fatalf("iTerm agent launch should not write into the user's current session: %#v", launch.Cmd.Args)
+	}
+	inner, err := strconv.Unquote(writeText)
+	if err != nil {
+		t.Fatalf("write-text payload is not a valid quoted string (escaping broke): %q", writeText)
+	}
+	if strings.Contains(inner, prompt) {
+		t.Fatalf("prompt leaked into AppleScript command: %q", inner)
+	}
+	script := agentLaunchScript(t)
+	if !strings.Contains(script, `'`+prompt+`'`) {
+		t.Fatal("expected prompt single-quoted inside the launch script")
+	}
+}
+
 func TestAgentLaunch_SessionNameIsUniquePerLaunchAndDistinctFromTerminal(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	ctx := planAgentContext()
@@ -479,6 +578,24 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 	}
 	if strings.Contains(prompt, "inherited-launch") {
 		t.Fatalf("prompt leaked inherited WTUI_LAUNCH_ID:\n%s", prompt)
+	}
+}
+
+func TestCodexAppLaunchIgnoresTerminalOptions(t *testing.T) {
+	launch, err := agentLaunchWithOptions(AgentLaunchContext{
+		Command:      "codex-app",
+		WorktreePath: "/repo/worktree",
+	}, "darwin", fakeGetenv(map[string]string{"TERMINAL": "GhostTerminal"}), fakeLookPath(), LaunchOptions{
+		TerminalCommand: "iTerm",
+	})
+	if err != nil {
+		t.Fatalf("agentLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args[:1], []string{"open"}) {
+		t.Fatalf("expected codex-app URL open command, got %#v", launch.Cmd.Args)
+	}
+	if strings.Contains(strings.Join(launch.Cmd.Args, "\n"), "iTerm") {
+		t.Fatalf("codex-app launch should not use configured terminal, got %#v", launch.Cmd.Args)
 	}
 }
 

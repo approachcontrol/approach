@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,7 +14,9 @@ import (
 	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/internal/version"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 )
 
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
@@ -229,6 +233,101 @@ func TestRuntimeArtifactRootFallsBackThroughPlanSessionConfig(t *testing.T) {
 	if got := runtimeArtifactRoot(cfg); got != "/from/config" {
 		t.Fatalf("artifact root = %q, want config root", got)
 	}
+}
+
+func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("TERMINAL", "")
+	root := t.TempDir()
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore sessions: %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore plans: %v", err)
+	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore flows: %v", err)
+	}
+	terminalCommand := putCommandOnPath(t, "wtui-test-terminal")
+	putCommandOnPath(t, "codex")
+
+	opts := modelOptionsFromConfig(config.Config{
+		Agent:    config.AgentConfig{Command: "codex"},
+		Terminal: config.TerminalConfig{Command: terminalCommand + " --reuse"},
+	}, nil, sessionStore, planStore, flowStore)
+
+	terminalLaunch, err := opts.LaunchTerminal("/repo/worktree")
+	if err != nil {
+		t.Fatalf("LaunchTerminal returned error: %v", err)
+	}
+	if !reflect.DeepEqual(terminalLaunch.Cmd.Args, []string{terminalCommand, "--reuse"}) {
+		t.Fatalf("expected LaunchTerminal to use configured terminal command, got %#v", terminalLaunch.Cmd.Args)
+	}
+	if terminalLaunch.Cmd.Dir != "/repo/worktree" {
+		t.Fatalf("LaunchTerminal dir = %q, want /repo/worktree", terminalLaunch.Cmd.Dir)
+	}
+
+	agentLaunch, err := opts.LaunchAgent(actions.AgentLaunchContext{Command: "codex", WorktreePath: "/repo/worktree"})
+	if err != nil {
+		t.Fatalf("LaunchAgent returned error: %v", err)
+	}
+	if len(agentLaunch.Cmd.Args) < 5 || !reflect.DeepEqual(agentLaunch.Cmd.Args[:5], []string{terminalCommand, "--reuse", "-e", "sh", "-c"}) {
+		t.Fatalf("expected LaunchAgent to use configured terminal command with -e, got %#v", agentLaunch.Cmd.Args)
+	}
+	if agentLaunch.Cleanup != nil {
+		agentLaunch.Cleanup()
+	}
+}
+
+func TestModelOptionsFromConfigTerminalEnvOverridesConfiguredCommand(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("ZELLIJ", "")
+	envTerminal := putCommandOnPath(t, "wtui-env-terminal")
+	configTerminal := putCommandOnPath(t, "wtui-config-terminal")
+	t.Setenv("TERMINAL", envTerminal)
+	root := t.TempDir()
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore sessions: %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore plans: %v", err)
+	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore flows: %v", err)
+	}
+
+	opts := modelOptionsFromConfig(config.Config{
+		Terminal: config.TerminalConfig{Command: configTerminal},
+	}, nil, sessionStore, planStore, flowStore)
+
+	launch, err := opts.LaunchTerminal("/repo/worktree")
+	if err != nil {
+		t.Fatalf("LaunchTerminal returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{envTerminal}) {
+		t.Fatalf("expected TERMINAL to override configured command, got %#v", launch.Cmd.Args)
+	}
+}
+
+func putCommandOnPath(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake command: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := exec.LookPath(name); err != nil {
+		t.Fatalf("fake command not on PATH: %v", err)
+	}
+	return path
 }
 
 func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
