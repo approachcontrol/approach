@@ -1552,7 +1552,7 @@ func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	launch, err := actions.TerminalLaunch(path)
+	launch, err := m.launchTerminal(path)
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
 		return m, nil
@@ -1760,6 +1760,7 @@ func (m Model) resetModeCursors() Model {
 }
 
 func (m Model) resetRightPaneCursors() Model {
+	m = m.invalidateListRequests()
 	m.pendingBranchSelection = ""
 	m.pendingWorktreeSelection = ""
 	m.rows = m.rows.SetItems(nil).ResetSelection()

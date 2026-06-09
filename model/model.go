@@ -85,6 +85,7 @@ type Model struct {
 	copyToClipboard           func(string) error
 	pageText                  func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                 func(string) error
+	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
 	sessionStateRoot          string
@@ -139,6 +140,7 @@ type Options struct {
 	CopyToClipboard      func(text string) error
 	PageText             func(body string) (actions.TerminalLaunchSpec, error)
 	SaveAgentCommand     func(string) error
+	LaunchTerminal       func(path string) (actions.TerminalLaunchSpec, error)
 	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	FinalizeAgentSession func(actions.AgentLaunchContext) error
 	SessionStateRoot     string
@@ -218,6 +220,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if pageText == nil {
 		pageText = actions.PageText
 	}
+	launchTerminal := opts.LaunchTerminal
+	if launchTerminal == nil {
+		launchTerminal = actions.TerminalLaunch
+	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
@@ -292,6 +298,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		copyToClipboard:      copyToClipboard,
 		pageText:             pageText,
 		saveAgent:            saveAgent,
+		launchTerminal:       launchTerminal,
 		launchAgent:          launchAgent,
 		finalizeAgentSession: finalizeAgentSession,
 		sessionStateRoot:     opts.SessionStateRoot,

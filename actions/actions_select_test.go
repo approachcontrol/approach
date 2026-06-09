@@ -160,6 +160,137 @@ func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
 	}
 }
 
+func TestTerminalLaunchWithOptions_DarwinConfiguredITermOpensWorktree(t *testing.T) {
+	launch, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("osascript"), nil, LaunchOptions{
+		TerminalCommand: "iTerm",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected iTerm AppleScript transport, got %#v", launch.Cmd.Args)
+	}
+	joined := strings.Join(launch.Cmd.Args, "\n")
+	for _, want := range []string{`tell application "iTerm"`, "activate", "set newWindow to (create window with default profile)", "write text", "cd '/repo' && exec ${SHELL:-/bin/sh}"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected iTerm launch args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+	if strings.Contains(joined, "current session of current window") {
+		t.Fatalf("iTerm launch should not write into the user's current session: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_DarwinTerminalAppNormalizesToFallback(t *testing.T) {
+	launch, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("open"), nil, LaunchOptions{
+		TerminalCommand: "Terminal.app",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"open", "-a", "Terminal", "/repo"}) {
+		t.Fatalf("unexpected macOS Terminal.app args: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_ActiveTmuxWinsOverConfiguredTerminal(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
+	launch, err := terminalLaunchWithOptions("/repo", "darwin", env, fakeLookPath("tmux", "osascript"), nil, LaunchOptions{
+		TerminalCommand: "iTerm",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "sh" || !strings.Contains(strings.Join(launch.Cmd.Args, " "), "tmux") {
+		t.Fatalf("expected active tmux transport, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_DarwinOutsideTmuxUsesConfiguredITermWrapper(t *testing.T) {
+	launch, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("tmux", "osascript"), nil, LaunchOptions{
+		TerminalCommand: "iTerm.app",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	joined := strings.Join(launch.Cmd.Args, "\n")
+	for _, want := range []string{`tell application "iTerm"`, "write text", "cd '/repo' && exec ${SHELL:-/bin/sh}"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected configured iTerm launch to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+	if strings.Contains(joined, "tmux new-session -A -s") {
+		t.Fatalf("configured iTerm should win over installed tmux outside tmux, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_DarwinOutsideTmuxUsesConfiguredCLIWrapper(t *testing.T) {
+	launch, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("tmux", "wezterm"), nil, LaunchOptions{
+		TerminalCommand: "wezterm start",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"wezterm", "start"}) {
+		t.Fatalf("expected configured CLI to win over installed tmux, got %#v", launch.Cmd.Args)
+	}
+	if launch.Cmd.Dir != "/repo" {
+		t.Fatalf("expected CLI wrapper dir /repo, got %q", launch.Cmd.Dir)
+	}
+}
+
+func TestTerminalLaunchWithOptions_TerminalEnvWinsOverInstalledTmuxOutsideTmux(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
+	launch, err := terminalLaunchWithOptions("/repo", "linux", env, fakeLookPath("tmux", "alacritty"), nil, LaunchOptions{
+		TerminalCommand: "wezterm start",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"alacritty"}) {
+		t.Fatalf("expected TERMINAL to win over installed tmux, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_TerminalEnvWinsOverConfiguredTerminal(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
+	launch, err := terminalLaunchWithOptions("/repo", "linux", env, fakeLookPath("alacritty", "wezterm"), nil, LaunchOptions{
+		TerminalCommand: "wezterm start",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"alacritty"}) {
+		t.Fatalf("expected TERMINAL to win, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_ConfiguredCLIUsesConfiguredArgs(t *testing.T) {
+	launch, err := terminalLaunchWithOptions("/repo", "linux", fakeGetenv(nil), fakeLookPath("wezterm"), nil, LaunchOptions{
+		TerminalCommand: "wezterm start --cwd .",
+	})
+	if err != nil {
+		t.Fatalf("terminalLaunchWithOptions returned error: %v", err)
+	}
+	if !reflect.DeepEqual(launch.Cmd.Args, []string{"wezterm", "start", "--cwd", "."}) {
+		t.Fatalf("unexpected configured CLI args: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestTerminalLaunchWithOptions_RejectsSupportedGUIAliasWithArgs(t *testing.T) {
+	_, err := terminalLaunchWithOptions("/repo", "darwin", fakeGetenv(nil), fakeLookPath("osascript"), nil, LaunchOptions{
+		TerminalCommand: "iTerm --new-window",
+	})
+	if err == nil {
+		t.Fatal("expected supported GUI alias with args to be rejected")
+	}
+	for _, want := range []string{"[terminal].command", "iTerm --new-window", "unsupported arguments"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
+		}
+	}
+}
+
 func TestTerminalLaunch_DarwinFallsBackToOpenAppWhenTerminalMissing(t *testing.T) {
 	env := fakeGetenv(map[string]string{"TERMINAL": "wezterm start"})
 	launch, err := terminalLaunch("/repo", "darwin", env, fakeLookPath("open"), nil)

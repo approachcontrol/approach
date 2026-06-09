@@ -3026,6 +3026,28 @@ func TestModel_TKey_WorktreeBranch_FiresCmd(t *testing.T) {
 	}
 }
 
+func TestModel_TKey_UsesInjectedLaunchTerminal(t *testing.T) {
+	var gotPath string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchTerminal: func(path string) (actions.TerminalLaunchSpec, error) {
+			gotPath = path
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha-worktrees/feature", BranchName: "feature"},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if cmd == nil {
+		t.Fatal("expected terminal launch command")
+	}
+	if gotPath != "/dev/alpha-worktrees/feature" {
+		t.Fatalf("expected launch path /dev/alpha-worktrees/feature, got %q", gotPath)
+	}
+}
+
 func TestModel_CKey_WorktreeBranch_FiresCmd(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
