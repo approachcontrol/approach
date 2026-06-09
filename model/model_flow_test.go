@@ -647,8 +647,8 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		launched.SessionStateRoot != "/state/wtui" {
 		t.Fatalf("unexpected Flow phase resume context: %#v", launched)
 	}
-	if launched.LaunchID == "" || launched.LaunchID == "launch-new" {
-		t.Fatalf("expected fresh Flow phase resume launch id, got %#v", launched)
+	if launched.LaunchID != "launch-new" {
+		t.Fatalf("expected Flow phase resume to reuse tracked launch id, got %#v", launched)
 	}
 }
 

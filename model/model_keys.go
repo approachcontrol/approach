@@ -1146,7 +1146,7 @@ func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, 
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
-		LaunchID:         newLaunchID(),
+		LaunchID:         flowPhaseSessionResumeLaunchID(phase, session),
 		RepoPath:         repoPath,
 		WorktreePath:     record.WorktreePath,
 		WorkingDir:       workingDir,
@@ -1160,6 +1160,13 @@ func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, 
 		FlowPhaseID:      phase.PhaseID,
 	}
 	return ctx, true, m
+}
+
+func flowPhaseSessionResumeLaunchID(phase flowstore.FlowPhase, session flowstore.Session) string {
+	if launchID := strings.TrimSpace(session.LaunchID); launchID != "" {
+		return launchID
+	}
+	return flowstore.LatestPhaseLaunchID(phase)
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
