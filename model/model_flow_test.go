@@ -78,6 +78,64 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	}
 }
 
+func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing.T) {
+	var gotFilter flowstore.FlowFilter
+	want := []flowstore.FlowRecord{
+		{FlowID: "flow-current", Title: "Current Flow", RepoPath: "/dev/alpha", Status: flowstore.StatusPending},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			gotFilter = filter
+			return want, nil
+		},
+	})
+	m = inRightPane(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	if cmd == nil {
+		t.Fatal("expected flows fetch command")
+	}
+	request := m.ListRequest(ui.ModeFlows)
+	firstCmd := cmd
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	if cmd == nil {
+		t.Fatal("expected second flows fetch command")
+	}
+	nextRequest := m.ListRequest(ui.ModeFlows)
+	if nextRequest == request {
+		t.Fatalf("second flow request = %d, want a new request", nextRequest)
+	}
+
+	msg, ok := firstCmd().(model.FlowResultMsg)
+	if !ok {
+		t.Fatalf("expected FlowResultMsg, got %T", msg)
+	}
+	if msg.ListRequest != request {
+		t.Fatalf("FlowResultMsg.ListRequest = %d, want original request %d", msg.ListRequest, request)
+	}
+	if gotFilter.RepoPath != "/dev/alpha" {
+		t.Fatalf("FlowFilter.RepoPath = %q, want /dev/alpha", gotFilter.RepoPath)
+	}
+	m, _ = update(m, msg)
+	if got := m.Flows(); len(got) != 0 {
+		t.Fatalf("stale FlowResultMsg populated flows: %#v", got)
+	}
+
+	nextMsg, ok := cmd().(model.FlowResultMsg)
+	if !ok {
+		t.Fatalf("expected second FlowResultMsg, got %T", nextMsg)
+	}
+	if nextMsg.ListRequest != nextRequest {
+		t.Fatalf("second FlowResultMsg.ListRequest = %d, want current request %d", nextMsg.ListRequest, nextRequest)
+	}
+	m, _ = update(m, nextMsg)
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-current" {
+		t.Fatalf("Flows() = %#v, want current flow", got)
+	}
+}
+
 func TestModel_StartsInFlowsModeAndFetchesSelectedRepoFlows(t *testing.T) {
 	var gotFilter flowstore.FlowFilter
 	want := []flowstore.FlowRecord{
