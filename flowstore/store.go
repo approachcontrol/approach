@@ -611,7 +611,12 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("session id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
-		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		// Attaching a session is metadata-only and never changes phase status,
+		// so prefer the row that matches the id exactly: when a legacy record
+		// still holds a stale duplicate ahead of the active row, collapsing
+		// into the first normalized match would silently drop the active
+		// row's status.
+		phaseIndex := phaseIndexPreferringExactID(record.Phases, update.PhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
@@ -1371,6 +1376,19 @@ func appendUniqueSession(sessions []Session, session Session) []Session {
 		}
 	}
 	return append(sessions, session)
+}
+
+// phaseIndexPreferringExactID resolves a phase like phaseIndexByID but prefers
+// the row whose stored id matches phaseID exactly over an earlier row that
+// only matches after normalization. Metadata-only updates use it so legacy
+// duplicate rows collapse into the row the caller actually targeted.
+func phaseIndexPreferringExactID(phases []FlowPhase, phaseID string) int {
+	for i, phase := range phases {
+		if phase.PhaseID == phaseID {
+			return i
+		}
+	}
+	return phaseIndexByID(phases, phaseID)
 }
 
 func phaseIndexByID(phases []FlowPhase, phaseID string) int {

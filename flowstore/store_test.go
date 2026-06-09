@@ -2284,6 +2284,76 @@ func TestStoreAttachSessionMatchesNormalizedPhaseIDVariants(t *testing.T) {
 	}
 }
 
+func TestStoreAttachSessionPrefersExactRowOverEarlierDuplicate(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// Legacy duplicates can leave a stale row ahead of the active one, e.g. a
+	// completed "Step-1" followed by the exact "step-1" row that is actually
+	// running. Attaching a session is metadata-only: it must target the exact
+	// row and keep its running status instead of collapsing into the stale row.
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "exact-row-attach",
+		Title:        "Exact row attach",
+		Instructions: "attach session to active duplicate",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseCompleted, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{
+				PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1",
+				Status: flowstore.PhaseRunning, Kind: "implementation_child", Order: 10,
+				LaunchIDs: []string{"launch-1"},
+				CreatedAt: now, UpdatedAt: now,
+			},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "step-1",
+		Session: flowstore.Session{Provider: "codex", SessionID: "sess-9"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(step-1) error = %v", err)
+	}
+
+	count := 0
+	var survivor flowstore.FlowPhase
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+			survivor = phase
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child rows not collapsed on attach: %#v", record.Phases)
+	}
+	if survivor.PhaseID != "step-1" {
+		t.Fatalf("survivor phase id = %q, want step-1", survivor.PhaseID)
+	}
+	if survivor.Status != flowstore.PhaseRunning {
+		t.Fatalf("survivor status = %q, want running; metadata-only attach must not change phase status", survivor.Status)
+	}
+	if len(survivor.LaunchIDs) != 1 || survivor.LaunchIDs[0] != "launch-1" {
+		t.Fatalf("launch ids lost in collapse: %#v", survivor.LaunchIDs)
+	}
+	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "sess-9" {
+		t.Fatalf("sessions = %#v, want attached sess-9", survivor.Sessions)
+	}
+}
+
 func TestStoreCollapseMergesLaunchAndSessionMetadataFromDuplicateRows(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
