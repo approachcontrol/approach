@@ -114,7 +114,9 @@ Examples:
 ```toml
 [terminal]
 command = "wezterm start"
+```
 
+```toml
 [terminal]
 command = "iTerm"
 ```
