@@ -661,6 +661,10 @@ func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
 		if i+1 < len(hints) {
 			next := hints[i+1]
 			switch {
+			case hint.Key == "↑/↓" && next.Key == "←/→":
+				grouped = append(grouped, shortcutHint{Key: "↑/↓ ←/→", Label: "select/pane/view", Warning: hint.Warning || next.Warning})
+				i++
+				continue
 			case hint.Key == "f" && next.Key == "F":
 				grouped = append(grouped, shortcutHint{Key: "f/F", Label: hint.Label + " / " + next.Label, Warning: hint.Warning || next.Warning})
 				i++
@@ -685,7 +689,10 @@ func padShortcutKey(key string, width int) string {
 }
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
-	navigation := []shortcutHint{{Key: "↑/↓", Label: "select", Inline: true}}
+	navigation := []shortcutHint{
+		{Key: "↑/↓", Label: "select", Inline: true},
+		{Key: "←/→", Label: "pane/view", Inline: true},
+	}
 	global := []shortcutHint{
 		{Key: "tab", Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
@@ -874,13 +881,22 @@ func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 }
 
 func withoutShortcutKey(sections []shortcutSection, key string) []shortcutSection {
+	return withoutShortcutKeys(sections, key)
+}
+
+func withoutShortcutKeys(sections []shortcutSection, keys ...string) []shortcutSection {
+	drop := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		drop[key] = struct{}{}
+	}
 	filtered := make([]shortcutSection, 0, len(sections))
 	for _, section := range sections {
 		hints := make([]shortcutHint, 0, len(section.Hints))
 		for _, hint := range section.Hints {
-			if hint.Key != key {
-				hints = append(hints, hint)
+			if _, ok := drop[hint.Key]; ok {
+				continue
 			}
+			hints = append(hints, hint)
 		}
 		if len(hints) == 0 {
 			continue
@@ -896,16 +912,9 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 		return renderWorktreeFooterShortcuts(sp, sections)
 	}
 	if sp.Mode == ModeBranches {
-		legend, rest := splitLegendSection(sections)
-		rest = withoutSection(rest, "Navigate")
-		rest = branchFooterSectionOrder(rest)
-		keys := renderFooterHintList(rest)
-		if keys != "" {
-			return renderFooterLegend(legend) + "  |  " + keys
-		}
-		return renderFooterLegend(legend)
+		return renderBranchFooterShortcuts(sp, sections)
 	}
-	return "  " + renderFooterHintList(footerSectionOrder(sections))
+	return renderGenericFooterShortcuts(sp, sections)
 }
 
 func transientStatusStyle(fadeStep int) lipgloss.Style {
@@ -921,59 +930,160 @@ func transientStatusStyle(fadeStep int) lipgloss.Style {
 
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
 	hints := flattenShortcutHints(sections)
-	parts := []string{}
-	for _, key := range []string{"tab", "q/esc"} {
-		if hint, ok := findShortcutHint(hints, key); ok {
-			parts = append(parts, renderFooterHint(hint))
-		}
-	}
+	base := footerHintsForKeys(hints, "tab", "q/esc")
+	agent := footerHintsForKeys(hints, "A")
+	upDown := footerHintsForKeys(hints, "↑/↓")
+	arrow := footerHintsForKeys(hints, "←/→")
+	safety := footerHintsForKeys(hints, "D")
+	allActions := worktreeFooterParts(hints, false)
+	compactActions := worktreeCompactFooterParts(hints)
 
-	required := worktreeFooterParts(hints, false)
-	requiredWithDestructive := worktreeFooterParts(hints, true)
-	if hint, ok := findShortcutHint(hints, "A"); ok {
-		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
-		// When agent actions are visible, keep A by making room from the D
-		// toggle first; otherwise preserve D ahead of lower-priority A.
-		if sp.AgentAvailable || sp.NewAgent {
-			if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, required...)...) {
-				parts = candidate
+	if len(allActions) == 0 {
+		for _, parts := range [][]string{
+			appendParts(base, agent, upDown, arrow, safety),
+			appendParts(base, upDown, arrow, safety),
+			appendParts(base, arrow, safety),
+			appendParts(base, arrow),
+			appendParts(base, upDown, safety),
+			base,
+		} {
+			if candidate, ok := footerCandidate(sp.Width, parts); ok {
+				return candidate
 			}
-		} else if footerPartsFit(sp.Width, candidate, append([]string{renderFooterHint(shortcutHint{Key: "↑/↓", Label: "select", Inline: true})}, requiredWithDestructive...)...) {
-			parts = candidate
 		}
 	}
-	if hint, ok := findShortcutHint(hints, "↑/↓"); ok {
-		parts = append(parts, renderFooterHint(hint))
+
+	candidates := [][]string{
+		appendParts(base, agent, upDown, arrow, safety, allActions),
+		appendParts(base, upDown, safety, allActions),
+		appendParts(base, upDown, allActions),
+		appendParts(base, arrow, compactActions),
+		appendParts(base, compactActions),
+		appendParts(arrow, compactActions),
+		compactActions,
+		base,
 	}
-	if hint, ok := findShortcutHint(hints, "D"); ok {
-		candidate := append(append([]string{}, parts...), renderFooterHint(hint))
-		if footerPartsFit(sp.Width, candidate, required...) {
-			parts = candidate
+	for _, parts := range candidates {
+		if candidate, ok := footerCandidate(sp.Width, parts); ok {
+			return candidate
 		}
 	}
-	for _, key := range []string{"n", "N", "m", "d", "p", "u", "enter", "f", "F"} {
+	candidate := "  " + strings.Join(compactActions, " ")
+	return ansi.Truncate(candidate, sp.Width, "")
+}
+
+func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	for _, drop := range [][]string{
+		{},
+		{"f5"},
+		{"f5", "A"},
+		{"f5", "A", "D"},
+		{"f5", "A", "D", "←/→"},
+		{"f5", "A", "D", "←/→", "↑/↓"},
+		{"f5", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "A", "D", "←/→", "↑/↓", "q/esc", "tab"},
+	} {
+		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
+		if lipgloss.Width(candidate) <= sp.Width {
+			return candidate
+		}
+	}
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", "tab")))
+	return ansi.Truncate(candidate, sp.Width, "")
+}
+
+func renderBranchFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	legend, rest := splitLegendSection(sections)
+	rest = branchFooterSectionOrder(rest)
+	hints := flattenShortcutHints(rest)
+	base := footerHintsForKeys(hints, "tab", "q/esc")
+	nav := footerHintsForKeys(hints, "↑/↓", "←/→")
+	actions := footerHintsForKeys(hints, "D", "n", "enter", "d", "f", "F", "t", "c", "a")
+
+	full := append(append(append([]string{}, base...), actions...), nav...)
+	baseActions := append(append([]string{}, base...), actions...)
+	baseNav := append(append([]string{}, base...), nav...)
+	baseArrow := footerHintsForKeys(hints, "tab", "q/esc", "←/→")
+
+	for _, parts := range [][]string{full, baseActions} {
+		if candidate, ok := branchFooterCandidateWithLegend(sp.Width, legend, parts); ok {
+			return candidate
+		}
+	}
+	if sp.BranchDirtySelected {
+		for _, parts := range [][]string{full, baseActions} {
+			if candidate, ok := branchFooterCandidateWithoutLegend(sp.Width, parts); ok {
+				return candidate
+			}
+		}
+	}
+	for _, parts := range [][]string{baseNav, baseArrow, base} {
+		if candidate, ok := branchFooterCandidateWithLegend(sp.Width, legend, parts); ok {
+			return candidate
+		}
+	}
+	for _, parts := range [][]string{full, baseActions, baseNav, baseArrow, base} {
+		if candidate, ok := branchFooterCandidateWithoutLegend(sp.Width, parts); ok {
+			return candidate
+		}
+	}
+	if len(base) > 0 {
+		return "  " + strings.Join(base, " ")
+	}
+	return renderFooterLegend(legend)
+}
+
+func branchFooterCandidateWithLegend(width int, legend []shortcutHint, parts []string) (string, bool) {
+	keys := strings.Join(parts, "  ")
+	if keys == "" {
+		candidate := renderFooterLegend(legend)
+		return candidate, lipgloss.Width(candidate) <= width
+	}
+	candidate := renderFooterLegend(legend) + "  |  " + keys
+	return candidate, lipgloss.Width(candidate) <= width
+}
+
+func branchFooterCandidateWithoutLegend(width int, parts []string) (string, bool) {
+	keys := strings.Join(parts, "  ")
+	if keys == "" {
+		return "", false
+	}
+	candidate := "  " + keys
+	return candidate, lipgloss.Width(candidate) <= width
+}
+
+func footerHintsForKeys(hints []shortcutHint, keys ...string) []string {
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
 		if hint, ok := findShortcutHint(hints, key); ok {
 			parts = append(parts, renderFooterHint(hint))
 		}
 	}
+	return parts
+}
 
-	open := ""
-	if _, ok := findShortcutHint(hints, "t"); ok {
-		if _, ok := findShortcutHint(hints, "c"); ok {
-			open = "t: terminal c: code"
-		}
+func appendParts(groups ...[]string) []string {
+	var parts []string
+	for _, group := range groups {
+		parts = append(parts, group...)
 	}
-	if open != "" {
-		parts = append(parts, open)
-	}
-	if hint, ok := findShortcutHint(hints, "P"); ok {
-		parts = append(parts, renderFooterHint(hint))
-	}
-	if hint, ok := findShortcutHint(hints, "a"); ok {
-		parts = append(parts, renderFooterHint(hint))
-	}
+	return parts
+}
 
-	return "  " + strings.Join(parts, " ")
+func footerCandidate(width int, parts []string) (string, bool) {
+	if len(parts) == 0 {
+		return "", false
+	}
+	candidate := "  " + strings.Join(parts, " ")
+	return candidate, lipgloss.Width(candidate) <= width
+}
+
+func worktreeCompactFooterParts(hints []shortcutHint) []string {
+	critical := footerHintsForKeys(hints, "d", "p", "u", "enter")
+	if len(critical) > 0 {
+		return appendParts(critical, footerHintsForKeys(hints, "f", "F"))
+	}
+	return appendParts(footerHintsForKeys(hints, "n", "N", "m"), footerHintsForKeys(hints, "f", "F"))
 }
 
 func worktreeFooterParts(hints []shortcutHint, includeDestructiveMode bool) []string {
@@ -999,11 +1109,6 @@ func worktreeFooterParts(hints []shortcutHint, includeDestructiveMode bool) []st
 		parts = append(parts, renderFooterHint(hint))
 	}
 	return parts
-}
-
-func footerPartsFit(width int, parts []string, extra ...string) bool {
-	all := append(append([]string{}, parts...), extra...)
-	return lipgloss.Width("  "+strings.Join(all, " ")) <= width
 }
 
 func flattenShortcutHints(sections []shortcutSection) []shortcutHint {

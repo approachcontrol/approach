@@ -370,8 +370,11 @@ func TestModel_RightNavigationReachesFlowsWithoutChangingExistingModeNumbers(t *
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("right from flows mode = %d, want still flows", m.Mode())
 	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("right from flows active pane = %d, want left pane", m.ActivePane())
+	}
 	if cmd != nil {
-		t.Fatalf("right from terminal mode should not fetch, got %T", cmd)
+		t.Fatalf("right from flows mode should not fetch, got %T", cmd)
 	}
 }
 

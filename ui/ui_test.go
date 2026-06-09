@@ -1186,6 +1186,18 @@ func TestRender_LeftPaneShortcutPaneOmitsModeNumberHint(t *testing.T) {
 	}
 }
 
+func TestRender_ShortcutPaneShowsArrowPaneViewHint(t *testing.T) {
+	for _, activePane := range []int{0, 1} {
+		pane := shortcutPaneText(renderShortcutPane(statusBarParams{
+			Mode:       ModeFlows,
+			ActivePane: activePane,
+		}, 26, 18))
+		if !strings.Contains(pane, "←/→") || !strings.Contains(pane, "pane/view") {
+			t.Fatalf("shortcut pane activePane=%d should include arrow pane/view hint, got:\n%s", activePane, pane)
+		}
+	}
+}
+
 func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
@@ -2256,7 +2268,8 @@ func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
 	}
 	for _, pair := range [][2]string{
 		{"tab: pane", "q/esc: quit"},
-		{"↑/↓ select", "enter: diff"},
+		{"↑/↓ select", "←/→ pane/view"},
+		{"←/→ pane/view", "enter: diff"},
 		{"enter: diff", "d: drop"},
 	} {
 		a := strings.Index(bar, pair[0])
@@ -2638,10 +2651,154 @@ func TestWorktreePane_ScrollOffset(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
-	for _, hint := range []string{"tab: pane", "q/esc: quit", "↑/↓ select"} {
+	bar := RenderStatusBar(160, 1, 0, 1, false, false, false)
+	for _, hint := range []string{"tab: pane", "q/esc: quit", "↑/↓ select", "←/→ pane/view"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode status bar should contain %q", hint)
+		}
+	}
+}
+
+func TestStatusBar_ShowsArrowPaneViewHintWhenLeftPaneActive(t *testing.T) {
+	bar := RenderStatusBar(80, ModeFlows, OverlayNone, 0, false, false, false)
+	if !strings.Contains(bar, "←/→ pane/view") {
+		t.Fatalf("left-pane status bar should advertise arrow pane/view navigation, got %q", bar)
+	}
+}
+
+func TestStatusBar_BranchesModeShowsArrowPaneViewHint(t *testing.T) {
+	bar := RenderStatusBar(120, ModeBranches, OverlayNone, 1, false, false, false)
+	if !strings.Contains(bar, "←/→ pane/view") {
+		t.Fatalf("branches status bar should advertise arrow pane/view navigation, got %q", bar)
+	}
+}
+
+func TestStatusBar_BranchesModeDoesNotWrapNarrowFooter(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		width       int
+		destructive bool
+	}{
+		{name: "compact navigation", width: 80},
+		{name: "legend navigation", width: 120},
+		{name: "action heavy", width: 160, destructive: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bar := RenderStatusBar(tc.width, ModeBranches, OverlayNone, 1, tc.destructive, false, false)
+			stripped := ansi.Strip(bar)
+			if strings.Contains(stripped, "\n") {
+				t.Fatalf("branch status bar width %d should stay one line, got %q", tc.width, stripped)
+			}
+			if got := lipgloss.Width(stripped); got > tc.width {
+				t.Fatalf("branch status bar width = %d, want <= %d: %q", got, tc.width, stripped)
+			}
+		})
+	}
+}
+
+func TestStatusBar_BranchesModePrefersActionsOverLegendWhenTight(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                   130,
+		Mode:                    ModeBranches,
+		Overlay:                 OverlayNone,
+		ActivePane:              1,
+		Destructive:             true,
+		RepoSelected:            true,
+		BranchDirtySelected:     true,
+		BranchDeletableSelected: true,
+		BranchOpenableSelected:  true,
+		FetchAvailable:          true,
+	})
+	stripped := ansi.Strip(bar)
+	if strings.Contains(stripped, "\n") {
+		t.Fatalf("branch status bar should stay one line, got %q", stripped)
+	}
+	if got := lipgloss.Width(stripped); got > 130 {
+		t.Fatalf("branch status bar width = %d, want <= 130: %q", got, stripped)
+	}
+	for _, hint := range []string{"n: new branch", "enter: diff", "d: delete", "f: fetch", "t: terminal", "c: code"} {
+		if !strings.Contains(bar, hint) {
+			t.Fatalf("branch status bar should keep action hint %q when it fits without legend, got %q", hint, bar)
+		}
+	}
+	if strings.Contains(bar, "no upstream") {
+		t.Fatalf("branch status bar should drop legend before action hints when tight, got %q", bar)
+	}
+}
+
+func TestStatusBar_ArrowPaneViewHintFitsNarrowFooter(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode Mode
+		pane int
+	}{
+		{name: "worktrees left pane", mode: ModeWorktrees, pane: 0},
+		{name: "branches", mode: ModeBranches, pane: 1},
+		{name: "flows", mode: ModeFlows, pane: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bar := RenderStatusBar(80, tc.mode, OverlayNone, tc.pane, false, false, false)
+			stripped := ansi.Strip(bar)
+			if strings.Contains(stripped, "\n") {
+				t.Fatalf("status bar should stay one line, got %q", stripped)
+			}
+			if got := lipgloss.Width(stripped); got > 80 {
+				t.Fatalf("status bar width = %d, want <= 80: %q", got, bar)
+			}
+			if !strings.Contains(bar, "←/→ pane/view") {
+				t.Fatalf("status bar should include arrow pane/view hint, got %q", bar)
+			}
+		})
+	}
+}
+
+func TestStatusBar_GenericActionModesDoNotWrapNarrowFooter(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		mode        Mode
+		destructive bool
+		wantHints   []string
+	}{
+		{name: "stashes destructive", mode: ModeStashes, destructive: true, wantHints: []string{"←/→ pane/view", "enter: diff", "d: drop"}},
+		{name: "reflog", mode: ModeReflog, wantHints: []string{"←/→ pane/view", "enter: diff", "y: copy hash"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bar := RenderStatusBar(80, tc.mode, OverlayNone, 1, tc.destructive, false, false)
+			stripped := ansi.Strip(bar)
+			if strings.Contains(stripped, "\n") {
+				t.Fatalf("status bar should stay one line, got %q", stripped)
+			}
+			if got := lipgloss.Width(stripped); got > 80 {
+				t.Fatalf("status bar width = %d, want <= 80: %q", got, stripped)
+			}
+			for _, hint := range tc.wantHints {
+				if !strings.Contains(bar, hint) {
+					t.Fatalf("status bar should contain %q, got %q", hint, bar)
+				}
+			}
+		})
+	}
+}
+
+func TestStatusBar_PlanPhaseFooterPreservesActionsAtNarrowWidth(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:             80,
+		Mode:              ModePlans,
+		Overlay:           OverlayNone,
+		ActivePane:        1,
+		PlanSelected:      true,
+		PlanPhaseSelected: true,
+	})
+	stripped := ansi.Strip(bar)
+	if strings.Contains(stripped, "\n") {
+		t.Fatalf("plan phase status bar should stay one line, got %q", stripped)
+	}
+	if got := lipgloss.Width(stripped); got > 80 {
+		t.Fatalf("plan phase status bar width = %d, want <= 80: %q", got, stripped)
+	}
+	for _, hint := range []string{"enter: phases", "o: open", "i: implement phase", "y: copy path"} {
+		if !strings.Contains(bar, hint) {
+			t.Fatalf("plan phase status bar should keep action hint %q, got %q", hint, bar)
 		}
 	}
 }
@@ -2718,6 +2875,37 @@ func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHintBeforeActions(t *tes
 	}
 	if dIdx > nIdx {
 		t.Fatalf("expected destructive hint before worktree actions, got %q", bar)
+	}
+}
+
+func TestStatusBar_WorktreesModeDoesNotWrapNarrowFooter(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		destructive bool
+		stale       bool
+		dirty       bool
+		wantHints   []string
+	}{
+		{name: "clean", wantHints: []string{"←/→ pane/view", "n: new worktree", "f: fetch", "F: pull"}},
+		{name: "dirty", dirty: true, wantHints: []string{"←/→ pane/view", "enter: diff"}},
+		{name: "destructive", destructive: true, wantHints: []string{"←/→ pane/view", "d: delete"}},
+		{name: "stale", destructive: true, stale: true, wantHints: []string{"←/→ pane/view", "p: prune"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bar := RenderStatusBar(80, ModeWorktrees, OverlayNone, 1, tc.destructive, tc.stale, tc.dirty)
+			stripped := ansi.Strip(bar)
+			if strings.Contains(stripped, "\n") {
+				t.Fatalf("worktree status bar should stay one line, got %q", stripped)
+			}
+			if got := lipgloss.Width(stripped); got > 80 {
+				t.Fatalf("worktree status bar width = %d, want <= 80: %q", got, stripped)
+			}
+			for _, hint := range tc.wantHints {
+				if !strings.Contains(bar, hint) {
+					t.Fatalf("worktree status bar should contain %q, got %q", hint, bar)
+				}
+			}
+		})
 	}
 }
 
