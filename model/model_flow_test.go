@@ -597,9 +597,14 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 }
 
 func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SessionStateRoot: "/state/wtui",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = ctx
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
@@ -631,8 +636,20 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected selected Flow phase resume command")
 	}
-	msg, ok := cmd().(model.AgentResultMsg)
-	if !ok || msg.Err != "" {
+	var msg model.AgentResultMsg
+	switch got := cmd().(type) {
+	case tea.BatchMsg:
+		for _, batched := range got {
+			if agentResult, ok := batched().(model.AgentResultMsg); ok {
+				msg = agentResult
+			}
+		}
+	case model.AgentResultMsg:
+		msg = got
+	default:
+		t.Fatalf("expected AgentResultMsg or BatchMsg from resume command, got %T", got)
+	}
+	if msg.Err != "" || msg.LaunchContext.ResumeSessionID == "" {
 		t.Fatalf("expected successful AgentResultMsg from resume command, got %#v", msg)
 	}
 	if launched.Command != "codex" ||
@@ -647,8 +664,14 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		launched.SessionStateRoot != "/state/wtui" {
 		t.Fatalf("unexpected Flow phase resume context: %#v", launched)
 	}
-	if launched.LaunchID != "launch-new" {
-		t.Fatalf("expected Flow phase resume to reuse tracked launch id, got %#v", launched)
+	if launched.LaunchID == "" || launched.LaunchID == "launch-new" {
+		t.Fatalf("expected Flow phase resume to use a fresh launch id, got %#v", launched.LaunchID)
+	}
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID != launched.LaunchID {
+		t.Fatalf("launch update = %#v, want fresh resume launch id %#v", launchUpdate, launched.LaunchID)
+	}
+	if !launched.FlowLaunchTracked {
+		t.Fatalf("expected Flow phase resume context to be marked tracked: %#v", launched)
 	}
 }
 
@@ -773,9 +796,58 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *
 	}
 }
 
-func TestModel_RKeyOnFlowPhaseResumeFailureDoesNotMarkPhaseNeedsAttention(t *testing.T) {
+func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Attention latest",
+		Status:       flowstore.StatusNeedsAttention,
+		Branch:       "flow/attention-latest",
+		WorktreePath: "/dev/alpha-worktrees/flow-attention-latest",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseNeedsAttention,
+			LaunchIDs: []string{"launch-old", "launch-new"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-old", LaunchID: "launch-old", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if !strings.Contains(m.View(), "r      resume") {
+		t.Fatalf("needs_attention phase should advertise Flow phase resume:\n%s", m.View())
+	}
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected needs_attention phase to resume older valid session")
+	}
+	_ = cmd()
+	if launched.ResumeSessionID != "codex-old" {
+		t.Fatalf("resume session = %#v, want older valid session", launched.ResumeSessionID)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
@@ -807,11 +879,92 @@ func TestModel_RKeyOnFlowPhaseResumeFailureDoesNotMarkPhaseNeedsAttention(t *tes
 	if cmd != nil {
 		t.Fatalf("immediate resume failure should not return command, got %T", cmd)
 	}
-	if len(phaseUpdates) != 0 {
-		t.Fatalf("resume failure should not update Flow phase, got %#v", phaseUpdates)
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if len(phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
+	}
+	if update := phaseUpdates[0]; update.FlowID != "flow-1" ||
+		update.PhaseID != "review-loop" ||
+		update.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(update.Notes, "terminal unavailable") {
+		t.Fatalf("phase update = %#v", update)
 	}
 	if got := m.TransientError(); !strings.Contains(got, "terminal unavailable") {
 		t.Fatalf("status = %q, want launch failure", got)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeRunFailureMarksTrackedLaunchNeedsAttention(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var phaseUpdate flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{}, nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("false"), Detached: true}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume run failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-run-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-run-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "review-loop",
+			Title:     "Review loop",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", LaunchID: "launch-old", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected resume launch command")
+	}
+	var result model.AgentResultMsg
+	switch got := cmd().(type) {
+	case tea.BatchMsg:
+		for _, batched := range got {
+			if agentResult, ok := batched().(model.AgentResultMsg); ok {
+				result = agentResult
+			}
+		}
+	case model.AgentResultMsg:
+		result = got
+	default:
+		t.Fatalf("expected AgentResultMsg or BatchMsg from resume command, got %T", got)
+	}
+	if result.Err == "" {
+		t.Fatalf("expected launch command failure, got %#v", result)
+	}
+	m, _ = update(m, result)
+
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
+		t.Fatalf("launch update = %#v", launchUpdate)
+	}
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "review-loop" ||
+		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(phaseUpdate.Notes, "exit status") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
 }
 

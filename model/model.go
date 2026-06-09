@@ -974,7 +974,7 @@ func (m Model) selectedFlowPhaseIndex() (int, bool) {
 
 func (m Model) selectedFlowPhaseResumable() bool {
 	phase, ok := m.selectedFlowPhase()
-	if !ok || flowstore.PhaseAwaitingSession(phase) {
+	if !ok || (phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase)) {
 		return false
 	}
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {

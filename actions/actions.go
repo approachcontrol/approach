@@ -558,22 +558,23 @@ type LaunchOptions struct {
 // AgentLaunchContext carries metadata wtui knows at launch time so provider
 // hooks can associate later session records with the selected repo/worktree.
 type AgentLaunchContext struct {
-	Command          string
-	LaunchID         string
-	RepoPath         string
-	WorktreePath     string
-	WorkingDir       string
-	Branch           string
-	Commit           string
-	SessionStateRoot string
-	ResumeSessionID  string
-	PlanID           string
-	PlanPath         string
-	PlanPhaseID      string
-	PlanPhaseTitle   string
-	PlanPhaseStatus  string
-	FlowID           string
-	FlowPhaseID      string
+	Command           string
+	LaunchID          string
+	RepoPath          string
+	WorktreePath      string
+	WorkingDir        string
+	Branch            string
+	Commit            string
+	SessionStateRoot  string
+	ResumeSessionID   string
+	PlanID            string
+	PlanPath          string
+	PlanPhaseID       string
+	PlanPhaseTitle    string
+	PlanPhaseStatus   string
+	FlowID            string
+	FlowPhaseID       string
+	FlowLaunchTracked bool
 	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
