@@ -11,6 +11,7 @@ import (
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/planstore"
+	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -23,6 +24,50 @@ const visibleRepoFetchFadeStepDuration = 1 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	return m.startFetchMode(m.mode)
+}
+
+func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
+	if m.scanRepos == nil {
+		m = m.setStatus(statusOther, "refresh unavailable")
+		return m, nil
+	}
+
+	m.repoRefreshSeq++
+	request := m.repoRefreshSeq
+	m.activeRepoRefresh = request
+
+	scanRepos := m.scanRepos
+	scanCmd := func() tea.Msg {
+		repos, err := scanRepos()
+		if err != nil {
+			return RepoRefreshFailedMsg{Request: request, Err: err.Error()}
+		}
+		return RepoRefreshResultMsg{Request: request, Repos: repos}
+	}
+
+	cmds := []tea.Cmd{scanCmd}
+	if repoPath, ok := m.currentRepoPath(); ok {
+		if _, ok := listFetchDescriptorForMode(m.mode); ok {
+			inlineWorktreePath := ""
+			if m.mode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
+				inlineWorktreePath = m.inlineWorktreeSessionPath
+			}
+			var fetchCmd tea.Cmd
+			m, fetchCmd = m.startFetchForMode()
+			if inlineWorktreePath != "" && fetchCmd != nil {
+				m.pendingInlineSessionRepo = repoPath
+				m.pendingInlineSessionPath = inlineWorktreePath
+				m.pendingInlineSessionList = m.currentListRequest(ui.ModeWorktrees)
+			}
+			if fetchCmd != nil {
+				cmds = append(cmds, fetchCmd)
+			}
+		}
+	}
+	if len(cmds) == 1 {
+		return m, scanCmd
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) fetchForMode() tea.Cmd {
@@ -59,6 +104,13 @@ func (m Model) isCurrentWorktreeSessionRequest(msg WorktreeSessionResultMsg) boo
 		msg.Request == m.activeWorktreeSessionReq &&
 		msg.RepoPath == m.inlineWorktreeSessionRepo &&
 		msg.WorktreePath == m.inlineWorktreeSessionPath
+}
+
+func (m Model) pendingInlineSessionRefresh(repoPath string, listRequest uint64) (string, bool) {
+	if m.pendingInlineSessionRepo != repoPath || m.pendingInlineSessionList != listRequest {
+		return "", false
+	}
+	return m.pendingInlineSessionPath, m.pendingInlineSessionPath != ""
 }
 
 func (m Model) nextWorktreeCreateRequest() (Model, uint64) {
@@ -354,6 +406,24 @@ func visibleRepoNoun(count int) string {
 		return "repo"
 	}
 	return "repos"
+}
+
+func (m Model) replaceReposPreservingVisibleSelection(repos []scanner.Repo, previousPath string) (Model, bool, bool) {
+	m.repos = m.repos.SetItems(repos)
+	visible := m.filteredRepos()
+	if len(visible) == 0 {
+		return m.reflowRepos(), previousPath != "", false
+	}
+	if previousPath != "" {
+		for _, repo := range visible {
+			if repo.Path == previousPath {
+				m = m.selectFilteredRepo(previousPath)
+				return m, false, true
+			}
+		}
+	}
+	currentPath, _ := m.currentRepoPath()
+	return m.reflowRepos(), previousPath != currentPath, true
 }
 
 func expireVisibleRepoFetchStatus(request uint64, text string) tea.Cmd {

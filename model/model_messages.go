@@ -143,6 +143,16 @@ type VisibleRepoFetchStatusExpiredMsg struct {
 	Text    string
 }
 
+type RepoRefreshResultMsg struct {
+	Request uint64
+	Repos   []scanner.Repo
+}
+
+type RepoRefreshFailedMsg struct {
+	Request uint64
+	Err     string
+}
+
 type GitPulledMsg struct {
 	RepoPath string
 }
@@ -442,12 +452,13 @@ func (m Model) visibleStatusFadeStep() int {
 	return m.status.FadeStep
 }
 
-func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
+func (m Model) handleWorktreeResult(msg WorktreeResultMsg) (Model, tea.Cmd) {
 	var ok bool
 	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeWorktrees, msg.ListRequest)
 	if !ok {
-		return m
+		return m, nil
 	}
+	inlineRefreshPath, refreshInline := m.pendingInlineSessionRefresh(msg.RepoPath, msg.ListRequest)
 	m.worktrees = m.worktrees.SetItems(msg.Worktrees)
 	m = m.clearInlineWorktreeSessions()
 	if m.pendingWorktreeSelection != "" {
@@ -457,8 +468,22 @@ func (m Model) handleWorktreeResult(msg WorktreeResultMsg) Model {
 		})
 		m.pendingWorktreeSelection = ""
 	}
+	if refreshInline {
+		for _, wt := range m.filteredWorktrees() {
+			if wt.Path != inlineRefreshPath {
+				continue
+			}
+			m.worktrees = m.worktrees.SelectFunc(func(wt gitquery.Worktree) bool {
+				return wt.Path == inlineRefreshPath
+			})
+			var request uint64
+			m, request = m.nextWorktreeSessionRequest(msg.RepoPath, inlineRefreshPath)
+			m = m.clampSelectionsAfterFilter()
+			return m, m.fetchWorktreeSessions(inlineRefreshPath, request)
+		}
+	}
 	m = m.clampSelectionsAfterFilter()
-	return m
+	return m, nil
 }
 
 func (m Model) handleWorktreeRemoved(msg WorktreeRemovedMsg) (tea.Model, tea.Cmd) {
@@ -588,6 +613,43 @@ func (m Model) handleVisibleRepoFetchStatusExpired(msg VisibleRepoFetchStatusExp
 		m.status = statusError{}
 	}
 	return m
+}
+
+func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Request == 0 || msg.Request != m.activeRepoRefresh {
+		return m, nil
+	}
+	m.activeRepoRefresh = 0
+
+	oldPath, oldOK := m.currentRepoPath()
+	var selectedChanged, hasSelection bool
+	m, selectedChanged, hasSelection = m.replaceReposPreservingVisibleSelection(msg.Repos, oldPath)
+	if !hasSelection {
+		m = m.resetRightPaneCursors()
+		if len(msg.Repos) == 0 {
+			m = m.setStatus(statusOther, "No repositories found")
+		} else {
+			m = m.setStatus(statusOther, "No repositories match filter")
+		}
+		return m, nil
+	}
+	if selectedChanged || !oldOK {
+		m = m.resetRightPaneCursors()
+		return m.startFetchForMode()
+	}
+	return m.clearStatus(statusOther), nil
+}
+
+func (m Model) handleRepoRefreshFailed(msg RepoRefreshFailedMsg) Model {
+	if msg.Request == 0 || msg.Request != m.activeRepoRefresh {
+		return m
+	}
+	m.activeRepoRefresh = 0
+	errText := msg.Err
+	if errText == "" {
+		errText = "unknown error"
+	}
+	return m.setStatus(statusOther, "failed to refresh repos: "+errText)
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {

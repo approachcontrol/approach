@@ -974,6 +974,20 @@ func TestRender_ShortcutPaneStylesModeTitleSeparately(t *testing.T) {
 	}
 }
 
+func TestRender_StatusBarShowsGlobalRefreshShortcut(t *testing.T) {
+	bar := ansi.Strip(RenderStatusBar(180, ModeFlows, OverlayNone, 1, false, false, false))
+	if !strings.Contains(bar, "f5: refresh") {
+		t.Fatalf("status bar should expose refresh shortcut, got %q", bar)
+	}
+}
+
+func TestRender_ShortcutPaneShowsGlobalRefreshShortcut(t *testing.T) {
+	pane := shortcutPaneText(renderShortcutPane(statusBarParams{Mode: ModeWorktrees}, 26, 20))
+	if !strings.Contains(pane, "f5     refresh") {
+		t.Fatalf("shortcut pane should expose refresh shortcut, got:\n%s", pane)
+	}
+}
+
 func TestSidebarShortcutHintsGroupsOnlyAdjacentPairs(t *testing.T) {
 	grouped := sidebarShortcutHints([]shortcutHint{
 		{Key: "f", Label: "fetch"},

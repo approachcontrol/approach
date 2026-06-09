@@ -103,6 +103,53 @@ func TestRun_WorktreeRootEnvOverridesConfigRoot(t *testing.T) {
 	}
 }
 
+func TestRun_PassesRefreshScannerWithResolvedScanOptions(t *testing.T) {
+	var startupScan scanner.ScanOptions
+	var refreshScan scanner.ScanOptions
+	scans := 0
+	err := run([]string{"wtui"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{
+				Scan: config.ScanConfig{Root: "/from/config", MaxDepth: 1},
+			}, nil
+		},
+		getenv: func(key string) string {
+			if key == "WORKTREE_ROOT" {
+				return "/from/env"
+			}
+			return ""
+		},
+		scan: func(opts scanner.ScanOptions) ([]scanner.Repo, error) {
+			scans++
+			if scans == 1 {
+				startupScan = opts
+			} else {
+				refreshScan = opts
+			}
+			return []scanner.Repo{{Path: "/repo", DisplayName: "repo"}}, nil
+		},
+		startProgramWithOptions: func(_ []scanner.Repo, opts startProgramOptions) error {
+			if opts.ScanRepos == nil {
+				t.Fatal("expected refresh scanner")
+			}
+			_, err := opts.ScanRepos()
+			return err
+		},
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if scans != 2 {
+		t.Fatalf("scan count = %d, want startup + refresh", scans)
+	}
+	if startupScan.Root != "/from/env" || refreshScan.Root != "/from/env" {
+		t.Fatalf("scan roots startup=%q refresh=%q, want WORKTREE_ROOT", startupScan.Root, refreshScan.Root)
+	}
+	if startupScan.MaxDepth != 1 || refreshScan.MaxDepth != 1 {
+		t.Fatalf("scan max depth startup=%d refresh=%d, want 1", startupScan.MaxDepth, refreshScan.MaxDepth)
+	}
+}
+
 func TestRun_ConfigErrorStopsBeforeScan(t *testing.T) {
 	scanned := false
 	err := run([]string{"wtui"}, runDeps{

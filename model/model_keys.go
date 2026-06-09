@@ -76,6 +76,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSetAgent()
 	}
 
+	if key == "f5" {
+		return m.startGlobalRefresh()
+	}
+
 	if m.activePane == 0 {
 		return m.handleLeftPaneKey(key)
 	}
@@ -1777,6 +1781,9 @@ func (m Model) clearInlineWorktreeSessions() Model {
 	m.activeWorktreeSessionReq = 0
 	m.inlineWorktreeSessionRepo = ""
 	m.inlineWorktreeSessionPath = ""
+	m.pendingInlineSessionRepo = ""
+	m.pendingInlineSessionPath = ""
+	m.pendingInlineSessionList = 0
 	m.worktreeSessions = newSessionPane()
 	return m
 }

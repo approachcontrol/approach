@@ -588,7 +588,12 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
 
-	return statusStyle.Width(width).Render(renderFooterShortcuts(sp, shortcutSections(sp)))
+	sections := shortcutSections(sp)
+	shortcuts := renderFooterShortcuts(sp, sections)
+	if strings.Contains(shortcuts, "\n") || lipgloss.Width(shortcuts) > width {
+		shortcuts = renderFooterShortcuts(sp, withoutShortcutKey(sections, "f5"))
+	}
+	return statusStyle.Width(width).Render(shortcuts)
 }
 
 func renderShortcutPane(sp statusBarParams, width, height int) string {
@@ -605,7 +610,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	}
 	sectionCount := 0
 
-	for _, section := range shortcutSections(sp) {
+	for _, section := range shortcutSectionsForPane(sp, height) {
 		hints := sidebarShortcutHints(section.Hints)
 		if len(hints) == 0 {
 			continue
@@ -685,6 +690,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		{Key: "tab", Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
 		{Key: "A", Label: "set agent"},
+		{Key: "f5", Label: "refresh"},
 	}
 
 	var actions []shortcutHint
@@ -842,10 +848,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if len(actions) > 0 {
 		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
 	}
-	sections = append(sections,
-		shortcutSection{Title: "Navigate", Hints: navigation},
-		shortcutSection{Title: "Global", Hints: global},
-	)
+	sections = append(sections, shortcutSection{Title: "Navigate", Hints: navigation})
 	if sp.Mode == ModeBranches {
 		sections = append(sections, shortcutSection{
 			Title: "Legend",
@@ -858,7 +861,34 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			},
 		})
 	}
+	sections = append(sections, shortcutSection{Title: "Global", Hints: global})
 	return sections
+}
+
+func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
+	sections := shortcutSections(sp)
+	if height < 20 {
+		return withoutShortcutKey(sections, "f5")
+	}
+	return sections
+}
+
+func withoutShortcutKey(sections []shortcutSection, key string) []shortcutSection {
+	filtered := make([]shortcutSection, 0, len(sections))
+	for _, section := range sections {
+		hints := make([]shortcutHint, 0, len(section.Hints))
+		for _, hint := range section.Hints {
+			if hint.Key != key {
+				hints = append(hints, hint)
+			}
+		}
+		if len(hints) == 0 {
+			continue
+		}
+		section.Hints = hints
+		filtered = append(filtered, section)
+	}
+	return filtered
 }
 
 func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
