@@ -45,6 +45,7 @@ type FlowStarterOptions struct {
 	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 	ResolveCommit        func(string) string
 	NewLaunchID          func() string
+	FlowPromptTemplates  FlowPromptTemplates
 }
 
 // FlowStarter owns the persistence, worktree, bootstrap, and recovery sequence
@@ -59,6 +60,7 @@ type FlowStarter struct {
 	runBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 	resolveCommit        func(string) string
 	newLaunchID          func() string
+	flowPromptTemplates  FlowPromptTemplates
 }
 
 func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
@@ -72,6 +74,7 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 		runBootstrapHook:     opts.RunBootstrapHook,
 		resolveCommit:        opts.ResolveCommit,
 		newLaunchID:          opts.NewLaunchID,
+		flowPromptTemplates:  opts.FlowPromptTemplates,
 	}
 	if starter.createFlow == nil {
 		starter.createFlow = func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
@@ -180,7 +183,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		PlanPhaseStatus:  phaseStatus,
 		FlowID:           flow.FlowID,
 		FlowPhaseID:      phaseID,
-		InitialPrompt:    flowPlanPrompt(flowstore.FlowRecord{Instructions: req.Instructions}),
+		InitialPrompt:    flowPlanPrompt(flowStartPromptRecord(flow, req, worktree, commit), s.flowPromptTemplates),
 	}
 	return FlowStartResult{
 		Flow:          flow,
@@ -216,10 +219,39 @@ func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) er
 	return fmt.Errorf("%s", resultErr)
 }
 
-func flowPlanPrompt(flow flowstore.FlowRecord) string {
+func flowStartPromptRecord(flow flowstore.FlowRecord, req FlowStartRequest, worktree actions.FlowWorktreeCreateResult, commit string) flowstore.FlowRecord {
+	if flow.Title == "" {
+		flow.Title = req.Title
+	}
+	if flow.Instructions == "" {
+		flow.Instructions = req.Instructions
+	}
+	if flow.RepoPath == "" {
+		flow.RepoPath = req.RepoPath
+	}
+	if flow.WorktreePath == "" {
+		flow.WorktreePath = worktree.WorktreePath
+	}
+	if flow.Branch == "" {
+		flow.Branch = worktree.Branch
+	}
+	if flow.BaseRef == "" {
+		flow.BaseRef = req.BaseRef
+	}
+	if flow.Commit == "" {
+		flow.Commit = commit
+	}
+	return flow
+}
+
+func flowPlanPrompt(flow flowstore.FlowRecord, templates FlowPromptTemplates) string {
+	if strings.TrimSpace(templates.Plan) != "" {
+		return renderFlowPromptTemplate(templates.Plan, flow, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan"}, flow.PlanPath, "")
+	}
 	var b strings.Builder
 	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)
-	b.WriteString("\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.")
+	b.WriteString("\n\nProduce a plan only; do not start coding in this phase.")
+	b.WriteString("\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.")
 	return b.String()
 }

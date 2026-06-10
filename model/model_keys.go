@@ -1091,7 +1091,7 @@ func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowsto
 			PlanPath:         planPath,
 			FlowID:           record.FlowID,
 			FlowPhaseID:      phase.PhaseID,
-			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody),
+			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody, m.flowPromptTemplates),
 		}}
 	}
 }
@@ -1389,7 +1389,10 @@ func flowNotReadyMessage(record flowstore.FlowRecord) string {
 	return "No ready Flow phase to launch"
 }
 
-func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
+func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
+	if template := templates.templateForPhase(phase.PhaseID); strings.TrimSpace(template) != "" {
+		return renderFlowPromptTemplate(template, record, phase, planPath, planBody)
+	}
 	switch phase.PhaseID {
 	case "plan-review":
 		return flowPlanReviewPrompt(record, phase, planPath, planBody)
@@ -1410,7 +1413,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
 	switch phaseID {
-	case "plan-review", "implementation", "review-loop", "pr-creation", "merge":
+	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
 		return false
 	default:
 		return true
@@ -1425,7 +1428,7 @@ func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowP
 	if strings.TrimSpace(planPath) == "" {
 		return flowImplementationWithoutPlanPrompt(record, phase)
 	}
-	return flowMinimalArtifactPrompt("Implement the approved plan.", planPath, record, phase)
+	return flowMinimalArtifactPrompt("Implement the approved plan.\nUse the commit skill before completing this phase.", planPath, record, phase)
 }
 
 func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
@@ -1436,12 +1439,13 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 	writeFlowPromptPlanContext(&b, record, "")
 	writeFlowPromptPhaseSummary(&b, record, "Plan Review context", "plan-review")
 	writeFlowRestartPromptIfNeeded(&b, record, phase)
+	b.WriteString("\nUse the commit skill before completing this phase.")
 	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the implementation is complete, blocked, or needs attention.")
 	return b.String()
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review loop skill to review the changes.", record, phase)
+	return flowMinimalChangePrompt("Use the review-loop workflow to review the changes.\nUse the commit skill when revisions are made.", record, phase)
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -1453,7 +1457,7 @@ func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 	if base == "" {
 		base = "<base>"
 	}
-	instruction := fmt.Sprintf("Create a PR for the changes.\nAfter the PR exists, run `wtui flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
+	instruction := fmt.Sprintf("Use the ship skill to create a PR for the changes.\nAfter the PR exists, run `wtui flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
 	return flowMinimalChangePrompt(instruction, record, phase)
 }
 
@@ -1471,9 +1475,8 @@ func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.Fl
 func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n\n")
-	b.WriteString("Flow phase: Autoreview (autoreview).\n")
-	writeFlowPromptHeader(&b, record, planPath)
-	writeFlowPromptPlanContext(&b, record, planBody)
+	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
+	writeFlowChangeMetadata(&b, record)
 	if flowstore.HasPRTarget(record.PR) {
 		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s\n", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
 		if record.PR.Status != "" {
@@ -1483,9 +1486,10 @@ func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 		b.WriteString("\nPR target: missing. Do not run Autoreview until `wtui flow pr set` records provider, number, URL, head, and base.\n")
 	}
 	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	fmt.Fprintf(&b, "\ncompleted:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome passed --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "needs_attention:\nwtui flow phase set --flow-id %s --phase-id %s --status needs_attention --outcome needs_attention --notes \"...\" --summary \"...\"\n\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "\nRecord the result with one of:\n")
+	fmt.Fprintf(&b, "wtui flow phase complete --flow-id %s --phase-id %s --outcome passed --summary \"...\"\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "wtui flow phase needs-attention --flow-id %s --phase-id %s --outcome needs_attention --notes \"...\" --summary \"...\"\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "wtui flow phase block --flow-id %s --phase-id %s --outcome blocked --notes \"...\"", record.FlowID, phase.PhaseID)
 	return b.String()
 }
 
