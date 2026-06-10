@@ -368,6 +368,7 @@ func (m Model) PlanSelected() int               { return m.plans.SelectedIndex()
 func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
 func (m Model) FlowSelected() int               { return m.flows.SelectedIndex() }
 func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
+func (m Model) ExpandedPlanID() string          { return m.expandedPlanID }
 func (m Model) ExpandedFlowID() string          { return m.expandedFlowID }
 func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
 func (m Model) SelectedFlowPhaseID() string     { return m.selectedFlowPhaseID }
@@ -475,6 +476,7 @@ func (m Model) View() string {
 		ExpandedFlowID:             m.expandedFlowID,
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
+		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
 		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
 		OverlayText:                modalView.Text,
 		TransientError:             m.visibleStatusText(),
@@ -985,6 +987,15 @@ func (m Model) selectedFlowPhaseResumable() bool {
 		return false
 	}
 	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
+}
+
+func (m Model) selectedFlowPhaseLaunchReady() bool {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return false
+	}
+	_, ok = readyFlowPhase(record)
+	return ok
 }
 
 func (m Model) clearSelectedPlanPhase() Model {

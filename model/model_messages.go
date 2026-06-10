@@ -1254,6 +1254,31 @@ func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m Model) handleCopyFlowID() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	value := ""
+	if phase, ok := m.selectedFlowPhase(); ok {
+		value = phase.PhaseID
+	} else {
+		flow, ok := m.selectedFlow()
+		if !ok {
+			return m, nil
+		}
+		value = flow.FlowID
+	}
+	if strings.TrimSpace(value) == "" {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := m.copyToClipboard(value); err != nil {
+			return ClipboardResultMsg{Err: err.Error()}
+		}
+		return ClipboardResultMsg{}
+	}
+}
+
 func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeSessions {
 		return m, nil

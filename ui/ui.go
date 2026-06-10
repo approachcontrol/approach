@@ -184,6 +184,7 @@ type RenderParams struct {
 	ExpandedFlowID             string
 	SelectedPlanPhaseID        string
 	SelectedFlowPhaseID        string
+	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	OverlayText                string
 	TransientError             string
@@ -245,10 +246,15 @@ func Render(p RenderParams) string {
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
+	flowPlanLinked := false
+	if flowSelected {
+		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
+	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
 	planPhaseSelected := selectedPlanPhaseID != ""
+	flowPhaseSelected := selectedFlowPhaseID != ""
 	status := statusBarParams{
 		Width:                      p.Width,
 		Mode:                       p.Mode,
@@ -276,6 +282,9 @@ func Render(p RenderParams) string {
 		PlanSelected:               planSelected,
 		PlanPhaseSelected:          planPhaseSelected,
 		FlowSelected:               flowSelected,
+		FlowPhaseSelected:          flowPhaseSelected,
+		FlowPlanLinked:             flowPlanLinked,
+		FlowPhaseLaunchReady:       p.FlowPhaseLaunchReady,
 		FlowPhaseResumableSelected: p.FlowPhaseResumableSelected,
 		TransientError:             p.TransientError,
 		TransientErrorFadeStep:     p.TransientErrorFadeStep,
@@ -520,6 +529,9 @@ type statusBarParams struct {
 	PlanSelected               bool
 	PlanPhaseSelected          bool
 	FlowSelected               bool
+	FlowPhaseSelected          bool
+	FlowPlanLinked             bool
+	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	TransientError             string
 	TransientErrorFadeStep     int
@@ -832,7 +844,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeSessions:
 		if sp.ActivePane == 1 && sp.SessionSelected {
 			actions = append(actions,
-				shortcutHint{Key: "enter", Label: "transcript"},
+				shortcutHint{Key: "o", Label: "transcript"},
 				shortcutHint{Key: "r", Label: "resume"},
 				shortcutHint{Key: "s", Label: "summary"},
 				shortcutHint{Key: "y", Label: "copy id"},
@@ -845,9 +857,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				implementLabel = "implement phase"
 			}
 			actions = append(actions,
-				shortcutHint{Key: "enter", Label: "phases"},
+				shortcutHint{Key: "x", Label: "phases"},
 				shortcutHint{Key: "o", Label: "open"},
-				shortcutHint{Key: "i", Label: implementLabel},
+				shortcutHint{Key: "a", Label: implementLabel},
 				shortcutHint{Key: "y", Label: "copy path"},
 			)
 		}
@@ -856,12 +868,24 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 			if sp.FlowSelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "phases"})
+				if sp.FlowPlanLinked {
+					actions = append(actions, shortcutHint{Key: "o", Label: "open"})
+				}
+				if sp.FlowPhaseSelected {
+					actions = append(actions, shortcutHint{Key: "y", Label: "copy phase id"})
+				} else {
+					actions = append(actions, shortcutHint{Key: "y", Label: "copy id"})
+				}
 			}
 			if sp.FlowPhaseResumableSelected {
 				actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 			}
 			if sp.AgentAvailable {
-				actions = append(actions, shortcutHint{Key: "a", Label: "launch phase"})
+				label := "phase status"
+				if sp.FlowPhaseLaunchReady {
+					label = "launch phase"
+				}
+				actions = append(actions, shortcutHint{Key: "a", Label: label})
 			}
 		}
 	}

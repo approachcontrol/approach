@@ -53,14 +53,39 @@ func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
 
 func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
-		Width:        120,
-		Mode:         ModeFlows,
-		ActivePane:   1,
-		RepoSelected: true,
-		FlowSelected: true,
+		Width:          120,
+		Mode:           ModeFlows,
+		ActivePane:     1,
+		RepoSelected:   true,
+		FlowSelected:   true,
+		FlowPlanLinked: true,
 	})
-	if !strings.Contains(bar, "x: phases") {
-		t.Fatalf("expected phase toggle hint for selected flow, got %q", bar)
+	for _, want := range []string{"x: phases", "o: open", "y: copy id"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
+		}
+	}
+}
+
+func TestStatusBar_FlowsModeDistinguishesPhaseStatusFromLaunch(t *testing.T) {
+	base := statusBarParams{
+		Width:          120,
+		Mode:           ModeFlows,
+		ActivePane:     1,
+		RepoSelected:   true,
+		FlowSelected:   true,
+		AgentAvailable: true,
+	}
+
+	gated := renderStatusBarWithState(base)
+	if !strings.Contains(gated, "a: phase status") || strings.Contains(gated, "a: launch phase") {
+		t.Fatalf("gated Flow should expose status action, got %q", gated)
+	}
+
+	base.FlowPhaseLaunchReady = true
+	ready := renderStatusBarWithState(base)
+	if !strings.Contains(ready, "a: launch phase") || strings.Contains(ready, "a: phase status") {
+		t.Fatalf("ready Flow should expose launch action, got %q", ready)
 	}
 }
 
@@ -93,6 +118,70 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 
 	if !strings.Contains(shortcutPaneText(view), "r      resume") {
 		t.Fatalf("resumable Flow phase should expose resume shortcut:\n%s", view)
+	}
+}
+
+func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Phase copy flow",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:          1,
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "implementation",
+	})
+
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "y      copy phase id") {
+		t.Fatalf("selected Flow phase should expose phase-id copy shortcut:\n%s", view)
+	}
+	if strings.Contains(pane, "y      copy id") {
+		t.Fatalf("selected Flow phase should not expose whole-flow copy shortcut:\n%s", view)
+	}
+}
+
+func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Stale phase copy flow",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:          1,
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "missing",
+	})
+
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "y      copy id") {
+		t.Fatalf("stale Flow phase selection should fall back to whole-flow copy shortcut:\n%s", view)
+	}
+	if strings.Contains(pane, "y      copy phase id") {
+		t.Fatalf("stale Flow phase selection should not expose phase-id copy shortcut:\n%s", view)
 	}
 }
 
@@ -390,10 +479,13 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 		AgentAvailable: true,
 	})
 
-	for _, want := range []string{"plan-review", "changes_requested", "1/3", "a", "launch phase"} {
+	for _, want := range []string{"plan-review", "changes_requested", "1/3", "a", "phase status"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("flows gate view missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "launch phase") {
+		t.Fatalf("gated flows view should not advertise launchable phase:\n%s", view)
 	}
 }
 

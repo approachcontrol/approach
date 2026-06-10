@@ -76,13 +76,13 @@ filter matches, or a load failure with details in the status bar.
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page session transcript, or expand/collapse plan phases |
+| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan phases |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `a` | Launch the selected coding agent in the selected worktree, or launch the selected ready Flow phase |
+| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or launch the selected ready Flow phase |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -90,12 +90,12 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
-| `x` | Show/hide sessions for the selected worktree (worktrees view) or expand/collapse Flow phase rows (flows view) |
-| `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), or plan Markdown path (plans view) |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan and Flow phase rows |
+| `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
 | `r` | Resume selected agent session (sessions view) |
 | `s` | Page selected agent session summary (sessions view) |
-| `o` | Page selected plan Markdown (plans view), or the linked plan body (flows view) |
-| `i` | Edit launch instructions and launch the selected plan or selected plan phase (plans view) |
+| `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
+| `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -183,9 +183,10 @@ Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the 
 Browse captured Claude Code and Codex sessions associated with the selected
 repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
 filter sessions by provider, session ID, launch ID, branch, worktree, model,
-status, or summary. Press `enter` to page the normalized transcript in `less -R`,
+status, or summary. Press `o` to page the normalized transcript in `less -R`,
 `s` to page the selected summary, `r` to resume the selected provider session,
-or `y` to copy the raw provider session ID.
+or `y` to copy the raw provider session ID. `enter` also pages the selected
+transcript.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
@@ -206,11 +207,13 @@ stored.
 Browse saved agent plans for the selected repo. Rows show status, branch, phase
 progress (`completed/total`), the updated date, and the title. Use `/` to filter
 plans by title, summary, status, branch, worktree basename, provider, session
-ID, launch ID, and phase titles/statuses. Press `enter` to expand or collapse
+ID, launch ID, and phase titles/statuses. Press `x` to expand or collapse
 the selected plan's phase rows, `o` to page the plan Markdown in `less -R`,
-and `y` to copy the plan Markdown path. Press `i` to edit launch
+and `y` to copy the plan Markdown path. Press `a` to edit launch
 instructions for the selected plan or selected phase, then `enter` to launch
 the selected agent or `esc` to cancel; blank instructions are rejected.
+`enter` still toggles phase rows, and `i` still opens plan launch instructions
+as compatibility aliases.
 
 Plans are persisted explicitly by agents through the `wtui plan` CLI rather than
 captured from hooks. Plans share the agent-artifact root with sessions: they are
@@ -264,8 +267,9 @@ by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow, `x` to expand or collapse phase detail rows for the
 selected Flow, and `o` to page the linked plan body in `less -R`; wtui shows a
-status message when the selected Flow has no linked plan. Press `a` on a Flow
-with a ready phase to launch the configured agent for that phase. When
+status message when the selected Flow has no linked plan. Press `y` to copy the
+selected Flow ID, or the selected phase ID when a phase row is selected. Press
+`a` on a Flow with a ready phase to launch the configured agent for that phase. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state
 and notes instead of launching. When PR Creation is complete but structured PR
 metadata is missing, Autoreview remains pending and the Flow row shows

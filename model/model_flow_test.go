@@ -220,6 +220,44 @@ func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
 	}
 }
 
+func TestModel_YKeyCopiesSelectedFlowOrPhaseID(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID: "flow-1",
+		Title:  "Copy flow ids",
+		Status: flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("expected flow id copy command")
+	}
+	_ = cmd()
+	if got := copied[len(copied)-1]; got != "flow-1" {
+		t.Fatalf("copied flow id = %q, want flow-1", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("expected flow phase id copy command")
+	}
+	_ = cmd()
+	if got := copied[len(copied)-1]; got != "implementation" {
+		t.Fatalf("copied phase id = %q, want implementation", got)
+	}
+}
+
 func TestModel_ExpandedFlowArrowKeysSelectPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
@@ -1221,6 +1259,28 @@ func TestModel_AKeyOnFlowLaunchesImplementationWithoutLinkedPlanContext(t *testi
 	}
 }
 
+func TestModel_ReadyFlowAdvertisesLaunchPhaseAction(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-ready",
+		Title:        "Ready implementation",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	view := m.View()
+	if !strings.Contains(view, "launch phase") {
+		t.Fatalf("ready flow view should expose launch action:\n%s", view)
+	}
+	if strings.Contains(view, "phase status") {
+		t.Fatalf("ready flow view should not downgrade launch action to status:\n%s", view)
+	}
+}
+
 func TestModel_AKeyOnFlowExplainsWhyImplementationIsNotReady(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
@@ -1236,7 +1296,7 @@ func TestModel_AKeyOnFlowExplainsWhyImplementationIsNotReady(t *testing.T) {
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
 		},
 	}})
-	if view := m.View(); !strings.Contains(view, "launch phase") {
+	if view := m.View(); !strings.Contains(view, "phase status") || strings.Contains(view, "launch phase") {
 		t.Fatalf("gated flow view should still expose launch/status action:\n%s", view)
 	}
 
