@@ -117,6 +117,15 @@ phase blocked → `blocked`; any phase needs_attention → `needs_attention`; al
 phases completed/skipped → `completed`; any phase started → `in_progress`;
 otherwise `pending`.
 
+## Linked plan sync
+
+When a Flow has a linked saved plan, setting a Flow phase to `completed` also
+marks a saved-plan phase with the same normalized phase ID as `completed`.
+Missing saved-plan phases are ignored, and already-completed saved-plan phases
+are left unchanged. If the linked plan cannot be read or updated, wtui marks the
+Flow phase `needs_attention` with a sync-failure note and returns the
+persistence error so the agent can report it.
+
 ## Compatibility and migration
 
 - The persisted schema is unchanged: `schema_version` stays `1` and no status

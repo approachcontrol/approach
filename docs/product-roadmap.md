@@ -16,8 +16,8 @@ lazygit.
 The codebase has moved past the original pre-launch roadmap. These capabilities
 are already implemented and should be treated as the baseline product:
 
-- Multi-repo scanning under `WORKTREE_ROOT` or `~/dev`, up to two levels deep,
-  excluding sibling `*-worktrees` directories.
+- Multi-repo scanning under `WORKTREE_ROOT` or `~/dev`, with configurable one-
+  or two-level depth, excluding sibling `*-worktrees` directories.
 - Eight right-pane modes: worktrees, branches, stashes, history, reflog,
   captured agent sessions, saved agent plans, and task-centric Flows.
 - Read-only default posture with explicit destructive mode (`D`) before delete,
@@ -146,7 +146,7 @@ Goal: let users adapt wtui without changing source or environment wrappers.
 |------|----------------|----------|
 | Multiple scan roots | Current scanning accepts one root. Many developers split work across `~/dev`, client folders, and sandbox folders. | P1 |
 | Custom code-open command | `c` is currently hardcoded to `code`. Support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env. | P1 |
-| Scan-depth/exclude controls | Preserve zero-config defaults while letting large workspaces avoid slow or noisy directories. | P2 |
+| Additional scan exclude controls | Preserve zero-config scan-depth defaults while letting large workspaces avoid noisy directories beyond sibling `*-worktrees`. | P2 |
 | Persisted UI defaults | Remember default mode and possibly last selected repo without making the app feel stateful in surprising ways. | P3 |
 
 ## Distribution Strategy
