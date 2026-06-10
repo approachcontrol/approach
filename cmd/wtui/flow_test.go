@@ -29,6 +29,9 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 	requireContainsAll(t, stdout.String(), []string{
 		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
 		"wtui flow read --flow-id",
+		"wtui flow phase complete --flow-id",
+		"wtui flow phase block --flow-id",
+		"wtui flow phase needs-attention --flow-id",
 		"wtui flow phase set --flow-id",
 		"wtui flow pr set --flow-id",
 		"wtui flow merge set --flow-id",
@@ -48,11 +51,74 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow phase <set|add-child> [flags]",
+		"Usage: wtui flow phase <set|complete|block|needs-attention|add-child> [flags]",
 		"wtui flow phase set --flow-id",
+		"wtui flow phase complete --flow-id",
+		"wtui flow phase block --flow-id",
+		"wtui flow phase needs-attention --flow-id",
 		"--status completed",
 		"wtui flow phase add-child --flow-id",
 	})
+}
+
+func TestRunFlowPhaseActionHelpPrintsExamplesWithoutLoadingConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		wants []string
+	}{
+		{
+			name: "complete",
+			args: []string{"wtui", "flow", "phase", "complete", "--help"},
+			wants: []string{
+				"Usage: wtui flow phase complete [flags]",
+				"--flow-id FLOW_ID",
+				"--phase-id PHASE_ID",
+				"--outcome OUTCOME",
+				`wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan`,
+			},
+		},
+		{
+			name: "block",
+			args: []string{"wtui", "flow", "phase", "block", "--help"},
+			wants: []string{
+				"Usage: wtui flow phase block [flags]",
+				"--flow-id FLOW_ID",
+				"--phase-id PHASE_ID",
+				"--notes TEXT",
+				`wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"`,
+			},
+		},
+		{
+			name: "needs-attention",
+			args: []string{"wtui", "flow", "phase", "needs-attention", "--help"},
+			wants: []string{
+				"Usage: wtui flow phase needs-attention [flags]",
+				"--flow-id FLOW_ID",
+				"--phase-id PHASE_ID",
+				"--notes TEXT",
+				`wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := run(tc.args, noScanDeps(t, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run for flow phase action help")
+					return config.Config{}, nil
+				},
+				stdout: &stdout,
+			}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			if strings.Contains(stdout.String(), "flag: help requested") {
+				t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+			}
+			requireContainsAll(t, stdout.String(), tc.wants)
+		})
+	}
 }
 
 func TestRunFlowPhaseSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
@@ -212,7 +278,7 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: wtui flow phase <set|add-child> [flags]",
+		"Usage: wtui flow phase <set|complete|block|needs-attention|add-child> [flags]",
 	})
 }
 
@@ -751,6 +817,244 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 			}
 			if phaseByID(updated, "review-loop").Status != tc.wantReviewStatus {
 				t.Fatalf("review-loop status = %q, want %q", phaseByID(updated, "review-loop").Status, tc.wantReviewStatus)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseActionCompletePrintsNextActionablePhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Action Complete", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "phase", "complete",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan",
+		"--summary", "Saved the implementation plan.",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.FlowID != created.FlowID || result.FlowStatus != flowstore.StatusInProgress {
+		t.Fatalf("result flow state = %#v", result)
+	}
+	if result.UpdatedPhase.PhaseID != "plan" ||
+		result.UpdatedPhase.Status != flowstore.PhaseCompleted ||
+		result.UpdatedPhase.Summary != "Saved the implementation plan." {
+		t.Fatalf("updated phase = %#v", result.UpdatedPhase)
+	}
+	if result.NextPhase == nil {
+		t.Fatal("next phase is nil, want plan-review")
+	}
+	if result.NextPhase.PhaseID != "plan-review" || result.NextPhase.Status != flowstore.PhaseReady {
+		t.Fatalf("next phase = %#v, want ready plan-review", result.NextPhase)
+	}
+	if strings.Join(result.NextPhase.AllowedStatuses, ",") != strings.Join(flowstore.AllowedNextPhaseStatuses(flowstore.PhaseReady), ",") {
+		t.Fatalf("next phase allowed statuses = %#v", result.NextPhase.AllowedStatuses)
+	}
+	if phaseByID(result.Flow, "plan-review").Status != flowstore.PhaseReady {
+		t.Fatalf("embedded flow plan-review = %#v", phaseByID(result.Flow, "plan-review"))
+	}
+}
+
+func TestRunFlowPhaseActionsMapToCanonicalStatuses(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name       string
+		command    string
+		wantStatus string
+		notes      string
+	}{
+		{name: "block with notes", command: "block", wantStatus: flowstore.PhaseBlocked, notes: "Waiting on reviewer input."},
+		{name: "block without notes", command: "block", wantStatus: flowstore.PhaseBlocked},
+		{name: "needs attention with notes", command: "needs-attention", wantStatus: flowstore.PhaseNeedsAttention, notes: "Revise the generated plan."},
+		{name: "needs attention without notes", command: "needs-attention", wantStatus: flowstore.PhaseNeedsAttention},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := filepath.Join(root, "repo-"+strings.ReplaceAll(tc.name, " ", "-"))
+			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+			args := []string{
+				"wtui", "flow", "phase", tc.command,
+				"--flow-id", created.FlowID,
+				"--phase-id", "plan",
+				"--state-root", root,
+			}
+			if tc.notes != "" {
+				args = append(args, "--notes", tc.notes)
+			}
+			var stdout bytes.Buffer
+			err := run(args, noScanDeps(t, runDeps{stdout: &stdout}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+
+			var result flowPhaseActionResult
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+			}
+			if result.UpdatedPhase.Status != tc.wantStatus || result.UpdatedPhase.Notes != tc.notes {
+				t.Fatalf("updated phase = %#v", result.UpdatedPhase)
+			}
+			if result.NextPhase == nil || result.NextPhase.PhaseID != "plan" || result.NextPhase.Status != tc.wantStatus {
+				t.Fatalf("next phase = %#v, want current phase still actionable", result.NextPhase)
+			}
+			if strings.Join(result.NextPhase.AllowedStatuses, ",") != strings.Join(flowstore.AllowedNextPhaseStatuses(tc.wantStatus), ",") {
+				t.Fatalf("next phase allowed statuses = %#v", result.NextPhase.AllowedStatuses)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseActionsDefaultPlanReviewOutcomes(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name        string
+		command     string
+		outcome     string
+		wantStatus  string
+		wantOutcome string
+		notes       string
+	}{
+		{name: "complete", command: "complete", wantStatus: flowstore.PhaseCompleted, wantOutcome: flowstore.OutcomeApproved},
+		{name: "complete with concerns", command: "complete", outcome: flowstore.OutcomeApprovedWithConcerns, wantStatus: flowstore.PhaseCompleted, wantOutcome: flowstore.OutcomeApprovedWithConcerns, notes: "Proceed, but keep rollout staged."},
+		{name: "block", command: "block", wantStatus: flowstore.PhaseBlocked, wantOutcome: flowstore.OutcomeBlocked, notes: "Waiting on a product decision."},
+		{name: "needs attention", command: "needs-attention", wantStatus: flowstore.PhaseNeedsAttention, wantOutcome: flowstore.OutcomeChangesRequested, notes: "Revise the plan."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := filepath.Join(root, "repo-plan-review-"+strings.ReplaceAll(tc.name, " ", "-"))
+			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+
+			args := []string{
+				"wtui", "flow", "phase", tc.command,
+				"--flow-id", created.FlowID,
+				"--phase-id", "plan-review",
+				"--state-root", root,
+			}
+			if tc.outcome != "" {
+				args = append(args, "--outcome", tc.outcome)
+			}
+			if tc.notes != "" {
+				args = append(args, "--notes", tc.notes)
+			}
+			var stdout bytes.Buffer
+			err := run(args, noScanDeps(t, runDeps{stdout: &stdout}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+
+			var result flowPhaseActionResult
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+			}
+			review := result.UpdatedPhase
+			if review.Status != tc.wantStatus || review.Outcome != tc.wantOutcome {
+				t.Fatalf("plan-review = %#v, want status %q outcome %q", review, tc.wantStatus, tc.wantOutcome)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseActionRejectsInvalidTransitionAndKeepsRecordUnchanged(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Invalid Action", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	err := run([]string{
+		"wtui", "flow", "phase", "complete",
+		"--flow-id", created.FlowID,
+		"--phase-id", "plan-review",
+		"--outcome", flowstore.OutcomeApproved,
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+	if err == nil || !strings.Contains(err.Error(), "invalid phase transition pending -> completed") {
+		t.Fatalf("run error = %v, want invalid transition", err)
+	}
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(created.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if phaseByID(read, "plan-review").Status != flowstore.PhasePending {
+		t.Fatalf("plan-review status after rejected action = %q, want pending", phaseByID(read, "plan-review").Status)
+	}
+}
+
+func TestRunFlowPhaseActionsRejectInvalidPlanReviewOutcomes(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name    string
+		command string
+		outcome string
+		notes   string
+		want    string
+	}{
+		{
+			name:    "complete changes requested",
+			command: "complete",
+			outcome: flowstore.OutcomeChangesRequested,
+			notes:   "Revise the plan.",
+			want:    "plan-review outcome changes_requested requires needs_attention status",
+		},
+		{
+			name:    "complete approved with concerns missing notes",
+			command: "complete",
+			outcome: flowstore.OutcomeApprovedWithConcerns,
+			want:    "plan-review approved_with_concerns requires notes",
+		},
+		{
+			name:    "needs attention approved",
+			command: "needs-attention",
+			outcome: flowstore.OutcomeApproved,
+			notes:   "Looks good.",
+			want:    "plan-review outcome approved requires completed status",
+		},
+		{
+			name:    "block approved",
+			command: "block",
+			outcome: flowstore.OutcomeApproved,
+			notes:   "Waiting.",
+			want:    "plan-review blocked requires outcome blocked",
+		},
+		{
+			name:    "needs attention missing notes",
+			command: "needs-attention",
+			want:    "plan-review changes_requested requires notes",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := filepath.Join(root, "repo-invalid-plan-review-"+strings.ReplaceAll(tc.name, " ", "-"))
+			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+
+			args := []string{
+				"wtui", "flow", "phase", tc.command,
+				"--flow-id", created.FlowID,
+				"--phase-id", "plan-review",
+				"--state-root", root,
+			}
+			if tc.outcome != "" {
+				args = append(args, "--outcome", tc.outcome)
+			}
+			if tc.notes != "" {
+				args = append(args, "--notes", tc.notes)
+			}
+			err := run(args, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
 			}
 		})
 	}

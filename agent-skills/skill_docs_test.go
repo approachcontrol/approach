@@ -19,6 +19,9 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 	})
 	requireContainsAll(t, "flow commands", skill, []string{
 		"wtui flow read --flow-id",
+		"wtui flow phase complete",
+		"wtui flow phase block",
+		"wtui flow phase needs-attention",
 		"wtui flow phase set",
 		"wtui flow plan set",
 		"wtui flow pr set",
@@ -61,6 +64,15 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 
 	if !strings.Contains(skill, "wtui flow phase set") || !strings.Contains(flowCLI, "runFlowPhaseSet") {
 		t.Fatal("skill and CLI should both expose flow phase set")
+	}
+	if !strings.Contains(skill, "wtui flow phase complete") || !strings.Contains(flowCLI, `command:        "complete"`) {
+		t.Fatal("skill and CLI should both expose flow phase complete")
+	}
+	if !strings.Contains(skill, "wtui flow phase block") || !strings.Contains(flowCLI, `command:        "block"`) {
+		t.Fatal("skill and CLI should both expose flow phase block")
+	}
+	if !strings.Contains(skill, "wtui flow phase needs-attention") || !strings.Contains(flowCLI, `command:        "needs-attention"`) {
+		t.Fatal("skill and CLI should both expose flow phase needs-attention")
 	}
 	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
 		t.Fatal("skill and CLI should both expose flow plan set")
@@ -190,9 +202,9 @@ func TestWtuiFlowSkillDocumentsPlanReviewGateOutcomes(t *testing.T) {
 		"changes_requested",
 		"blocked",
 		"wtui derives all phase readiness",
-		`--status needs_attention --outcome "changes_requested"`,
-		`--status completed --outcome "approved_with_concerns" --notes "..."`,
-		`--status blocked --outcome "blocked" --notes "..."`,
+		`wtui flow phase needs-attention --notes "..."`,
+		`wtui flow phase complete --outcome "approved_with_concerns" --notes "..."`,
+		`wtui flow phase block --notes "..."`,
 	})
 }
 

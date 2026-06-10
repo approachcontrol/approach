@@ -56,7 +56,11 @@ Commands:
   create           Create a Flow; prints JSON when --json is present.
   list             List Flows as JSON.
   read             Print one Flow record as JSON.
-  phase set        Advance a Flow phase.
+  phase complete   Mark a Flow phase completed.
+  phase block      Mark a Flow phase blocked.
+  phase needs-attention
+                   Mark a Flow phase as needing attention.
+  phase set        Advance a Flow phase with explicit status.
   phase add-child  Add or update an implementation child phase.
   plan set         Link a saved plan artifact to a Flow.
   pr set           Record pull request metadata.
@@ -65,6 +69,9 @@ Commands:
 Examples:
   wtui flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
   wtui flow read --flow-id "$FLOW_ID"
+  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+  wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
+  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --notes "Revise scope"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
   wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
@@ -278,15 +285,36 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow phase <set|add-child> [flags]")
+		return fmt.Errorf("usage: wtui flow phase <set|complete|block|needs-attention|add-child> [flags]")
 	}
 	switch args[0] {
 	case "set":
 		return runFlowPhaseSet(args[1:], deps)
+	case "complete":
+		return runFlowPhaseAction(args[1:], deps, flowPhaseActionSpec{
+			command:        "complete",
+			status:         flowstore.PhaseCompleted,
+			defaultOutcome: flowstore.OutcomeApproved,
+			printHelp:      printFlowPhaseCompleteHelp,
+		})
+	case "block":
+		return runFlowPhaseAction(args[1:], deps, flowPhaseActionSpec{
+			command:        "block",
+			status:         flowstore.PhaseBlocked,
+			defaultOutcome: flowstore.OutcomeBlocked,
+			printHelp:      printFlowPhaseBlockHelp,
+		})
+	case "needs-attention":
+		return runFlowPhaseAction(args[1:], deps, flowPhaseActionSpec{
+			command:        "needs-attention",
+			status:         flowstore.PhaseNeedsAttention,
+			defaultOutcome: flowstore.OutcomeChangesRequested,
+			printHelp:      printFlowPhaseNeedsAttentionHelp,
+		})
 	case "add-child":
 		return runFlowPhaseAddChild(args[1:], deps)
 	default:
-		return unknownCommandError(args[0], []string{"set", "add-child"}, flowPhaseHelpText)
+		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "add-child"}, flowPhaseHelpText)
 	}
 }
 
@@ -294,24 +322,52 @@ func printFlowPhaseHelp(w io.Writer) {
 	io.WriteString(w, flowPhaseHelpText)
 }
 
-const flowPhaseHelpText = `Usage: wtui flow phase <set|add-child> [flags]
+const flowPhaseHelpText = `Usage: wtui flow phase <set|complete|block|needs-attention|add-child> [flags]
 
 Update Flow phase state. Readiness is derived by wtui; agents set running,
 completed, needs_attention, blocked, or skipped.
 
 Commands:
-  set        Set a phase status, outcome, summary, or notes.
-  add-child  Add or update an implementation child phase.
+  set              Set a phase status, outcome, summary, or notes.
+  complete         Mark a phase completed and print the next actionable phase.
+  block            Mark a phase blocked.
+  needs-attention  Mark a phase as needing attention.
+  add-child        Add or update an implementation child phase.
 
 Examples:
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+  wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
+  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
   wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
 
 Common flags:
   --state-root PATH  Override the artifact state root.
 `
+
+type flowPhaseActionSpec struct {
+	command        string
+	status         string
+	defaultOutcome string
+	printHelp      func(io.Writer)
+}
+
+type flowPhaseActionResult struct {
+	FlowID       string                `json:"flow_id"`
+	FlowStatus   string                `json:"flow_status"`
+	UpdatedPhase flowstore.FlowPhase   `json:"updated_phase"`
+	NextPhase    *flowPhaseActionState `json:"next_phase,omitempty"`
+	Flow         flowstore.FlowRecord  `json:"flow"`
+}
+
+type flowPhaseActionState struct {
+	PhaseID         string   `json:"phase_id"`
+	Title           string   `json:"title"`
+	Status          string   `json:"status"`
+	AllowedStatuses []string `json:"allowed_statuses,omitempty"`
+}
 
 func runFlowPhaseSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase set", flag.ContinueOnError)
@@ -386,6 +442,169 @@ Examples:
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
 `)
+}
+
+func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) error {
+	flags := flag.NewFlagSet("flow phase "+spec.command, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { spec.printHelp(deps.stdout) }
+	flowID := flags.String("flow-id", "", "flow id")
+	phaseID := flags.String("phase-id", "", "phase id")
+	outcome := flags.String("outcome", "", "phase outcome")
+	summary := flags.String("summary", "", "phase summary")
+	notes := flags.String("notes", "", "phase notes")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow phase %s requires --flow-id", spec.command)
+	}
+	if *phaseID == "" {
+		return fmt.Errorf("flow phase %s requires --phase-id", spec.command)
+	}
+	actionOutcome := strings.TrimSpace(*outcome)
+	if actionOutcome == "" && normalizeFlowPhaseID(*phaseID) == "plan-review" {
+		actionOutcome = spec.defaultOutcome
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  *flowID,
+		PhaseID: *phaseID,
+		Status:  spec.status,
+		Outcome: actionOutcome,
+		Notes:   *notes,
+		Summary: *summary,
+	})
+	if err != nil {
+		return err
+	}
+	updated, ok := flowPhaseByID(record, *phaseID)
+	if !ok {
+		return fmt.Errorf("phase %q not found in updated flow %q", *phaseID, *flowID)
+	}
+	return writeFlowJSON(deps.stdout, flowPhaseActionResult{
+		FlowID:       record.FlowID,
+		FlowStatus:   record.Status,
+		UpdatedPhase: updated,
+		NextPhase:    nextFlowPhaseActionState(record, updated),
+		Flow:         record,
+	})
+}
+
+func printFlowPhaseCompleteHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow phase complete [flags]
+
+Mark a Flow phase completed and print the next actionable phase state.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+
+Common flags:
+  --outcome OUTCOME
+  --summary TEXT
+  --notes TEXT
+  --state-root PATH
+
+Examples:
+  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan-review --outcome approved
+`)
+}
+
+func printFlowPhaseBlockHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow phase block [flags]
+
+Mark a Flow phase blocked and print the next actionable phase state.
+Notes may be required by phase rules.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+
+Common flags:
+  --outcome OUTCOME
+  --summary TEXT
+  --notes TEXT
+  --state-root PATH
+
+Examples:
+  wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
+  wtui flow phase block --flow-id "$FLOW_ID" --phase-id plan-review --outcome blocked --notes "Waiting on product"
+`)
+}
+
+func printFlowPhaseNeedsAttentionHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow phase needs-attention [flags]
+
+Mark a Flow phase as needing attention and print the next actionable phase state.
+Notes may be required by phase rules.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+
+Common flags:
+  --outcome OUTCOME
+  --summary TEXT
+  --notes TEXT
+  --state-root PATH
+
+Examples:
+  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id implementation --notes "Tests need revision"
+  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
+`)
+}
+
+func nextFlowPhaseActionState(record flowstore.FlowRecord, updated flowstore.FlowPhase) *flowPhaseActionState {
+	if flowPhaseIsActionable(updated) && updated.Status != flowstore.PhaseCompleted && updated.Status != flowstore.PhaseSkipped {
+		return newFlowPhaseActionState(updated)
+	}
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if flowPhaseIsActionable(phase) {
+			return newFlowPhaseActionState(phase)
+		}
+	}
+	return nil
+}
+
+func flowPhaseIsActionable(phase flowstore.FlowPhase) bool {
+	switch phase.Status {
+	case flowstore.PhaseReady, flowstore.PhaseRunning, flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
+func newFlowPhaseActionState(phase flowstore.FlowPhase) *flowPhaseActionState {
+	return &flowPhaseActionState{
+		PhaseID:         phase.PhaseID,
+		Title:           phase.Title,
+		Status:          phase.Status,
+		AllowedStatuses: flowstore.AllowedNextPhaseStatuses(phase.Status),
+	}
+}
+
+func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	normalized := normalizeFlowPhaseID(phaseID)
+	for _, phase := range record.Phases {
+		if normalizeFlowPhaseID(phase.PhaseID) == normalized {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func normalizeFlowPhaseID(phaseID string) string {
+	return strings.ToLower(strings.TrimSpace(phaseID))
 }
 
 func runFlowPhaseAddChild(args []string, deps runDeps) error {
