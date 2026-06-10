@@ -361,6 +361,13 @@ wtui flow merge set --flow-id "$FLOW_ID" \
   --merged-at "2026-06-08T15:04:05Z"
 ```
 
+When a Flow is linked to a saved plan, transitioning a Flow phase to `completed`
+also marks a matching saved-plan phase with the same normalized phase ID as
+`completed`. Missing saved-plan phases are ignored. If that sync fails, wtui
+marks the Flow phase `needs_attention` and reports the persistence error.
+Repeating `completed` for an already-completed Flow phase preserves that
+completed state even if the linked-plan sync later fails.
+
 Child implementation phases gate downstream readiness in phase order: review
 loop and PR creation remain pending until required implementation children are
 completed or explicitly skipped with notes. Flow phase launch prompts stay

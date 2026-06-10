@@ -67,7 +67,7 @@ Goal: let users adapt wtui without changing source or environment wrappers.
 
 - [ ] P1 - Multiple scan roots: support developers who split work across `~/dev`, client folders, and sandbox folders.
 - [ ] P1 - Custom code-open command: support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env instead of hardcoding `code`.
-- [ ] P2 - Scan-depth/exclude controls: preserve zero-config defaults while letting large workspaces avoid slow or noisy directories.
+- [ ] P2 - Additional scan exclude controls: preserve zero-config scan-depth defaults while letting large workspaces avoid noisy directories beyond sibling `*-worktrees`.
 - [ ] P3 - Persisted UI defaults: remember default mode and possibly last selected repo without surprising statefulness.
 
 ## Distribution Follow-Ups

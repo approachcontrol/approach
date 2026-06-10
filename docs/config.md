@@ -325,6 +325,13 @@ wtui flow pr set --flow-id ID --provider github --number N --url URL \
     --head HEAD_BRANCH --base BASE_BRANCH [--status STATUS] [--state-root PATH]
 ```
 
+When a Flow is linked to a saved plan, transitioning a Flow phase to `completed`
+also marks a matching saved-plan phase with the same normalized phase ID as
+`completed`. Missing saved-plan phases are ignored. If that sync fails, wtui
+marks the Flow phase `needs_attention` and reports the persistence error.
+Repeating `completed` for an already-completed Flow phase preserves that
+completed state even if the linked-plan sync later fails.
+
 Flow IDs use the same safe single-path-segment shape as plans:
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use
 `YYYYMMDDTHHMMSSZ-<title-slug>` with a numeric suffix on collision. New flows
