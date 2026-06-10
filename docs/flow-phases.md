@@ -119,12 +119,14 @@ otherwise `pending`.
 
 ## Linked plan sync
 
-When a Flow has a linked saved plan, setting a Flow phase to `completed` also
-marks a saved-plan phase with the same normalized phase ID as `completed`.
+When a Flow has a linked saved plan, transitioning a Flow phase to `completed`
+also marks a saved-plan phase with the same normalized phase ID as `completed`.
 Missing saved-plan phases are ignored, and already-completed saved-plan phases
-are left unchanged. If the linked plan cannot be read or updated, wtui marks the
-Flow phase `needs_attention` with a sync-failure note and returns the
-persistence error so the agent can report it.
+are left unchanged. If the linked plan cannot be read or updated during that
+transition, wtui marks the Flow phase `needs_attention` with a sync-failure note
+and returns the persistence error so the agent can report it. Repeating
+`completed` for an already-completed Flow phase preserves that completed state
+even if the linked-plan sync later fails.
 
 ## Compatibility and migration
 
