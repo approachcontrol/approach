@@ -567,7 +567,7 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 	prompt := gotURL.Query().Get("prompt")
 	for _, want := range []string{
 		"Read the plan & begin + ship.",
-		"WTUI_WORKTREE_PATH=" + shellQuote("/repo/work tree+plus"),
+		"WTUI_WORKTREE_PATH: " + shellQuote("/repo/work tree+plus"),
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
@@ -617,7 +617,7 @@ func TestCodexAppLaunchUsesWorkingDirForNewThreadPath(t *testing.T) {
 		t.Fatalf("path query = %q, want working dir", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo/worktree")) {
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo/worktree")) {
 		t.Fatalf("prompt should carry worktree metadata:\n%s", prompt)
 	}
 }
@@ -641,7 +641,7 @@ func TestCodexAppLaunchUsesRepoProjectPathForWorktreeLaunch(t *testing.T) {
 		t.Fatalf("path query = %q, want repo project path", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo-worktrees/feature")) {
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo-worktrees/feature")) {
 		t.Fatalf("prompt should still carry worktree metadata:\n%s", prompt)
 	}
 }
@@ -664,7 +664,7 @@ func TestCodexAppLaunchIncludesWorktreeMetadataWithoutInitialPrompt(t *testing.T
 		t.Fatalf("path query = %q, want repo project path", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo-worktrees/feature")) {
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo-worktrees/feature")) {
 		t.Fatalf("prompt should carry worktree metadata without an initial prompt:\n%s", prompt)
 	}
 }
@@ -700,23 +700,37 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 	prompt := gotURL.Query().Get("prompt")
 	for _, want := range []string{
 		"Read the plan and begin implementation.",
-		"WTUI_LAUNCH_ID=" + shellQuote("launch-1"),
-		"WTUI_WORKTREE_PATH=" + shellQuote("/repo/work'tree$(bad)"),
-		"WTUI_SESSION_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
-		"WTUI_PLAN_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
-		"WTUI_FLOW_STATE_ROOT=" + shellQuote("/state/wtui/sessions/v1"),
-		"WTUI_PLAN_ID=" + shellQuote("plan-1"),
-		"WTUI_PLAN_PATH=" + shellQuote("/state/wtui/sessions/v1/plans/plan-1/plan.md"),
-		"WTUI_PLAN_PHASE_ID=" + shellQuote("phase-1"),
-		"WTUI_FLOW_ID=" + shellQuote("flow-1"),
-		"WTUI_FLOW_PHASE_ID=" + shellQuote("plan"),
-		"--state-root " + shellQuote("/state/wtui/sessions/v1"),
+		"These WTUI_* values are launch metadata included in this prompt only.",
+		"Codex App does not receive them as shell environment variables.",
+		"WTUI_LAUNCH_ID: " + shellQuote("launch-1"),
+		"WTUI_WORKTREE_PATH: " + shellQuote("/repo/work'tree$(bad)"),
+		"WTUI_SESSION_STATE_ROOT: " + shellQuote("/state/wtui/sessions/v1"),
+		"WTUI_PLAN_STATE_ROOT: " + shellQuote("/state/wtui/sessions/v1"),
+		"WTUI_FLOW_STATE_ROOT: " + shellQuote("/state/wtui/sessions/v1"),
+		"WTUI_PLAN_ID: " + shellQuote("plan-1"),
+		"WTUI_PLAN_PATH: " + shellQuote("/state/wtui/sessions/v1/plans/plan-1/plan.md"),
+		"WTUI_PLAN_PHASE_ID: " + shellQuote("phase-1"),
+		"WTUI_FLOW_ID: " + shellQuote("flow-1"),
+		"WTUI_FLOW_PHASE_ID: " + shellQuote("plan"),
+		"wtui plan list --json --state-root " + shellQuote("/state/wtui/sessions/v1"),
+		"wtui flow list --json --state-root " + shellQuote("/state/wtui/sessions/v1"),
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
 	for _, unwanted := range []string{
+		"WTUI_LAUNCH_ID=",
+		"WTUI_WORKTREE_PATH=",
+		"WTUI_SESSION_STATE_ROOT=",
+		"WTUI_PLAN_STATE_ROOT=",
+		"WTUI_FLOW_STATE_ROOT=",
+		"WTUI_PLAN_ID=",
+		"WTUI_PLAN_PATH=",
+		"WTUI_PLAN_PHASE_ID=",
+		"WTUI_FLOW_ID=",
+		"WTUI_FLOW_PHASE_ID=",
+		"export WTUI_",
 		"WTUI_REPO_PATH",
 		"WTUI_BRANCH",
 		"WTUI_COMMIT",
@@ -750,7 +764,7 @@ func TestCodexAppFlowLaunchUsesRepoProjectPath(t *testing.T) {
 		t.Fatalf("path query = %q, want repo project path", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH="+shellQuote("/repo-worktrees/flow-add-flow-mode")) {
+	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo-worktrees/flow-add-flow-mode")) {
 		t.Fatalf("prompt should still carry worktree metadata:\n%s", prompt)
 	}
 }

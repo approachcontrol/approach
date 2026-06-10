@@ -232,11 +232,13 @@ start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
 `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and
 `WTUI_COMMIT`; for new plans, and for updates that provide a repo or worktree
 location, wtui also resolves best-effort repo, worktree, branch, and commit
-metadata from git. `codex-app` launches do not inherit `WTUI_*` because wtui
-opens a macOS deep link; wtui uses the repo path as the deep-link project path
-and includes worktree, state-root, plan, and flow metadata in the launch prompt.
-Pass `--state-root` or export the listed state-root vars before running
-`wtui plan`. The
+metadata from git. `codex-app` launches do not inherit `WTUI_*` shell
+environment variables because wtui opens a macOS deep link; wtui uses the repo
+path as the deep-link project path and includes worktree, state-root, plan, and
+flow values as prompt-only launch metadata. That metadata includes copyable
+`wtui plan list --json --state-root ...` and
+`wtui flow list --json --state-root ...` examples that show where to pass the
+state root for subsequent plan and flow commands. The
 `wtui-plan-persist` skill instructs agents on when and how to save plans; its
 canonical source lives in
 `agent-skills/wtui-plan-persist/` for symlinking into user-level Codex/Claude
@@ -441,14 +443,16 @@ Codex hook example:
 }
 ```
 
-When wtui launches or resumes a CLI agent session, it appends these environment
-variables:
-`WTUI_AGENT`, `WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
-`WTUI_BRANCH`, `WTUI_COMMIT`, and `WTUI_SESSION_STATE_ROOT`.
+When wtui launches or resumes a CLI agent session, it appends `WTUI_*`
+environment metadata, including `WTUI_AGENT`, `WTUI_LAUNCH_ID`,
+`WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, `WTUI_COMMIT`,
+`WTUI_SESSION_STATE_ROOT`, `WTUI_PLAN_STATE_ROOT`, `WTUI_FLOW_STATE_ROOT`, and
+plan or flow IDs, paths, and phase fields when available.
 `codex-app` launches are the exception: wtui opens a macOS deep link, scrubs
-inherited `WTUI_*` from `open`, and includes launch metadata in the prompt. New
-`codex-app` threads use the repo path for Codex App project identity when
-available; the selected worktree path is still included in the prompt metadata.
+inherited `WTUI_*` from `open`, and includes prompt-only launch metadata with
+copyable `--state-root` command examples. New `codex-app` threads use the repo
+path for Codex App project identity when available; the selected worktree path
+is still included in the prompt metadata.
 
 Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with
