@@ -884,17 +884,21 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("wtui launch metadata (Codex App launches do not inherit WTUI_* environment from macOS open):")
+	b.WriteString("wtui launch metadata:")
+	b.WriteString("\nThese WTUI_* values are launch metadata included in this prompt only.")
+	b.WriteString("\nCodex App does not receive them as shell environment variables.")
 	for _, item := range kept {
 		b.WriteString("\n- ")
 		b.WriteString(item.key)
-		b.WriteString("=")
+		b.WriteString(": ")
 		b.WriteString(shellQuote(item.value))
 	}
 	if ctx.SessionStateRoot != "" {
-		b.WriteString("\nWhen running wtui plan commands for this launch, pass `--state-root ")
+		b.WriteString("\nCopyable state-root command examples:")
+		b.WriteString("\n- wtui plan list --json --state-root ")
 		b.WriteString(shellQuote(ctx.SessionStateRoot))
-		b.WriteString("` or export WTUI_FLOW_STATE_ROOT/WTUI_PLAN_STATE_ROOT/WTUI_SESSION_STATE_ROOT with that value.")
+		b.WriteString("\n- wtui flow list --json --state-root ")
+		b.WriteString(shellQuote(ctx.SessionStateRoot))
 	}
 	return b.String()
 }
