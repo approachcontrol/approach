@@ -44,9 +44,9 @@ Goal: add context that helps users decide which worktree needs attention.
 - [ ] P2 - GitHub/GitLab provider config: support PR creation, PR detection, and CI lookup without hardcoding one provider.
 - [ ] P3 - Worktree notes, labels, or tags: help users manage many parallel branches, especially for review or agent-driven work.
 - [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, show worktree-scoped inline sessions in mode 1, page normalized transcripts in mode 6, resume selected sessions, and copy raw provider session IDs.
-- [x] P3 - Saved plans (skill-first v1): persist agent plans via the `wtui plan` CLI and the `wtui-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with `less -R` paging, phase expansion, per-phase progress, plan-path copying, and launch instructions for whole-plan or selected-phase agent launch.
+- [x] P3 - Saved plans (skill-first v1): persist agent plans via the `wtui plan` CLI and the `wtui-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with `less -R` paging, phase expansion, per-phase progress, plan-path copying, plan Markdown editing, and launch instructions for whole-plan or selected-phase agent launch.
 - [x] P3 - Flow records and default Flow UI: persist task-centric Flow records via the `wtui flow` CLI into `<sessions root>/flows/...`; start the TUI in mode 8; create new Flows; launch ready phases; browse derived status, phase progress, linked plan metadata, PR metadata, repo-scoped filtering, linked-plan body opening, and recoverable partial-state labels.
-- [ ] P3 - Plans follow-ups: optional Claude Code `plan-hook` adapter (`ExitPlanMode` PreToolUse/PostToolUse), automatic phase extraction, and TUI editing/deletion (see plan appendix).
+- [ ] P3 - Plans follow-ups: optional Claude Code `plan-hook` adapter (`ExitPlanMode` PreToolUse/PostToolUse), automatic phase extraction, and TUI deletion (see plan appendix).
 - [ ] P3 - Flow follow-ups: add transcript shortcuts from expanded phase rows, manual recovery/retry actions for partial Flow states, and richer phase/session status once provider signals are reliable.
 - [ ] P3 - Agent session follow-ups: add open-native-transcript actions and richer status when provider signals are reliable.
 - [ ] P3 - Desktop notifications: notify on long-running fetch, pull, or batch completion after the operation model is mature.
@@ -66,7 +66,7 @@ surface is stronger.
 Goal: let users adapt wtui without changing source or environment wrappers.
 
 - [ ] P1 - Multiple scan roots: support developers who split work across `~/dev`, client folders, and sandbox folders.
-- [ ] P1 - Custom editor command: support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env instead of hardcoding `code`.
+- [ ] P1 - Custom code-open command: support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env instead of hardcoding `code`.
 - [ ] P2 - Scan-depth/exclude controls: preserve zero-config defaults while letting large workspaces avoid slow or noisy directories.
 - [ ] P3 - Persisted UI defaults: remember default mode and possibly last selected repo without surprising statefulness.
 

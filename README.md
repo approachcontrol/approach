@@ -95,6 +95,7 @@ filter matches, or a load failure with details in the status bar.
 | `r` | Resume selected agent session (sessions view) |
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
+| `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
@@ -209,11 +210,14 @@ progress (`completed/total`), the updated date, and the title. Use `/` to filter
 plans by title, summary, status, branch, worktree basename, provider, session
 ID, launch ID, and phase titles/statuses. Press `x` to expand or collapse
 the selected plan's phase rows, `o` to page the plan Markdown in `less -R`,
-and `y` to copy the plan Markdown path. Press `a` to edit launch
-instructions for the selected plan or selected phase, then `enter` to launch
-the selected agent or `esc` to cancel; blank instructions are rejected.
-`enter` still toggles phase rows, and `i` still opens plan launch instructions
-as compatibility aliases.
+`e` to edit the plan Markdown, and `y` to copy the plan Markdown path. The edit
+action opens `[editor].command` when configured, otherwise `$EDITOR`, and
+refreshes the plans pane when that command exits; use wait flags such as
+`code --wait` for GUI editors that detach by default. Press `a` to edit launch
+instructions for the selected plan or selected phase, then `enter` to launch the
+selected agent or `esc` to cancel; blank instructions are rejected. `enter`
+still toggles phase rows, and `i` still opens plan launch instructions as
+compatibility aliases.
 
 Plans are persisted explicitly by agents through the `wtui plan` CLI rather than
 captured from hooks. Plans share the agent-artifact root with sessions: they are
@@ -256,7 +260,7 @@ running `wtui plan` commands. The `wtui-plan-persist` skill instructs agents on
 when and how to save plans. Its canonical source lives in
 `agent-skills/wtui-plan-persist/`, which is intentionally outside Codex and
 Claude's repo auto-discovery directories so it can be symlinked into user-level
-skill dirs for use across repos. v1 has no TUI plan editing or deletion.
+skill dirs for use across repos. v1 has no TUI plan deletion.
 
 ### Flows view (mode 8)
 
@@ -403,9 +407,10 @@ script = ".wtui/bootstrap"
 
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. `[agent].plan_prompt`
 customizes the editable instructions shown before launching an agent from the
-plans pane. See [docs/config.md](docs/config.md) for the full config reference,
-including sessions storage, bootstrap hook settings, and parsed foundation
-fields for editor, terminal, provider, launch, and agent settings.
+plans pane. `[editor].command` customizes the editor used by the plans pane
+edit action. See [docs/config.md](docs/config.md) for the full config reference,
+including sessions storage, bootstrap hook settings, terminal settings, and
+parsed foundation fields for provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|

@@ -700,6 +700,101 @@ func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 	}
 }
 
+func TestModel_EKeyEditsSelectedPlanAndRefreshesPlansAfterExit(t *testing.T) {
+	var editedPaths []string
+	var filters []planstore.PlanFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PlanMarkdownPath: func(planID string) (string, error) {
+			if planID != "plan-1" {
+				t.Fatalf("resolver planID = %q, want plan-1", planID)
+			}
+			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+		},
+		EditFile: func(path string) (actions.TerminalLaunchSpec, error) {
+			editedPaths = append(editedPaths, path)
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+		ListPlans: func(filter planstore.PlanFilter) ([]planstore.PlanRecord, error) {
+			filters = append(filters, filter)
+			return []planstore.PlanRecord{
+				{PlanID: "plan-1", Title: "Edited plan", Status: "approved", RepoPath: filter.RepoPath},
+			}, nil
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
+	})
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if cmd == nil {
+		t.Fatal("expected edit command")
+	}
+	assertListRequestsUnchanged(t, before, m)
+
+	m, refreshCmd := update(m, cmd())
+	if len(editedPaths) != 1 || editedPaths[0] != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
+		t.Fatalf("edited paths = %#v", editedPaths)
+	}
+	if refreshCmd == nil {
+		t.Fatal("expected plans refresh command after editor exits")
+	}
+	assertOnlyListRequestAdvanced(t, before, m, ui.ModePlans)
+
+	msg, ok := refreshCmd().(model.PlanResultMsg)
+	if !ok {
+		t.Fatalf("refresh command returned %T, want PlanResultMsg", msg)
+	}
+	if msg.ListRequest != m.ListRequest(ui.ModePlans) {
+		t.Fatalf("refresh ListRequest = %d, want %d", msg.ListRequest, m.ListRequest(ui.ModePlans))
+	}
+	if len(filters) != 1 || filters[0].RepoPath != "/dev/alpha" {
+		t.Fatalf("refresh filters = %#v", filters)
+	}
+}
+
+func TestModel_EKeyPlanEditorErrorShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+		EditFile: func(string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("editor unavailable")
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd on editor error, got %T", cmd)
+	}
+	if !strings.Contains(m.View(), "editor unavailable") {
+		t.Fatal("expected editor error in status")
+	}
+}
+
+func TestModel_StalePlanEditResultDoesNotShowStatusOrRefresh(t *testing.T) {
+	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{
+		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
+	})
+	before := listRequests(m)
+
+	m, cmd := update(m, model.PlanEditResultMsg{RepoPath: "/dev/bravo", Err: "editor failed"})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for stale edit error, got %T", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+	if strings.Contains(m.View(), "editor failed") {
+		t.Fatal("stale edit error should not show in status")
+	}
+
+	m, cmd = update(m, model.PlanEditResultMsg{RepoPath: "/dev/bravo"})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for stale edit success, got %T", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
 func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 	root := t.TempDir()
 	var copied string

@@ -46,7 +46,8 @@ are already implemented and should be treated as the baseline product:
   repos.
 - Saved agent plans persisted through the `wtui plan` CLI and browsed in the
   plans pane with per-phase progress, phase expansion, plan-path copying, and
-  editable launch instructions for whole-plan or selected-phase agent launch.
+  plan Markdown editing plus editable launch instructions for whole-plan or
+  selected-phase agent launch.
 - Flow records persisted through the `wtui flow` CLI and started from the
   default flows pane with new-flow creation, ready-phase agent launch, derived
   status, phase progress, linked plan metadata, PR metadata, repo-scoped
@@ -143,7 +144,7 @@ Goal: let users adapt wtui without changing source or environment wrappers.
 | Item | Why it matters | Priority |
 |------|----------------|----------|
 | Multiple scan roots | Current scanning accepts one root. Many developers split work across `~/dev`, client folders, and sandbox folders. | P1 |
-| Custom editor command | `c` is currently hardcoded to `code`. Support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env. | P1 |
+| Custom code-open command | `c` is currently hardcoded to `code`. Support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env. | P1 |
 | Scan-depth/exclude controls | Preserve zero-config defaults while letting large workspaces avoid slow or noisy directories. | P2 |
 | Persisted UI defaults | Remember default mode and possibly last selected repo without making the app feel stateful in surprising ways. | P3 |
 

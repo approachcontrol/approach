@@ -85,7 +85,7 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 		PlanSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"x      phases", "o      open", "a      implement", "y      copy path"} {
+	for _, want := range []string{"x      phases", "o      open", "e      edit", "a      implement", "y      copy path"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("plans view should expose shortcut %q:\n%s", want, view)
 		}
@@ -166,7 +166,7 @@ func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
 	})
 
 	pane := shortcutPaneText(view)
-	for _, forbidden := range []string{"x      phases", "o      open", "a      implement", "y      copy path", "i      implement"} {
+	for _, forbidden := range []string{"x      phases", "o      open", "e      edit", "a      implement", "y      copy path", "i      implement"} {
 		if strings.Contains(pane, forbidden) {
 			t.Fatalf("empty plans view should omit %q:\n%s", forbidden, view)
 		}

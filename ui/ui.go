@@ -859,6 +859,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions,
 				shortcutHint{Key: "x", Label: "phases"},
 				shortcutHint{Key: "o", Label: "open"},
+				shortcutHint{Key: "e", Label: "edit"},
 				shortcutHint{Key: "a", Label: implementLabel},
 				shortcutHint{Key: "y", Label: "copy path"},
 			)

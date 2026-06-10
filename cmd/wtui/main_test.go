@@ -407,6 +407,40 @@ func TestModelOptionsFromConfigTerminalEnvOverridesConfiguredCommand(t *testing.
 	}
 }
 
+func TestModelOptionsFromConfigPassesEditorCommandToEditFile(t *testing.T) {
+	t.Setenv("EDITOR", "vim")
+	root := t.TempDir()
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore sessions: %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore plans: %v", err)
+	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore flows: %v", err)
+	}
+	editorCommand := putCommandOnPath(t, "wtui-test-editor")
+
+	opts := modelOptionsFromConfig(config.Config{
+		Editor: config.EditorConfig{Command: editorCommand + " --wait"},
+	}, nil, sessionStore, planStore, flowStore)
+
+	launch, err := opts.EditFile("/state/plans/plan-1/plan.md")
+	if err != nil {
+		t.Fatalf("EditFile returned error: %v", err)
+	}
+	if !launch.Interactive {
+		t.Fatal("EditFile launch should be interactive")
+	}
+	want := []string{editorCommand, "--wait", "/state/plans/plan-1/plan.md"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
 func putCommandOnPath(t *testing.T, name string) string {
 	t.Helper()
 	dir := t.TempDir()
