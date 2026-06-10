@@ -37,9 +37,15 @@ readiness, agents own honest reporting of their own phase.
 | `skipped` | agent | Phase intentionally bypassed (requires notes). |
 
 Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
-`skipped` through `wtui flow phase set`. Setting `ready` is rejected with
-"readiness is derived"; the CLI rejects unknown statuses with the valid list,
-and the store rejects them as `invalid phase status`.
+`skipped` through `wtui flow phase set`. The high-level wrappers
+`wtui flow phase complete`, `wtui flow phase block`, and
+`wtui flow phase needs-attention` use the same validation and persistence path
+for the common `completed`, `blocked`, and `needs_attention` outcomes, then
+print JSON with the updated phase and next actionable phase state. These
+wrappers do not add separate notes requirements; store validation remains the
+source of truth. Setting `ready` is rejected with "readiness is derived"; the
+CLI rejects unknown statuses with the valid list, and the store rejects them as
+`invalid phase status`.
 
 ## Canonical transition table
 
@@ -79,7 +85,9 @@ predecessor satisfies its downstream gate:
 - **Default gate**: the phase is `completed`, or `skipped` with notes.
 - **Plan Review**: `completed` with outcome `approved` or
   `approved_with_concerns`, or `skipped` with notes. Any other outcome keeps
-  Implementation `pending`.
+  Implementation `pending`. The high-level Plan Review wrappers fill the
+  unambiguous outcomes when omitted: `complete` uses `approved`,
+  `needs-attention` uses `changes_requested`, and `block` uses `blocked`.
 - **PR Creation**: `completed` *and* structured PR metadata recorded via
   `wtui flow pr set` (provider, positive number, valid URL, head/base
   branches). Completion alone does not unlock Autoreview; a skipped PR

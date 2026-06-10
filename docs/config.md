@@ -272,6 +272,12 @@ wtui flow create --title "Ship saved plans" \
 
 wtui flow list [--repo-path PATH] [--state-root PATH] --json
 wtui flow read --flow-id ID [--state-root PATH]
+wtui flow phase complete --flow-id ID --phase-id ID \
+    [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
+wtui flow phase block --flow-id ID --phase-id ID \
+    [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
+wtui flow phase needs-attention --flow-id ID --phase-id ID \
+    [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
@@ -310,6 +316,16 @@ The Plan Review phase gates Implementation. Plan Review completion must use
 --notes ...` for missing inputs or external blockers. Implementation becomes
 ready only after approved Plan Review outcomes, or after an explicit
 skipped-with-notes Plan Review override.
+
+For common phase outcomes, `wtui flow phase complete`, `wtui flow phase block`,
+and `wtui flow phase needs-attention` wrap the same validation and persistence
+as `phase set`, then print JSON containing the updated phase, the next
+actionable phase state, and allowed statuses for that next action. Notes
+requirements are still enforced by the same store rules as `phase set`. Plan
+Review wrappers fill the unambiguous outcomes when omitted: `complete` uses
+`approved`, `block` uses `blocked`, and `needs-attention` uses
+`changes_requested`. Use `phase set` when a phase needs an explicit uncommon
+status, a skipped-with-notes override, or an explicit restart.
 
 Implementation can be split into ordered child phases with
 `wtui flow phase add-child`. Child phase IDs are stable and normalized (trimmed

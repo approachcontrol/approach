@@ -310,11 +310,21 @@ wtui flow read --flow-id "$FLOW_ID"
 # Link a saved plan artifact back to a flow.
 wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 
-# Record Plan Review. approved_with_concerns, changes_requested, and blocked
-# require --notes. Implementation becomes ready only after approved review
-# outcomes, or after an explicit skipped-with-notes Plan Review override.
+# Record common phase outcomes without hand-assembling --status. These commands
+# print JSON with the updated phase and the next actionable phase state. For
+# Plan Review, complete defaults to approved, needs-attention defaults to
+# changes_requested, and block defaults to blocked unless --outcome is supplied.
+wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review \
+  --notes "Revise the rollout section"
+wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation \
+  --notes "Waiting on review"
+
+# The lower-level phase set command remains available for explicit status,
+# outcome, summary, and notes updates. approved_with_concerns,
+# changes_requested, and blocked Plan Review outcomes require --notes.
 wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review \
-  --status completed --outcome approved
+  --status completed --outcome approved_with_concerns --notes "Watch rollout risk"
 
 # Split Implementation into ordered child phases. Re-running the same command
 # updates the stable child phase without duplicating it.

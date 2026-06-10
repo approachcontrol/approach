@@ -39,28 +39,39 @@ Also use the launch metadata when present: `WTUI_FLOW_PHASE_ID`,
 Agent-facing phase statuses are `running`, `needs_attention`, `completed`,
 `blocked`, and `skipped`. Report only the status of your own phase honestly;
 wtui derives all phase readiness and ordering, so never reason about which
-phase becomes ready next. Agents cannot set `ready`. Skipped phases require
-`--notes`, and restarting a blocked or needs-attention phase as `running`
-requires `--notes`. Invalid transitions fail with the allowed next statuses;
-fix the reported state rather than retrying blindly.
+phase becomes ready next. It is fine to read the `next_phase` field returned by
+the high-level phase action commands; do not infer that state yourself. Agents
+cannot set `ready`. Skipped phases require `--notes`, and restarting a blocked
+or needs-attention phase as `running` requires `--notes`. Invalid transitions
+fail with the allowed next statuses; fix the reported state rather than
+retrying blindly.
 
 For the `plan-review` phase, wtui accepts only these review outcomes:
 `approved`, `approved_with_concerns`, `changes_requested`, and `blocked`.
 `approved_with_concerns`, `changes_requested`, and `blocked` require
 `--notes`.
 
-Use the current implemented phase update command:
+Prefer the high-level phase action commands for common outcomes. They use the
+same validation as `phase set`, persist the update, and print JSON with the
+updated phase plus the next actionable phase state:
 
 ```bash
-wtui flow phase set \
+wtui flow phase complete \
   --flow-id "$WTUI_FLOW_ID" \
   --phase-id "$WTUI_FLOW_PHASE_ID" \
-  --status completed \
-  --outcome "approved" \
-  --summary "What changed and where the next phase should begin." \
+  --summary "What changed in this phase." \
   --notes "Optional audit notes." \
   "${FLOW_STATE_ARGS[@]}"
 ```
+
+Use `wtui flow phase block --notes "..."` for blockers and
+`wtui flow phase needs-attention --notes "..."` for non-blocking concerns.
+For Plan Review only, those wrappers fill default outcomes when omitted:
+`complete` => `approved`, `needs-attention` => `changes_requested`, and
+`block` => `blocked`. The `complete` wrapper can still take an explicit
+Plan Review outcome such as `approved_with_concerns`. Use the lower-level
+`wtui flow phase set` command for `running`, `skipped`, restarts, or other
+explicit status updates.
 
 ## Persistence Failures
 
@@ -69,10 +80,11 @@ the user. These persistence failures must not be treated as successful phase
 progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
-The current Flow CLI exposes `create`, `list`, `read`, `phase set`,
-`phase add-child`, `plan set`, `pr set`, and `merge set`. Record merge metadata
-with `wtui flow merge set`; do not claim a merge was recorded unless that
-structured command succeeds.
+The current Flow CLI exposes `create`, `list`, `read`, `phase complete`,
+`phase block`, `phase needs-attention`, `phase set`, `phase add-child`,
+`plan set`, `pr set`, and `merge set`. Record merge metadata with
+`wtui flow merge set`; do not claim a merge was recorded unless that structured
+command succeeds.
 
 ## Plan Phase
 
@@ -82,7 +94,8 @@ Goal: produce a saved wtui plan artifact.
 2. Save or update the plan through `wtui plan save`.
 3. Link the saved plan artifact back to the Flow with `wtui flow plan set`.
 4. Record plan progress with `wtui plan phase set` when the plan has phases.
-5. Complete or block the Flow phase with `wtui flow phase set`.
+5. Complete or block the Flow phase with `wtui flow phase complete` or
+   `wtui flow phase block`.
 
 ```bash
 if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | wtui plan save \
@@ -144,10 +157,9 @@ if ! wtui plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; the
   exit 1
 fi
 
-wtui flow phase set \
+wtui flow phase complete \
   --flow-id "$WTUI_FLOW_ID" \
   --phase-id plan \
-  --status completed \
   --outcome "plan_saved" \
   --summary "Saved and linked plan $PLAN_ID." \
   "${FLOW_STATE_ARGS[@]}"
@@ -209,21 +221,20 @@ if ! wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null
   exit 1
 fi
 
-wtui flow phase set \
+wtui flow phase complete \
   --flow-id "$WTUI_FLOW_ID" \
   --phase-id plan-review \
-  --status completed \
-  --outcome "approved" \
   --summary "Plan is ready for implementation." \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
-Use `--status needs_attention --outcome "changes_requested"` when the plan
-needs revision; include `--notes` explaining the required changes. Use
-`--status completed --outcome "approved_with_concerns" --notes "..."` when
-implementation may proceed but should carry the noted concern forward. Use
-`--status blocked --outcome "blocked" --notes "..."` when human input, missing
-plan context, or an external dependency prevents review.
+Use `wtui flow phase needs-attention --notes "..."` when the plan needs
+revision; the Plan Review outcome defaults to `changes_requested`. Use
+`wtui flow phase complete --outcome "approved_with_concerns" --notes "..."`
+when implementation may proceed but should carry the noted concern forward. Use
+`wtui flow phase block --notes "..."` when human input, missing plan context,
+or an external dependency prevents review; the Plan Review outcome defaults to
+`blocked`.
 
 ## Implementation Phase
 
