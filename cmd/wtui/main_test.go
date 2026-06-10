@@ -45,6 +45,97 @@ func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 	}
 }
 
+func TestRun_HelpBypassesConfigAndScan(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "--help"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for --help")
+			return config.Config{}, nil
+		},
+		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
+			t.Fatal("scan should not run for --help")
+			return nil, nil
+		},
+		startProgram: func([]scanner.Repo, config.Config) error {
+			t.Fatal("program should not start for --help")
+			return nil
+		},
+		stdout: &stdout,
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui [--version] [command]",
+		"wtui plan --help",
+		"wtui flow --help",
+		"wtui session-hook --provider codex",
+	})
+}
+
+func TestRun_UnknownCommandSuggestsNearbyCommand(t *testing.T) {
+	err := run([]string{"wtui", "plna"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown command")
+			return config.Config{}, nil
+		},
+		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
+			t.Fatal("scan should not run for unknown command")
+			return nil, nil
+		},
+		startProgram: func([]scanner.Repo, config.Config) error {
+			t.Fatal("program should not start for unknown command")
+			return nil
+		},
+		stdout: &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected unknown command error")
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "plna"; did you mean "plan"?`,
+		"Usage: wtui [--version] [command]",
+	})
+}
+
+func TestRun_UnknownCommandFarFromValidShowsUsageWithoutSuggestion(t *testing.T) {
+	err := run([]string{"wtui", "definitely-not-close"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown command")
+			return config.Config{}, nil
+		},
+		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
+			t.Fatal("scan should not run for unknown command")
+			return nil, nil
+		},
+		startProgram: func([]scanner.Repo, config.Config) error {
+			t.Fatal("program should not start for unknown command")
+			return nil
+		},
+		stdout: &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected unknown command error")
+	}
+	if strings.Contains(err.Error(), "did you mean") {
+		t.Fatalf("far command should not suggest a command:\n%s", err)
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "definitely-not-close"`,
+		"Usage: wtui [--version] [command]",
+	})
+}
+
+func TestNearestCommandSuggestsOnlyNearbyCommands(t *testing.T) {
+	valid := []string{"plan", "flow", "session-hook"}
+	if got := nearestCommand("flw", valid); got != "flow" {
+		t.Fatalf("nearestCommand(flw) = %q, want flow", got)
+	}
+	if got := nearestCommand("definitely-not-close", valid); got != "" {
+		t.Fatalf("nearestCommand(definitely-not-close) = %q, want no suggestion", got)
+	}
+}
+
 func TestRun_LoadsConfigBeforeScanning(t *testing.T) {
 	var got scanner.ScanOptions
 	err := run([]string{"wtui"}, runDeps{
@@ -552,6 +643,15 @@ func singleSessionFile(t *testing.T, root, provider, name string) string {
 
 func quoteJSON(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+}
+
+func requireContainsAll(t *testing.T, text string, wants []string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output missing %q:\n%s", want, text)
+		}
+	}
 }
 
 func TestBootstrapHookResolverMatchesConfiguredRepoPath(t *testing.T) {

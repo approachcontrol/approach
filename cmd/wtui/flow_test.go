@@ -14,6 +14,236 @@ import (
 	"github.com/brian-bell/wtui/planstore"
 )
 
+func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for flow help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
+		"wtui flow read --flow-id",
+		"wtui flow phase set --flow-id",
+		"wtui flow pr set --flow-id",
+		"wtui flow merge set --flow-id",
+	})
+}
+
+func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "phase", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for flow phase help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui flow phase <set|add-child> [flags]",
+		"wtui flow phase set --flow-id",
+		"--status completed",
+		"wtui flow phase add-child --flow-id",
+	})
+}
+
+func TestRunFlowPhaseSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "phase", "set", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for flow phase set help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if strings.Contains(stdout.String(), "flag: help requested") {
+		t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui flow phase set [flags]",
+		"--flow-id FLOW_ID",
+		"--phase-id PHASE_ID",
+		"--status STATUS",
+	})
+}
+
+func TestRunFlowPRSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "pr", "set", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for flow pr set help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if strings.Contains(stdout.String(), "flag: help requested") {
+		t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui flow pr set [flags]",
+		"--number N",
+		"--url URL",
+		"--head BRANCH",
+	})
+}
+
+func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		wants []string
+	}{
+		{
+			name: "create",
+			args: []string{"wtui", "flow", "create", "--help"},
+			wants: []string{
+				"Usage: wtui flow create [flags]",
+				"--title TITLE",
+				"--instructions TEXT",
+			},
+		},
+		{
+			name: "list",
+			args: []string{"wtui", "flow", "list", "--help"},
+			wants: []string{
+				"Usage: wtui flow list [flags]",
+				"--json",
+				"--repo-path PATH",
+			},
+		},
+		{
+			name: "read",
+			args: []string{"wtui", "flow", "read", "--help"},
+			wants: []string{
+				"Usage: wtui flow read [flags]",
+				"--flow-id FLOW_ID",
+				"wtui flow read --flow-id",
+			},
+		},
+		{
+			name: "phase add-child",
+			args: []string{"wtui", "flow", "phase", "add-child", "--help"},
+			wants: []string{
+				"Usage: wtui flow phase add-child [flags]",
+				"--phase-id PHASE_ID",
+				"--order N",
+			},
+		},
+		{
+			name: "plan set",
+			args: []string{"wtui", "flow", "plan", "set", "--help"},
+			wants: []string{
+				"Usage: wtui flow plan set [flags]",
+				"--flow-id FLOW_ID",
+				"--plan-id PLAN_ID",
+			},
+		},
+		{
+			name: "merge set",
+			args: []string{"wtui", "flow", "merge", "set", "--help"},
+			wants: []string{
+				"Usage: wtui flow merge set [flags]",
+				"--status STATUS",
+				"--merged-at RFC3339_TIMESTAMP",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := run(tc.args, noScanDeps(t, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run for flow leaf help")
+					return config.Config{}, nil
+				},
+				stdout: &stdout,
+			}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			if strings.Contains(stdout.String(), "flag: help requested") {
+				t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+			}
+			requireContainsAll(t, stdout.String(), tc.wants)
+		})
+	}
+}
+
+func TestRunFlowUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
+	err := run([]string{"wtui", "flow", "phaze"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown flow subcommand")
+			return config.Config{}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("expected unknown subcommand error")
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "phaze"; did you mean "phase"?`,
+		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
+	})
+}
+
+func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
+	err := run([]string{"wtui", "flow", "phase", "ste"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown flow phase subcommand")
+			return config.Config{}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("expected unknown subcommand error")
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "ste"; did you mean "set"?`,
+		"Usage: wtui flow phase <set|add-child> [flags]",
+	})
+}
+
+func TestRunFlowNestedSetSubcommandsSuggestSet(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "plan", args: []string{"wtui", "flow", "plan", "sete"}},
+		{name: "pr", args: []string{"wtui", "flow", "pr", "sete"}},
+		{name: "merge", args: []string{"wtui", "flow", "merge", "sete"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run for unknown flow nested subcommand")
+					return config.Config{}, nil
+				},
+				stdout: &bytes.Buffer{},
+			}))
+			if err == nil {
+				t.Fatal("expected unknown subcommand error")
+			}
+			requireContainsAll(t, err.Error(), []string{
+				`unknown command "sete"; did you mean "set"?`,
+				"Usage: wtui flow",
+			})
+		})
+	}
+}
+
 func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -761,6 +991,38 @@ func TestRunFlowCreateRequiresJSON(t *testing.T) {
 		noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --json")
+	}
+}
+
+func TestRunFlowCreateValidatesRepoPathBeforeLoadingConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing repo path",
+			args: []string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--json"},
+			want: "requires --repo-path",
+		},
+		{
+			name: "relative repo path",
+			args: []string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", "repo", "--json"},
+			want: "requires absolute --repo-path",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run before repo path validation")
+					return config.Config{}, nil
+				},
+				stdout: &bytes.Buffer{},
+			}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

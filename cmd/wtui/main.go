@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -46,6 +47,10 @@ type startProgramOptions struct {
 
 func run(args []string, deps runDeps) error {
 	deps = fillRunDeps(deps)
+	if len(args) == 2 && isHelpArg(args[1]) {
+		printMainHelp(deps.stdout)
+		return nil
+	}
 	if len(args) > 1 && args[1] == "session-hook" {
 		return runSessionHook(args, deps)
 	}
@@ -62,6 +67,9 @@ func run(args []string, deps runDeps) error {
 	flags.BoolVar(versionFlag, "v", false, "print version and exit")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
+	}
+	if flags.NArg() > 0 {
+		return unknownCommandError(flags.Arg(0), []string{"plan", "flow", "session-hook"}, mainHelpText)
 	}
 
 	if *versionFlag {
@@ -100,6 +108,101 @@ func run(args []string, deps runDeps) error {
 		return fmt.Errorf("error: %w", err)
 	}
 	return nil
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "--help" || arg == "-h" || arg == "help"
+}
+
+func printMainHelp(w io.Writer) {
+	io.WriteString(w, mainHelpText)
+}
+
+const mainHelpText = `Usage: wtui [--version] [command]
+
+Launch the worktree TUI, or use a command to persist agent artifacts.
+
+Commands:
+  plan          Save, list, read, and update saved plans.
+  flow          Create, inspect, and update Flow records.
+  session-hook  Capture Claude or Codex session hook payloads.
+
+Flags:
+  --version, -v  Print version and exit.
+  --help, -h     Print this help and exit.
+
+Examples:
+  wtui
+  wtui plan --help
+  wtui flow --help
+  wtui session-hook --provider codex
+`
+
+func unknownCommandError(got string, valid []string, usage string) error {
+	if suggestion := nearestCommand(got, valid); suggestion != "" {
+		return fmt.Errorf("unknown command %q; did you mean %q?\n\n%s", got, suggestion, usage)
+	}
+	return fmt.Errorf("unknown command %q\n\n%s", got, usage)
+}
+
+func nearestCommand(got string, valid []string) string {
+	best := ""
+	bestDistance := 3
+	for _, candidate := range valid {
+		distance := editDistance(got, candidate)
+		if distance < bestDistance {
+			best = candidate
+			bestDistance = distance
+		}
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr := make([]int, len(b)+1)
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = minInt(
+				curr[j-1]+1,
+				prev[j]+1,
+				prev[j-1]+cost,
+			)
+		}
+		prev = curr
+	}
+	return prev[len(b)]
+}
+
+func minInt(values ...int) int {
+	minimum := values[0]
+	for _, value := range values[1:] {
+		if value < minimum {
+			minimum = value
+		}
+	}
+	return minimum
+}
+
+func parseCommandFlags(flags *flag.FlagSet, args []string) (bool, error) {
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
 }
 
 func fillRunDeps(deps runDeps) runDeps {

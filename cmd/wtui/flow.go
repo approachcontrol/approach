@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -16,6 +17,10 @@ import (
 // runFlow handles `wtui flow ...` subcommands. It may load config to resolve
 // the artifact root but must never scan repositories or start the TUI.
 func runFlow(args []string, deps runDeps) error {
+	if len(args) == 3 && isHelpArg(args[2]) {
+		printFlowHelp(deps.stdout)
+		return nil
+	}
 	if len(args) < 3 {
 		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]")
 	}
@@ -35,9 +40,39 @@ func runFlow(args []string, deps runDeps) error {
 	case "merge":
 		return runFlowMerge(args[3:], deps)
 	default:
-		return fmt.Errorf("unknown flow subcommand %q", args[2])
+		return unknownCommandError(args[2], []string{"create", "list", "read", "phase", "plan", "pr", "merge"}, flowHelpText)
 	}
 }
+
+func printFlowHelp(w io.Writer) {
+	io.WriteString(w, flowHelpText)
+}
+
+const flowHelpText = `Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]
+
+Create and update task-centric Flow records under the wtui agent-artifact root.
+
+Commands:
+  create           Create a Flow; prints JSON when --json is present.
+  list             List Flows as JSON.
+  read             Print one Flow record as JSON.
+  phase set        Advance a Flow phase.
+  phase add-child  Add or update an implementation child phase.
+  plan set         Link a saved plan artifact to a Flow.
+  pr set           Record pull request metadata.
+  merge set        Record merge metadata.
+
+Examples:
+  wtui flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
+  wtui flow read --flow-id "$FLOW_ID"
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
+  wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
+
+Most commands accept:
+  --state-root PATH  Override the artifact state root after the leaf command.
+`
 
 // resolveFlowRoot applies the documented precedence:
 // --state-root > WTUI_FLOW_STATE_ROOT > WTUI_PLAN_STATE_ROOT >
@@ -73,6 +108,7 @@ func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
 func runFlowCreate(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow create", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowCreateHelp(deps.stdout) }
 	title := flags.String("title", "", "flow title")
 	instructions := flags.String("instructions", "", "task instructions")
 	instructionsFile := flags.String("instructions-file", "", "read task instructions from file")
@@ -83,7 +119,10 @@ func runFlowCreate(args []string, deps runDeps) error {
 	commit := flags.String("commit", "", "start commit")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	asJSON := flags.Bool("json", false, "emit JSON output")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if !*asJSON {
@@ -91,6 +130,12 @@ func runFlowCreate(args []string, deps runDeps) error {
 	}
 	if strings.TrimSpace(*title) == "" {
 		return fmt.Errorf("flow create requires --title")
+	}
+	if strings.TrimSpace(*repoPath) == "" {
+		return fmt.Errorf("flow create requires --repo-path")
+	}
+	if !filepath.IsAbs(*repoPath) {
+		return fmt.Errorf("flow create requires absolute --repo-path")
 	}
 	body, err := readFlowInstructions(*instructions, *instructionsFile)
 	if err != nil {
@@ -115,13 +160,40 @@ func runFlowCreate(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, record)
 }
 
+func printFlowCreateHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow create [flags]
+
+Create a Flow record. JSON output is required in v1.
+
+Required flags:
+  --title TITLE
+  --instructions TEXT or --instructions-file PATH
+  --repo-path PATH
+  --json
+
+Common flags:
+  --worktree-path PATH
+  --branch BRANCH
+  --base-ref REF
+  --commit SHA
+  --state-root PATH
+
+Example:
+  wtui flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
+`)
+}
+
 func runFlowList(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow list", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowListHelp(deps.stdout) }
 	repoPath := flags.String("repo-path", "", "filter by repository path")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	asJSON := flags.Bool("json", false, "emit JSON output")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if !*asJSON {
@@ -141,12 +213,33 @@ func runFlowList(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, records)
 }
 
+func printFlowListHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow list [flags]
+
+List Flow records as JSON.
+
+Required flags:
+  --json
+
+Common flags:
+  --repo-path PATH
+  --state-root PATH
+
+Example:
+  wtui flow list --repo-path "$REPO" --json
+`)
+}
+
 func runFlowRead(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow read", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowReadHelp(deps.stdout) }
 	flowID := flags.String("flow-id", "", "flow id")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *flowID == "" {
@@ -163,7 +256,27 @@ func runFlowRead(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, record)
 }
 
+func printFlowReadHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow read [flags]
+
+Print one Flow record as JSON.
+
+Required flags:
+  --flow-id FLOW_ID
+
+Common flags:
+  --state-root PATH
+
+Example:
+  wtui flow read --flow-id "$FLOW_ID"
+`)
+}
+
 func runFlowPhase(args []string, deps runDeps) error {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowPhaseHelp(deps.stdout)
+		return nil
+	}
 	if len(args) < 1 {
 		return fmt.Errorf("usage: wtui flow phase <set|add-child> [flags]")
 	}
@@ -173,13 +286,37 @@ func runFlowPhase(args []string, deps runDeps) error {
 	case "add-child":
 		return runFlowPhaseAddChild(args[1:], deps)
 	default:
-		return fmt.Errorf("usage: wtui flow phase <set|add-child> [flags]")
+		return unknownCommandError(args[0], []string{"set", "add-child"}, flowPhaseHelpText)
 	}
 }
+
+func printFlowPhaseHelp(w io.Writer) {
+	io.WriteString(w, flowPhaseHelpText)
+}
+
+const flowPhaseHelpText = `Usage: wtui flow phase <set|add-child> [flags]
+
+Update Flow phase state. Readiness is derived by wtui; agents set running,
+completed, needs_attention, blocked, or skipped.
+
+Commands:
+  set        Set a phase status, outcome, summary, or notes.
+  add-child  Add or update an implementation child phase.
+
+Examples:
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
+  wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
+
+Common flags:
+  --state-root PATH  Override the artifact state root.
+`
 
 func runFlowPhaseSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPhaseSetHelp(deps.stdout) }
 	flowID := flags.String("flow-id", "", "flow id")
 	phaseID := flags.String("phase-id", "", "phase id")
 	status := flags.String("status", "", "phase status")
@@ -187,7 +324,10 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 	summary := flags.String("summary", "", "phase summary")
 	notes := flags.String("notes", "", "phase notes")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *flowID == "" {
@@ -226,16 +366,42 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, record)
 }
 
+func printFlowPhaseSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow phase set [flags]
+
+Set a Flow phase status, outcome, summary, or notes.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+  --status STATUS
+
+Common flags:
+  --outcome OUTCOME
+  --summary TEXT
+  --notes TEXT
+  --state-root PATH
+
+Examples:
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
+  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+`)
+}
+
 func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow phase add-child", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPhaseAddChildHelp(deps.stdout) }
 	flowID := flags.String("flow-id", "", "flow id")
 	parentPhaseID := flags.String("parent-phase-id", "implementation", "parent phase id")
 	phaseID := flags.String("phase-id", "", "child phase id")
 	title := flags.String("title", "", "child phase title")
 	order := flags.Int("order", 0, "child phase order under implementation")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *flowID == "" {
@@ -267,21 +433,64 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, record)
 }
 
+func printFlowPhaseAddChildHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow phase add-child [flags]
+
+Add or update an implementation child phase.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+  --title TITLE
+  --order N
+
+Common flags:
+  --parent-phase-id PHASE_ID
+  --state-root PATH
+
+Example:
+  wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
+`)
+}
+
 func runFlowPlan(args []string, deps runDeps) error {
-	if len(args) < 1 || args[0] != "set" {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowPlanHelp(deps.stdout)
+		return nil
+	}
+	if len(args) < 1 {
 		return fmt.Errorf("usage: wtui flow plan set [flags]")
+	}
+	if args[0] != "set" {
+		return unknownCommandError(args[0], []string{"set"}, flowPlanHelpText)
 	}
 	return runFlowPlanSet(args[1:], deps)
 }
 
+func printFlowPlanHelp(w io.Writer) {
+	io.WriteString(w, flowPlanHelpText)
+}
+
+const flowPlanHelpText = `Usage: wtui flow plan set [flags]
+
+Link a saved plan artifact to a Flow.
+
+Example:
+  wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+`
+
 func runFlowPlanSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow plan set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPlanSetHelp(deps.stdout) }
 	flowID := flags.String("flow-id", "", "flow id")
 	planID := flags.String("plan-id", "", "plan id")
 	planPath := flags.String("plan-path", "", "plan markdown path")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *flowID == "" {
@@ -305,16 +514,54 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, record)
 }
 
+func printFlowPlanSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow plan set [flags]
+
+Link a saved plan artifact to a Flow.
+
+Required flags:
+  --flow-id FLOW_ID
+  --plan-id PLAN_ID
+
+Common flags:
+  --plan-path PATH
+  --state-root PATH
+
+Example:
+  wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+`)
+}
+
 func runFlowPR(args []string, deps runDeps) error {
-	if len(args) < 1 || args[0] != "set" {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowPRHelp(deps.stdout)
+		return nil
+	}
+	if len(args) < 1 {
 		return fmt.Errorf("usage: wtui flow pr set [flags]")
+	}
+	if args[0] != "set" {
+		return unknownCommandError(args[0], []string{"set"}, flowPRHelpText)
 	}
 	return runFlowPRSet(args[1:], deps)
 }
 
+func printFlowPRHelp(w io.Writer) {
+	io.WriteString(w, flowPRHelpText)
+}
+
+const flowPRHelpText = `Usage: wtui flow pr set [flags]
+
+Record pull request metadata for a Flow.
+
+Example:
+  wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
+`
+
 func runFlowPRSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow pr set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPRSetHelp(deps.stdout) }
 	flowID := flags.String("flow-id", "", "flow id")
 	provider := flags.String("provider", "github", "PR provider")
 	number := flags.Int("number", 0, "PR number")
@@ -323,7 +570,10 @@ func runFlowPRSet(args []string, deps runDeps) error {
 	base := flags.String("base", "", "PR base branch")
 	status := flags.String("status", "", "PR status")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *flowID == "" {
@@ -360,22 +610,67 @@ func runFlowPRSet(args []string, deps runDeps) error {
 	return writeFlowJSON(deps.stdout, record)
 }
 
+func printFlowPRSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow pr set [flags]
+
+Record pull request metadata for a Flow.
+
+Required flags:
+  --flow-id FLOW_ID
+  --number N
+  --url URL
+  --head BRANCH
+  --base BRANCH
+
+Common flags:
+  --provider PROVIDER
+  --status STATUS
+  --state-root PATH
+
+Example:
+  wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
+`)
+}
+
 func runFlowMerge(args []string, deps runDeps) error {
-	if len(args) < 1 || args[0] != "set" {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowMergeHelp(deps.stdout)
+		return nil
+	}
+	if len(args) < 1 {
 		return fmt.Errorf("usage: wtui flow merge set [flags]")
+	}
+	if args[0] != "set" {
+		return unknownCommandError(args[0], []string{"set"}, flowMergeHelpText)
 	}
 	return runFlowMergeSet(args[1:], deps)
 }
 
+func printFlowMergeHelp(w io.Writer) {
+	io.WriteString(w, flowMergeHelpText)
+}
+
+const flowMergeHelpText = `Usage: wtui flow merge set [flags]
+
+Record merge metadata for a Flow.
+
+Example:
+  wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
+`
+
 func runFlowMergeSet(args []string, deps runDeps) error {
 	flags := flag.NewFlagSet("flow merge set", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowMergeSetHelp(deps.stdout) }
 	flowID := flags.String("flow-id", "", "flow id")
 	status := flags.String("status", "", "merge status")
 	commit := flags.String("commit", "", "merge commit")
 	mergedAt := flags.String("merged-at", "", "merge timestamp")
 	stateRoot := flags.String("state-root", "", "artifact state root")
-	if err := flags.Parse(args); err != nil {
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
 		return err
 	}
 	if *flowID == "" {
@@ -412,6 +707,27 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 		return err
 	}
 	return writeFlowJSON(deps.stdout, record)
+}
+
+func printFlowMergeSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow merge set [flags]
+
+Record merge metadata for a Flow.
+
+Required flags:
+  --flow-id FLOW_ID
+  --status STATUS
+
+Merged status also requires:
+  --commit SHA
+  --merged-at RFC3339_TIMESTAMP
+
+Common flags:
+  --state-root PATH
+
+Example:
+  wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
+`)
 }
 
 func readFlowInstructions(inline, file string) (string, error) {
