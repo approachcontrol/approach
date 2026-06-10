@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/brian-bell/wtui/agent"
+	"github.com/google/shlex"
 )
 
 type commandSpec struct {
@@ -530,6 +531,50 @@ func pageText(body string, lookPath lookPathFunc) (TerminalLaunchSpec, error) {
 	cmd := exec.Command("less", "-R")
 	cmd.Stdin = strings.NewReader(body)
 	return TerminalLaunchSpec{Cmd: cmd, Interactive: true}, nil
+}
+
+// EditorOptions customizes how editable files are opened.
+type EditorOptions struct {
+	EditorCommand string
+}
+
+// EditFile builds an interactive editor command for path.
+func EditFile(path string) (TerminalLaunchSpec, error) {
+	return EditFileWithOptions(path, EditorOptions{})
+}
+
+// EditFileWithOptions is EditFile with configurable editor selection.
+func EditFileWithOptions(path string, opts EditorOptions) (TerminalLaunchSpec, error) {
+	return editFileWithOptions(path, os.Getenv, exec.LookPath, opts)
+}
+
+func editFileWithOptions(path string, getenv getenvFunc, lookPath lookPathFunc, opts EditorOptions) (TerminalLaunchSpec, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return TerminalLaunchSpec{}, fmt.Errorf("editor path cannot be empty")
+	}
+	source := "[editor].command"
+	editor := strings.TrimSpace(opts.EditorCommand)
+	if editor == "" {
+		source = "EDITOR"
+		editor = strings.TrimSpace(getenv("EDITOR"))
+	}
+	if editor == "" {
+		return TerminalLaunchSpec{}, fmt.Errorf("no editor configured; set [editor].command or EDITOR")
+	}
+	fields, err := shlex.Split(editor)
+	if err != nil {
+		return TerminalLaunchSpec{}, fmt.Errorf("parse %s: %w", source, err)
+	}
+	if len(fields) == 0 || strings.TrimSpace(fields[0]) == "" {
+		return TerminalLaunchSpec{}, fmt.Errorf("%s is empty", source)
+	}
+	if !commandExists(fields[0], lookPath) {
+		return TerminalLaunchSpec{}, fmt.Errorf("%s is set to %q, but that command was not found", source, editor)
+	}
+	args := append([]string(nil), fields[1:]...)
+	args = append(args, path)
+	return TerminalLaunchSpec{Cmd: exec.Command(fields[0], args...), Interactive: true}, nil
 }
 
 // OpenVSCode opens VSCode at the given path.

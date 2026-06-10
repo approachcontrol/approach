@@ -86,6 +86,7 @@ type Model struct {
 	planMarkdownPath          func(string) (string, error)
 	copyToClipboard           func(string) error
 	pageText                  func(string) (actions.TerminalLaunchSpec, error)
+	editFile                  func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                 func(string) error
 	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
@@ -141,6 +142,7 @@ type Options struct {
 	PlanMarkdownPath     func(planID string) (string, error)
 	CopyToClipboard      func(text string) error
 	PageText             func(body string) (actions.TerminalLaunchSpec, error)
+	EditFile             func(path string) (actions.TerminalLaunchSpec, error)
 	SaveAgentCommand     func(string) error
 	LaunchTerminal       func(path string) (actions.TerminalLaunchSpec, error)
 	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
@@ -222,6 +224,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if pageText == nil {
 		pageText = actions.PageText
 	}
+	editFile := opts.EditFile
+	if editFile == nil {
+		editFile = actions.EditFile
+	}
 	launchTerminal := opts.LaunchTerminal
 	if launchTerminal == nil {
 		launchTerminal = actions.TerminalLaunch
@@ -299,6 +305,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		planMarkdownPath:     planMarkdownPath,
 		copyToClipboard:      copyToClipboard,
 		pageText:             pageText,
+		editFile:             editFile,
 		saveAgent:            saveAgent,
 		launchTerminal:       launchTerminal,
 		launchAgent:          launchAgent,
@@ -778,6 +785,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TerminalResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)
+		}
+		return m, nil
+	case PlanEditResultMsg:
+		if !m.isCurrentRepo(msg.RepoPath) {
+			return m, nil
+		}
+		if msg.Err != "" {
+			m = m.setStatus(statusOther, msg.Err)
+			return m, nil
+		}
+		if m.mode == ui.ModePlans {
+			return m.startFetchMode(ui.ModePlans)
 		}
 		return m, nil
 	case AgentSetMsg:

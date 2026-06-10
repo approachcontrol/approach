@@ -22,6 +22,7 @@ exist:
 | Setting | Highest precedence | Config fallback | Built-in default |
 |---------|--------------------|-----------------|------------------|
 | Scan root | `WORKTREE_ROOT` | `[scan].root` | `~/dev` |
+| Plan editor command | `[editor].command` | `EDITOR` | unset |
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
@@ -92,12 +93,15 @@ Values greater than `2` behave like `2`.
 
 ### `[editor]`
 
-Parsed for future editor-launch settings. The current editor action still opens
-VS Code with `code`.
+Configures the editor used by the plans pane `e` action. The selected plan's
+`plan.md` path is appended to the command, and the plans pane refreshes after
+the configured command exits. Use wait flags such as `code --wait` for GUI
+editors that detach by default. When this setting is omitted, wtui falls back
+to `$EDITOR`.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `command` | string | Future editor command setting. |
+| `command` | string | Shell-style editor command, such as `code --wait`, `vim`, or `vim -c "set ft=markdown"`. |
 
 ### `[terminal]`
 
@@ -190,6 +194,9 @@ not captured from provider hooks in v1. Each plan is stored as
 `<artifact-root>/plans/<plan-id>/meta.json` plus `plan.md`, with the same
 restrictive permissions (`0700` directories, `0600` files) and atomic writes as
 sessions. They appear in the TUI plans pane (mode `7`).
+Use `e` in the plans pane to edit the selected `plan.md` with `[editor].command`
+or `$EDITOR`; missing editor commands are shown in the TUI status bar. The plans
+pane refreshes when the configured editor command exits.
 
 ```bash
 # Save or update (reuse --plan-id) a plan; Markdown comes from --file or stdin.

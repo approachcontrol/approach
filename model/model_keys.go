@@ -351,6 +351,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			return m.handleOpenFlowPlanText()
 		}
+	case "e":
+		if m.mode == ui.ModePlans {
+			return m.handleEditPlan()
+		}
 	case "m":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
@@ -618,6 +622,31 @@ func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
 	}
 	m = m.startViewRequest(FetchPlanText, ui.ModeFlows)
 	return m, m.fetchPlanTextByID(record.PlanID, ui.ModeFlows)
+}
+
+func (m Model) handleEditPlan() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModePlans || len(m.filteredPlans()) == 0 {
+		return m, nil
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	plan, ok := m.selectedPlan()
+	if !ok {
+		return m, nil
+	}
+	planPath, err := m.planMarkdownPath(plan.PlanID)
+	if err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	launch, err := m.editFile(planPath)
+	if err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	return m, runPlanEditLaunch(repoPath, launch)
 }
 
 func (m Model) handleDelete() (tea.Model, tea.Cmd) {
@@ -1805,6 +1834,29 @@ func runTerminalLaunch(launch actions.TerminalLaunchSpec) tea.Cmd {
 			return TerminalResultMsg{Err: err.Error()}
 		}
 		return TerminalResultMsg{}
+	}
+}
+
+func runPlanEditLaunch(repoPath string, launch actions.TerminalLaunchSpec) tea.Cmd {
+	if launch.Interactive {
+		return tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {
+			if err != nil {
+				if launch.Cleanup != nil {
+					launch.Cleanup()
+				}
+				return PlanEditResultMsg{RepoPath: repoPath, Err: err.Error()}
+			}
+			return PlanEditResultMsg{RepoPath: repoPath}
+		})
+	}
+	return func() tea.Msg {
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return PlanEditResultMsg{RepoPath: repoPath, Err: err.Error()}
+		}
+		return PlanEditResultMsg{RepoPath: repoPath}
 	}
 }
 

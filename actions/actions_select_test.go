@@ -150,6 +150,112 @@ func TestTerminalLaunch_HonorsTerminal(t *testing.T) {
 	}
 }
 
+func TestEditFileWithOptionsUsesConfiguredEditorBeforeEditorEnv(t *testing.T) {
+	launch, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(map[string]string{
+		"EDITOR": "vim",
+	}), fakeLookPath("code", "vim"), EditorOptions{
+		EditorCommand: "code --wait",
+	})
+	if err != nil {
+		t.Fatalf("editFileWithOptions returned error: %v", err)
+	}
+	if !launch.Interactive {
+		t.Fatal("edit launch should be interactive")
+	}
+	want := []string{"code", "--wait", "/state/plans/plan-1/plan.md"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestEditFileWithOptionsFallsBackToEditorEnv(t *testing.T) {
+	launch, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(map[string]string{
+		"EDITOR": "vim",
+	}), fakeLookPath("vim"), EditorOptions{})
+	if err != nil {
+		t.Fatalf("editFileWithOptions returned error: %v", err)
+	}
+	want := []string{"vim", "/state/plans/plan-1/plan.md"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestEditFileWithOptionsParsesQuotedEditorArgs(t *testing.T) {
+	launch, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(nil), fakeLookPath("vim"), EditorOptions{
+		EditorCommand: `vim -c "set ft=markdown"`,
+	})
+	if err != nil {
+		t.Fatalf("editFileWithOptions returned error: %v", err)
+	}
+	want := []string{"vim", "-c", "set ft=markdown", "/state/plans/plan-1/plan.md"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestEditFileWithOptionsPreservesEmptyQuotedEditorArg(t *testing.T) {
+	launch, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(nil), fakeLookPath("emacsclient"), EditorOptions{
+		EditorCommand: `emacsclient -a "" -c`,
+	})
+	if err != nil {
+		t.Fatalf("editFileWithOptions returned error: %v", err)
+	}
+	want := []string{"emacsclient", "-a", "", "-c", "/state/plans/plan-1/plan.md"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestEditFileWithOptionsWhitespaceConfiguredEditorFallsBackToEditorEnv(t *testing.T) {
+	launch, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(map[string]string{
+		"EDITOR": "vim",
+	}), fakeLookPath("vim"), EditorOptions{EditorCommand: " \t "})
+	if err != nil {
+		t.Fatalf("editFileWithOptions returned error: %v", err)
+	}
+	want := []string{"vim", "/state/plans/plan-1/plan.md"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestEditFileWithOptionsReportsCommentOnlyEditorAsEmpty(t *testing.T) {
+	_, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(nil), fakeLookPath(), EditorOptions{
+		EditorCommand: "# disabled",
+	})
+	if err == nil {
+		t.Fatal("expected empty editor error")
+	}
+	if !strings.Contains(err.Error(), "[editor].command is empty") {
+		t.Fatalf("error = %v, want empty editor error", err)
+	}
+}
+
+func TestEditFileWithOptionsReportsQuotedEmptyCommandAsEmpty(t *testing.T) {
+	_, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(map[string]string{
+		"EDITOR": `""`,
+	}), fakeLookPath(), EditorOptions{})
+	if err == nil {
+		t.Fatal("expected empty editor error")
+	}
+	if !strings.Contains(err.Error(), "EDITOR is empty") {
+		t.Fatalf("error = %v, want empty editor error", err)
+	}
+}
+
+func TestEditFileWithOptionsReportsMissingEditor(t *testing.T) {
+	_, err := editFileWithOptions("/state/plans/plan-1/plan.md", fakeGetenv(nil), fakeLookPath(), EditorOptions{})
+	if err == nil {
+		t.Fatal("expected missing editor error")
+	}
+	for _, want := range []string{"[editor].command", "EDITOR"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing editor error should contain %q, got %v", want, err)
+		}
+	}
+}
+
 func TestTerminalLaunch_DarwinFallsBackToTerminalApp(t *testing.T) {
 	launch, err := terminalLaunch("/repo", "darwin", fakeGetenv(nil), fakeLookPath("open"), nil)
 	if err != nil {

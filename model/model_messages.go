@@ -270,6 +270,11 @@ type TerminalResultMsg struct {
 	Err string
 }
 
+type PlanEditResultMsg struct {
+	RepoPath string
+	Err      string
+}
+
 type AgentSetMsg struct {
 	Command string
 }
