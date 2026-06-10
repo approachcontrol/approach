@@ -153,6 +153,11 @@ func (s *Store) HasPlan(planID string) bool {
 	return ok
 }
 
+// ReadMetadata returns one plan metadata record by ID without reading plan.md.
+func (s *Store) ReadMetadata(planID string) (PlanRecord, error) {
+	return s.readMetadataStrict(planID)
+}
+
 // Save writes a plan record and returns its plan ID. When a plan with the same
 // ID already exists, Markdown and Title are always replaced from the incoming
 // record (both are required), while Status, Source, Summary, phases,
@@ -366,27 +371,35 @@ func (s *Store) List(filter PlanFilter) ([]PlanRecord, error) {
 }
 
 func (s *Store) readRecord(planID string) (PlanRecord, bool) {
-	if err := validatePlanID(planID); err != nil {
-		return PlanRecord{}, false
-	}
-	dir := s.planDir(planID)
-	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	record, err := s.readMetadataStrict(planID)
 	if err != nil {
 		return PlanRecord{}, false
 	}
-	var record PlanRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		// Corrupt metadata should not hide every other plan.
-		return PlanRecord{}, false
-	}
-	if record.PlanID != planID {
-		return PlanRecord{}, false
-	}
+	dir := s.planDir(planID)
 	markdown, err := os.ReadFile(filepath.Join(dir, "plan.md"))
 	if err == nil {
 		record.Markdown = string(markdown)
 	}
 	return record, true
+}
+
+func (s *Store) readMetadataStrict(planID string) (PlanRecord, error) {
+	if err := validatePlanID(planID); err != nil {
+		return PlanRecord{}, err
+	}
+	dir := s.planDir(planID)
+	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		return PlanRecord{}, fmt.Errorf("read plan metadata: %w", err)
+	}
+	var record PlanRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return PlanRecord{}, fmt.Errorf("decode plan metadata: %w", err)
+	}
+	if record.PlanID != planID {
+		return PlanRecord{}, fmt.Errorf("plan metadata id %q does not match %q", record.PlanID, planID)
+	}
+	return record, nil
 }
 
 func (s *Store) planDir(planID string) string {

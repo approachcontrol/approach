@@ -40,6 +40,41 @@ func TestStoreListSkipsCorruptAndNonDirEntries(t *testing.T) {
 	}
 }
 
+func TestStoreReadMetadataReturnsPlanMetadataAndReportsCorruptMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:   "readable",
+		Title:    "Readable",
+		Markdown: "# Readable\n",
+		Status:   "draft",
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	read, err := store.ReadMetadata("readable")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if read.PlanID != "readable" || read.Markdown != "" {
+		t.Fatalf("ReadMetadata() = %#v", read)
+	}
+
+	badDir := filepath.Join(root, "plans", "bad")
+	if err := os.MkdirAll(badDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "meta.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadMetadata("bad"); err == nil {
+		t.Fatal("ReadMetadata(corrupt) error = nil")
+	}
+}
+
 func TestStoreSavesAndListsPlansByRepoPath(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

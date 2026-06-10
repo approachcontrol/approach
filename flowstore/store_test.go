@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/planstore"
 )
 
 func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
@@ -332,6 +333,430 @@ func TestStoreSetPhasePersistsUpdateAndDerivesStatus(t *testing.T) {
 	}
 	if read.Status != completed.Status || read.Phases[0].Status != flowstore.PhaseCompleted || read.Phases[1].Status != flowstore.PhaseReady {
 		t.Fatalf("persisted record = %#v, want completed plan and ready next phase", read)
+	}
+}
+
+func TestStoreSetPhaseSyncsCompletedLinkedPlanPhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("plan NewStore() error = %v", err)
+	}
+	if _, err := planStore.Save(planstore.PlanRecord{
+		PlanID:   "plan-1",
+		Title:    "Linked Plan",
+		Markdown: "Build the thing.",
+		Status:   "in_progress",
+		RepoPath: repoPath,
+		Phases: []planstore.PlanPhase{{
+			PhaseID: "implementation",
+			Title:   "Implementation",
+			Status:  "in_progress",
+			Order:   3,
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Phase sync",
+		Instructions: "sync the linked plan",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != nil {
+		t.Fatalf("SetPlanLink() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation running) error = %v", err)
+	}
+
+	completed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Implementation finished.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	}
+	if got := phaseByID(t, completed, "implementation").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("flow implementation status = %q, want completed", got)
+	}
+
+	plans, err := planStore.List(planstore.PlanFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("plan List() error = %v", err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plan List() returned %d records, want 1: %#v", len(plans), plans)
+	}
+	implementation := planPhaseByID(t, plans[0], "implementation")
+	if implementation.Status != "completed" {
+		t.Fatalf("linked plan implementation status = %q, want completed; phases = %#v", implementation.Status, plans[0].Phases)
+	}
+}
+
+func TestStoreSetPhaseDoesNotAddMissingLinkedPlanPhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("plan NewStore() error = %v", err)
+	}
+	if _, err := planStore.Save(planstore.PlanRecord{
+		PlanID:   "plan-1",
+		Title:    "Linked Plan",
+		Markdown: "Build the thing.",
+		Status:   "in_progress",
+		RepoPath: repoPath,
+		Phases: []planstore.PlanPhase{{
+			PhaseID: "implementation",
+			Title:   "Implementation",
+			Status:  "in_progress",
+			Order:   3,
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Skip missing plan phase",
+		Instructions: "do not pollute the plan",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != nil {
+		t.Fatalf("SetPlanLink() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation")
+
+	completed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "review-loop",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Review loop passed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(review-loop completed) error = %v", err)
+	}
+	if got := phaseByID(t, completed, "review-loop").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("flow review-loop status = %q, want completed", got)
+	}
+
+	plans, err := planStore.List(planstore.PlanFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("plan List() error = %v", err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("plan List() returned %d records, want 1: %#v", len(plans), plans)
+	}
+	if _, ok := maybePlanPhaseByID(plans[0], "review-loop"); ok {
+		t.Fatalf("linked plan unexpectedly gained review-loop phase: %#v", plans[0].Phases)
+	}
+}
+
+func TestStoreSetPhaseCompletesWithoutLinkedPlanMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "No linked plan",
+		Instructions: "complete without plan metadata",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation running) error = %v", err)
+	}
+
+	completed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Implementation finished without a linked plan.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	}
+	phase := phaseByID(t, completed, "implementation")
+	if phase.Status != flowstore.PhaseCompleted || completed.PlanID != "" || completed.PlanPath != "" {
+		t.Fatalf("completed flow without linked plan = %#v", completed)
+	}
+}
+
+func TestStoreSetPhaseMarksNeedsAttentionWhenLinkedPlanSyncFails(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Plan sync failure",
+		Instructions: "surface failed plan persistence",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation running) error = %v", err)
+	}
+	record, err = store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID:   record.FlowID,
+		PlanID:   "missing-plan",
+		PlanPath: filepath.Join(root, "plans", "missing-plan", "plan.md"),
+	})
+	if err != nil {
+		t.Fatalf("SetStartMetadata() error = %v", err)
+	}
+
+	_, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Implementation finished.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "sync linked plan phase") {
+		t.Fatalf("SetPhase(implementation completed) error = %v, want linked plan sync failure", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := phaseByID(t, read, "implementation")
+	if phase.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("implementation status after sync failure = %q, want needs_attention", phase.Status)
+	}
+	if !strings.Contains(phase.Notes, "missing-plan") {
+		t.Fatalf("implementation notes = %q, want missing plan detail", phase.Notes)
+	}
+	if read.Status != flowstore.StatusNeedsAttention {
+		t.Fatalf("flow status = %q, want needs_attention", read.Status)
+	}
+}
+
+func TestStoreSetPhaseMarksNeedsAttentionWhenMatchingLinkedPlanPhaseUpdateFails(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("plan NewStore() error = %v", err)
+	}
+	if _, err := planStore.Save(planstore.PlanRecord{
+		PlanID:   "plan-1",
+		Title:    "Linked Plan",
+		Markdown: "Build the thing.",
+		Status:   "in_progress",
+		RepoPath: repoPath,
+		Phases: []planstore.PlanPhase{{
+			PhaseID: "implementation",
+			Status:  "in_progress",
+			Order:   3,
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Plan phase update failure",
+		Instructions: "surface matching phase persistence failure",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != nil {
+		t.Fatalf("SetPlanLink() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation running) error = %v", err)
+	}
+
+	_, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Implementation finished.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "phase title is required") {
+		t.Fatalf("SetPhase(implementation completed) error = %v, want plan phase title failure", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := phaseByID(t, read, "implementation")
+	if phase.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("implementation status after matching plan phase update failure = %q, want needs_attention", phase.Status)
+	}
+	if !strings.Contains(phase.Notes, "phase title is required") {
+		t.Fatalf("implementation notes = %q, want phase title failure detail", phase.Notes)
+	}
+}
+
+func TestStoreSetPhaseSkipsAlreadyCompletedLinkedPlanPhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("plan NewStore() error = %v", err)
+	}
+	if _, err := planStore.Save(planstore.PlanRecord{
+		PlanID:   "plan-1",
+		Title:    "Linked Plan",
+		Markdown: "Build the thing.",
+		Status:   "in_progress",
+		RepoPath: repoPath,
+		Phases: []planstore.PlanPhase{{
+			PhaseID: "implementation",
+			Status:  "completed",
+			Order:   3,
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Already synced plan phase",
+		Instructions: "do not rewrite completed plan phase",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: record.FlowID, PlanID: "plan-1"})
+	if err != nil {
+		t.Fatalf("SetPlanLink() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseRunning,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation running) error = %v", err)
+	}
+
+	completed, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Implementation finished.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	}
+	if got := phaseByID(t, completed, "implementation").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("flow implementation status = %q, want completed", got)
+	}
+}
+
+func TestStoreSetPhaseCompletedRetryIgnoresPlanSyncFailureAndPreservesCompletedFlow(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Completed retry",
+		Instructions: "do not demote completed phase",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Implementation finished before the plan link existed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	}
+	record, err = store.SetStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID:   record.FlowID,
+		PlanID:   "missing-plan",
+		PlanPath: filepath.Join(root, "plans", "missing-plan", "plan.md"),
+	})
+	if err != nil {
+		t.Fatalf("SetStartMetadata() error = %v", err)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseCompleted,
+		Summary: "Idempotent completion retry.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation completed retry) error = %v", err)
+	}
+	if got := phaseByID(t, updated, "implementation").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("updated implementation status = %q, want completed", got)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := phaseByID(t, read, "implementation")
+	if phase.Status != flowstore.PhaseCompleted {
+		t.Fatalf("implementation status after completed retry sync failure = %q, want completed", phase.Status)
+	}
+	if read.Status != flowstore.StatusInProgress {
+		t.Fatalf("flow status = %q, want in_progress", read.Status)
 	}
 }
 
@@ -2661,6 +3086,24 @@ func phaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowst
 	}
 	t.Fatalf("phase %q not found in %#v", phaseID, record.Phases)
 	return flowstore.FlowPhase{}
+}
+
+func planPhaseByID(t *testing.T, record planstore.PlanRecord, phaseID string) planstore.PlanPhase {
+	t.Helper()
+	if phase, ok := maybePlanPhaseByID(record, phaseID); ok {
+		return phase
+	}
+	t.Fatalf("plan phase %q not found in %#v", phaseID, record.Phases)
+	return planstore.PlanPhase{}
+}
+
+func maybePlanPhaseByID(record planstore.PlanRecord, phaseID string) (planstore.PlanPhase, bool) {
+	for _, phase := range record.Phases {
+		if phase.PhaseID == phaseID {
+			return phase, true
+		}
+	}
+	return planstore.PlanPhase{}, false
 }
 
 func mustCompleteFlowPhases(t *testing.T, store *flowstore.Store, record *flowstore.FlowRecord, phaseIDs ...string) {

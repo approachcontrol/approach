@@ -333,6 +333,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 
 	now := s.now()
 	phase := record.Phases[phaseIndex]
+	originalStatus := phase.Status
 	if err := validatePhaseUpdate(phase, update); err != nil {
 		return FlowRecord{}, err
 	}
@@ -360,6 +361,22 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	record = refreshPhaseReadiness(record, now)
 	record.Status = DeriveStatus(record)
 	if err := s.write(record); err != nil {
+		return FlowRecord{}, err
+	}
+	if err := s.syncLinkedPlanPhase(record, phase); err != nil {
+		if originalStatus == PhaseCompleted {
+			return record, nil
+		}
+		failedPhase := markPhaseSyncNeedsAttention(phase, err, now)
+		if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
+			record.Phases[failedIndex] = failedPhase
+		}
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		record.Status = DeriveStatus(record)
+		if writeErr := s.write(record); writeErr != nil {
+			return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+		}
 		return FlowRecord{}, err
 	}
 	return record, nil
@@ -428,6 +445,60 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 
 func clearsPhaseOutcome(status string) bool {
 	return status == PhaseRunning
+}
+
+func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) FlowPhase {
+	phase.Status = PhaseNeedsAttention
+	phase.Outcome = ""
+	note := fmt.Sprintf("Linked plan phase sync failed: %v", err)
+	if strings.TrimSpace(phase.Notes) != "" {
+		phase.Notes = strings.TrimSpace(phase.Notes) + "\n" + note
+	} else {
+		phase.Notes = note
+	}
+	phase.UpdatedAt = now
+	return phase
+}
+
+func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
+	planID := strings.TrimSpace(record.PlanID)
+	if planID == "" || phase.Status != PhaseCompleted {
+		return nil
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: s.root})
+	if err != nil {
+		return fmt.Errorf("sync linked plan phase: %w", err)
+	}
+	plan, err := planStore.ReadMetadata(planID)
+	if err != nil {
+		return fmt.Errorf("sync linked plan phase: %w", err)
+	}
+	planPhase, ok := planPhaseByNormalizedID(plan, phase.PhaseID)
+	if !ok {
+		return nil
+	}
+	if planPhase.Status == "completed" {
+		return nil
+	}
+	if err := planStore.SetPhase(planID, planstore.PlanPhase{
+		PhaseID: planPhase.PhaseID,
+		Title:   planPhase.Title,
+		Status:  "completed",
+		Order:   planPhase.Order,
+	}); err != nil {
+		return fmt.Errorf("sync linked plan phase: %w", err)
+	}
+	return nil
+}
+
+func planPhaseByNormalizedID(record planstore.PlanRecord, phaseID string) (planstore.PlanPhase, bool) {
+	want := artifacts.NormalizePhaseID(phaseID)
+	for _, phase := range record.Phases {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
+			return phase, true
+		}
+	}
+	return planstore.PlanPhase{}, false
 }
 
 // SetPlanLink validates and persists the saved plan artifact linked to a Flow.
