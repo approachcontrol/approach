@@ -92,7 +92,7 @@ filter matches, or a load failure with details in the status bar.
 | `c` | Open VSCode at worktree path |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan and Flow phase rows |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
-| `r` | Resume selected agent session (sessions view) |
+| `r` | Resume selected agent session (sessions view) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
@@ -276,11 +276,14 @@ metadata, phase titles/statuses/summaries, and linked session metadata. Press
 selected Flow, and `o` to page the linked plan body in `less -R`; wtui shows a
 status message when the selected Flow has no linked plan. Press `y` to copy the
 selected Flow ID, or the selected phase ID when a phase row is selected. Press
-`a` on a Flow with a ready phase to launch the configured agent for that phase. When
-Implementation is still gated by Plan Review, wtui reports the Plan Review state
-and notes instead of launching. When PR Creation is complete but structured PR
-metadata is missing, Autoreview remains pending and the Flow row shows
-`autoreview:missing-pr`.
+`r` on an expanded phase row with an attached provider session to resume that
+session; CLI resumes are recorded as a fresh Flow phase launch attempt, while
+`codex-app` resumes navigate to the existing app thread without extra launch
+tracking. Press `a` on a Flow with a ready phase to launch the configured agent
+for that phase. When Implementation is still gated by Plan Review, wtui reports
+the Plan Review state and notes instead of launching. When PR Creation is
+complete but structured PR metadata is missing, Autoreview remains pending and
+the Flow row shows `autoreview:missing-pr`.
 Expanded phase rows group child implementation phases directly under
 Implementation.
 
@@ -290,7 +293,8 @@ shows `recover-worktree`, a running phase with a recorded launch but no attached
 session yet shows `await-session`, a phase with an attached session whose
 launch ID does not match the phase's launch attempts shows `session-mismatch`,
 and an attached session that lacks a provider session ID shows
-`missing-session-id`.
+`missing-session-id`. A pending Autoreview phase whose PR Creation predecessor
+completed without structured PR metadata shows `missing-pr`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and
