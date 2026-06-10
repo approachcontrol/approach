@@ -51,9 +51,10 @@ are already implemented and should be treated as the baseline product:
 - Flow records persisted through the `wtui flow` CLI and started from the
   default flows pane with new-flow creation, ready-phase agent launch, derived
   status, phase progress, linked plan metadata, PR metadata, repo-scoped
-  filtering, linked-plan body opening, and recoverable partial-state labels for
-  missing worktree metadata, pending session attachment, and launch/session
-  mismatch.
+  filtering, linked-plan body opening, expanded-phase session resume, and
+  recoverable partial-state labels for missing worktree metadata, pending
+  session attachment, launch/session mismatch, missing provider session IDs,
+  and missing Autoreview PR metadata.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.

@@ -286,10 +286,13 @@ through `wtui flow`. Each record is stored as
 flows pane (mode `8`), which is the startup default. The pane shows linked plan
 IDs when present; press `n` to create a new Flow, `x` to expand or collapse
 read-only phase detail rows, `o` to open the linked plan body from the selected
-Flow, and `a` to launch the selected ready phase. Expanded rows group child
-implementation phases directly under Implementation. Launches record a launch
-ID and Flow/plan environment metadata for the agent. Other Flow mutation remains
-CLI/agent-driven in v1.
+Flow, `r` to resume an attached provider session from the selected phase row,
+and `a` to launch the selected ready phase. Expanded rows group child
+implementation phases directly under Implementation. New launches record a
+launch ID and Flow/plan environment metadata for the agent; CLI phase-session
+resumes also record a fresh launch ID, while `codex-app` resumes navigate to
+the existing app thread without additional launch tracking. Other Flow mutation
+remains CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
@@ -340,8 +343,8 @@ states. It shows `recover-worktree` when a saved Flow has no branch/worktree
 metadata, `await-session` when a running phase has a launch attempt but no
 attached provider session yet, `session-mismatch` when a phase's attached
 session launch ID does not match the phase launch IDs, `missing-session-id`
-when an attached session lacks a provider session ID, and
-`autoreview:missing-pr` when PR Creation completed without structured PR
+when an attached session lacks a provider session ID, and `missing-pr` on a
+pending Autoreview phase when PR Creation completed without structured PR
 metadata.
 
 The Plan Review phase gates Implementation. Plan Review completion must use
