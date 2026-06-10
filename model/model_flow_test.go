@@ -1168,6 +1168,7 @@ func TestModel_AKeyOnFlowLaunchesImplementationWithMinimalPrompt(t *testing.T) {
 	}
 	wantPrompt := strings.Join([]string{
 		"Implement the approved plan.",
+		"Use the commit skill before completing this phase.",
 		"",
 		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-implementation",
@@ -1256,6 +1257,62 @@ func TestModel_AKeyOnFlowLaunchesImplementationWithoutLinkedPlanContext(t *testi
 	}
 	if strings.Contains(launched.InitialPrompt, "Plan: \n") {
 		t.Fatalf("implementation prompt should not include an empty plan path:\n%s", launched.InitialPrompt)
+	}
+}
+
+func TestModel_FlowPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Implementation: "Custom {phase_id} for {flow_id}: {plan_path} @ {worktree_path} on {branch} from {commit}; keep {unknown}",
+		},
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("templated Implementation launch should not pre-read %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-template",
+		Branch:       "flow/template",
+		Commit:       "c0ffee",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/plans/plan-1/plan.md",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("flows-mode a should prepare an implementation launch")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected agent result command")
+	}
+	_ = cmd()
+
+	want := "Custom implementation for flow-1: /state/plans/plan-1/plan.md @ /dev/alpha-worktrees/flow-template on flow/template from c0ffee; keep {unknown}"
+	if launched.InitialPrompt != want {
+		t.Fatalf("templated flow prompt = %q, want %q", launched.InitialPrompt, want)
 	}
 }
 
@@ -1373,7 +1430,8 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		t.Fatalf("launch context = %#v", launched)
 	}
 	wantPrompt := strings.Join([]string{
-		"Use the review loop skill to review the changes.",
+		"Use the review-loop workflow to review the changes.",
+		"Use the commit skill when revisions are made.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-review-loop",
 		"Branch: flow/review-loop",
@@ -1470,7 +1528,7 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithMinimalPrompt(t *testing.T) {
 		t.Fatalf("launch context = %#v", launched)
 	}
 	wantPrompt := strings.Join([]string{
-		"Create a PR for the changes.",
+		"Use the ship skill to create a PR for the changes.",
 		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
@@ -1544,7 +1602,7 @@ func TestModel_AKeyOnFlowLaunchesPRCreationWithStructuredMetadataPrompt(t *testi
 	_ = cmd()
 
 	wantPrompt := strings.Join([]string{
-		"Create a PR for the changes.",
+		"Use the ship skill to create a PR for the changes.",
 		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
@@ -1572,7 +1630,8 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
-			return "# Saved plan\n", nil
+			t.Fatalf("Autoreview launch should pass PR metadata without pre-reading %q", planID)
+			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -1625,17 +1684,22 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
 		"second-level review",
+		"use the ship skill when fixes require commits or pushes",
 		"github #115",
 		"https://github.com/brian-bell/wtui/pull/115",
 		"head: flow/pr",
 		"base: main",
-		"wtui flow phase set --flow-id flow-1 --phase-id autoreview",
-		"--status completed",
-		"--status needs_attention",
-		"--status blocked",
+		"wtui flow phase complete --flow-id flow-1 --phase-id autoreview",
+		"wtui flow phase needs-attention --flow-id flow-1 --phase-id autoreview",
+		"wtui flow phase block --flow-id flow-1 --phase-id autoreview",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("autoreview prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{"saved plan body", "--status completed", "--status needs_attention", "--status blocked"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("autoreview prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
@@ -1645,7 +1709,8 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithRecoveryPrompt(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
-			return "# Saved plan\n", nil
+			t.Fatalf("Autoreview recovery launch should pass PR metadata without pre-reading %q", planID)
+			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -1700,7 +1765,7 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithRecoveryPrompt(t *testing.T) {
 		"restart required",
 		"--status running",
 		"rerunning autoreview after addressing prior findings",
-		"--status completed",
+		"wtui flow phase complete --flow-id flow-1 --phase-id autoreview",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("autoreview recovery prompt missing %q:\n%s", want, launched.InitialPrompt)

@@ -26,6 +26,7 @@ exist:
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
+| Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
 | Session hook root | `--state-root` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
@@ -59,6 +60,13 @@ prefer_multiplexer = true
 [agent]
 command = "codex"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
+
+[flow_prompts]
+plan = "Produce a plan only for: {instructions}"
+implementation = "Implement {plan_path} in {worktree_path}, then use the commit skill before completing."
+review_loop = "Use review-loop for {branch}; use commit if revisions are made."
+pr_creation = "Use ship for {branch}; record PR metadata for flow {flow_id}."
+autoreview = "Autoreview {pr_url}; use ship when fixes require commits or pushes."
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
@@ -164,6 +172,31 @@ value immediately, creating the config file if needed.
 |-----|------|-------------|
 | `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
 | `plan_prompt` | string | Optional one-line template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
+
+### `[flow_prompts]`
+
+Optional templates for Flow phase launch prompts. Blank or omitted keys use
+the built-in prompt for that phase. Unknown placeholders remain literal.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `plan` | string | Template for the initial Plan phase launch. |
+| `plan_review` | string | Template for Plan Review. |
+| `implementation` | string | Template for Implementation. |
+| `review_loop` | string | Template for Review Loop. |
+| `pr_creation` | string | Template for PR Creation. |
+| `autoreview` | string | Template for Autoreview. |
+| `merge` | string | Template for Merge. |
+| `generic` | string | Template for non-standard Flow phase IDs. |
+
+Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
+`{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,
+`{plan_body}`, `{repo_path}`, `{worktree_path}`, `{branch}`, `{commit}`,
+`{base_ref}`, `{pr_provider}`, `{pr_number}`, `{pr_url}`, `{pr_head}`,
+`{pr_base}`, and `{pr_status}`. Standard Plan Review, Implementation, Review
+Loop, PR Creation, Autoreview, and Merge launches do not pre-read the linked
+plan body, so `{plan_body}` is empty for those built-in phase types unless a
+future phase path explicitly supplies it.
 
 ### `[sessions]`
 
@@ -337,7 +370,11 @@ under `implementation`; they gate review loop and PR creation until completed or
 skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
 Implementation point to the saved plan artifact, while Review Loop and PR
 Creation include only the worktree, branch, and start commit metadata needed to
-inspect the changes.
+inspect the changes. Built-in prompts tell Plan to produce only a plan,
+Implementation to use the `commit` skill, Review Loop to use the review-loop
+workflow and `commit` when revisions are made, PR Creation to use the `ship`
+skill, and Autoreview to use `ship` when fixes require commits or pushes.
+Override `[flow_prompts]` keys to customize those phase templates.
 
 The PR Creation phase should record structured PR metadata with
 `wtui flow pr set` after a pull request exists. The command currently supports

@@ -361,9 +361,13 @@ loop and PR creation remain pending until required implementation children are
 completed or explicitly skipped with notes. Flow phase launch prompts stay
 minimal: Plan Review and Implementation point to the saved plan artifact, while
 Review Loop and PR Creation include only the worktree, branch, and start commit
-metadata needed to inspect the changes. Autoreview is ready only after PR
-Creation is complete and `wtui flow pr set` has recorded provider, PR number,
-URL, head branch, and base branch metadata. Merge stays an explicit phase:
+metadata needed to inspect the changes. Built-in prompts tell Plan to produce
+only a plan, Implementation to use the `commit` skill, Review Loop to use the
+review-loop workflow and `commit` when revisions are made, PR Creation to use
+the `ship` skill, and Autoreview to use `ship` when fixes require commits or
+pushes. Autoreview is ready only after PR Creation is complete and
+`wtui flow pr set` has recorded provider, PR number, URL, head branch, and base
+branch metadata. Merge stays an explicit phase:
 agents must record both the Merge phase update and structured merge metadata
 through `wtui flow merge set`; `--status merged` requires existing PR metadata,
 a merge commit, and an RFC3339 merge timestamp. If merge is blocked, record a
@@ -406,6 +410,10 @@ max_depth = 2
 command = "codex"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
+[flow_prompts]
+implementation = "Implement {plan_path} from {worktree_path}, then use the commit skill before completing."
+pr_creation = "Use the ship skill for {branch}, then record PR metadata for flow {flow_id}."
+
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
 copy_raw_transcripts = false
@@ -420,10 +428,11 @@ script = ".wtui/bootstrap"
 
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. `[agent].plan_prompt`
 customizes the editable instructions shown before launching an agent from the
-plans pane. `[editor].command` customizes the editor used by the plans pane
-edit action. See [docs/config.md](docs/config.md) for the full config reference,
-including sessions storage, bootstrap hook settings, terminal settings, and
-parsed foundation fields for provider, launch, and agent settings.
+plans pane, while `[flow_prompts]` customizes Flow phase launch templates.
+`[editor].command` customizes the editor used by the plans pane edit action.
+See [docs/config.md](docs/config.md) for the full config reference, including
+sessions storage, bootstrap hook settings, terminal settings, and parsed
+foundation fields for provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|

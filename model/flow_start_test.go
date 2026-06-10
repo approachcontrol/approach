@@ -119,7 +119,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		t.Fatalf("launch context = %#v", ctx)
 	}
 	prompt := strings.ToLower(ctx.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "build the thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+	for _, want := range []string{"wtui-flow", "build the thing", "produce a plan only", "do not start coding", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("launch prompt missing %q: %q", want, ctx.InitialPrompt)
 		}
@@ -145,6 +145,56 @@ func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "missing CreateFlow") {
 		t.Fatalf("error = %q, want missing CreateFlow", err)
+	}
+}
+
+func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-plan", Branch: "flow/plan"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				Instructions: "Build the thing",
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				BaseRef:      update.BaseRef,
+				Commit:       update.Commit,
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		ResolveCommit: func(string) string {
+			return "abc123"
+		},
+		NewLaunchID: func() string {
+			return "launch-1"
+		},
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Plan: "Plan {flow_id}: {instructions} in {worktree_path} on {branch} from {commit}; keep {unknown}",
+		},
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/dev/alpha",
+		Title:        "Add Flow Mode",
+		Instructions: "Build the thing",
+		BaseRef:      "main",
+		AgentCommand: "codex",
+	})
+	if err != nil {
+		t.Fatalf("StartPlan returned error: %v", err)
+	}
+
+	want := "Plan flow-1: Build the thing in /dev/alpha-worktrees/flow-plan on flow/plan from abc123; keep {unknown}"
+	if result.LaunchContext.InitialPrompt != want {
+		t.Fatalf("plan prompt = %q, want %q", result.LaunchContext.InitialPrompt, want)
 	}
 }
 

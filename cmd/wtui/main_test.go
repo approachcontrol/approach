@@ -14,6 +14,7 @@ import (
 	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/internal/version"
+	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
@@ -438,6 +439,49 @@ func TestModelOptionsFromConfigPassesEditorCommandToEditFile(t *testing.T) {
 	want := []string{editorCommand, "--wait", "/state/plans/plan-1/plan.md"}
 	if !reflect.DeepEqual(launch.Cmd.Args, want) {
 		t.Fatalf("editor args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+}
+
+func TestModelOptionsFromConfigPassesFlowPromptTemplates(t *testing.T) {
+	root := t.TempDir()
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore sessions: %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore plans: %v", err)
+	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore flows: %v", err)
+	}
+
+	opts := modelOptionsFromConfig(config.Config{
+		FlowPrompts: config.FlowPromptConfig{
+			Plan:           "plan",
+			PlanReview:     "plan review",
+			Implementation: "implementation",
+			ReviewLoop:     "review loop",
+			PRCreation:     "pr creation",
+			Autoreview:     "autoreview",
+			Merge:          "merge",
+			Generic:        "generic",
+		},
+	}, nil, sessionStore, planStore, flowStore)
+
+	want := model.FlowPromptTemplates{
+		Plan:           "plan",
+		PlanReview:     "plan review",
+		Implementation: "implementation",
+		ReviewLoop:     "review loop",
+		PRCreation:     "pr creation",
+		Autoreview:     "autoreview",
+		Merge:          "merge",
+		Generic:        "generic",
+	}
+	if opts.FlowPromptTemplates != want {
+		t.Fatalf("flow prompt templates = %#v, want %#v", opts.FlowPromptTemplates, want)
 	}
 }
 

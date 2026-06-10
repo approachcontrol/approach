@@ -16,14 +16,15 @@ type homeDirFunc func() (string, error)
 
 // Config is wtui's parsed configuration file.
 type Config struct {
-	Scan      ScanConfig      `toml:"scan"`
-	Editor    EditorConfig    `toml:"editor"`
-	Terminal  TerminalConfig  `toml:"terminal"`
-	Provider  ProviderConfig  `toml:"provider"`
-	Launch    LaunchConfig    `toml:"launch"`
-	Agent     AgentConfig     `toml:"agent"`
-	Sessions  SessionsConfig  `toml:"sessions"`
-	Bootstrap BootstrapConfig `toml:"bootstrap"`
+	Scan        ScanConfig       `toml:"scan"`
+	Editor      EditorConfig     `toml:"editor"`
+	Terminal    TerminalConfig   `toml:"terminal"`
+	Provider    ProviderConfig   `toml:"provider"`
+	Launch      LaunchConfig     `toml:"launch"`
+	Agent       AgentConfig      `toml:"agent"`
+	FlowPrompts FlowPromptConfig `toml:"flow_prompts"`
+	Sessions    SessionsConfig   `toml:"sessions"`
+	Bootstrap   BootstrapConfig  `toml:"bootstrap"`
 }
 
 // ScanConfig configures repository discovery.
@@ -56,6 +57,18 @@ type LaunchConfig struct {
 type AgentConfig struct {
 	Command    string `toml:"command"`
 	PlanPrompt string `toml:"plan_prompt"`
+}
+
+// FlowPromptConfig stores optional launch prompt templates for Flow phases.
+type FlowPromptConfig struct {
+	Plan           string `toml:"plan"`
+	PlanReview     string `toml:"plan_review"`
+	Implementation string `toml:"implementation"`
+	ReviewLoop     string `toml:"review_loop"`
+	PRCreation     string `toml:"pr_creation"`
+	Autoreview     string `toml:"autoreview"`
+	Merge          string `toml:"merge"`
+	Generic        string `toml:"generic"`
 }
 
 // SessionsConfig controls agent-session capture storage.

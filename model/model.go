@@ -73,6 +73,7 @@ type Model struct {
 	pendingWorktreeSelection  string
 	agentCommand              string
 	planPromptTemplate        string
+	flowPromptTemplates       FlowPromptTemplates
 	scanRepos                 func() ([]scanner.Repo, error)
 	fetchRepo                 func(string) error
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
@@ -129,6 +130,7 @@ type Options struct {
 	AgentCommand         string
 	StartupMode          ui.Mode
 	PlanPromptTemplate   string
+	FlowPromptTemplates  FlowPromptTemplates
 	ScanRepos            func() ([]scanner.Repo, error)
 	FetchRepo            func(string) error
 	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
@@ -271,6 +273,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			RunBootstrapHook:     runBootstrapHook,
 			ResolveCommit:        actions.ResolveWorktreeCommit,
 			NewLaunchID:          newLaunchID,
+			FlowPromptTemplates:  opts.FlowPromptTemplates,
 		})
 		startFlowPlan = starter.StartPlan
 	}
@@ -292,6 +295,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		mode:                 startupMode(opts.StartupMode),
 		agentCommand:         agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:   opts.PlanPromptTemplate,
+		flowPromptTemplates:  opts.FlowPromptTemplates,
 		scanRepos:            opts.ScanRepos,
 		fetchRepo:            fetchRepo,
 		listSessions:         listSessions,

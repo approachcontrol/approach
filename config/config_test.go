@@ -44,6 +44,11 @@ prefer_multiplexer = true
 command = "codex"
 plan_prompt = "Implement {title} from {plan_path}"
 
+[flow_prompts]
+plan = "Plan only: {instructions}"
+implementation = "Implement {plan_path} in {worktree_path}"
+autoreview = "Review {pr_url} and ship fixes"
+
 [sessions]
 root = "~/state/wtui/sessions"
 copy_raw_transcripts = false
@@ -94,6 +99,11 @@ timeout_seconds = 300
 	}
 	if cfg.Agent.PlanPrompt != "Implement {title} from {plan_path}" {
 		t.Fatalf("expected agent plan prompt to parse, got %q", cfg.Agent.PlanPrompt)
+	}
+	if cfg.FlowPrompts.Plan != "Plan only: {instructions}" ||
+		cfg.FlowPrompts.Implementation != "Implement {plan_path} in {worktree_path}" ||
+		cfg.FlowPrompts.Autoreview != "Review {pr_url} and ship fixes" {
+		t.Fatalf("expected flow prompt templates to parse, got %#v", cfg.FlowPrompts)
 	}
 	if cfg.Sessions.Root != filepath.Join(home, "state", "wtui", "sessions") {
 		t.Fatalf("expected expanded sessions root, got %q", cfg.Sessions.Root)
