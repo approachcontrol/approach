@@ -1,6 +1,8 @@
 name: Codex
 
 on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -29,6 +31,7 @@ on:
 jobs:
   autoreview_ship:
     if: |
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '@codex') || contains(github.event.comment.body, '@autoreview')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review_comment' && (contains(github.event.comment.body, '@codex') || contains(github.event.comment.body, '@autoreview')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && (contains(github.event.review.body, '@codex') || contains(github.event.review.body, '@autoreview')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association)) ||
@@ -41,7 +44,7 @@ jobs:
       actions: read
     secrets: inherit
     with:
-      pr_number: ${{ github.event.inputs.pr_number || '' }}
-      instructions: ${{ github.event.inputs.instructions || '' }}
+      pr_number: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.inputs.pr_number || '' }}
+      instructions: ${{ github.event_name == 'pull_request' && 'Automatic PR submission autoreview.' || github.event.inputs.instructions || '' }}
       autoreview_parallel_tests: ${{ github.event.inputs.autoreview_parallel_tests || '' }}
       codex_version: ${{ github.event.inputs.codex_version || '' }}
