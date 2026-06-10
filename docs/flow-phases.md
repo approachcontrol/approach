@@ -40,9 +40,10 @@ Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
 `skipped` through `wtui flow phase set`. The high-level wrappers
 `wtui flow phase complete`, `wtui flow phase block`, and
 `wtui flow phase needs-attention` use the same validation and persistence path
-for the common `completed`, `blocked`, and `needs_attention` outcomes, then
-print JSON with the updated phase and next actionable phase state. These
-wrappers do not add separate notes requirements; store validation remains the
+for the common `completed`, `blocked`, and `needs_attention` outcomes. The
+`wtui flow phase restart` wrapper records `running` with a rerun note. These
+wrappers print JSON with the updated phase and next actionable phase state.
+They do not add separate notes requirements; store validation remains the
 source of truth. Setting `ready` is rejected with "readiness is derived"; the
 CLI rejects unknown statuses with the valid list, and the store rejects them as
 `invalid phase status`.
@@ -56,8 +57,8 @@ CLI rejects unknown statuses with the valid list, and the store rejects them as
 | `running` | – | yes | yes | yes | yes |
 | `needs_attention` | yes (notes) | – | – | – | yes |
 | `blocked` | yes (notes) | – | – | – | yes |
-| `completed` | yes (restart) | – | – | – | – |
-| `skipped` | yes (restart) | – | – | – | – |
+| `completed` | yes | – | – | – | – |
+| `skipped` | yes | – | – | – | – |
 
 Additional rules:
 
@@ -65,7 +66,9 @@ Additional rules:
   outcome/summary/notes on the current status).
 - `skipped` always requires `--notes`, from any state.
 - Restarting a `needs_attention` or `blocked` phase as `running` requires
-  `--notes`; completing one directly is invalid — restart first.
+  `--notes`; completing one directly is invalid — restart first. The
+  high-level `wtui flow phase restart` wrapper supplies a standard note when
+  `--notes` is omitted.
 - Invalid transitions fail with the allowed next statuses, e.g.
   `invalid phase transition pending -> completed; allowed from pending: skipped`.
 
@@ -88,6 +91,9 @@ predecessor satisfies its downstream gate:
   Implementation `pending`. The high-level Plan Review wrappers fill the
   unambiguous outcomes when omitted: `complete` uses `approved`,
   `needs-attention` uses `changes_requested`, and `block` uses `blocked`.
+- **Autoreview**: the high-level wrappers fill the unambiguous outcomes when
+  omitted: `complete` uses `passed`, `needs-attention` uses
+  `needs_attention`, and `block` uses `blocked`.
 - **PR Creation**: `completed` *and* structured PR metadata recorded via
   `wtui flow pr set` (provider, positive number, valid URL, head/base
   branches). Completion alone does not unlock Autoreview; a skipped PR

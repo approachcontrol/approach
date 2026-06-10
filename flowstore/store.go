@@ -169,6 +169,13 @@ type PhaseUpdate struct {
 	Summary string
 }
 
+// PhaseRestartUpdate restarts a blocked or needs-attention phase as running.
+type PhaseRestartUpdate struct {
+	FlowID  string
+	PhaseID string
+	Notes   string
+}
+
 // ChildPhaseUpdate creates or updates a stable child phase under Implementation.
 type ChildPhaseUpdate struct {
 	FlowID        string
@@ -380,6 +387,51 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return record, nil
+}
+
+// RestartPhase atomically restarts a blocked or needs-attention phase as running.
+func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	if err := validatePhaseID(update.PhaseID); err != nil {
+		return FlowRecord{}, err
+	}
+	if strings.TrimSpace(update.Notes) == "" {
+		return FlowRecord{}, fmt.Errorf("phase restart requires notes")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		if phase.Status != PhaseNeedsAttention && phase.Status != PhaseBlocked {
+			return FlowRecord{}, fmt.Errorf("flow phase restart requires current status needs_attention or blocked; %s is %s", phase.PhaseID, phase.Status)
+		}
+		if err := validatePhaseUpdate(phase, PhaseUpdate{
+			FlowID:  update.FlowID,
+			PhaseID: update.PhaseID,
+			Status:  PhaseRunning,
+			Notes:   update.Notes,
+		}); err != nil {
+			return FlowRecord{}, err
+		}
+		phase.Status = PhaseRunning
+		phase.Outcome = ""
+		phase.Notes = update.Notes
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		if phase.PhaseID == "merge" {
+			record.Merge = Merge{Status: MergePending}
+		}
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		return record, nil
+	})
 }
 
 // AddChildPhase creates or updates a stable child phase under Implementation.

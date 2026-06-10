@@ -311,6 +311,8 @@ wtui flow phase block --flow-id ID --phase-id ID \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow phase needs-attention --flow-id ID --phase-id ID \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
+wtui flow phase restart --flow-id ID --phase-id ID \
+    [--notes TEXT] [--state-root PATH]
 wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
@@ -357,8 +359,12 @@ actionable phase state, and allowed statuses for that next action. Notes
 requirements are still enforced by the same store rules as `phase set`. Plan
 Review wrappers fill the unambiguous outcomes when omitted: `complete` uses
 `approved`, `block` uses `blocked`, and `needs-attention` uses
-`changes_requested`. Use `phase set` when a phase needs an explicit uncommon
-status, a skipped-with-notes override, or an explicit restart.
+`changes_requested`. Autoreview wrappers fill `passed`, `blocked`, and
+`needs_attention` for the matching common outcomes. Use
+`wtui flow phase restart` to rerun a blocked or needs-attention phase as
+`running`; if `--notes` is omitted, wtui records a standard rerun note. Use
+`phase set` when a phase needs an explicit uncommon status or a
+skipped-with-notes override.
 
 Implementation can be split into ordered child phases with
 `wtui flow phase add-child`. Child phase IDs are stable and normalized (trimmed
@@ -374,6 +380,9 @@ inspect the changes. Built-in prompts tell Plan to produce only a plan,
 Implementation to use the `commit` skill, Review Loop to use the review-loop
 workflow and `commit` when revisions are made, PR Creation to use the `ship`
 skill, and Autoreview to use `ship` when fixes require commits or pushes.
+Autoreview launch prompts include the PR target metadata but leave completion,
+needs-attention, blocked, and restart mechanics to the high-level Flow phase
+commands.
 Override `[flow_prompts]` keys to customize those phase templates.
 
 The PR Creation phase should record structured PR metadata with
