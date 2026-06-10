@@ -969,6 +969,135 @@ func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
 	}
 }
 
+func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Atomic restart",
+		Instructions: "restart only recovery states",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/atomic-restart",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     115,
+		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		HeadBranch: "flow/atomic-restart",
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+
+	_, err = store.RestartPhase(flowstore.PhaseRestartUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Notes:   "Rerunning Autoreview after addressing prior findings.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "autoreview is ready") {
+		t.Fatalf("RestartPhase(ready) error = %v, want ready rejection", err)
+	}
+
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Status:  flowstore.PhaseNeedsAttention,
+		Outcome: "needs_attention",
+		Notes:   "Follow-up concern remains.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(needs_attention) error = %v", err)
+	}
+	record, err = store.RestartPhase(flowstore.PhaseRestartUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "autoreview",
+		Notes:   "Rerunning Autoreview after addressing prior findings.",
+	})
+	if err != nil {
+		t.Fatalf("RestartPhase(needs_attention) error = %v", err)
+	}
+	phase := phaseByID(t, record, "autoreview")
+	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" {
+		t.Fatalf("autoreview after restart = %#v, want running with cleared outcome", phase)
+	}
+}
+
+func TestStoreRestartPhaseClearsBlockedMergeMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Restart merge",
+		Instructions: "clear blocked merge metadata",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/restart-merge",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     115,
+		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		HeadBranch: "flow/restart-merge",
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "autoreview")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "merge",
+		Status:  flowstore.PhaseBlocked,
+		Outcome: flowstore.OutcomeBlocked,
+		Notes:   "CI is not green.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(merge blocked) error = %v", err)
+	}
+	record, err = store.SetMerge(flowstore.MergeUpdate{
+		FlowID: record.FlowID,
+		Status: flowstore.MergeBlocked,
+	})
+	if err != nil {
+		t.Fatalf("SetMerge(blocked) error = %v", err)
+	}
+	if record.Merge.Status != flowstore.MergeBlocked || record.Status != flowstore.StatusBlocked {
+		t.Fatalf("blocked merge record = %#v", record)
+	}
+
+	record, err = store.RestartPhase(flowstore.PhaseRestartUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "merge",
+		Notes:   "Rerunning Merge after CI recovered.",
+	})
+	if err != nil {
+		t.Fatalf("RestartPhase(merge) error = %v", err)
+	}
+	if got := phaseByID(t, record, "merge").Status; got != flowstore.PhaseRunning {
+		t.Fatalf("merge phase status = %q, want running", got)
+	}
+	if record.Merge.Status != flowstore.MergePending {
+		t.Fatalf("merge metadata after restart = %#v, want pending", record.Merge)
+	}
+	if record.Status != flowstore.StatusInProgress {
+		t.Fatalf("flow status after merge restart = %q, want in_progress", record.Status)
+	}
+}
+
 func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

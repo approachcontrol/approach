@@ -22,6 +22,7 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 		"wtui flow phase complete",
 		"wtui flow phase block",
 		"wtui flow phase needs-attention",
+		"wtui flow phase restart",
 		"wtui flow phase set",
 		"wtui flow plan set",
 		"wtui flow pr set",
@@ -73,6 +74,9 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 	if !strings.Contains(skill, "wtui flow phase needs-attention") || !strings.Contains(flowCLI, `command:        "needs-attention"`) {
 		t.Fatal("skill and CLI should both expose flow phase needs-attention")
+	}
+	if !strings.Contains(skill, "wtui flow phase restart") || !strings.Contains(flowCLI, "runFlowPhaseRestart") {
+		t.Fatal("skill and CLI should both expose flow phase restart")
 	}
 	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
 		t.Fatal("skill and CLI should both expose flow plan set")

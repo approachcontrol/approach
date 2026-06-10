@@ -314,6 +314,7 @@ wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 # print JSON with the updated phase and the next actionable phase state. For
 # Plan Review, complete defaults to approved, needs-attention defaults to
 # changes_requested, and block defaults to blocked unless --outcome is supplied.
+# Autoreview defaults are passed, needs_attention, and blocked.
 wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
 wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review \
   --notes "Revise the rollout section"
@@ -365,7 +366,17 @@ metadata needed to inspect the changes. Built-in prompts tell Plan to produce
 only a plan, Implementation to use the `commit` skill, Review Loop to use the
 review-loop workflow and `commit` when revisions are made, PR Creation to use
 the `ship` skill, and Autoreview to use `ship` when fixes require commits or
-pushes. Autoreview is ready only after PR Creation is complete and
+pushes without embedding phase-restart recipes. Use
+`wtui flow phase restart` to rerun a blocked or needs-attention phase as
+`running`; if notes are omitted, wtui records a standard rerun note.
+
+For example, after addressing Autoreview findings:
+
+```bash
+wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+```
+
+Autoreview is ready only after PR Creation is complete and
 `wtui flow pr set` has recorded provider, PR number, URL, head branch, and base
 branch metadata. Merge stays an explicit phase:
 agents must record both the Merge phase update and structured merge metadata

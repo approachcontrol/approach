@@ -32,6 +32,7 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		"wtui flow phase complete --flow-id",
 		"wtui flow phase block --flow-id",
 		"wtui flow phase needs-attention --flow-id",
+		"wtui flow phase restart --flow-id",
 		"wtui flow phase set --flow-id",
 		"wtui flow pr set --flow-id",
 		"wtui flow merge set --flow-id",
@@ -51,11 +52,12 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow phase <set|complete|block|needs-attention|add-child> [flags]",
+		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|add-child> [flags]",
 		"wtui flow phase set --flow-id",
 		"wtui flow phase complete --flow-id",
 		"wtui flow phase block --flow-id",
 		"wtui flow phase needs-attention --flow-id",
+		"wtui flow phase restart --flow-id",
 		"--status completed",
 		"wtui flow phase add-child --flow-id",
 	})
@@ -278,7 +280,7 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: wtui flow phase <set|complete|block|needs-attention|add-child> [flags]",
+		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|add-child> [flags]",
 	})
 }
 
@@ -964,6 +966,170 @@ func TestRunFlowPhaseActionsDefaultPlanReviewOutcomes(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name        string
+		command     string
+		notes       string
+		wantStatus  string
+		wantOutcome string
+	}{
+		{name: "complete", command: "complete", wantStatus: flowstore.PhaseCompleted, wantOutcome: "passed"},
+		{name: "needs attention", command: "needs-attention", notes: "Follow-up concern remains.", wantStatus: flowstore.PhaseNeedsAttention, wantOutcome: "needs_attention"},
+		{name: "block", command: "block", notes: "Autoreview cannot inspect the PR.", wantStatus: flowstore.PhaseBlocked, wantOutcome: flowstore.OutcomeBlocked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			branch := "flow/autoreview-" + strings.ReplaceAll(tc.name, " ", "-")
+			created := mustRunFlowReadyForAutoreview(t, root, tc.name, branch)
+
+			args := []string{
+				"wtui", "flow", "phase", tc.command,
+				"--flow-id", created.FlowID,
+				"--phase-id", "autoreview",
+				"--state-root", root,
+			}
+			if tc.notes != "" {
+				args = append(args, "--notes", tc.notes)
+			}
+			var stdout bytes.Buffer
+			err := run(args, noScanDeps(t, runDeps{stdout: &stdout}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+
+			var result flowPhaseActionResult
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+			}
+			autoreview := result.UpdatedPhase
+			if autoreview.Status != tc.wantStatus || autoreview.Outcome != tc.wantOutcome {
+				t.Fatalf("autoreview = %#v, want status %q outcome %q", autoreview, tc.wantStatus, tc.wantOutcome)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseRestartRerunsAttentionAndBlockedPhases(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name         string
+		startStatus  string
+		startOutcome string
+		startNotes   string
+	}{
+		{
+			name:         "needs attention",
+			startStatus:  flowstore.PhaseNeedsAttention,
+			startOutcome: "needs_attention",
+			startNotes:   "Follow-up concern remains.",
+		},
+		{
+			name:         "blocked",
+			startStatus:  flowstore.PhaseBlocked,
+			startOutcome: flowstore.OutcomeBlocked,
+			startNotes:   "Autoreview was blocked.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			branch := "flow/restart-" + strings.ReplaceAll(tc.name, " ", "-")
+			created := mustRunFlowReadyForAutoreview(t, root, tc.name, branch)
+			mustSetFlowPhase(t, root, created.FlowID, "autoreview", tc.startStatus, tc.startOutcome, tc.startNotes, "")
+
+			var stdout bytes.Buffer
+			err := run([]string{
+				"wtui", "flow", "phase", "restart",
+				"--flow-id", created.FlowID,
+				"--phase-id", "autoreview",
+				"--state-root", root,
+			}, noScanDeps(t, runDeps{stdout: &stdout}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+
+			var result flowPhaseActionResult
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+			}
+			autoreview := result.UpdatedPhase
+			if autoreview.Status != flowstore.PhaseRunning || autoreview.Outcome != "" {
+				t.Fatalf("autoreview = %#v, want running with cleared outcome", autoreview)
+			}
+			if !strings.Contains(autoreview.Notes, "Rerunning Autoreview after addressing prior findings.") {
+				t.Fatalf("autoreview notes = %q, want default rerun note", autoreview.Notes)
+			}
+		})
+	}
+}
+
+func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name        string
+		prepare     func(t *testing.T) flowstore.FlowRecord
+		wantCurrent string
+	}{
+		{
+			name: "pending",
+			prepare: func(t *testing.T) flowstore.FlowRecord {
+				return mustRunFlow(t, []string{
+					"wtui", "flow", "create",
+					"--title", "pending restart",
+					"--instructions", "phase it",
+					"--repo-path", filepath.Join(root, "repo-pending"),
+					"--json",
+					"--state-root", root,
+				})
+			},
+			wantCurrent: "pending",
+		},
+		{
+			name: "ready",
+			prepare: func(t *testing.T) flowstore.FlowRecord {
+				return mustRunFlowReadyForAutoreview(t, root, "ready restart", "flow/restart-ready")
+			},
+			wantCurrent: "ready",
+		},
+		{
+			name: "completed",
+			prepare: func(t *testing.T) flowstore.FlowRecord {
+				record := mustRunFlowReadyForAutoreview(t, root, "completed restart", "flow/restart-completed")
+				return mustSetFlowPhase(t, root, record.FlowID, "autoreview", flowstore.PhaseCompleted, "passed", "", "")
+			},
+			wantCurrent: "completed",
+		},
+		{
+			name: "skipped",
+			prepare: func(t *testing.T) flowstore.FlowRecord {
+				record := mustRunFlowReadyForAutoreview(t, root, "skipped restart", "flow/restart-skipped")
+				return mustSetFlowPhase(t, root, record.FlowID, "autoreview", flowstore.PhaseSkipped, "", "", "Autoreview intentionally skipped.")
+			},
+			wantCurrent: "skipped",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := tc.prepare(t)
+			err := run([]string{
+				"wtui", "flow", "phase", "restart",
+				"--flow-id", record.FlowID,
+				"--phase-id", "autoreview",
+				"--state-root", root,
+			}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil {
+				t.Fatal("restart returned nil error for non-recovery state")
+			}
+			for _, want := range []string{
+				"flow phase restart requires current status needs_attention or blocked",
+				"autoreview is " + tc.wantCurrent,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("restart error = %q, want %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
 func TestRunFlowPhaseActionRejectsInvalidTransitionAndKeepsRecordUnchanged(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -1341,6 +1507,36 @@ func mustRunFlow(t *testing.T, args []string) flowstore.FlowRecord {
 		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
 	}
 	return record
+}
+
+func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flowstore.FlowRecord {
+	t.Helper()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", title,
+		"--instructions", "phase it",
+		"--repo-path", filepath.Join(root, "repo-"+strings.ReplaceAll(title, " ", "-")),
+		"--branch", branch,
+		"--json",
+		"--state-root", root,
+	})
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+		outcome := ""
+		if phaseID == "plan-review" {
+			outcome = flowstore.OutcomeApproved
+		}
+		mustSetFlowPhase(t, root, created.FlowID, phaseID, flowstore.PhaseCompleted, outcome, "", "")
+	}
+	return mustRunFlow(t, []string{
+		"wtui", "flow", "pr", "set",
+		"--flow-id", created.FlowID,
+		"--provider", "github",
+		"--number", "115",
+		"--url", "https://github.com/brian-bell/wtui/pull/115",
+		"--head", branch,
+		"--base", "main",
+		"--state-root", root,
+	})
 }
 
 func mustSetFlowPhase(t *testing.T, root, flowID, phaseID, status, outcome, summary, notes string) flowstore.FlowRecord {

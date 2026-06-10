@@ -1646,6 +1646,7 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-pr",
 		Branch:       "flow/pr",
+		Commit:       "ghi789",
 		PlanID:       "plan-1",
 		Status:       flowstore.StatusInProgress,
 		PR: flowstore.PullRequest{
@@ -1685,19 +1686,21 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
 	for _, want := range []string{
 		"second-level review",
 		"use the ship skill when fixes require commits or pushes",
+		"worktree: /dev/alpha-worktrees/flow-pr",
+		"branch: flow/pr",
+		"start commit: ghi789",
+		"pr target:",
 		"github #115",
 		"https://github.com/brian-bell/wtui/pull/115",
 		"head: flow/pr",
 		"base: main",
-		"wtui flow phase complete --flow-id flow-1 --phase-id autoreview",
-		"wtui flow phase needs-attention --flow-id flow-1 --phase-id autoreview",
-		"wtui flow phase block --flow-id flow-1 --phase-id autoreview",
+		"status: open",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("autoreview prompt missing %q:\n%s", want, launched.InitialPrompt)
 		}
 	}
-	for _, unwanted := range []string{"saved plan body", "--status completed", "--status needs_attention", "--status blocked"} {
+	for _, unwanted := range []string{"saved plan body", "wtui flow phase", "--status completed", "--status needs_attention", "--status blocked"} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("autoreview prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
@@ -1725,6 +1728,7 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithRecoveryPrompt(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-pr",
 		Branch:       "flow/pr",
+		Commit:       "ghi789",
 		PlanID:       "plan-1",
 		Status:       flowstore.StatusNeedsAttention,
 		PR: flowstore.PullRequest{
@@ -1762,13 +1766,23 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithRecoveryPrompt(t *testing.T) {
 
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
-		"restart required",
-		"--status running",
-		"rerunning autoreview after addressing prior findings",
-		"wtui flow phase complete --flow-id flow-1 --phase-id autoreview",
+		"second-level review",
+		"use the ship skill when fixes require commits or pushes",
+		"worktree: /dev/alpha-worktrees/flow-pr",
+		"branch: flow/pr",
+		"start commit: ghi789",
+		"github #115",
+		"head: flow/pr",
+		"base: main",
+		"status: open",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("autoreview recovery prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{"restart required", "--status running", "rerunning autoreview", "wtui flow phase"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("autoreview recovery prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
@@ -1809,8 +1823,9 @@ func TestModel_AKeyOnFlowDoesNotRelaunchAutoreviewWithoutPRTarget(t *testing.T) 
 	if launchAttempted {
 		t.Fatal("LaunchAgent() ran without PR metadata")
 	}
-	if got := m.TransientError(); got != "No ready Flow phase to launch" {
-		t.Fatalf("status = %q, want no ready phase message", got)
+	wantErr := "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
+	if got := m.TransientError(); got != wantErr {
+		t.Fatalf("status = %q, want %q", got, wantErr)
 	}
 }
 
