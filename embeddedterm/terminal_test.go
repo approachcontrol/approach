@@ -117,6 +117,20 @@ func TestScreenBufferBuffersSplitUTF8Rune(t *testing.T) {
 	}
 }
 
+func TestScreenBufferCapsUnterminatedEscapeBuffer(t *testing.T) {
+	screen := newScreenBuffer(20, 2, 0)
+	screen.Write([]byte("\x1b]" + strings.Repeat("x", maxPendingSequenceBytes+1)))
+	if len(screen.pending) != 0 {
+		t.Fatalf("pending bytes = %d, want capped and discarded", len(screen.pending))
+	}
+
+	screen.Write([]byte("ok"))
+	got := strings.Join(screen.VisibleLines(20, 2), "\n")
+	if !strings.Contains(got, "ok") {
+		t.Fatalf("visible lines = %q, want later normal output after discarded escape", got)
+	}
+}
+
 func TestTerminalReportsFailedForNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

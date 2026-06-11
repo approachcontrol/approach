@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const maxPendingSequenceBytes = 4096
+
 type screenBuffer struct {
 	width         int
 	height        int
@@ -47,7 +49,7 @@ func (s *screenBuffer) Write(p []byte) {
 		case '\x1b':
 			next, complete := s.applyEscape(p, i)
 			if !complete {
-				s.pending = append(s.pending[:0], p[i:]...)
+				s.storePending(p[i:])
 				return
 			}
 			if next <= i {
@@ -78,7 +80,7 @@ func (s *screenBuffer) Write(p []byte) {
 			i++
 		default:
 			if p[i] >= 0x80 && !utf8.FullRune(p[i:]) {
-				s.pending = append(s.pending[:0], p[i:]...)
+				s.storePending(p[i:])
 				return
 			}
 			r := rune(p[i])
@@ -96,6 +98,14 @@ func (s *screenBuffer) Write(p []byte) {
 			i += size
 		}
 	}
+}
+
+func (s *screenBuffer) storePending(p []byte) {
+	if len(p) > maxPendingSequenceBytes {
+		s.pending = nil
+		return
+	}
+	s.pending = append(s.pending[:0], p...)
 }
 
 func (s *screenBuffer) Resize(width, height int) {

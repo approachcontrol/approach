@@ -53,6 +53,10 @@ func NewManager() *Manager {
 	return &Manager{}
 }
 
+func IsUnsupported(err error) bool {
+	return errors.Is(err, pty.ErrUnsupported)
+}
+
 func (m *Manager) Start(ctx context.Context, req StartRequest) (*Terminal, error) {
 	if strings.TrimSpace(req.Command) == "" {
 		return nil, fmt.Errorf("embedded terminal command is required")

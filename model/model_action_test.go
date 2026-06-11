@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/creack/pty"
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
@@ -4042,6 +4043,38 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	}
 	if strings.Contains(view, "Provider") || strings.Contains(view, "Summary") {
 		t.Fatalf("embedded terminal view should hide saved-session table:\n%s", view)
+	}
+}
+
+func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return nil, pty.ErrUnsupported
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{
+			Provider:     sessions.ProviderCodex,
+			SessionID:    "codex-session-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/feat",
+			Branch:       "feature/api",
+		},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected external resume command when embedded PTY is unsupported")
+	}
+	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "/dev/alpha-worktrees/feat" {
+		t.Fatalf("unexpected fallback resume context: %#v", got)
 	}
 }
 

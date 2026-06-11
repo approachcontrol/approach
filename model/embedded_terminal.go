@@ -162,16 +162,16 @@ func (m Model) nextEmbeddedTerminalNumber() (int, bool) {
 	return 0, false
 }
 
-func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, bool) {
+func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, bool, error) {
 	number, ok := m.nextEmbeddedTerminalNumber()
 	if !ok {
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
-		return m, false
+		return m, false, nil
 	}
 	term, err := m.startEmbeddedTerminal(ctx, m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
-		return m, false
+		return m, false, err
 	}
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
 		Number:   number,
@@ -180,7 +180,7 @@ func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessi
 		Terminal: term,
 	})
 	m.activeEmbeddedTerminalNum = number
-	return m, true
+	return m, true, nil
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {
@@ -399,7 +399,11 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	}
 	needsTick := len(next.embeddedTerminals) == 0
 	var opened bool
-	next, opened = next.openEmbeddedTerminal(ctx, record)
+	var err error
+	next, opened, err = next.openEmbeddedTerminal(ctx, record)
+	if err != nil && embeddedterm.IsUnsupported(err) {
+		return next.launchAgentWithContext(ctx)
+	}
 	if opened && needsTick {
 		return next.startEmbeddedTerminalTick()
 	}
