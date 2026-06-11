@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
@@ -290,6 +291,49 @@ func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 
 	if !strings.Contains(view, "ctrl+g") {
 		t.Fatalf("embedded terminal prefix cue missing:\n%s", view)
+	}
+}
+
+func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	normal := renderShortcutPane(statusBarParams{
+		Mode:                   ModeSessions,
+		ActivePane:             1,
+		EmbeddedTerminalActive: true,
+	}, 26, 12)
+	normalText := ansi.Strip(normal)
+	if !strings.Contains(normalText, "ctrl+g commands") {
+		t.Fatalf("embedded terminal should expose prefix shortcut:\n%s", normalText)
+	}
+	if strings.Contains(normalText, "x      close") {
+		t.Fatalf("embedded terminal should hide prefix-only close shortcut until ctrl+g mode:\n%s", normalText)
+	}
+	if want := statusStyle.Render("ctrl+g"); !strings.Contains(normal, want) {
+		t.Fatalf("embedded terminal shortcut key should render muted while terminal input is active:\n%q\nmissing %q", normal, want)
+	}
+
+	prefix := renderShortcutPane(statusBarParams{
+		Mode:                   ModeSessions,
+		ActivePane:             1,
+		EmbeddedTerminalActive: true,
+		EmbeddedTerminalPrefix: true,
+	}, 26, 12)
+	prefixText := ansi.Strip(prefix)
+	for _, want := range []string{"ctrl+g send", "l      sessions", "x      close", "q/esc  quit", "1-9    switch"} {
+		if !strings.Contains(prefixText, want) {
+			t.Fatalf("embedded terminal prefix shortcuts missing %q:\n%s", want, prefixText)
+		}
+	}
+	if want := shortcutKeyStyle.Render("x"); !strings.Contains(prefix, want) {
+		t.Fatalf("embedded terminal prefix shortcut key should render active:\n%q\nmissing %q", prefix, want)
 	}
 }
 

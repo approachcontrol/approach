@@ -292,6 +292,7 @@ func Render(p RenderParams) string {
 		ReflogSelected:             reflogSelected,
 		SessionSelected:            sessionSelected,
 		EmbeddedTerminalActive:     embeddedTerminalActive,
+		EmbeddedTerminalPrefix:     p.EmbeddedTerminalPrefix,
 		PlanSelected:               planSelected,
 		PlanPhaseSelected:          planPhaseSelected,
 		FlowSelected:               flowSelected,
@@ -542,6 +543,7 @@ type statusBarParams struct {
 	ReflogSelected             bool
 	SessionSelected            bool
 	EmbeddedTerminalActive     bool
+	EmbeddedTerminalPrefix     bool
 	PlanSelected               bool
 	PlanPhaseSelected          bool
 	FlowSelected               bool
@@ -566,6 +568,7 @@ type shortcutHint struct {
 	Label   string
 	Warning bool
 	Inline  bool
+	Muted   bool
 }
 
 type shortcutSection struct {
@@ -651,7 +654,15 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 		return ""
 	}
 	lines := make([]string, 0)
-	title := shortcutTitleStyle.Render("Shortcuts") + "  " + shortcutModeStyle.Render(modeShortcutTitle(sp.Mode))
+	titleStyle := shortcutTitleStyle
+	modeStyle := shortcutModeStyle
+	groupStyle := shortcutGroupStyle
+	if shortcutsMuted(sp) {
+		titleStyle = statusStyle
+		modeStyle = statusStyle
+		groupStyle = statusStyle
+	}
+	title := titleStyle.Render("Shortcuts") + "  " + modeStyle.Render(modeShortcutTitle(sp.Mode))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
 	tight := height <= 7
@@ -669,7 +680,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 			if sectionCount > 0 && !tight {
 				lines = append(lines, strings.Repeat(" ", width))
 			}
-			lines = append(lines, truncateToWidth(" "+shortcutGroupStyle.Render(section.Title), width))
+			lines = append(lines, truncateToWidth(" "+groupStyle.Render(section.Title), width))
 		}
 		for _, hint := range hints {
 			lines = append(lines, renderShortcutPaneHint(hint, width))
@@ -696,11 +707,15 @@ func renderShortcutPaneHint(hint shortcutHint, width int) string {
 		return ansi.Truncate(" "+shortcutTextStyle.Render(hint.Label), width, "")
 	}
 	keyStyle := shortcutKeyStyle
+	labelStyle := shortcutTextStyle
 	if hint.Warning {
 		keyStyle = dirtyRedStyle.Bold(true)
+	} else if hint.Muted {
+		keyStyle = statusStyle
+		labelStyle = statusStyle
 	}
 	key := padShortcutKey(keyStyle.Render(hint.Key), shortcutKeyColumnWidth)
-	label := shortcutTextStyle.Render(hint.Label)
+	label := labelStyle.Render(hint.Label)
 	return ansi.Truncate(" "+key+" "+label, width, "")
 }
 
@@ -739,6 +754,24 @@ func padShortcutKey(key string, width int) string {
 }
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
+	if sp.Mode == ModeSessions && sp.EmbeddedTerminalActive {
+		hints := []shortcutHint{{Key: "ctrl+g", Label: "commands"}}
+		if sp.EmbeddedTerminalPrefix {
+			hints = []shortcutHint{
+				{Key: "ctrl+g", Label: "send"},
+				{Key: "l", Label: "sessions"},
+				{Key: "x", Label: "close"},
+				{Key: "q/esc", Label: "quit"},
+				{Key: "1-9", Label: "switch"},
+			}
+		}
+		sections := []shortcutSection{{Title: "Terminal", Hints: hints}}
+		if !sp.EmbeddedTerminalPrefix {
+			sections = muteShortcutSections(sections)
+		}
+		return sections
+	}
+
 	navigation := []shortcutHint{
 		{Key: "↑/↓", Label: "select", Inline: true},
 		{Key: "←/→", Label: "pane/view", Inline: true},
@@ -858,9 +891,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			)
 		}
 	case ModeSessions:
-		if sp.ActivePane == 1 && sp.EmbeddedTerminalActive {
-			actions = append(actions, shortcutHint{Key: "ctrl+g", Label: "commands"})
-		} else if sp.ActivePane == 1 && sp.SessionSelected {
+		if sp.ActivePane == 1 && sp.SessionSelected {
 			actions = append(actions,
 				shortcutHint{Key: "o", Label: "transcript"},
 				shortcutHint{Key: "r", Label: "resume"},
@@ -938,6 +969,24 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	sections = append(sections, shortcutSection{Title: "Global", Hints: global})
 	return sections
+}
+
+func shortcutsMuted(sp statusBarParams) bool {
+	return sp.Mode == ModeSessions && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
+}
+
+func muteShortcutSections(sections []shortcutSection) []shortcutSection {
+	muted := make([]shortcutSection, 0, len(sections))
+	for _, section := range sections {
+		hints := make([]shortcutHint, 0, len(section.Hints))
+		for _, hint := range section.Hints {
+			hint.Muted = true
+			hints = append(hints, hint)
+		}
+		section.Hints = hints
+		muted = append(muted, section)
+	}
+	return muted
 }
 
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
@@ -1288,6 +1337,9 @@ func renderFooterHint(hint shortcutHint) string {
 	text := hint.Key + shortcutSeparator(hint) + " " + hint.Label
 	if hint.Warning {
 		return dirtyRedStyle.Render(text)
+	}
+	if hint.Muted {
+		return statusStyle.Render(text)
 	}
 	return text
 }
