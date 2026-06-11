@@ -53,6 +53,14 @@ type SelectItem struct {
 	Value string
 }
 
+type EmbeddedTerminalTab struct {
+	Number   int
+	Provider string
+	Identity string
+	State    string
+	Active   bool
+}
+
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
 // not the other way around), so the type lives here to avoid an import cycle.
@@ -174,6 +182,9 @@ type RenderParams struct {
 	Sessions                   []sessions.SessionRecord
 	SessionSelected            int
 	SessionScroll              int
+	EmbeddedTerminals          []EmbeddedTerminalTab
+	EmbeddedTerminalLines      []string
+	EmbeddedTerminalPrefix     bool
 	Plans                      []planstore.PlanRecord
 	PlanSelected               int
 	PlanScroll                 int
@@ -243,7 +254,8 @@ func Render(p RenderParams) string {
 	stashSelected := p.Mode == ModeStashes && p.StashSelected >= 0 && p.StashSelected < len(p.Stashes)
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
-	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
+	embeddedTerminalActive := p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0
+	sessionSelected := p.Mode == ModeSessions && !embeddedTerminalActive && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
@@ -279,6 +291,7 @@ func Render(p RenderParams) string {
 		CommitSelected:             commitSelected,
 		ReflogSelected:             reflogSelected,
 		SessionSelected:            sessionSelected,
+		EmbeddedTerminalActive:     embeddedTerminalActive,
 		PlanSelected:               planSelected,
 		PlanPhaseSelected:          planPhaseSelected,
 		FlowSelected:               flowSelected,
@@ -372,6 +385,8 @@ func Render(p RenderParams) string {
 		rightLines = renderCommitPane(p.Commits, commitSel, p.CommitScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
+	case p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0:
+		rightLines = renderEmbeddedTerminalPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
@@ -526,6 +541,7 @@ type statusBarParams struct {
 	CommitSelected             bool
 	ReflogSelected             bool
 	SessionSelected            bool
+	EmbeddedTerminalActive     bool
 	PlanSelected               bool
 	PlanPhaseSelected          bool
 	FlowSelected               bool
@@ -842,7 +858,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			)
 		}
 	case ModeSessions:
-		if sp.ActivePane == 1 && sp.SessionSelected {
+		if sp.ActivePane == 1 && sp.EmbeddedTerminalActive {
+			actions = append(actions, shortcutHint{Key: "ctrl+g", Label: "commands"})
+		} else if sp.ActivePane == 1 && sp.SessionSelected {
 			actions = append(actions,
 				shortcutHint{Key: "o", Label: "transcript"},
 				shortcutHint{Key: "r", Label: "resume"},
@@ -1583,6 +1601,44 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
+}
+
+func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), width)
+	if height == 1 {
+		return []string{header}
+	}
+	bodyHeight := height - 1
+	lines := make([]string, 0, bodyHeight)
+	if len(liveLines) > bodyHeight {
+		liveLines = liveLines[len(liveLines)-bodyHeight:]
+	}
+	for _, line := range liveLines {
+		lines = append(lines, truncateToWidth(line, width))
+	}
+	return append([]string{header}, scrollAndPad(lines, 0, bodyHeight)...)
+}
+
+func renderEmbeddedTerminalHeader(tabs []EmbeddedTerminalTab) string {
+	parts := make([]string, 0, len(tabs))
+	for _, tab := range tabs {
+		label := fmt.Sprintf("%d", tab.Number)
+		for _, value := range []string{tab.Provider, tab.Identity, tab.State} {
+			if strings.TrimSpace(value) != "" {
+				label += " " + strings.TrimSpace(value)
+			}
+		}
+		if tab.Active {
+			label = selectedStyle.Render(label)
+		} else {
+			label = statusStyle.Render(label)
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, "  ")
 }
 
 func sessionSummaryDisplayText(summary string) string {

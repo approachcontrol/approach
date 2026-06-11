@@ -91,6 +91,10 @@ type Model struct {
 	saveAgent                 func(string) error
 	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	startEmbeddedTerminal     EmbeddedTerminalStarter
+	embeddedTerminals         []embeddedTerminalSlot
+	activeEmbeddedTerminalNum int
+	terminalPrefixActive      bool
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
 	sessionStateRoot          string
 	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
@@ -127,31 +131,32 @@ type visibleRepoFetchState struct {
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
-	AgentCommand         string
-	StartupMode          ui.Mode
-	PlanPromptTemplate   string
-	FlowPromptTemplates  FlowPromptTemplates
-	ScanRepos            func() ([]scanner.Repo, error)
-	FetchRepo            func(string) error
-	ListSessions         func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
-	ReadTranscript       func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
-	ListPlans            func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
-	ListFlows            func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	StartFlowPlan        func(FlowStartRequest) (FlowStartResult, error)
-	SetFlowPhase         func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
-	AddFlowPhaseLaunchID func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
-	ReadPlan             func(string) (string, error)
-	PlanMarkdownPath     func(planID string) (string, error)
-	CopyToClipboard      func(text string) error
-	PageText             func(body string) (actions.TerminalLaunchSpec, error)
-	EditFile             func(path string) (actions.TerminalLaunchSpec, error)
-	SaveAgentCommand     func(string) error
-	LaunchTerminal       func(path string) (actions.TerminalLaunchSpec, error)
-	LaunchAgent          func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
-	FinalizeAgentSession func(actions.AgentLaunchContext) error
-	SessionStateRoot     string
-	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
-	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
+	AgentCommand          string
+	StartupMode           ui.Mode
+	PlanPromptTemplate    string
+	FlowPromptTemplates   FlowPromptTemplates
+	ScanRepos             func() ([]scanner.Repo, error)
+	FetchRepo             func(string) error
+	ListSessions          func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	ReadTranscript        func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
+	ListPlans             func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	ListFlows             func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	StartFlowPlan         func(FlowStartRequest) (FlowStartResult, error)
+	SetFlowPhase          func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	AddFlowPhaseLaunchID  func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	ReadPlan              func(string) (string, error)
+	PlanMarkdownPath      func(planID string) (string, error)
+	CopyToClipboard       func(text string) error
+	PageText              func(body string) (actions.TerminalLaunchSpec, error)
+	EditFile              func(path string) (actions.TerminalLaunchSpec, error)
+	SaveAgentCommand      func(string) error
+	LaunchTerminal        func(path string) (actions.TerminalLaunchSpec, error)
+	LaunchAgent           func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	StartEmbeddedTerminal EmbeddedTerminalStarter
+	FinalizeAgentSession  func(actions.AgentLaunchContext) error
+	SessionStateRoot      string
+	BootstrapHookForRepo  func(string) (actions.BootstrapHook, bool)
+	RunBootstrapHook      func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 // New creates a Model from discovered repos.
@@ -238,6 +243,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
 	}
+	startEmbeddedTerminal := opts.StartEmbeddedTerminal
+	if startEmbeddedTerminal == nil {
+		startEmbeddedTerminal = defaultEmbeddedTerminalStarter
+	}
 	bootstrapHookForRepo := opts.BootstrapHookForRepo
 	if bootstrapHookForRepo == nil {
 		bootstrapHookForRepo = func(string) (actions.BootstrapHook, bool) { return actions.BootstrapHook{}, false }
@@ -282,41 +291,42 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
 	m := Model{
-		repos:                newRepoPane().SetItems(repos),
-		rows:                 newBranchPane(),
-		stashes:              newStashPane(),
-		worktrees:            newWorktreePane(),
-		worktreeSessions:     newSessionPane(),
-		commits:              newCommitPane(),
-		reflogs:              newReflogPane(),
-		sessions:             newSessionPane(),
-		plans:                newPlanPane(),
-		flows:                newFlowPane(),
-		mode:                 startupMode(opts.StartupMode),
-		agentCommand:         agent.Normalize(opts.AgentCommand),
-		planPromptTemplate:   opts.PlanPromptTemplate,
-		flowPromptTemplates:  opts.FlowPromptTemplates,
-		scanRepos:            opts.ScanRepos,
-		fetchRepo:            fetchRepo,
-		listSessions:         listSessions,
-		readTranscript:       readTranscript,
-		listPlans:            listPlans,
-		listFlows:            listFlows,
-		startFlowPlan:        startFlowPlan,
-		setFlowPhase:         setFlowPhase,
-		addFlowPhaseLaunchID: addFlowPhaseLaunchID,
-		readPlan:             readPlan,
-		planMarkdownPath:     planMarkdownPath,
-		copyToClipboard:      copyToClipboard,
-		pageText:             pageText,
-		editFile:             editFile,
-		saveAgent:            saveAgent,
-		launchTerminal:       launchTerminal,
-		launchAgent:          launchAgent,
-		finalizeAgentSession: finalizeAgentSession,
-		sessionStateRoot:     opts.SessionStateRoot,
-		bootstrapHookForRepo: bootstrapHookForRepo,
-		runBootstrapHook:     runBootstrapHook,
+		repos:                 newRepoPane().SetItems(repos),
+		rows:                  newBranchPane(),
+		stashes:               newStashPane(),
+		worktrees:             newWorktreePane(),
+		worktreeSessions:      newSessionPane(),
+		commits:               newCommitPane(),
+		reflogs:               newReflogPane(),
+		sessions:              newSessionPane(),
+		plans:                 newPlanPane(),
+		flows:                 newFlowPane(),
+		mode:                  startupMode(opts.StartupMode),
+		agentCommand:          agent.Normalize(opts.AgentCommand),
+		planPromptTemplate:    opts.PlanPromptTemplate,
+		flowPromptTemplates:   opts.FlowPromptTemplates,
+		scanRepos:             opts.ScanRepos,
+		fetchRepo:             fetchRepo,
+		listSessions:          listSessions,
+		readTranscript:        readTranscript,
+		listPlans:             listPlans,
+		listFlows:             listFlows,
+		startFlowPlan:         startFlowPlan,
+		setFlowPhase:          setFlowPhase,
+		addFlowPhaseLaunchID:  addFlowPhaseLaunchID,
+		readPlan:              readPlan,
+		planMarkdownPath:      planMarkdownPath,
+		copyToClipboard:       copyToClipboard,
+		pageText:              pageText,
+		editFile:              editFile,
+		saveAgent:             saveAgent,
+		launchTerminal:        launchTerminal,
+		launchAgent:           launchAgent,
+		startEmbeddedTerminal: startEmbeddedTerminal,
+		finalizeAgentSession:  finalizeAgentSession,
+		sessionStateRoot:      opts.SessionStateRoot,
+		bootstrapHookForRepo:  bootstrapHookForRepo,
+		runBootstrapHook:      runBootstrapHook,
 	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeFlows; mode++ {
 		m.listRequestSeq++
@@ -477,6 +487,9 @@ func (m Model) View() string {
 		Sessions:                   sessions,
 		SessionSelected:            sessionSelected,
 		SessionScroll:              sessionScroll,
+		EmbeddedTerminals:          m.embeddedTerminalTabs(),
+		EmbeddedTerminalLines:      m.embeddedTerminalLines(),
+		EmbeddedTerminalPrefix:     m.terminalPrefixActive,
 		Plans:                      plans,
 		PlanSelected:               planSelected,
 		PlanScroll:                 planScroll,
@@ -702,7 +715,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m = m.resizeEmbeddedTerminals()
 		m = m.clampSelectionsAfterFilter()
+	case embeddedSessionPickerSelectedMsg:
+		return m.handleEmbeddedSessionPickerSelected(msg)
+	case terminateEmbeddedTerminalMsg:
+		return m.handleTerminateEmbeddedTerminal(msg)
+	case quitEmbeddedTerminalsMsg:
+		return m.handleQuitEmbeddedTerminals()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:

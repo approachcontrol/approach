@@ -232,6 +232,43 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestRender_SessionsModeShowsEmbeddedTerminalInsteadOfSessionRows(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   10,
+		Mode:     ModeSessions,
+		Sessions: []sessions.SessionRecord{{
+			Provider:  sessions.ProviderCodex,
+			SessionID: "codex-session-1",
+			Branch:    "feature/saved",
+			Summary:   "saved session row",
+		}},
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number:   1,
+			Provider: "codex",
+			Identity: "feature/api",
+			State:    "running",
+			Active:   true,
+		}},
+		EmbeddedTerminalLines: []string{"agent output"},
+		ActivePane:            1,
+		SessionSelected:       0,
+	})
+
+	for _, want := range []string{"[6] sessions", "1 codex feature/api running", "agent output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("embedded sessions view missing %q:\n%s", want, view)
+		}
+	}
+	for _, hidden := range []string{"Provider", "Summary", "saved session row"} {
+		if strings.Contains(view, hidden) {
+			t.Fatalf("embedded sessions view should hide saved session table %q:\n%s", hidden, view)
+		}
+	}
+}
+
 func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 	params := RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
