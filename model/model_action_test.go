@@ -3972,23 +3972,6 @@ type fakeEmbeddedTerminal struct {
 	state        string
 }
 
-type realTestEmbeddedTerminal struct {
-	term *embeddedterm.Terminal
-}
-
-func (t realTestEmbeddedTerminal) VisibleLines(width, height int) []string {
-	return t.term.VisibleLines(width, height, embeddedterm.Viewport{Mode: embeddedterm.ViewportLive})
-}
-func (t realTestEmbeddedTerminal) Write(p []byte) (int, error) { return t.term.Write(p) }
-func (t realTestEmbeddedTerminal) Resize(width, height int) error {
-	return t.term.Resize(width, height)
-}
-func (t realTestEmbeddedTerminal) Terminate() error { return t.term.Terminate() }
-func (t realTestEmbeddedTerminal) Wait(ctx context.Context) error {
-	return t.term.Wait(ctx)
-}
-func (t realTestEmbeddedTerminal) State() string { return string(t.term.State()) }
-
 func (t *fakeEmbeddedTerminal) VisibleLines(width, height int) []string {
 	t.visibleCalls = append(t.visibleCalls, [2]int{width, height})
 	return t.lines
@@ -4083,7 +4066,7 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return realTestEmbeddedTerminal{term: term}, nil
+			return model.NewRealEmbeddedTerminalForTest(term), nil
 		},
 	})
 	t.Cleanup(func() {
@@ -4605,7 +4588,8 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
+		!got.Embedded {
 		t.Fatalf("unexpected resume launch context: %#v", got)
 	}
 	if got.FlowID != "" || got.FlowPhaseID != "" {
@@ -4671,7 +4655,7 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 
-	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" {
+	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" || !got.Embedded {
 		t.Fatalf("unexpected cwd fallback resume context: %#v", got)
 	}
 }

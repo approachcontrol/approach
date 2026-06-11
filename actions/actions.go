@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -620,6 +621,7 @@ type AgentLaunchContext struct {
 	FlowID            string
 	FlowPhaseID       string
 	FlowLaunchTracked bool
+	Embedded          bool
 	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
@@ -748,7 +750,7 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	args := agentLaunchArgs(command, resumeSessionID)
+	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded)
 	if ctx.InitialPrompt != "" {
 		args = append(args, ctx.InitialPrompt)
 	}
@@ -954,12 +956,15 @@ func ResolveWorktreeCommit(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func agentLaunchArgs(command, resumeSessionID string) []string {
+func agentLaunchArgs(command, resumeSessionID string, embedded bool) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
 		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
 		args := []string{"--config", hookConfig}
+		if embedded {
+			args = slices.Insert(args, 0, "--no-alt-screen")
+		}
 		if resumeSessionID != "" {
 			args = append(args, "resume", resumeSessionID)
 		}

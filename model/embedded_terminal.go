@@ -3,9 +3,7 @@ package model
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +55,8 @@ type realEmbeddedTerminal struct {
 }
 
 func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
-	cmd, err := embeddedTerminalCommand(ctx)
+	ctx.Embedded = true
+	cmd, err := actions.AgentCommand(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -68,19 +67,8 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 	return realEmbeddedTerminal{term: term}, nil
 }
 
-func embeddedTerminalCommand(ctx actions.AgentLaunchContext) (*exec.Cmd, error) {
-	cmd, err := actions.AgentCommand(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if agent.Normalize(ctx.Command) == agent.CommandCodex && !slices.Contains(cmd.Args, "--no-alt-screen") {
-		cmd.Args = slices.Insert(cmd.Args, 1, "--no-alt-screen")
-	}
-	return cmd, nil
-}
-
 func (t realEmbeddedTerminal) VisibleLines(width, height int) []string {
-	return t.term.VisibleLines(width, height, embeddedterm.Viewport{Mode: embeddedterm.ViewportLive})
+	return t.term.VisibleLines(width, height)
 }
 
 func (t realEmbeddedTerminal) Write(p []byte) (int, error) { return t.term.Write(p) }
@@ -181,6 +169,7 @@ func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessi
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
 		return m, false, nil
 	}
+	ctx.Embedded = true
 	term, err := m.startEmbeddedTerminal(ctx, m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
