@@ -161,10 +161,11 @@ func (t *Terminal) Terminate() error {
 	t.terminating = true
 	ptmx := t.pty
 	t.mu.Unlock()
+	err := terminateProcessGroup(t.cmd)
 	if ptmx != nil {
 		_ = ptmx.Close()
 	}
-	if err := terminateProcessGroup(t.cmd); err != nil {
+	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), terminateWaitTimeout)
