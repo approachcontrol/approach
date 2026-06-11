@@ -80,7 +80,7 @@ func (t realEmbeddedTerminal) Wait(ctx context.Context) error {
 }
 func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
 
-const embeddedTerminalRepaintInterval = 100 * time.Millisecond
+const embeddedTerminalRepaintInterval = time.Second / 30
 
 func (m Model) startEmbeddedTerminalTick() (Model, tea.Cmd) {
 	m.embeddedTerminalTickGen++

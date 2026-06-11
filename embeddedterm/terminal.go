@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	bubbleemulator "github.com/taigrr/bubbleterm/emulator"
 )
 
 type State string
@@ -42,7 +43,6 @@ type StartRequest struct {
 }
 
 const (
-	defaultScrollbackLines  = 5000
 	finalOutputDrainTimeout = 200 * time.Millisecond
 	terminateWaitTimeout    = 2 * time.Second
 )
@@ -72,20 +72,24 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 		return nil, fmt.Errorf("embedded terminal command is required")
 	}
 	width, height = normalizeSize(width, height)
+	ensureTerminalEnv(cmd)
 	configureProcessGroup(cmd)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)})
 	if err != nil {
 		return nil, err
 	}
+	emu, err := bubbleemulator.NewFromPipes(width, height, ptmx, ptmx)
+	if err != nil {
+		_ = ptmx.Close()
+		return nil, err
+	}
 	t := &Terminal{
 		cmd:      cmd,
 		pty:      ptmx,
-		screen:   newScreenBuffer(width, height, defaultScrollbackLines),
+		emulator: emu,
 		state:    StateRunning,
 		done:     make(chan struct{}),
-		readDone: make(chan struct{}),
 	}
-	go t.readLoop()
 	go t.waitLoop()
 	return t, nil
 }
@@ -94,12 +98,11 @@ type Terminal struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
 	pty         *os.File
-	screen      *screenBuffer
+	emulator    *bubbleemulator.Emulator
 	state       State
 	err         error
 	terminating bool
 	done        chan struct{}
-	readDone    chan struct{}
 }
 
 func (t *Terminal) State() State {
@@ -111,8 +114,15 @@ func (t *Terminal) State() State {
 func (t *Terminal) VisibleLines(width, height int, viewport Viewport) []string {
 	width, height = normalizeSize(width, height)
 	t.mu.Lock()
-	lines := t.screen.VisibleLines(width, height)
+	emu := t.emulator
 	t.mu.Unlock()
+	if emu == nil {
+		return make([]string, height)
+	}
+	lines := emu.GetScreen().Rows
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
+	}
 	out := make([]string, height)
 	copy(out[height-len(lines):], lines)
 	return out
@@ -131,9 +141,7 @@ func (t *Terminal) Resize(width, height int) error {
 		t.mu.Unlock()
 		return nil
 	}
-	if t.screen != nil {
-		t.screen.Resize(width, height)
-	}
+	emu := t.emulator
 	t.mu.Unlock()
 	if ptmx == nil {
 		return nil
@@ -143,6 +151,11 @@ func (t *Terminal) Resize(width, height int) error {
 			return nil
 		}
 		return err
+	}
+	if emu != nil {
+		if err := emu.Resize(width, height); err != nil && !isClosedPTYError(err) {
+			return err
+		}
 	}
 	return nil
 }
@@ -177,10 +190,36 @@ func (t *Terminal) Terminate() error {
 }
 
 func (t *Terminal) Close() error {
-	if t.pty == nil {
+	t.mu.Lock()
+	ptmx := t.pty
+	emu := t.emulator
+	t.pty = nil
+	t.emulator = nil
+	t.mu.Unlock()
+	if emu != nil {
+		_ = emu.Close()
+	}
+	if ptmx == nil {
 		return nil
 	}
-	return t.pty.Close()
+	if err := ptmx.Close(); err != nil && !isClosedPTYError(err) {
+		return err
+	}
+	return nil
+}
+
+func (t *Terminal) closePTY() error {
+	t.mu.Lock()
+	ptmx := t.pty
+	t.pty = nil
+	t.mu.Unlock()
+	if ptmx == nil {
+		return nil
+	}
+	if err := ptmx.Close(); err != nil && !isClosedPTYError(err) {
+		return err
+	}
+	return nil
 }
 
 func (t *Terminal) Wait(ctx context.Context) error {
@@ -195,31 +234,10 @@ func (t *Terminal) Wait(ctx context.Context) error {
 	}
 }
 
-func (t *Terminal) readLoop() {
-	defer close(t.readDone)
-	var tmp [4096]byte
-	for {
-		n, err := t.pty.Read(tmp[:])
-		if n > 0 {
-			t.mu.Lock()
-			t.screen.Write(tmp[:n])
-			t.mu.Unlock()
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
 func (t *Terminal) waitLoop() {
 	err := t.cmd.Wait()
-	select {
-	case <-t.readDone:
-	case <-time.After(finalOutputDrainTimeout):
-		_ = t.Close()
-		<-t.readDone
-	}
-	_ = t.Close()
+	time.Sleep(finalOutputDrainTimeout)
+	_ = t.closePTY()
 	t.mu.Lock()
 	t.err = err
 	switch {
@@ -232,6 +250,19 @@ func (t *Terminal) waitLoop() {
 	}
 	t.mu.Unlock()
 	close(t.done)
+}
+
+func ensureTerminalEnv(cmd *exec.Cmd) {
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	for i, env := range cmd.Env {
+		if strings.HasPrefix(env, "TERM=") {
+			cmd.Env[i] = "TERM=xterm-256color"
+			return
+		}
+	}
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
 }
 
 func normalizeSize(width, height int) (int, int) {

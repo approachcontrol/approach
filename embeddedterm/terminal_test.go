@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTerminalRunsCommandAndRendersLiveOutput(t *testing.T) {
@@ -66,81 +68,33 @@ func TestTerminalRendersCursorUpdatesAndClears(t *testing.T) {
 	}
 }
 
-func TestScreenBufferKeepsBoundedScrollback(t *testing.T) {
-	screen := newScreenBuffer(20, 2, 3)
-	for i := 0; i < 10; i++ {
-		screen.Write([]byte("line\n"))
+func TestTerminalPreservesANSIStyleInVisibleLines(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
 	}
-	if got := screen.retainedLineCount(); got > 5 {
-		t.Fatalf("retained line count = %d, want bounded count <= 5", got)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf '\\033[31mred\\033[0m'"},
+		Width:   20,
+		Height:  3,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
 	}
-}
+	defer term.Close()
 
-func TestScreenBufferTabAtRightEdgeDoesNotHang(t *testing.T) {
-	screen := newScreenBuffer(10, 2, 0)
-	done := make(chan struct{})
-	go func() {
-		screen.Write([]byte("123456789\t"))
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("tab expansion at the right edge did not complete")
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
 	}
-}
-
-func TestScreenBufferBuffersSplitCSISequence(t *testing.T) {
-	screen := newScreenBuffer(20, 2, 0)
-	screen.Write([]byte("hello"))
-	screen.Write([]byte("\r\x1b["))
-	screen.Write([]byte("Kbye"))
-
-	got := strings.Join(screen.VisibleLines(20, 2), "\n")
-	if !strings.Contains(got, "bye") {
-		t.Fatalf("visible lines = %q, want replacement text", got)
+	got := strings.Join(term.VisibleLines(20, 3, Viewport{Mode: ViewportLive}), "\n")
+	if !strings.Contains(ansi.Strip(got), "red") {
+		t.Fatalf("visible lines = %q, want stripped output containing red", got)
 	}
-	if strings.Contains(got, "hello") || strings.Contains(got, "Kbye") {
-		t.Fatalf("visible lines = %q, want split clear-line sequence applied", got)
-	}
-}
-
-func TestScreenBufferBuffersSplitUTF8Rune(t *testing.T) {
-	screen := newScreenBuffer(20, 2, 0)
-	screen.Write([]byte{0xc3})
-	screen.Write([]byte{0xa9})
-
-	got := strings.Join(screen.VisibleLines(20, 2), "\n")
-	if !strings.Contains(got, "é") {
-		t.Fatalf("visible lines = %q, want split UTF-8 rune rendered", got)
-	}
-}
-
-func TestScreenBufferCapsUnterminatedEscapeBuffer(t *testing.T) {
-	screen := newScreenBuffer(20, 2, 0)
-	screen.Write([]byte("\x1b]" + strings.Repeat("x", maxPendingSequenceBytes+1)))
-	if len(screen.pending) != 0 {
-		t.Fatalf("pending bytes = %d, want capped and discarded", len(screen.pending))
-	}
-
-	screen.Write([]byte("ok"))
-	got := strings.Join(screen.VisibleLines(20, 2), "\n")
-	if !strings.Contains(got, "ok") {
-		t.Fatalf("visible lines = %q, want later normal output after discarded escape", got)
-	}
-}
-
-func TestScreenBufferRestoresNormalScreenAfterAltScreen(t *testing.T) {
-	screen := newScreenBuffer(30, 2, 0)
-	screen.Write([]byte("before \x1b[?1049h alt \x1b[?1049l"))
-
-	got := strings.Join(screen.VisibleLines(30, 2), "\n")
-	if !strings.Contains(got, "before") {
-		t.Fatalf("visible lines = %q, want normal screen restored", got)
-	}
-	if strings.Contains(got, "alt") {
-		t.Fatalf("visible lines = %q, want alternate screen hidden after exit", got)
+	if !strings.Contains(got, "\x1b[") {
+		t.Fatalf("visible lines = %q, want ANSI style preserved", got)
 	}
 }
 
