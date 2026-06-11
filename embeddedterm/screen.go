@@ -3,6 +3,7 @@ package embeddedterm
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -16,6 +17,7 @@ type screenBuffer struct {
 	row           int
 	col           int
 	alt           bool
+	pending       []byte
 }
 
 func newScreenBuffer(width, height, maxScrollback int) *screenBuffer {
@@ -33,11 +35,21 @@ func newScreenBuffer(width, height, maxScrollback int) *screenBuffer {
 }
 
 func (s *screenBuffer) Write(p []byte) {
-	text := strings.ToValidUTF8(string(p), "")
-	for i := 0; i < len(text); {
-		switch text[i] {
+	if len(s.pending) > 0 {
+		next := make([]byte, 0, len(s.pending)+len(p))
+		next = append(next, s.pending...)
+		next = append(next, p...)
+		p = next
+		s.pending = nil
+	}
+	for i := 0; i < len(p); {
+		switch p[i] {
 		case '\x1b':
-			next := s.applyEscape(text, i)
+			next, complete := s.applyEscape(p, i)
+			if !complete {
+				s.pending = append(s.pending[:0], p[i:]...)
+				return
+			}
 			if next <= i {
 				i++
 			} else {
@@ -65,10 +77,18 @@ func (s *screenBuffer) Write(p []byte) {
 			}
 			i++
 		default:
-			r := rune(text[i])
+			if p[i] >= 0x80 && !utf8.FullRune(p[i:]) {
+				s.pending = append(s.pending[:0], p[i:]...)
+				return
+			}
+			r := rune(p[i])
 			size := 1
-			if text[i] >= 0x80 {
-				r, size = decodeRune(text[i:])
+			if p[i] >= 0x80 {
+				r, size = utf8.DecodeRune(p[i:])
+				if r == utf8.RuneError && size == 1 {
+					i++
+					continue
+				}
 			}
 			if r >= ' ' {
 				s.putRune(r)
@@ -179,9 +199,9 @@ func (s *screenBuffer) appendHistory(line string) {
 	}
 }
 
-func (s *screenBuffer) applyEscape(text string, start int) int {
+func (s *screenBuffer) applyEscape(text []byte, start int) (int, bool) {
 	if start+1 >= len(text) {
-		return start + 1
+		return start, false
 	}
 	switch text[start+1] {
 	case '[':
@@ -192,21 +212,21 @@ func (s *screenBuffer) applyEscape(text string, start int) int {
 		return skipUntilST(text, start+2)
 	case 'c':
 		s.resetScreen()
-		return start + 2
+		return start + 2, true
 	case 'D':
 		s.newLine()
-		return start + 2
+		return start + 2, true
 	case 'M':
 		if s.row > 0 {
 			s.row--
 		}
-		return start + 2
+		return start + 2, true
 	default:
-		return start + 2
+		return start + 2, true
 	}
 }
 
-func (s *screenBuffer) applyCSI(text string, start int) int {
+func (s *screenBuffer) applyCSI(text []byte, start int) (int, bool) {
 	end := start
 	for end < len(text) {
 		b := text[end]
@@ -216,9 +236,9 @@ func (s *screenBuffer) applyCSI(text string, start int) int {
 		end++
 	}
 	if end >= len(text) {
-		return len(text)
+		return start - 2, false
 	}
-	params := text[start:end]
+	params := string(text[start:end])
 	final := text[end]
 	values := csiParams(params)
 	switch final {
@@ -248,7 +268,7 @@ func (s *screenBuffer) applyCSI(text string, start int) int {
 			s.resetVisibleScreen()
 		}
 	}
-	return end + 1
+	return end + 1, true
 }
 
 func (s *screenBuffer) eraseDisplay(mode int) {
@@ -338,35 +358,25 @@ func param(values []int, index, fallback int) int {
 	return values[index]
 }
 
-func skipUntilTerminator(text string, start int) int {
+func skipUntilTerminator(text []byte, start int) (int, bool) {
 	for i := start; i < len(text); i++ {
 		if text[i] == '\a' {
-			return i + 1
+			return i + 1, true
 		}
 		if text[i] == '\x1b' && i+1 < len(text) && text[i+1] == '\\' {
-			return i + 2
+			return i + 2, true
 		}
 	}
-	return len(text)
+	return start - 2, false
 }
 
-func skipUntilST(text string, start int) int {
+func skipUntilST(text []byte, start int) (int, bool) {
 	for i := start; i+1 < len(text); i++ {
 		if text[i] == '\x1b' && text[i+1] == '\\' {
-			return i + 2
+			return i + 2, true
 		}
 	}
-	return len(text)
-}
-
-func decodeRune(s string) (rune, int) {
-	for size := 1; size <= len(s) && size <= 4; size++ {
-		runes := []rune(s[:size])
-		if len(runes) == 1 && string(runes[0]) == s[:size] {
-			return runes[0], size
-		}
-	}
-	return rune(s[0]), 1
+	return start - 2, false
 }
 
 func makeBlankLines(height, width int) [][]rune {

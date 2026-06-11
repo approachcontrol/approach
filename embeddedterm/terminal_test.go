@@ -91,6 +91,32 @@ func TestScreenBufferTabAtRightEdgeDoesNotHang(t *testing.T) {
 	}
 }
 
+func TestScreenBufferBuffersSplitCSISequence(t *testing.T) {
+	screen := newScreenBuffer(20, 2, 0)
+	screen.Write([]byte("hello"))
+	screen.Write([]byte("\r\x1b["))
+	screen.Write([]byte("Kbye"))
+
+	got := strings.Join(screen.VisibleLines(20, 2), "\n")
+	if !strings.Contains(got, "bye") {
+		t.Fatalf("visible lines = %q, want replacement text", got)
+	}
+	if strings.Contains(got, "hello") || strings.Contains(got, "Kbye") {
+		t.Fatalf("visible lines = %q, want split clear-line sequence applied", got)
+	}
+}
+
+func TestScreenBufferBuffersSplitUTF8Rune(t *testing.T) {
+	screen := newScreenBuffer(20, 2, 0)
+	screen.Write([]byte{0xc3})
+	screen.Write([]byte{0xa9})
+
+	got := strings.Join(screen.VisibleLines(20, 2), "\n")
+	if !strings.Contains(got, "é") {
+		t.Fatalf("visible lines = %q, want split UTF-8 rune rendered", got)
+	}
+}
+
 func TestTerminalReportsFailedForNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
