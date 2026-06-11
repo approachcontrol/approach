@@ -72,6 +72,84 @@ func TestTerminalRendersOutputWhileCommandIsRunning(t *testing.T) {
 	t.Fatalf("visible lines never showed live output: %#v", term.VisibleLines(40, 5, Viewport{Mode: ViewportLive}))
 }
 
+func TestTerminalBridgesTerminalQueryResponses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not installed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "bash",
+		Args: []string{
+			"-lc",
+			"printf '\\033[6n'; IFS= read -r -s -n 6 response; printf 'query-answered'",
+		},
+		Width:  40,
+		Height: 5,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := strings.Join(term.VisibleLines(40, 5, Viewport{Mode: ViewportLive}), "\n")
+	if !strings.Contains(got, "query-answered") {
+		t.Fatalf("visible lines = %q, want output after terminal query response", got)
+	}
+}
+
+func TestStripTerminalResponseRequests(t *testing.T) {
+	input := "before" +
+		"\x1b[6n" +
+		"\x1b]10;?\x1b\\" +
+		"\x1b]11;?\x07" +
+		"\x1b[?u" +
+		"\x1b[c" +
+		"\x1b[?25h" +
+		"after"
+	got, pending, queries := stripTerminalResponseRequests([]byte(input), false)
+	if len(pending) != 0 {
+		t.Fatalf("pending = %q, want empty", string(pending))
+	}
+	if len(queries) != 5 {
+		t.Fatalf("queries = %#v, want five terminal response requests", queries)
+	}
+	want := "before\x1b[?25hafter"
+	if string(got) != want {
+		t.Fatalf("filtered = %q, want %q", string(got), want)
+	}
+}
+
+func TestStripTerminalResponseRequestsKeepsSplitSequencesPending(t *testing.T) {
+	got, pending, queries := stripTerminalResponseRequests([]byte("before\x1b]10;?"), false)
+	if string(got) != "before" {
+		t.Fatalf("filtered = %q, want prefix only", string(got))
+	}
+	if string(pending) != "\x1b]10;?" {
+		t.Fatalf("pending = %q, want partial OSC query", string(pending))
+	}
+	if len(queries) != 0 {
+		t.Fatalf("queries = %#v, want none before sequence completes", queries)
+	}
+	got, pending, queries = stripTerminalResponseRequests(append(pending, []byte("\x1b\\after")...), false)
+	if len(pending) != 0 {
+		t.Fatalf("pending after completion = %q, want empty", string(pending))
+	}
+	if len(queries) != 1 || queries[0].kind != terminalResponseForeground {
+		t.Fatalf("queries after completion = %#v, want foreground query", queries)
+	}
+	if string(got) != "after" {
+		t.Fatalf("filtered after completion = %q, want trailing output", string(got))
+	}
+}
+
 func TestTerminalRendersCursorUpdatesAndClears(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

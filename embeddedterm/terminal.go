@@ -84,7 +84,7 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 	if err != nil {
 		return nil, err
 	}
-	outputReader := newTerminalOutputReader(ptmx, width, defaultScrollbackLines)
+	outputReader := newTerminalOutputReader(ptmx, ptmx, width, defaultScrollbackLines)
 	emu, err := newEmulatorFromPipes(width, height, outputReader, ptmx)
 	if err != nil {
 		_ = ptmx.Close()
@@ -356,44 +356,132 @@ func waitForCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
 }
 
 type terminalOutputReader struct {
-	reader   io.Reader
-	done     chan struct{}
-	once     sync.Once
-	retained *vt.Emulator
-	mu       sync.Mutex
+	reader        io.Reader
+	writer        io.Writer
+	done          chan struct{}
+	once          sync.Once
+	retained      *vt.SafeEmulator
+	filterPending []byte
+	outputPending []byte
+	mu            sync.Mutex
 }
 
-func newTerminalOutputReader(reader io.Reader, width, maxLines int) *terminalOutputReader {
+func newTerminalOutputReader(reader io.Reader, writer io.Writer, width, maxLines int) *terminalOutputReader {
 	width, maxLines = normalizeSize(width, maxLines)
-	return &terminalOutputReader{
+	r := &terminalOutputReader{
 		reader:   reader,
+		writer:   writer,
 		done:     make(chan struct{}),
-		retained: vt.NewEmulator(width, maxLines),
+		retained: vt.NewSafeEmulator(width, maxLines),
 	}
+	return r
 }
 
 func (r *terminalOutputReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		r.recordRetained(p[:n])
+	for {
+		if n := r.copyOutputPending(p); n > 0 {
+			return n, nil
+		}
+		n, err := r.reader.Read(p)
+		if n > 0 {
+			filtered, queries := r.filterForBubbleterm(p[:n], err != nil)
+			if len(filtered) > 0 {
+				r.recordRetained(filtered)
+			}
+			r.writeResponses(r.terminalResponses(queries))
+			if len(filtered) > 0 {
+				return r.copyFilteredOutput(p, filtered), nil
+			}
+		}
+		if err != nil {
+			r.close()
+			return 0, err
+		}
 	}
-	if err != nil {
-		r.close()
+}
+
+func (r *terminalOutputReader) copyOutputPending(p []byte) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.outputPending) == 0 {
+		return 0
 	}
-	return n, err
+	n := copy(p, r.outputPending)
+	r.outputPending = append(r.outputPending[:0], r.outputPending[n:]...)
+	return n
+}
+
+func (r *terminalOutputReader) copyFilteredOutput(p, filtered []byte) int {
+	n := copy(p, filtered)
+	if n < len(filtered) {
+		r.mu.Lock()
+		r.outputPending = append(r.outputPending[:0], filtered[n:]...)
+		r.mu.Unlock()
+	}
+	return n
 }
 
 func (r *terminalOutputReader) recordRetained(p []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.retained != nil {
 		_, _ = r.retained.Write(p)
 	}
 }
 
-func (r *terminalOutputReader) retainedRows() []string {
+func (r *terminalOutputReader) filterForBubbleterm(p []byte, final bool) ([]byte, []terminalResponseRequest) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	input := append(r.filterPending, p...)
+	r.filterPending = nil
+	r.mu.Unlock()
+	filtered, pending, queries := stripTerminalResponseRequests(input, final)
+	if len(pending) > 0 {
+		r.mu.Lock()
+		r.filterPending = append(r.filterPending[:0], pending...)
+		r.mu.Unlock()
+	}
+	return filtered, queries
+}
+
+func (r *terminalOutputReader) terminalResponses(queries []terminalResponseRequest) []byte {
+	if len(queries) == 0 {
+		return nil
+	}
+	var responses strings.Builder
+	for _, query := range queries {
+		switch query.kind {
+		case terminalResponseCPR:
+			x, y := 0, 0
+			if r.retained != nil {
+				pos := r.retained.CursorPosition()
+				x, y = pos.X, pos.Y
+			}
+			responses.WriteString(ansi.CursorPositionReport(y+1, x+1))
+		case terminalResponseStatus:
+			responses.WriteString(ansi.DeviceStatusReport(ansi.DECStatusReport(0)))
+		case terminalResponsePrimaryDA:
+			responses.WriteString(ansi.PrimaryDeviceAttributes(62, 1, 6, 22))
+		case terminalResponseSecondaryDA:
+			responses.WriteString(ansi.SecondaryDeviceAttributes(1, 10, 0))
+		case terminalResponseKittyKeyboard:
+			responses.WriteString("\x1b[?0u")
+		case terminalResponseForeground:
+			responses.WriteString(ansi.SetForegroundColor(ansi.XRGBColor{Color: ansi.White}.String()))
+		case terminalResponseBackground:
+			responses.WriteString(ansi.SetBackgroundColor(ansi.XRGBColor{Color: ansi.Black}.String()))
+		case terminalResponseCursorColor:
+			responses.WriteString(ansi.SetCursorColor(ansi.XRGBColor{Color: ansi.White}.String()))
+		}
+	}
+	return []byte(responses.String())
+}
+
+func (r *terminalOutputReader) writeResponses(responses []byte) {
+	if len(responses) == 0 || r.writer == nil {
+		return
+	}
+	_, _ = r.writer.Write(responses)
+}
+
+func (r *terminalOutputReader) retainedRows() []string {
 	if r.retained == nil {
 		return nil
 	}
@@ -402,8 +490,165 @@ func (r *terminalOutputReader) retainedRows() []string {
 
 func (r *terminalOutputReader) close() {
 	r.once.Do(func() {
+		if r.retained != nil {
+			_ = r.retained.Close()
+		}
 		close(r.done)
 	})
+}
+
+type terminalResponseKind int
+
+const (
+	terminalResponseCPR terminalResponseKind = iota
+	terminalResponseStatus
+	terminalResponsePrimaryDA
+	terminalResponseSecondaryDA
+	terminalResponseKittyKeyboard
+	terminalResponseForeground
+	terminalResponseBackground
+	terminalResponseCursorColor
+)
+
+type terminalResponseRequest struct {
+	kind terminalResponseKind
+}
+
+func stripTerminalResponseRequests(input []byte, final bool) ([]byte, []byte, []terminalResponseRequest) {
+	var out []byte
+	var queries []terminalResponseRequest
+	for i := 0; i < len(input); {
+		if input[i] != 0x1b {
+			out = append(out, input[i])
+			i++
+			continue
+		}
+		if i+1 >= len(input) {
+			if final {
+				out = append(out, input[i])
+				i++
+				continue
+			}
+			return out, append([]byte(nil), input[i:]...), queries
+		}
+		switch input[i+1] {
+		case '[':
+			end := findCSIEnd(input, i+2)
+			if end == -1 {
+				if final {
+					out = append(out, input[i:]...)
+					return out, nil, queries
+				}
+				return out, append([]byte(nil), input[i:]...), queries
+			}
+			seq := input[i : end+1]
+			if query, ok := terminalResponseCSI(seq); ok {
+				queries = append(queries, query)
+			} else {
+				out = append(out, seq...)
+			}
+			i = end + 1
+		case ']':
+			end := findOSCEnd(input, i+2)
+			if end == -1 {
+				if final {
+					out = append(out, input[i:]...)
+					return out, nil, queries
+				}
+				return out, append([]byte(nil), input[i:]...), queries
+			}
+			seq := input[i:end]
+			if query, ok := terminalResponseOSC(seq); ok {
+				queries = append(queries, query)
+			} else {
+				out = append(out, input[i:end]...)
+			}
+			i = end
+		default:
+			out = append(out, input[i], input[i+1])
+			i += 2
+		}
+	}
+	return out, nil, queries
+}
+
+func findCSIEnd(input []byte, start int) int {
+	for i := start; i < len(input); i++ {
+		if input[i] >= 0x40 && input[i] <= 0x7e {
+			return i
+		}
+	}
+	return -1
+}
+
+func terminalResponseCSI(seq []byte) (terminalResponseRequest, bool) {
+	if len(seq) < 3 || seq[0] != 0x1b || seq[1] != '[' {
+		return terminalResponseRequest{}, false
+	}
+	body := string(seq[2:])
+	final := body[len(body)-1]
+	params := body[:len(body)-1]
+	switch final {
+	case 'c':
+		switch params {
+		case "", "0":
+			return terminalResponseRequest{kind: terminalResponsePrimaryDA}, true
+		case ">":
+			return terminalResponseRequest{kind: terminalResponseSecondaryDA}, true
+		default:
+			return terminalResponseRequest{}, false
+		}
+	case 'n':
+		switch params {
+		case "5":
+			return terminalResponseRequest{kind: terminalResponseStatus}, true
+		case "6", "?6":
+			return terminalResponseRequest{kind: terminalResponseCPR}, true
+		default:
+			return terminalResponseRequest{}, false
+		}
+	case 'p':
+		return terminalResponseRequest{}, strings.HasSuffix(params, "$")
+	case 'u':
+		if params == "?" {
+			return terminalResponseRequest{kind: terminalResponseKittyKeyboard}, true
+		}
+		return terminalResponseRequest{}, false
+	default:
+		return terminalResponseRequest{}, false
+	}
+}
+
+func findOSCEnd(input []byte, start int) int {
+	for i := start; i < len(input); i++ {
+		switch input[i] {
+		case 0x07:
+			return i + 1
+		case 0x1b:
+			if i+1 < len(input) && input[i+1] == '\\' {
+				return i + 2
+			}
+		}
+	}
+	return -1
+}
+
+func terminalResponseOSC(seq []byte) (terminalResponseRequest, bool) {
+	if len(seq) < 5 || seq[0] != 0x1b || seq[1] != ']' {
+		return terminalResponseRequest{}, false
+	}
+	body := string(seq[2:])
+	body = strings.TrimSuffix(strings.TrimSuffix(body, "\x1b\\"), "\x07")
+	switch body {
+	case "10;?":
+		return terminalResponseRequest{kind: terminalResponseForeground}, true
+	case "11;?":
+		return terminalResponseRequest{kind: terminalResponseBackground}, true
+	case "12;?":
+		return terminalResponseRequest{kind: terminalResponseCursorColor}, true
+	default:
+		return terminalResponseRequest{}, false
+	}
 }
 
 func normalizeSize(width, height int) (int, int) {
