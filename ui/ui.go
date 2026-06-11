@@ -237,19 +237,12 @@ func FlowSplitPanelHeights(height int) (listHeight, spacerHeight, terminalHeight
 	if listHeight < flowSplitMinPanelHeight {
 		listHeight = flowSplitMinPanelHeight
 	}
-	terminalHeight = height / 4
-	if terminalHeight < flowSplitMinPanelHeight {
-		terminalHeight = flowSplitMinPanelHeight
+	terminalHeight = height - listHeight
+	if terminalHeight < 1 {
+		terminalHeight = 1
+		listHeight = height - terminalHeight
 	}
-	if listHeight+terminalHeight > height {
-		terminalHeight = height - listHeight
-		if terminalHeight < 1 {
-			terminalHeight = 1
-			listHeight = height - terminalHeight
-		}
-	}
-	spacerHeight = height - listHeight - terminalHeight
-	return listHeight, spacerHeight, terminalHeight
+	return listHeight, 0, terminalHeight
 }
 
 // Render produces the full terminal view string.

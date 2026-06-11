@@ -68,15 +68,24 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{"planning next step", "running tests"},
-		ActivePane:                1,
+		FlowEmbeddedTerminalLines: []string{
+			"terminal line 1",
+			"terminal line 2",
+			"terminal line 3",
+			"terminal line 4",
+			"terminal line 5",
+			"terminal line 6",
+			"terminal line 7",
+			"terminal line 8",
+		},
+		ActivePane: 1,
 	})
 
 	for _, want := range []string{
 		"Add embedded Flow terminal",
 		"1 codex implementation running",
-		"planning next step",
-		"running tests",
+		"terminal line 1",
+		"terminal line 8",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("split Flow terminal view missing %q:\n%s", want, view)
