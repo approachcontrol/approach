@@ -131,6 +131,19 @@ func TestScreenBufferCapsUnterminatedEscapeBuffer(t *testing.T) {
 	}
 }
 
+func TestScreenBufferRestoresNormalScreenAfterAltScreen(t *testing.T) {
+	screen := newScreenBuffer(30, 2, 0)
+	screen.Write([]byte("before \x1b[?1049h alt \x1b[?1049l"))
+
+	got := strings.Join(screen.VisibleLines(30, 2), "\n")
+	if !strings.Contains(got, "before") {
+		t.Fatalf("visible lines = %q, want normal screen restored", got)
+	}
+	if strings.Contains(got, "alt") {
+		t.Fatalf("visible lines = %q, want alternate screen hidden after exit", got)
+	}
+}
+
 func TestTerminalReportsFailedForNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

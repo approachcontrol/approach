@@ -20,6 +20,9 @@ type screenBuffer struct {
 	col           int
 	alt           bool
 	pending       []byte
+	normalLines   [][]rune
+	normalRow     int
+	normalCol     int
 }
 
 func newScreenBuffer(width, height, maxScrollback int) *screenBuffer {
@@ -269,16 +272,40 @@ func (s *screenBuffer) applyCSI(text []byte, start int) (int, bool) {
 		s.eraseLine(param(values, 0, 0))
 	case 'h':
 		if strings.Contains(params, "?1049") || strings.Contains(params, "?1047") {
-			s.alt = true
-			s.resetVisibleScreen()
+			s.enterAltScreen()
 		}
 	case 'l':
 		if strings.Contains(params, "?1049") || strings.Contains(params, "?1047") {
-			s.alt = false
-			s.resetVisibleScreen()
+			s.exitAltScreen()
 		}
 	}
 	return end + 1, true
+}
+
+func (s *screenBuffer) enterAltScreen() {
+	if s.alt {
+		return
+	}
+	s.normalLines = cloneLines(s.lines)
+	s.normalRow = s.row
+	s.normalCol = s.col
+	s.alt = true
+	s.resetVisibleScreen()
+}
+
+func (s *screenBuffer) exitAltScreen() {
+	if !s.alt {
+		return
+	}
+	s.alt = false
+	if len(s.normalLines) > 0 {
+		s.lines = fitLines(s.normalLines, s.height, s.width)
+		s.row = clamp(s.normalRow, 0, s.height-1)
+		s.col = clamp(s.normalCol, 0, s.width)
+	}
+	s.normalLines = nil
+	s.normalRow = 0
+	s.normalCol = 0
 }
 
 func (s *screenBuffer) eraseDisplay(mode int) {
@@ -395,6 +422,22 @@ func makeBlankLines(height, width int) [][]rune {
 		lines[i] = blankRunes(width)
 	}
 	return lines
+}
+
+func cloneLines(lines [][]rune) [][]rune {
+	next := make([][]rune, len(lines))
+	for i := range lines {
+		next[i] = append([]rune(nil), lines[i]...)
+	}
+	return next
+}
+
+func fitLines(lines [][]rune, height, width int) [][]rune {
+	next := makeBlankLines(height, width)
+	for i := 0; i < len(next) && i < len(lines); i++ {
+		copy(next[i], lines[i])
+	}
+	return next
 }
 
 func blankRunes(width int) []rune {
