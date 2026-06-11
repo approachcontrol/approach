@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
 
@@ -22,15 +25,6 @@ const (
 	StateFailed     State = "failed"
 	StateTerminated State = "terminated"
 )
-
-type ViewportMode string
-
-const ViewportLive ViewportMode = "live"
-
-type Viewport struct {
-	Mode         ViewportMode
-	ScrollOffset int
-}
 
 type StartRequest struct {
 	Command string
@@ -45,7 +39,12 @@ const (
 	defaultScrollbackLines  = 5000
 	finalOutputDrainTimeout = 200 * time.Millisecond
 	terminateWaitTimeout    = 2 * time.Second
+	maxPendingSequenceBytes = 16
 )
+
+var newEmulator = func(width, height int) (*vt.SafeEmulator, error) {
+	return vt.NewSafeEmulator(width, height), nil
+}
 
 type Manager struct{}
 
@@ -72,34 +71,48 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 		return nil, fmt.Errorf("embedded terminal command is required")
 	}
 	width, height = normalizeSize(width, height)
+	ensureTerminalEnv(cmd)
 	configureProcessGroup(cmd)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)})
 	if err != nil {
 		return nil, err
 	}
-	t := &Terminal{
-		cmd:      cmd,
-		pty:      ptmx,
-		screen:   newScreenBuffer(width, height, defaultScrollbackLines),
-		state:    StateRunning,
-		done:     make(chan struct{}),
-		readDone: make(chan struct{}),
+	emu, err := newEmulator(width, height)
+	if err != nil {
+		_ = ptmx.Close()
+		_ = terminateProcessGroup(cmd)
+		_ = waitForCommandExit(cmd, terminateWaitTimeout)
+		return nil, err
 	}
-	go t.readLoop()
+	emu.SetScrollbackSize(defaultScrollbackLines)
+	t := &Terminal{
+		cmd:       cmd,
+		pty:       ptmx,
+		emulator:  emu,
+		state:     StateRunning,
+		done:      make(chan struct{}),
+		readDone:  make(chan struct{}),
+		drainDone: make(chan struct{}),
+	}
+	go t.readLoop(ptmx, emu)
+	go t.drainResponses(ptmx, emu)
 	go t.waitLoop()
 	return t, nil
 }
 
 type Terminal struct {
 	mu          sync.Mutex
+	emuMu       sync.Mutex
 	cmd         *exec.Cmd
 	pty         *os.File
-	screen      *screenBuffer
+	emulator    *vt.SafeEmulator
 	state       State
 	err         error
 	terminating bool
 	done        chan struct{}
 	readDone    chan struct{}
+	drainDone   chan struct{}
+	finalRows   []string
 }
 
 func (t *Terminal) State() State {
@@ -108,18 +121,56 @@ func (t *Terminal) State() State {
 	return t.state
 }
 
-func (t *Terminal) VisibleLines(width, height int, viewport Viewport) []string {
+func (t *Terminal) VisibleLines(width, height int) []string {
 	width, height = normalizeSize(width, height)
 	t.mu.Lock()
-	lines := t.screen.VisibleLines(width, height)
+	emu := t.emulator
+	state := t.state
+	finalRows := append([]string(nil), t.finalRows...)
 	t.mu.Unlock()
+
+	var lines []string
+	if state == StateExited || state == StateFailed || state == StateTerminated {
+		lines = finalRows
+	} else if emu != nil {
+		t.emuMu.Lock()
+		lines = splitTerminalRows(emu.Render())
+		t.emuMu.Unlock()
+	}
+	if len(lines) == 0 {
+		return blankTerminalLines(width, height)
+	}
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
+	}
+	out := blankTerminalLines(width, height)
+	start := height - len(lines)
+	for i, line := range lines {
+		out[start+i] = fitTerminalLine(line, width)
+	}
+	return out
+}
+
+func blankTerminalLines(width, height int) []string {
 	out := make([]string, height)
-	copy(out[height-len(lines):], lines)
+	for i := range out {
+		out[i] = fitTerminalLine("", width)
+	}
 	return out
 }
 
 func (t *Terminal) Write(p []byte) (int, error) {
-	return t.pty.Write(p)
+	t.mu.Lock()
+	ptmx := t.pty
+	t.mu.Unlock()
+	if ptmx == nil {
+		return 0, os.ErrClosed
+	}
+	n, err := ptmx.Write(p)
+	if err != nil && isClosedPTYError(err) {
+		return n, os.ErrClosed
+	}
+	return n, err
 }
 
 func (t *Terminal) Resize(width, height int) error {
@@ -127,12 +178,10 @@ func (t *Terminal) Resize(width, height int) error {
 	t.mu.Lock()
 	state := t.state
 	ptmx := t.pty
+	emu := t.emulator
 	if state == StateExited || state == StateFailed || state == StateTerminated {
 		t.mu.Unlock()
 		return nil
-	}
-	if t.screen != nil {
-		t.screen.Resize(width, height)
 	}
 	t.mu.Unlock()
 	if ptmx == nil {
@@ -143,6 +192,11 @@ func (t *Terminal) Resize(width, height int) error {
 			return nil
 		}
 		return err
+	}
+	if emu != nil {
+		t.emuMu.Lock()
+		emu.Resize(width, height)
+		t.emuMu.Unlock()
 	}
 	return nil
 }
@@ -163,7 +217,7 @@ func (t *Terminal) Terminate() error {
 	t.mu.Unlock()
 	err := terminateProcessGroup(t.cmd)
 	if ptmx != nil {
-		_ = ptmx.Close()
+		_ = t.closePTY()
 	}
 	if err != nil {
 		return err
@@ -177,10 +231,28 @@ func (t *Terminal) Terminate() error {
 }
 
 func (t *Terminal) Close() error {
-	if t.pty == nil {
+	if err := t.closePTY(); err != nil {
+		return err
+	}
+	t.waitForReadDone()
+	t.saveFinalRows(t.snapshotRows())
+	t.shutdownEmulator()
+	t.waitForTerminalIO()
+	return nil
+}
+
+func (t *Terminal) closePTY() error {
+	t.mu.Lock()
+	ptmx := t.pty
+	t.pty = nil
+	t.mu.Unlock()
+	if ptmx == nil {
 		return nil
 	}
-	return t.pty.Close()
+	if err := ptmx.Close(); err != nil && !isClosedPTYError(err) {
+		return err
+	}
+	return nil
 }
 
 func (t *Terminal) Wait(ctx context.Context) error {
@@ -195,33 +267,21 @@ func (t *Terminal) Wait(ctx context.Context) error {
 	}
 }
 
-func (t *Terminal) readLoop() {
-	defer close(t.readDone)
-	var tmp [4096]byte
-	for {
-		n, err := t.pty.Read(tmp[:])
-		if n > 0 {
-			t.mu.Lock()
-			t.screen.Write(tmp[:n])
-			t.mu.Unlock()
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
 func (t *Terminal) waitLoop() {
 	err := t.cmd.Wait()
-	select {
-	case <-t.readDone:
-	case <-time.After(finalOutputDrainTimeout):
-		_ = t.Close()
+	if !t.waitForReadDone() {
+		_ = t.closePTY()
 		<-t.readDone
 	}
-	_ = t.Close()
+	finalRows := t.snapshotRows()
+	_ = t.closePTY()
+	t.shutdownEmulator()
+	t.waitForTerminalIO()
 	t.mu.Lock()
 	t.err = err
+	if len(finalRows) > 0 || len(t.finalRows) == 0 {
+		t.finalRows = finalRows
+	}
 	switch {
 	case err == nil:
 		t.state = StateExited
@@ -232,6 +292,236 @@ func (t *Terminal) waitLoop() {
 	}
 	t.mu.Unlock()
 	close(t.done)
+}
+
+func (t *Terminal) readLoop(ptmx *os.File, emu *vt.SafeEmulator) {
+	defer close(t.readDone)
+	filter := kittyQueryFilter{writer: ptmx}
+	buf := make([]byte, 4096)
+	for {
+		n, err := ptmx.Read(buf)
+		if n > 0 {
+			filtered := filter.Filter(buf[:n], err != nil)
+			if len(filtered) > 0 {
+				t.emuMu.Lock()
+				_, writeErr := emu.Write(filtered)
+				t.emuMu.Unlock()
+				if writeErr != nil {
+					return
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (t *Terminal) drainResponses(ptmx *os.File, emu *vt.SafeEmulator) {
+	defer close(t.drainDone)
+	_, _ = io.Copy(ptmx, emu)
+}
+
+func closeEmulatorResponses(emu *vt.SafeEmulator) {
+	type pipeCloser interface {
+		CloseWithError(error) error
+	}
+	if closer, ok := emu.InputPipe().(pipeCloser); ok {
+		_ = closer.CloseWithError(io.EOF)
+	}
+}
+
+func (t *Terminal) shutdownEmulator() {
+	t.mu.Lock()
+	emu := t.emulator
+	t.emulator = nil
+	t.mu.Unlock()
+	if emu == nil {
+		return
+	}
+	t.emuMu.Lock()
+	closeEmulatorResponses(emu)
+	t.emuMu.Unlock()
+}
+
+func (t *Terminal) snapshotRows() []string {
+	t.mu.Lock()
+	emu := t.emulator
+	t.mu.Unlock()
+	if emu == nil {
+		return nil
+	}
+	t.emuMu.Lock()
+	defer t.emuMu.Unlock()
+	rows := make([]string, 0, emu.ScrollbackLen()+emu.Height())
+	if scrollback := emu.Scrollback(); scrollback != nil {
+		for _, line := range scrollback.Lines() {
+			rows = append(rows, line.Render())
+		}
+	}
+	rows = append(rows, splitTerminalRows(emu.Render())...)
+	return trimBlankTerminalRows(rows)
+}
+
+func (t *Terminal) saveFinalRows(rows []string) {
+	if len(rows) == 0 {
+		return
+	}
+	t.mu.Lock()
+	t.finalRows = rows
+	t.mu.Unlock()
+}
+
+func ensureTerminalEnv(cmd *exec.Cmd) {
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	for i, env := range cmd.Env {
+		if strings.HasPrefix(env, "TERM=") {
+			if env == "TERM=" || env == "TERM=dumb" {
+				cmd.Env[i] = "TERM=xterm-256color"
+			}
+			return
+		}
+	}
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
+}
+
+func fitTerminalLine(line string, width int) string {
+	line = ansi.Truncate(line, width, "")
+	if padding := width - ansi.StringWidth(line); padding > 0 {
+		line += strings.Repeat(" ", padding)
+	}
+	return line
+}
+
+func splitTerminalRows(rendered string) []string {
+	rows := strings.Split(rendered, "\n")
+	if len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
+
+func trimBlankTerminalRows(rows []string) []string {
+	for len(rows) > 0 && strings.TrimSpace(ansi.Strip(rows[len(rows)-1])) == "" {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
+
+func (t *Terminal) waitForTerminalIO() {
+	t.waitForReadDone()
+	t.waitForDrainDone()
+}
+
+func (t *Terminal) waitForReadDone() bool {
+	select {
+	case <-t.readDone:
+		return true
+	case <-time.After(finalOutputDrainTimeout):
+		return false
+	}
+}
+
+func (t *Terminal) waitForDrainDone() bool {
+	select {
+	case <-t.drainDone:
+		return true
+	case <-time.After(finalOutputDrainTimeout):
+		return false
+	}
+}
+
+func waitForCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return context.DeadlineExceeded
+	}
+}
+
+type kittyQueryFilter struct {
+	writer  io.Writer
+	pending []byte
+}
+
+func (f *kittyQueryFilter) Filter(p []byte, final bool) []byte {
+	queries := []struct {
+		sequence string
+		response string
+	}{
+		{sequence: "\x1b[?u", response: "\x1b[?0u"},
+		// This vt version answers DSR-5 with DEC private syntax; wtui needs
+		// the ANSI status form so children do not block waiting for ESC[0n.
+		{sequence: "\x1b[5n", response: "\x1b[0n"},
+	}
+	input := append(append([]byte(nil), f.pending...), p...)
+	f.pending = nil
+	var out []byte
+	for i := 0; i < len(input); {
+		if input[i] != 0x1b {
+			out = append(out, input[i])
+			i++
+			continue
+		}
+		remaining := input[i:]
+		if query, ok := completeTerminalFilterQuery(remaining, queries); ok {
+			_, _ = io.WriteString(f.writer, query.response)
+			i += len(query.sequence)
+			continue
+		}
+		if !final && partialTerminalFilterQuery(remaining, queries) {
+			f.pending = append(f.pending[:0], remaining...)
+			break
+		}
+		if len(f.pending) > maxPendingSequenceBytes {
+			out = append(out, f.pending...)
+			f.pending = nil
+		}
+		out = append(out, input[i])
+		i++
+	}
+	if len(f.pending) > maxPendingSequenceBytes {
+		out = append(out, f.pending...)
+		f.pending = nil
+	}
+	return out
+}
+
+func completeTerminalFilterQuery(input []byte, queries []struct {
+	sequence string
+	response string
+}) (struct {
+	sequence string
+	response string
+}, bool) {
+	for _, query := range queries {
+		if len(input) >= len(query.sequence) && string(input[:len(query.sequence)]) == query.sequence {
+			return query, true
+		}
+	}
+	return struct {
+		sequence string
+		response string
+	}{}, false
+}
+
+func partialTerminalFilterQuery(input []byte, queries []struct {
+	sequence string
+	response string
+}) bool {
+	for _, query := range queries {
+		if len(input) < len(query.sequence) && strings.HasPrefix(query.sequence, string(input)) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeSize(width, height int) (int, int) {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1981,6 +1982,44 @@ func TestAgentCommandWiresClaudeSessionHook(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Fatalf("expected claude launch args to contain %q, got %#v", want, cmd.Args)
 		}
+	}
+}
+
+func TestAgentCommandEmbeddedCodexDisablesAltScreen(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:         "codex",
+		WorktreePath:    "/repo/worktree",
+		ResumeSessionID: "codex-session-1",
+		Embedded:        true,
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	if len(cmd.Args) < 3 || cmd.Args[0] != "codex" || cmd.Args[1] != "--no-alt-screen" || cmd.Args[2] != "--config" {
+		t.Fatalf("embedded codex args = %#v, want --no-alt-screen immediately after binary", cmd.Args)
+	}
+
+	nonEmbedded, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:      "codex",
+		WorktreePath: "/repo/worktree",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	if slices.Contains(nonEmbedded.Args, "--no-alt-screen") {
+		t.Fatalf("non-embedded codex args = %#v, should not include --no-alt-screen", nonEmbedded.Args)
+	}
+
+	claude, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:      "claude",
+		WorktreePath: "/repo/worktree",
+		Embedded:     true,
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	if slices.Contains(claude.Args, "--no-alt-screen") {
+		t.Fatalf("embedded claude args = %#v, should not include codex flag", claude.Args)
 	}
 }
 

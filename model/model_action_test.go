@@ -7,13 +7,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/embeddedterm"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
@@ -4046,6 +4049,49 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	}
 }
 
+func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	var term *embeddedterm.Terminal
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			var err error
+			term, err = embeddedterm.NewManager().Start(context.Background(), embeddedterm.StartRequest{
+				Command: "sh",
+				Args:    []string{"-c", "printf real-pty-output; sleep 1"},
+				Width:   40,
+				Height:  5,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return model.NewRealEmbeddedTerminalForTest(term), nil
+		},
+	})
+	t.Cleanup(func() {
+		if term != nil {
+			_ = term.Terminate()
+		}
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(m.View(), "real-pty-output") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("embedded terminal view never showed real PTY output:\n%s", m.View())
+}
+
 func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -4542,7 +4588,8 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
+		!got.Embedded {
 		t.Fatalf("unexpected resume launch context: %#v", got)
 	}
 	if got.FlowID != "" || got.FlowPhaseID != "" {
@@ -4608,7 +4655,7 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 
-	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" {
+	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" || !got.Embedded {
 		t.Fatalf("unexpected cwd fallback resume context: %#v", got)
 	}
 }

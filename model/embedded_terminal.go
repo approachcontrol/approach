@@ -55,6 +55,7 @@ type realEmbeddedTerminal struct {
 }
 
 func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
+	ctx.Embedded = true
 	cmd, err := actions.AgentCommand(ctx)
 	if err != nil {
 		return nil, err
@@ -67,7 +68,7 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 }
 
 func (t realEmbeddedTerminal) VisibleLines(width, height int) []string {
-	return t.term.VisibleLines(width, height, embeddedterm.Viewport{Mode: embeddedterm.ViewportLive})
+	return t.term.VisibleLines(width, height)
 }
 
 func (t realEmbeddedTerminal) Write(p []byte) (int, error) { return t.term.Write(p) }
@@ -80,7 +81,7 @@ func (t realEmbeddedTerminal) Wait(ctx context.Context) error {
 }
 func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
 
-const embeddedTerminalRepaintInterval = 100 * time.Millisecond
+const embeddedTerminalRepaintInterval = time.Second / 30
 
 func (m Model) startEmbeddedTerminalTick() (Model, tea.Cmd) {
 	m.embeddedTerminalTickGen++
@@ -168,6 +169,7 @@ func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessi
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
 		return m, false, nil
 	}
+	ctx.Embedded = true
 	term, err := m.startEmbeddedTerminal(ctx, m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
