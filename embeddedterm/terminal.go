@@ -42,8 +42,9 @@ type StartRequest struct {
 }
 
 const (
-	defaultScrollbackLines = 5000
-	terminateWaitTimeout   = 2 * time.Second
+	defaultScrollbackLines  = 5000
+	finalOutputDrainTimeout = 200 * time.Millisecond
+	terminateWaitTimeout    = 2 * time.Second
 )
 
 type Manager struct{}
@@ -207,8 +208,13 @@ func (t *Terminal) readLoop() {
 
 func (t *Terminal) waitLoop() {
 	err := t.cmd.Wait()
+	select {
+	case <-t.readDone:
+	case <-time.After(finalOutputDrainTimeout):
+		_ = t.Close()
+		<-t.readDone
+	}
 	_ = t.Close()
-	<-t.readDone
 	t.mu.Lock()
 	t.err = err
 	switch {
