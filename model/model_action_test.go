@@ -4064,11 +4064,27 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 		t.Fatalf("plain terminal key should not return wtui command, got %T", cmd)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlW})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnd})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDelete})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgUp})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlRight})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 
-	want := []string{"a", " ", "\x03", "\a"}
+	want := []string{
+		"a", " ",
+		"\x01", "\x05", "\x12", "\x17",
+		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[1;5D", "\x1b[1;5C",
+		"\x03", "\a",
+	}
 	if !reflect.DeepEqual(fakeTerm.writes, want) {
 		t.Fatalf("terminal writes = %#v, want %#v", fakeTerm.writes, want)
 	}

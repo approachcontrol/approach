@@ -424,33 +424,110 @@ func keyBytes(msg tea.KeyMsg) []byte {
 	if msg.Type == tea.KeyRunes {
 		return []byte(string(msg.Runes))
 	}
-	if msg.Type == tea.KeySpace {
-		return []byte{' '}
-	}
-	switch msg.String() {
-	case "enter":
+	switch msg.Type {
+	case tea.KeyEnter:
 		return []byte{'\r'}
-	case "backspace", "ctrl+h":
+	case tea.KeyBackspace, tea.KeyCtrlH:
 		return []byte{0x7f}
-	case "tab":
+	case tea.KeyTab:
 		return []byte{'\t'}
-	case "esc":
+	case tea.KeyEsc:
 		return []byte{0x1b}
-	case "up":
+	case tea.KeySpace:
+		return []byte{' '}
+	case tea.KeyUp:
 		return []byte("\x1b[A")
-	case "down":
+	case tea.KeyDown:
 		return []byte("\x1b[B")
-	case "right":
+	case tea.KeyRight:
 		return []byte("\x1b[C")
-	case "left":
+	case tea.KeyLeft:
 		return []byte("\x1b[D")
-	case "ctrl+c":
-		return []byte{0x03}
-	case "ctrl+d":
-		return []byte{0x04}
-	case "ctrl+u":
-		return []byte{0x15}
+	case tea.KeyHome:
+		return []byte("\x1b[H")
+	case tea.KeyEnd:
+		return []byte("\x1b[F")
+	case tea.KeyPgUp:
+		return []byte("\x1b[5~")
+	case tea.KeyPgDown:
+		return []byte("\x1b[6~")
+	case tea.KeyDelete:
+		return []byte("\x1b[3~")
+	case tea.KeyInsert:
+		return []byte("\x1b[2~")
+	case tea.KeyShiftTab:
+		return []byte("\x1b[Z")
+	case tea.KeyCtrlUp:
+		return []byte("\x1b[1;5A")
+	case tea.KeyCtrlDown:
+		return []byte("\x1b[1;5B")
+	case tea.KeyCtrlRight:
+		return []byte("\x1b[1;5C")
+	case tea.KeyCtrlLeft:
+		return []byte("\x1b[1;5D")
+	case tea.KeyCtrlHome:
+		return []byte("\x1b[1;5H")
+	case tea.KeyCtrlEnd:
+		return []byte("\x1b[1;5F")
+	case tea.KeyCtrlPgUp:
+		return []byte("\x1b[5;5~")
+	case tea.KeyCtrlPgDown:
+		return []byte("\x1b[6;5~")
+	case tea.KeyShiftUp:
+		return []byte("\x1b[1;2A")
+	case tea.KeyShiftDown:
+		return []byte("\x1b[1;2B")
+	case tea.KeyShiftRight:
+		return []byte("\x1b[1;2C")
+	case tea.KeyShiftLeft:
+		return []byte("\x1b[1;2D")
+	case tea.KeyShiftHome:
+		return []byte("\x1b[1;2H")
+	case tea.KeyShiftEnd:
+		return []byte("\x1b[1;2F")
+	case tea.KeyCtrlShiftUp:
+		return []byte("\x1b[1;6A")
+	case tea.KeyCtrlShiftDown:
+		return []byte("\x1b[1;6B")
+	case tea.KeyCtrlShiftRight:
+		return []byte("\x1b[1;6C")
+	case tea.KeyCtrlShiftLeft:
+		return []byte("\x1b[1;6D")
+	case tea.KeyCtrlShiftHome:
+		return []byte("\x1b[1;6H")
+	case tea.KeyCtrlShiftEnd:
+		return []byte("\x1b[1;6F")
+	case tea.KeyF1:
+		return []byte("\x1bOP")
+	case tea.KeyF2:
+		return []byte("\x1bOQ")
+	case tea.KeyF3:
+		return []byte("\x1bOR")
+	case tea.KeyF4:
+		return []byte("\x1bOS")
+	case tea.KeyF5:
+		return []byte("\x1b[15~")
+	case tea.KeyF6:
+		return []byte("\x1b[17~")
+	case tea.KeyF7:
+		return []byte("\x1b[18~")
+	case tea.KeyF8:
+		return []byte("\x1b[19~")
+	case tea.KeyF9:
+		return []byte("\x1b[20~")
+	case tea.KeyF10:
+		return []byte("\x1b[21~")
+	case tea.KeyF11:
+		return []byte("\x1b[23~")
+	case tea.KeyF12:
+		return []byte("\x1b[24~")
 	default:
+		if msg.Type >= 0 && msg.Type <= 31 {
+			return []byte{byte(msg.Type)}
+		}
+		if msg.Type == tea.KeyCtrlQuestionMark {
+			return []byte{0x7f}
+		}
 		return nil
 	}
 }
