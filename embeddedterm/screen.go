@@ -56,7 +56,11 @@ func (s *screenBuffer) Write(p []byte) {
 			i++
 		case '\t':
 			nextTab := ((s.col / 8) + 1) * 8
-			for s.col < nextTab {
+			spaces := nextTab - s.col
+			if remaining := s.width - s.col; spaces > remaining {
+				spaces = remaining
+			}
+			for j := 0; j < spaces; j++ {
 				s.putRune(' ')
 			}
 			i++

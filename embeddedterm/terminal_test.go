@@ -76,6 +76,21 @@ func TestScreenBufferKeepsBoundedScrollback(t *testing.T) {
 	}
 }
 
+func TestScreenBufferTabAtRightEdgeDoesNotHang(t *testing.T) {
+	screen := newScreenBuffer(10, 2, 0)
+	done := make(chan struct{})
+	go func() {
+		screen.Write([]byte("123456789\t"))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("tab expansion at the right edge did not complete")
+	}
+}
+
 func TestTerminalReportsFailedForNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
