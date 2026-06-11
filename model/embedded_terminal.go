@@ -110,14 +110,6 @@ func (m Model) embeddedTerminalTickCmd() tea.Cmd {
 	})
 }
 
-func (m Model) activeEmbeddedTerminal() (embeddedTerminalSlot, int, bool) {
-	return m.activeEmbeddedTerminalForScope(embeddedTerminalScopeSession)
-}
-
-func (m Model) activeFlowEmbeddedTerminal() (embeddedTerminalSlot, int, bool) {
-	return m.activeEmbeddedTerminalForScope(embeddedTerminalScopeFlow)
-}
-
 func (m Model) activeEmbeddedTerminalForScope(scope embeddedTerminalScope) (embeddedTerminalSlot, int, bool) {
 	activeNum := m.activeEmbeddedTerminalNumber(scope)
 	for i, slot := range m.embeddedTerminals {
@@ -214,7 +206,7 @@ func (m Model) embeddedTerminalContentHeightForScope(scope embeddedTerminalScope
 }
 
 func (m Model) flowEmbeddedTerminalContentHeight() int {
-	_, _, terminalHeight := ui.FlowSplitPanelHeights(m.rightContentHeight())
+	_, terminalHeight := ui.FlowSplitPanelHeights(m.rightContentHeight())
 	height := terminalHeight - 1
 	if height <= 0 {
 		return 1
@@ -324,14 +316,6 @@ func shortSessionID(sessionID string) string {
 		return sessionID
 	}
 	return sessionID[:8]
-}
-
-func (m Model) switchEmbeddedTerminal(number int) Model {
-	return m.switchEmbeddedTerminalForScope(embeddedTerminalScopeSession, number)
-}
-
-func (m Model) switchFlowEmbeddedTerminal(number int) Model {
-	return m.switchEmbeddedTerminalForScope(embeddedTerminalScopeFlow, number)
 }
 
 func (m Model) switchEmbeddedTerminalForScope(scope embeddedTerminalScope, number int) Model {
@@ -492,8 +476,10 @@ func (m Model) dismissEmbeddedTerminal(number int) Model {
 		return m
 	}
 	if removedScope == embeddedTerminalScopeFlow {
-		m.activeFlowTerminalNum = m.firstEmbeddedTerminalNumberForScope(embeddedTerminalScopeFlow)
-		if m.activeFlowTerminalNum == 0 {
+		if m.activeFlowTerminalNum == number {
+			m.activeFlowTerminalNum = m.firstEmbeddedTerminalNumberForScope(embeddedTerminalScopeFlow)
+		}
+		if m.firstEmbeddedTerminalNumberForScope(embeddedTerminalScopeFlow) == 0 {
 			m.flowFocus = flowFocusList
 		}
 	} else if m.activeEmbeddedTerminalNum == number {
@@ -566,10 +552,6 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 		return next.startEmbeddedTerminalTick()
 	}
 	return next, nil
-}
-
-func (m Model) writeToActiveTerminal(p []byte) Model {
-	return m.writeToActiveTerminalForScope(embeddedTerminalScopeSession, p)
 }
 
 func (m Model) writeToActiveTerminalForScope(scope embeddedTerminalScope, p []byte) Model {

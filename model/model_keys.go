@@ -214,7 +214,7 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "f":
 		return m.startFetchVisibleRepos()
 	case "q", "ctrl+c", "esc":
-		return m, tea.Quit
+		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
 }
@@ -395,7 +395,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "c":
 		return m.handleOpenCode()
 	case "q", "ctrl+c", "esc":
-		return m, tea.Quit
+		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
 }
@@ -1770,13 +1770,16 @@ func (m Model) launchFlowEmbeddedHeadlessWithContext(ctx actions.AgentLaunchCont
 	ctx.FlowLaunchTracked = true
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err := m.openFlowEmbeddedTerminal(ctx)
-	if err != nil {
-		errText := err.Error()
+	if err != nil || !opened {
+		errText := "Maximum embedded terminals reached"
+		if err != nil {
+			errText = err.Error()
+		}
 		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
 		next = next.setStatus(statusOther, errText)
 		return next, nil
 	}
-	if opened && needsTick {
+	if needsTick {
 		return next.startEmbeddedTerminalTick()
 	}
 	return next, nil
@@ -2195,9 +2198,14 @@ func (m Model) flowContentHeight() int {
 		return 1
 	}
 	if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
-		listHeight, _, _ := ui.FlowSplitPanelHeights(m.rightContentHeight())
+		listHeight, _ := ui.FlowSplitPanelHeights(m.rightContentHeight())
+		// The split renderer spends TableHeaderRows of the list panel on the
+		// header, so only the remainder holds data rows.
+		if rows := listHeight - ui.TableHeaderRows; rows > 0 {
+			return rows
+		}
 		if listHeight > 0 {
-			return listHeight
+			return 1
 		}
 	}
 	return height

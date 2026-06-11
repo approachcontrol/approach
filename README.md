@@ -197,7 +197,9 @@ PTY; press `ctrl+g` for wtui commands: `ctrl+g 1`-`9` switches terminals,
 `ctrl+g l` opens a saved-session picker, `ctrl+g x` dismisses an exited
 terminal or confirms termination of a running one, `ctrl+g q` or `ctrl+g esc`
 quits with cleanup, and `ctrl+g ctrl+g` sends a literal `ctrl+g` to the agent.
-Embedded terminals are not restored after wtui restarts.
+Quitting wtui from anywhere while embedded terminals are still running asks for
+confirmation and terminates them first. Embedded terminals are not restored
+after wtui restarts.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or

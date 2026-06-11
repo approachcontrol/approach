@@ -221,17 +221,16 @@ type RenderParams struct {
 	NewAgentAvailable          bool
 }
 
-func FlowSplitPanelHeights(height int) (listHeight, spacerHeight, terminalHeight int) {
+func FlowSplitPanelHeights(height int) (listHeight, terminalHeight int) {
 	if height <= 0 {
-		return 0, 0, 0
+		return 0, 0
 	}
 	if height < flowSplitMinPanelHeight*2 {
 		listHeight = height / 2
 		if listHeight < 1 {
 			listHeight = 1
 		}
-		terminalHeight = height - listHeight
-		return listHeight, 0, terminalHeight
+		return listHeight, height - listHeight
 	}
 	listHeight = height / 4
 	if listHeight < flowSplitMinPanelHeight {
@@ -242,7 +241,7 @@ func FlowSplitPanelHeights(height int) (listHeight, spacerHeight, terminalHeight
 		terminalHeight = 1
 		listHeight = height - terminalHeight
 	}
-	return listHeight, 0, terminalHeight
+	return listHeight, terminalHeight
 }
 
 // Render produces the full terminal view string.
@@ -1890,15 +1889,12 @@ const (
 )
 
 func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive bool) []string {
-	listHeight, spacerHeight, terminalHeight := FlowSplitPanelHeights(height)
+	listHeight, terminalHeight := FlowSplitPanelHeights(height)
 	lines := make([]string, 0, height)
 	if len(records) > 0 {
 		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID)...)
 	} else {
 		lines = append(lines, renderPlaceholderPane(width, listHeight, "No flows")...)
-	}
-	for i := 0; i < spacerHeight; i++ {
-		lines = append(lines, "")
 	}
 	lines = append(lines, renderEmbeddedTerminalPane(terminals, terminalLines, prefixActive, width, terminalHeight)...)
 	return scrollAndPad(lines, 0, height)

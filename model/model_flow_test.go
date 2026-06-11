@@ -1438,6 +1438,170 @@ func TestModel_FlowTerminalFocusRoutesKeysToPTYAndTabReturnsToList(t *testing.T)
 	}
 }
 
+func TestModel_FlowListQuitWithRunningEmbeddedTerminalConfirmsAndTerminates(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil {
+		t.Fatalf("quit with running flow terminal should open confirmation, got command %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected quit confirmation overlay, got %d", m.Overlay())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected quit confirmation command")
+	}
+	_, cmd = update(m, cmd())
+	if cmd == nil {
+		t.Fatal("expected tea.Quit after confirmed flow terminal quit")
+	}
+	if fakeTerm.State() != "terminated" {
+		t.Fatalf("terminal state = %q, want terminated", fakeTerm.State())
+	}
+}
+
+func TestModel_LeftPaneQuitWithRunningEmbeddedTerminalConfirms(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil {
+		t.Fatalf("left-pane quit with running terminal should open confirmation, got command %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected quit confirmation overlay, got %d", m.Overlay())
+	}
+}
+
+func TestModel_IKeyOnFlowAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	for i := 0; i < 9; i++ {
+		var cmd tea.Cmd
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+		if cmd == nil {
+			t.Fatalf("launch %d should prepare an embedded launch", i+1)
+		}
+		m, _ = update(m, cmd())
+	}
+	if starts != 9 {
+		t.Fatalf("embedded terminal starts = %d, want 9", starts)
+	}
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates before cap = %#v, want none", phaseUpdates)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i at cap should still prepare a launch attempt")
+	}
+	m, _ = update(m, cmd())
+	if starts != 9 {
+		t.Fatalf("embedded terminal starts after cap = %d, want 9", starts)
+	}
+	if len(phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one needs_attention update", phaseUpdates)
+	}
+	if got := phaseUpdates[0]; got.FlowID != "flow-1" ||
+		got.PhaseID != "implementation" ||
+		got.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(got.Notes, "Maximum embedded terminals") {
+		t.Fatalf("phase update = %#v", got)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Maximum embedded terminals") {
+		t.Fatalf("status = %q, want terminal cap message", got)
+	}
+}
+
+func TestModel_FlowSplitListScrollKeepsSelectionVisible(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	flows := []flowstore.FlowRecord{
+		{FlowID: "flow-1", RepoPath: "/dev/alpha", Branch: "flow/alpha", Title: "Flow alpha", Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}}},
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Branch: "flow/beta", Title: "Flow beta", Status: flowstore.StatusInProgress},
+		{FlowID: "flow-3", RepoPath: "/dev/alpha", Branch: "flow/gamma", Title: "Flow gamma", Status: flowstore.StatusInProgress},
+		{FlowID: "flow-4", RepoPath: "/dev/alpha", Branch: "flow/delta", Title: "Flow delta", Status: flowstore.StatusInProgress},
+	}
+	m = flowsInRightPane(t, m, flows)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	for i := 0; i < 3; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if m.FlowSelected() != 3 {
+		t.Fatalf("flow selection = %d, want 3", m.FlowSelected())
+	}
+	view := m.View()
+	if !strings.Contains(view, "flow/delta") {
+		t.Fatalf("selected flow should be visible in the split list:\n%s", view)
+	}
+	if strings.Contains(view, "flow/alpha") {
+		t.Fatalf("first flow should scroll offscreen in the split list:\n%s", view)
+	}
+}
+
 func TestModel_AKeyOnFlowLaunchesImplementationWithoutLinkedPlanContext(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
