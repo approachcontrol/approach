@@ -164,6 +164,96 @@ func TestTerminalVisibleLinesAfterExitCanGrowViewport(t *testing.T) {
 	}
 }
 
+func TestTerminalRetainedOutputRestoresNormalScreenAfterAltScreen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf 'one\\ntwo\\n\\033[?1049halt screen\\033[?1049lthree\\nfour\\nfive\\n'"},
+		Width:   30,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := ansi.Strip(strings.Join(term.VisibleLines(30, 5, Viewport{Mode: ViewportLive}), "\n"))
+	if strings.Contains(got, "alt screen") {
+		t.Fatalf("visible lines = %q, want alternate screen content hidden after exit", got)
+	}
+	for _, want := range []string{"one", "two", "three", "four", "five"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("visible lines = %q, want normal screen output %q after alt-screen restore", got, want)
+		}
+	}
+}
+
+func TestTerminalRetainedOutputAppliesCursorClears(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf 'stale\\rnew\\033[K\\ntwo\\nthree\\nfour\\nfive\\n'"},
+		Width:   30,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := ansi.Strip(strings.Join(term.VisibleLines(30, 5, Viewport{Mode: ViewportLive}), "\n"))
+	if strings.Contains(got, "stale") {
+		t.Fatalf("visible lines = %q, want stale overwritten text hidden", got)
+	}
+	if !strings.Contains(got, "new") {
+		t.Fatalf("visible lines = %q, want cursor-updated text retained", got)
+	}
+}
+
+func TestTerminalRetainedLongLineIsBoundedToTerminalGrid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf " + shellQuote(strings.Repeat("x", 20000))},
+		Width:   20,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	for _, line := range term.VisibleLines(20, 5, Viewport{Mode: ViewportLive}) {
+		if width := ansi.StringWidth(line); width != 20 {
+			t.Fatalf("line width = %d, want fitted width 20 in %#v", width, line)
+		}
+	}
+}
+
 func TestTerminalWaitDrainsFinalOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

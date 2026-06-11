@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 	bubbleemulator "github.com/taigrr/bubbleterm/emulator"
 )
@@ -83,7 +84,7 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 	if err != nil {
 		return nil, err
 	}
-	outputReader := newTerminalOutputReader(ptmx, defaultScrollbackLines)
+	outputReader := newTerminalOutputReader(ptmx, width, defaultScrollbackLines)
 	emu, err := newEmulatorFromPipes(width, height, outputReader, ptmx)
 	if err != nil {
 		_ = ptmx.Close()
@@ -135,8 +136,8 @@ func (t *Terminal) VisibleLines(width, height int, viewport Viewport) []string {
 	lines := emu.GetScreen().Rows
 	if state == StateExited || state == StateFailed || state == StateTerminated {
 		if outputReader != nil {
-			if scrollback := outputReader.visibleRows(); len(scrollback) > len(lines) {
-				lines = scrollback
+			if retained := outputReader.retainedRows(); len(retained) > len(lines) {
+				lines = retained
 			}
 		}
 	}
@@ -313,6 +314,21 @@ func fitTerminalLine(line string, width int) string {
 	return line
 }
 
+func splitTerminalRows(rendered string) []string {
+	rows := strings.Split(rendered, "\n")
+	if len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
+
+func trimBlankTerminalRows(rows []string) []string {
+	for len(rows) > 0 && strings.TrimSpace(ansi.Strip(rows[len(rows)-1])) == "" {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
+
 func (t *Terminal) waitForOutputReader() {
 	t.mu.Lock()
 	outputReader := t.outputReader
@@ -340,27 +356,26 @@ func waitForCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
 }
 
 type terminalOutputReader struct {
-	reader     io.Reader
-	done       chan struct{}
-	once       sync.Once
-	mu         sync.Mutex
-	scrollback []string
-	current    strings.Builder
-	maxLines   int
+	reader   io.Reader
+	done     chan struct{}
+	once     sync.Once
+	retained *vt.Emulator
+	mu       sync.Mutex
 }
 
-func newTerminalOutputReader(reader io.Reader, maxLines int) *terminalOutputReader {
+func newTerminalOutputReader(reader io.Reader, width, maxLines int) *terminalOutputReader {
+	width, maxLines = normalizeSize(width, maxLines)
 	return &terminalOutputReader{
 		reader:   reader,
 		done:     make(chan struct{}),
-		maxLines: maxLines,
+		retained: vt.NewEmulator(width, maxLines),
 	}
 }
 
 func (r *terminalOutputReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 {
-		r.record(p[:n])
+		r.recordRetained(p[:n])
 	}
 	if err != nil {
 		r.close()
@@ -368,39 +383,21 @@ func (r *terminalOutputReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (r *terminalOutputReader) record(p []byte) {
+func (r *terminalOutputReader) recordRetained(p []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, ch := range string(p) {
-		switch ch {
-		case '\n':
-			r.appendLine(r.current.String())
-			r.current.Reset()
-		case '\r':
-			continue
-		default:
-			r.current.WriteRune(ch)
-		}
+	if r.retained != nil {
+		_, _ = r.retained.Write(p)
 	}
 }
 
-func (r *terminalOutputReader) appendLine(line string) {
-	r.scrollback = append(r.scrollback, line)
-	if r.maxLines > 0 && len(r.scrollback) > r.maxLines {
-		copy(r.scrollback, r.scrollback[len(r.scrollback)-r.maxLines:])
-		r.scrollback = r.scrollback[:r.maxLines]
-	}
-}
-
-func (r *terminalOutputReader) visibleRows() []string {
+func (r *terminalOutputReader) retainedRows() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rows := make([]string, 0, len(r.scrollback)+1)
-	rows = append(rows, r.scrollback...)
-	if r.current.Len() > 0 {
-		rows = append(rows, r.current.String())
+	if r.retained == nil {
+		return nil
 	}
-	return rows
+	return trimBlankTerminalRows(splitTerminalRows(r.retained.Render()))
 }
 
 func (r *terminalOutputReader) close() {
