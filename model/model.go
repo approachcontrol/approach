@@ -94,6 +94,7 @@ type Model struct {
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
 	activeEmbeddedTerminalNum int
+	embeddedTerminalTickGen   uint64
 	terminalPrefixActive      bool
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
 	sessionStateRoot          string
@@ -723,6 +724,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTerminateEmbeddedTerminal(msg)
 	case quitEmbeddedTerminalsMsg:
 		return m.handleQuitEmbeddedTerminals()
+	case embeddedTerminalTickMsg:
+		if msg.Generation != m.embeddedTerminalTickGen {
+			return m, nil
+		}
+		if len(m.embeddedTerminals) > 0 {
+			return m, m.embeddedTerminalTickCmd()
+		}
+		return m, nil
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:

@@ -1113,7 +1113,12 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		next, _ = next.openEmbeddedTerminal(ctx, record)
+		needsTick := len(next.embeddedTerminals) == 0
+		var opened bool
+		next, opened = next.openEmbeddedTerminal(ctx, record)
+		if opened && needsTick {
+			return next.startEmbeddedTerminalTick()
+		}
 		return next, nil
 	}
 	return next.launchAgentWithContext(ctx)

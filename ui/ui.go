@@ -386,7 +386,7 @@ func Render(p RenderParams) string {
 	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0:
-		rightLines = renderEmbeddedTerminalPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, rightContentWidth, rightContentHeight)
+		rightLines = renderEmbeddedTerminalPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
@@ -1603,11 +1603,14 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, width, height int) []string {
+func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive bool, width, height int) []string {
 	if height <= 0 {
 		return nil
 	}
 	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), width)
+	if prefixActive {
+		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), width)
+	}
 	if height == 1 {
 		return []string{header}
 	}

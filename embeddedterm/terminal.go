@@ -1,13 +1,14 @@
 package embeddedterm
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -40,6 +41,11 @@ type StartRequest struct {
 	Height  int
 }
 
+const (
+	defaultScrollbackLines = 5000
+	terminateWaitTimeout   = 2 * time.Second
+)
+
 type Manager struct{}
 
 func NewManager() *Manager {
@@ -61,15 +67,18 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 		return nil, fmt.Errorf("embedded terminal command is required")
 	}
 	width, height = normalizeSize(width, height)
+	configureProcessGroup(cmd)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)})
 	if err != nil {
 		return nil, err
 	}
 	t := &Terminal{
-		cmd:   cmd,
-		pty:   ptmx,
-		state: StateRunning,
-		done:  make(chan error, 1),
+		cmd:      cmd,
+		pty:      ptmx,
+		screen:   newScreenBuffer(width, height, defaultScrollbackLines),
+		state:    StateRunning,
+		done:     make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	go t.readLoop()
 	go t.waitLoop()
@@ -80,11 +89,12 @@ type Terminal struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
 	pty         *os.File
-	buf         bytes.Buffer
+	screen      *screenBuffer
 	state       State
 	err         error
 	terminating bool
-	done        chan error
+	done        chan struct{}
+	readDone    chan struct{}
 }
 
 func (t *Terminal) State() State {
@@ -96,12 +106,8 @@ func (t *Terminal) State() State {
 func (t *Terminal) VisibleLines(width, height int, viewport Viewport) []string {
 	width, height = normalizeSize(width, height)
 	t.mu.Lock()
-	text := t.buf.String()
+	lines := t.screen.VisibleLines(width, height)
 	t.mu.Unlock()
-	lines := screenLines(text, width)
-	if len(lines) > height {
-		lines = lines[len(lines)-height:]
-	}
 	out := make([]string, height)
 	copy(out[height-len(lines):], lines)
 	return out
@@ -113,7 +119,27 @@ func (t *Terminal) Write(p []byte) (int, error) {
 
 func (t *Terminal) Resize(width, height int) error {
 	width, height = normalizeSize(width, height)
-	return pty.Setsize(t.pty, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)})
+	t.mu.Lock()
+	state := t.state
+	ptmx := t.pty
+	if state == StateExited || state == StateFailed || state == StateTerminated {
+		t.mu.Unlock()
+		return nil
+	}
+	if t.screen != nil {
+		t.screen.Resize(width, height)
+	}
+	t.mu.Unlock()
+	if ptmx == nil {
+		return nil
+	}
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)}); err != nil {
+		if isClosedPTYError(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (t *Terminal) Terminate() error {
@@ -128,8 +154,17 @@ func (t *Terminal) Terminate() error {
 	}
 	t.mu.Lock()
 	t.terminating = true
+	ptmx := t.pty
 	t.mu.Unlock()
-	if err := t.cmd.Process.Kill(); err != nil {
+	if ptmx != nil {
+		_ = ptmx.Close()
+	}
+	if err := terminateProcessGroup(t.cmd); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminateWaitTimeout)
+	defer cancel()
+	if err := t.Wait(ctx); err != nil && ctx.Err() != nil {
 		return err
 	}
 	return nil
@@ -144,7 +179,10 @@ func (t *Terminal) Close() error {
 
 func (t *Terminal) Wait(ctx context.Context) error {
 	select {
-	case err := <-t.done:
+	case <-t.done:
+		t.mu.Lock()
+		err := t.err
+		t.mu.Unlock()
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
@@ -152,12 +190,13 @@ func (t *Terminal) Wait(ctx context.Context) error {
 }
 
 func (t *Terminal) readLoop() {
+	defer close(t.readDone)
 	var tmp [4096]byte
 	for {
 		n, err := t.pty.Read(tmp[:])
 		if n > 0 {
 			t.mu.Lock()
-			_, _ = t.buf.Write(tmp[:n])
+			t.screen.Write(tmp[:n])
 			t.mu.Unlock()
 		}
 		if err != nil {
@@ -169,6 +208,7 @@ func (t *Terminal) readLoop() {
 func (t *Terminal) waitLoop() {
 	err := t.cmd.Wait()
 	_ = t.Close()
+	<-t.readDone
 	t.mu.Lock()
 	t.err = err
 	switch {
@@ -180,7 +220,7 @@ func (t *Terminal) waitLoop() {
 		t.state = StateFailed
 	}
 	t.mu.Unlock()
-	t.done <- err
+	close(t.done)
 }
 
 func normalizeSize(width, height int) (int, int) {
@@ -193,24 +233,10 @@ func normalizeSize(width, height int) (int, int) {
 	return width, height
 }
 
-func screenLines(text string, width int) []string {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "")
-	raw := strings.Split(text, "\n")
-	lines := make([]string, 0, len(raw))
-	for _, line := range raw {
-		if line == "" {
-			lines = append(lines, "")
-			continue
-		}
-		for len(line) > width {
-			lines = append(lines, line[:width])
-			line = line[width:]
-		}
-		lines = append(lines, line)
+func isClosedPTYError(err error) bool {
+	if errors.Is(err, os.ErrClosed) {
+		return true
 	}
-	if len(lines) == 0 {
-		return []string{""}
-	}
-	return lines
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "file already closed") || strings.Contains(text, "bad file descriptor")
 }

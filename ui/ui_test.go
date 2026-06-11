@@ -269,6 +269,30 @@ func TestRender_SessionsModeShowsEmbeddedTerminalInsteadOfSessionRows(t *testing
 	}
 }
 
+func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   10,
+		Mode:     ModeSessions,
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number:   1,
+			Provider: "codex",
+			Identity: "feature/api",
+			State:    "running",
+			Active:   true,
+		}},
+		EmbeddedTerminalLines:  []string{"agent output"},
+		EmbeddedTerminalPrefix: true,
+		ActivePane:             1,
+	})
+
+	if !strings.Contains(view, "ctrl+g") {
+		t.Fatalf("embedded terminal prefix cue missing:\n%s", view)
+	}
+}
+
 func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 	params := RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

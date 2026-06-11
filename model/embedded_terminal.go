@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -22,6 +23,7 @@ type EmbeddedTerminal interface {
 	Write([]byte) (int, error)
 	Resize(width, height int) error
 	Terminate() error
+	Wait(context.Context) error
 	State() string
 }
 
@@ -43,6 +45,10 @@ type terminateEmbeddedTerminalMsg struct {
 }
 
 type quitEmbeddedTerminalsMsg struct{}
+
+type embeddedTerminalTickMsg struct {
+	Generation uint64
+}
 
 type realEmbeddedTerminal struct {
 	term *embeddedterm.Terminal
@@ -69,7 +75,24 @@ func (t realEmbeddedTerminal) Resize(width, height int) error {
 	return t.term.Resize(width, height)
 }
 func (t realEmbeddedTerminal) Terminate() error { return t.term.Terminate() }
-func (t realEmbeddedTerminal) State() string    { return string(t.term.State()) }
+func (t realEmbeddedTerminal) Wait(ctx context.Context) error {
+	return t.term.Wait(ctx)
+}
+func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
+
+const embeddedTerminalRepaintInterval = 100 * time.Millisecond
+
+func (m Model) startEmbeddedTerminalTick() (Model, tea.Cmd) {
+	m.embeddedTerminalTickGen++
+	return m, m.embeddedTerminalTickCmd()
+}
+
+func (m Model) embeddedTerminalTickCmd() tea.Cmd {
+	generation := m.embeddedTerminalTickGen
+	return tea.Tick(embeddedTerminalRepaintInterval, func(time.Time) tea.Msg {
+		return embeddedTerminalTickMsg{Generation: generation}
+	})
+}
 
 func (m Model) activeEmbeddedTerminal() (embeddedTerminalSlot, int, bool) {
 	for i, slot := range m.embeddedTerminals {
@@ -157,6 +180,9 @@ func (m Model) resizeEmbeddedTerminals() Model {
 	height := m.embeddedTerminalContentHeight()
 	for _, slot := range m.embeddedTerminals {
 		if slot.Terminal == nil {
+			continue
+		}
+		if !embeddedTerminalRunning(slot.Terminal) {
 			continue
 		}
 		if err := slot.Terminal.Resize(width, height); err != nil {
@@ -309,6 +335,7 @@ func (m Model) dismissEmbeddedTerminal(number int) Model {
 	if len(m.embeddedTerminals) == 0 {
 		m.activeEmbeddedTerminalNum = 0
 		m.terminalPrefixActive = false
+		m.embeddedTerminalTickGen++
 		return m
 	}
 	if m.activeEmbeddedTerminalNum == number {
@@ -359,7 +386,12 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if ctx.Command == agent.CommandCodexApp {
 		return next.launchAgentWithContext(ctx)
 	}
-	next, _ = next.openEmbeddedTerminal(ctx, record)
+	needsTick := len(next.embeddedTerminals) == 0
+	var opened bool
+	next, opened = next.openEmbeddedTerminal(ctx, record)
+	if opened && needsTick {
+		return next.startEmbeddedTerminalTick()
+	}
 	return next, nil
 }
 

@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -3976,6 +3977,9 @@ func (t *fakeEmbeddedTerminal) Resize(width, height int) error {
 	return nil
 }
 func (t *fakeEmbeddedTerminal) Terminate() error { t.state = "terminated"; return nil }
+func (t *fakeEmbeddedTerminal) Wait(context.Context) error {
+	return nil
+}
 func (t *fakeEmbeddedTerminal) State() string {
 	if t.state == "" {
 		return "running"
@@ -4015,8 +4019,8 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("embedded session resume should not return external launch command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 	if got.Command != "codex" ||
 		got.ResumeSessionID != "codex-session-1" ||
@@ -4279,6 +4283,68 @@ func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
 	}
 }
 
+func TestModel_EmbeddedTerminalResizeSkipsExitedPTYs(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "exited"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
+
+	if len(fakeTerm.resizes) != 0 {
+		t.Fatalf("exited terminal should not receive resize calls, got %#v", fakeTerm.resizes)
+	}
+}
+
+func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T) {
+	first := &fakeEmbeddedTerminal{}
+	second := &fakeEmbeddedTerminal{}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			if starts == 1 {
+				return first, nil
+			}
+			return second, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, firstTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if firstTick == nil {
+		t.Fatal("expected first embedded terminal to schedule repaint tick")
+	}
+
+	first.state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, secondTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if secondTick == nil {
+		t.Fatal("expected reopened embedded terminal to schedule repaint tick")
+	}
+
+	m, staleCmd := update(m, firstTick())
+	if staleCmd != nil {
+		t.Fatalf("stale repaint tick should not reschedule, got %T", staleCmd)
+	}
+	_, liveCmd := update(m, secondTick())
+	if liveCmd == nil {
+		t.Fatal("current repaint tick should continue while terminal is active")
+	}
+}
+
 func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -4308,8 +4374,8 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("embedded session resume should not return external launch command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 
 	if got.Command != "claude" ||
@@ -4383,8 +4449,8 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("embedded session resume should not return external launch command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 
 	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" {
@@ -4442,8 +4508,8 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("embedded claude resume should not return external launch command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("embedded claude resume should schedule terminal repaint ticks")
 	}
 
 	if got.Command != "claude" ||
