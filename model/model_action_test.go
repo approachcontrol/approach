@@ -4435,6 +4435,30 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 	}
 }
 
+func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, tick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if tick == nil {
+		t.Fatal("expected embedded terminal to schedule repaint tick")
+	}
+
+	fakeTerm.state = "exited"
+	_, cmd := update(m, tick())
+	if cmd != nil {
+		t.Fatalf("exited embedded terminal should stop repaint loop, got %T", cmd)
+	}
+}
+
 func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
