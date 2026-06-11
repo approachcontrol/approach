@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 	bubbleemulator "github.com/taigrr/bubbleterm/emulator"
 )
@@ -78,31 +80,34 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 	if err != nil {
 		return nil, err
 	}
-	emu, err := bubbleemulator.NewFromPipes(width, height, ptmx, ptmx)
+	outputReader := newTerminalOutputReader(ptmx)
+	emu, err := bubbleemulator.NewFromPipes(width, height, outputReader, ptmx)
 	if err != nil {
 		_ = ptmx.Close()
 		return nil, err
 	}
 	t := &Terminal{
-		cmd:      cmd,
-		pty:      ptmx,
-		emulator: emu,
-		state:    StateRunning,
-		done:     make(chan struct{}),
+		cmd:          cmd,
+		pty:          ptmx,
+		emulator:     emu,
+		outputReader: outputReader,
+		state:        StateRunning,
+		done:         make(chan struct{}),
 	}
 	go t.waitLoop()
 	return t, nil
 }
 
 type Terminal struct {
-	mu          sync.Mutex
-	cmd         *exec.Cmd
-	pty         *os.File
-	emulator    *bubbleemulator.Emulator
-	state       State
-	err         error
-	terminating bool
-	done        chan struct{}
+	mu           sync.Mutex
+	cmd          *exec.Cmd
+	pty          *os.File
+	emulator     *bubbleemulator.Emulator
+	outputReader *terminalOutputReader
+	state        State
+	err          error
+	terminating  bool
+	done         chan struct{}
 }
 
 func (t *Terminal) State() State {
@@ -124,12 +129,25 @@ func (t *Terminal) VisibleLines(width, height int, viewport Viewport) []string {
 		lines = lines[len(lines)-height:]
 	}
 	out := make([]string, height)
-	copy(out[height-len(lines):], lines)
+	start := height - len(lines)
+	for i, line := range lines {
+		out[start+i] = fitTerminalLine(line, width)
+	}
 	return out
 }
 
 func (t *Terminal) Write(p []byte) (int, error) {
-	return t.pty.Write(p)
+	t.mu.Lock()
+	ptmx := t.pty
+	t.mu.Unlock()
+	if ptmx == nil {
+		return 0, os.ErrClosed
+	}
+	n, err := ptmx.Write(p)
+	if err != nil && isClosedPTYError(err) {
+		return n, os.ErrClosed
+	}
+	return n, err
 }
 
 func (t *Terminal) Resize(width, height int) error {
@@ -193,6 +211,7 @@ func (t *Terminal) Close() error {
 	t.mu.Lock()
 	ptmx := t.pty
 	emu := t.emulator
+	outputReader := t.outputReader
 	t.pty = nil
 	t.emulator = nil
 	t.mu.Unlock()
@@ -204,6 +223,9 @@ func (t *Terminal) Close() error {
 	}
 	if err := ptmx.Close(); err != nil && !isClosedPTYError(err) {
 		return err
+	}
+	if outputReader != nil {
+		outputReader.close()
 	}
 	return nil
 }
@@ -238,6 +260,7 @@ func (t *Terminal) waitLoop() {
 	err := t.cmd.Wait()
 	time.Sleep(finalOutputDrainTimeout)
 	_ = t.closePTY()
+	t.waitForOutputReader()
 	t.mu.Lock()
 	t.err = err
 	switch {
@@ -258,11 +281,61 @@ func ensureTerminalEnv(cmd *exec.Cmd) {
 	}
 	for i, env := range cmd.Env {
 		if strings.HasPrefix(env, "TERM=") {
-			cmd.Env[i] = "TERM=xterm-256color"
+			if env == "TERM=" || env == "TERM=dumb" {
+				cmd.Env[i] = "TERM=xterm-256color"
+			}
 			return
 		}
 	}
 	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
+}
+
+func fitTerminalLine(line string, width int) string {
+	line = ansi.Truncate(line, width, "")
+	if padding := width - ansi.StringWidth(line); padding > 0 {
+		line += strings.Repeat(" ", padding)
+	}
+	return line
+}
+
+func (t *Terminal) waitForOutputReader() {
+	t.mu.Lock()
+	outputReader := t.outputReader
+	t.mu.Unlock()
+	if outputReader == nil {
+		return
+	}
+	select {
+	case <-outputReader.done:
+	case <-time.After(finalOutputDrainTimeout):
+	}
+}
+
+type terminalOutputReader struct {
+	reader io.Reader
+	done   chan struct{}
+	once   sync.Once
+}
+
+func newTerminalOutputReader(reader io.Reader) *terminalOutputReader {
+	return &terminalOutputReader{
+		reader: reader,
+		done:   make(chan struct{}),
+	}
+}
+
+func (r *terminalOutputReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err != nil {
+		r.close()
+	}
+	return n, err
+}
+
+func (r *terminalOutputReader) close() {
+	r.once.Do(func() {
+		close(r.done)
+	})
 }
 
 func normalizeSize(width, height int) (int, int) {

@@ -2,6 +2,8 @@ package embeddedterm
 
 import (
 	"context"
+	"errors"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -98,6 +100,108 @@ func TestTerminalPreservesANSIStyleInVisibleLines(t *testing.T) {
 	}
 }
 
+func TestTerminalVisibleLinesFitRequestedWidth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf '\\033[31mabcdef\\033[0m'"},
+		Width:   20,
+		Height:  3,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	lines := term.VisibleLines(5, 3, Viewport{Mode: ViewportLive})
+	for _, line := range lines {
+		if width := ansi.StringWidth(line); width != 5 {
+			t.Fatalf("line width = %d, want 5 in %#v", width, lines)
+		}
+	}
+	if got := strings.Join(lines, "\n"); !strings.Contains(ansi.Strip(got), "abcde") {
+		t.Fatalf("visible lines = %#v, want output truncated to requested width", lines)
+	}
+}
+
+func TestTerminalWaitDrainsFinalOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	payload := strings.Repeat("x", 5000) + "done"
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf " + shellQuote(payload)},
+		Width:   80,
+		Height:  80,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := strings.Join(term.VisibleLines(80, 80, Viewport{Mode: ViewportLive}), "\n")
+	if !strings.Contains(got, "done") {
+		t.Fatalf("visible lines missing final output marker")
+	}
+}
+
+func TestTerminalAddsTermOnlyWhenAbsentOrDumb(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+
+	tests := []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{name: "absent", env: []string{"PATH=" + os.Getenv("PATH")}, want: "xterm-256color"},
+		{name: "dumb", env: []string{"PATH=" + os.Getenv("PATH"), "TERM=dumb"}, want: "xterm-256color"},
+		{name: "explicit", env: []string{"PATH=" + os.Getenv("PATH"), "TERM=screen-256color"}, want: "screen-256color"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			term, err := NewManager().Start(ctx, StartRequest{
+				Command: "sh",
+				Args:    []string{"-c", "printf \"$TERM\""},
+				Env:     tt.env,
+				Width:   40,
+				Height:  3,
+			})
+			if err != nil {
+				t.Fatalf("Start returned error: %v", err)
+			}
+			defer term.Close()
+
+			if err := term.Wait(ctx); err != nil {
+				t.Fatalf("Wait returned error: %v", err)
+			}
+			got := strings.Join(term.VisibleLines(40, 3, Viewport{Mode: ViewportLive}), "\n")
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("visible lines = %q, want TERM %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTerminalReportsFailedForNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
@@ -124,6 +228,10 @@ func TestTerminalReportsFailedForNonZeroExit(t *testing.T) {
 	}
 }
 
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func TestTerminalWaitIsRepeatableAfterExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
@@ -147,6 +255,58 @@ func TestTerminalWaitIsRepeatableAfterExit(t *testing.T) {
 	}
 	if err := term.Wait(ctx); err != nil {
 		t.Fatalf("second Wait returned error: %v", err)
+	}
+}
+
+func TestTerminalWriteAfterExitReturnsClosedError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "exit 0"},
+		Width:   20,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	if _, err := term.Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Write after exit error = %v, want os.ErrClosed", err)
+	}
+}
+
+func TestTerminalWriteAfterCloseReturnsClosedError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "sleep 30"},
+		Width:   20,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Terminate()
+
+	if err := term.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	if _, err := term.Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Write after close error = %v, want os.ErrClosed", err)
 	}
 }
 
