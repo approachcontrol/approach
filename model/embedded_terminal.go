@@ -425,6 +425,14 @@ func (m Model) writeToActiveTerminal(p []byte) Model {
 }
 
 func keyBytes(msg tea.KeyMsg) []byte {
+	p := baseKeyBytes(msg)
+	if len(p) == 0 || !msg.Alt {
+		return p
+	}
+	return append([]byte{0x1b}, p...)
+}
+
+func baseKeyBytes(msg tea.KeyMsg) []byte {
 	if msg.Type == tea.KeyRunes {
 		return []byte(string(msg.Runes))
 	}

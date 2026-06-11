@@ -4108,6 +4108,8 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlLeft})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlRight})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
@@ -4116,6 +4118,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 		"a", " ",
 		"\x01", "\x05", "\x12", "\x17",
 		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[1;5D", "\x1b[1;5C",
+		"\x1bf", "\x1b\x1b[D",
 		"\x03", "\a",
 	}
 	if !reflect.DeepEqual(fakeTerm.writes, want) {
