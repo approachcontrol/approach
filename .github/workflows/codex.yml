@@ -166,6 +166,7 @@ jobs:
       head_sha: ${{ steps.resolve.outputs.head_sha }}
       title: ${{ steps.resolve.outputs.title }}
       body: ${{ steps.resolve.outputs.body }}
+      operator_instructions: ${{ steps.resolve.outputs.operator_instructions }}
     steps:
       - name: Resolve pull request
         id: resolve
@@ -199,6 +200,7 @@ jobs:
 
             let shouldRun = false;
             let pr = payload.pull_request;
+            let operatorInstructions = '';
 
             if (eventName === 'pull_request') {
               shouldRun = !pr.draft;
@@ -215,11 +217,33 @@ jobs:
                   pull_number: payload.issue.number,
                 });
                 pr = response.data;
+                operatorInstructions = [
+                  'Trigger: pull request issue comment',
+                  '',
+                  payload.comment.body,
+                ].join('\n');
               }
             } else if (eventName === 'pull_request_review_comment') {
               shouldRun = includesCodexMention(payload.comment?.body) && isTrustedActor(payload.comment?.author_association);
+              if (shouldRun) {
+                operatorInstructions = [
+                  'Trigger: pull request review comment',
+                  `Path: ${payload.comment.path || ''}`,
+                  `Line: ${payload.comment.line || payload.comment.original_line || ''}`,
+                  '',
+                  payload.comment.body,
+                ].join('\n');
+              }
             } else if (eventName === 'pull_request_review') {
               shouldRun = includesCodexMention(payload.review?.body) && isTrustedActor(payload.review?.author_association);
+              if (shouldRun) {
+                operatorInstructions = [
+                  'Trigger: pull request review',
+                  `Review state: ${payload.review.state || ''}`,
+                  '',
+                  payload.review.body,
+                ].join('\n');
+              }
             } else if (eventName === 'workflow_dispatch') {
               const mode = payload.inputs?.mode || 'codex';
               if (mode === 'autoreview') {
@@ -243,6 +267,7 @@ jobs:
                 pr = await getMostRecentSameRepoPR();
               }
               shouldRun = Boolean(pr);
+              operatorInstructions = payload.inputs?.instructions || '';
             }
 
             if (shouldRun && pr.head.repo.full_name !== `${owner}/${repo}`) {
@@ -257,6 +282,7 @@ jobs:
             core.setOutput('head_sha', pr?.head?.sha || '');
             core.setOutput('title', pr?.title || '');
             core.setOutput('body', pr?.body || '');
+            core.setOutput('operator_instructions', operatorInstructions);
 
   codex:
     runs-on: ubuntu-latest
@@ -313,8 +339,10 @@ jobs:
             ${{ needs.resolve_pr.outputs.body }}
             ```
 
-            Trusted operator instructions:
-            ${{ github.event.inputs.instructions || '' }}
+            Trusted operator instructions from the event that triggered this run:
+            ```text
+            ${{ needs.resolve_pr.outputs.operator_instructions }}
+            ```
 
   post_feedback:
     runs-on: ubuntu-latest
