@@ -94,6 +94,8 @@ type Model struct {
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
 	activeEmbeddedTerminalNum int
+	activeFlowTerminalNum     int
+	flowFocus                 flowFocus
 	embeddedTerminalTickGen   uint64
 	terminalPrefixActive      bool
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
@@ -497,6 +499,10 @@ func (m Model) View() string {
 		Flows:                      flows,
 		FlowSelected:               flowSelected,
 		FlowScroll:                 flowScroll,
+		FlowEmbeddedTerminals:      m.flowEmbeddedTerminalTabs(),
+		FlowEmbeddedTerminalLines:  m.flowEmbeddedTerminalLines(),
+		FlowEmbeddedTerminalPrefix: m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
+		FlowTerminalFocused:        m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
 		ExpandedPlanID:             m.expandedPlanID,
 		ExpandedFlowID:             m.expandedFlowID,
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
@@ -842,6 +848,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
+		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
+			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+			return next, tea.Batch(fetchCmd, launchCmd)
+		}
+		return next, launchCmd
+	case FlowEmbeddedLaunchRequestedMsg:
+		next, launchCmd := m.launchFlowEmbeddedHeadlessWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)

@@ -44,6 +44,46 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    260,
+		Height:   18,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Add embedded Flow terminal",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/embedded-terminal",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+			},
+		}},
+		FlowSelected: 0,
+		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number:   1,
+			Provider: "codex",
+			Identity: "implementation",
+			State:    "running",
+			Active:   true,
+		}},
+		FlowEmbeddedTerminalLines: []string{"planning next step", "running tests"},
+		ActivePane:                1,
+	})
+
+	for _, want := range []string{
+		"Add embedded Flow terminal",
+		"1 codex implementation running",
+		"planning next step",
+		"running tests",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("split Flow terminal view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
 	bar := RenderStatusBar(120, ModeFlows, OverlayNone, 1, false, false, false)
 	if !strings.Contains(bar, "n: new flow") {

@@ -1679,6 +1679,102 @@ func TestAgentCommandAddsFlowEnvironment(t *testing.T) {
 	}
 }
 
+func TestAgentCommandBuildsHeadlessCodexExecCommand(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "flow/add-flow-mode",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		Headless:         true,
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	if len(args) != 5 {
+		t.Fatalf("args = %#v, want command plus hook config, exec, and prompt", args)
+	}
+	if args[0] != "codex" || args[1] != "--config" || args[3] != "exec" || args[4] != "Implement this phase." {
+		t.Fatalf("unexpected headless codex args: %#v", args)
+	}
+	if strings.Contains(strings.Join(args, "\x00"), "json") {
+		t.Fatalf("headless codex args should stay human-readable, got %#v", args)
+	}
+	if !strings.Contains(args[2], "session-hook --provider codex") {
+		t.Fatalf("expected codex hook config in args, got %#v", args)
+	}
+	env := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_AGENT":              "codex",
+		"WTUI_FLOW_ID":            "flow-1",
+		"WTUI_FLOW_PHASE_ID":      "implementation",
+		"WTUI_FLOW_STATE_ROOT":    "/state/wtui/sessions/v1",
+		"WTUI_WORKTREE_PATH":      "/repo/worktree",
+		"WTUI_COMMIT":             "abcdef",
+		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
+		}
+	}
+}
+
+func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "claude",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		Branch:           "flow/add-flow-mode",
+		Commit:           "abcdef",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		Headless:         true,
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	if len(args) != 5 {
+		t.Fatalf("args = %#v, want command plus --print, hook settings, and prompt", args)
+	}
+	if args[0] != "claude" || args[1] != "--print" || args[2] != "--settings" || args[4] != "Implement this phase." {
+		t.Fatalf("unexpected headless claude args: %#v", args)
+	}
+	if strings.Contains(strings.Join(args, "\x00"), "json") {
+		t.Fatalf("headless claude args should stay human-readable, got %#v", args)
+	}
+	if !strings.Contains(args[3], "session-hook --provider claude") {
+		t.Fatalf("expected claude hook settings in args, got %#v", args)
+	}
+	env := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"WTUI_AGENT":              "claude",
+		"WTUI_FLOW_ID":            "flow-1",
+		"WTUI_FLOW_PHASE_ID":      "implementation",
+		"WTUI_FLOW_STATE_ROOT":    "/state/wtui/sessions/v1",
+		"WTUI_WORKTREE_PATH":      "/repo/worktree",
+		"WTUI_COMMIT":             "abcdef",
+		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
+		}
+	}
+}
+
 func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",
