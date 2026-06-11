@@ -45,9 +45,12 @@ type StartRequest struct {
 }
 
 const (
+	defaultScrollbackLines  = 5000
 	finalOutputDrainTimeout = 200 * time.Millisecond
 	terminateWaitTimeout    = 2 * time.Second
 )
+
+var newEmulatorFromPipes = bubbleemulator.NewFromPipes
 
 type Manager struct{}
 
@@ -80,10 +83,13 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 	if err != nil {
 		return nil, err
 	}
-	outputReader := newTerminalOutputReader(ptmx)
-	emu, err := bubbleemulator.NewFromPipes(width, height, outputReader, ptmx)
+	outputReader := newTerminalOutputReader(ptmx, defaultScrollbackLines)
+	emu, err := newEmulatorFromPipes(width, height, outputReader, ptmx)
 	if err != nil {
 		_ = ptmx.Close()
+		outputReader.close()
+		_ = terminateProcessGroup(cmd)
+		_ = waitForCommandExit(cmd, terminateWaitTimeout)
 		return nil, err
 	}
 	t := &Terminal{
@@ -120,11 +126,20 @@ func (t *Terminal) VisibleLines(width, height int, viewport Viewport) []string {
 	width, height = normalizeSize(width, height)
 	t.mu.Lock()
 	emu := t.emulator
+	state := t.state
+	outputReader := t.outputReader
 	t.mu.Unlock()
 	if emu == nil {
 		return make([]string, height)
 	}
 	lines := emu.GetScreen().Rows
+	if state == StateExited || state == StateFailed || state == StateTerminated {
+		if outputReader != nil {
+			if scrollback := outputReader.visibleRows(); len(scrollback) > len(lines) {
+				lines = scrollback
+			}
+		}
+	}
 	if len(lines) > height {
 		lines = lines[len(lines)-height:]
 	}
@@ -311,25 +326,81 @@ func (t *Terminal) waitForOutputReader() {
 	}
 }
 
-type terminalOutputReader struct {
-	reader io.Reader
-	done   chan struct{}
-	once   sync.Once
+func waitForCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return context.DeadlineExceeded
+	}
 }
 
-func newTerminalOutputReader(reader io.Reader) *terminalOutputReader {
+type terminalOutputReader struct {
+	reader     io.Reader
+	done       chan struct{}
+	once       sync.Once
+	mu         sync.Mutex
+	scrollback []string
+	current    strings.Builder
+	maxLines   int
+}
+
+func newTerminalOutputReader(reader io.Reader, maxLines int) *terminalOutputReader {
 	return &terminalOutputReader{
-		reader: reader,
-		done:   make(chan struct{}),
+		reader:   reader,
+		done:     make(chan struct{}),
+		maxLines: maxLines,
 	}
 }
 
 func (r *terminalOutputReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.record(p[:n])
+	}
 	if err != nil {
 		r.close()
 	}
 	return n, err
+}
+
+func (r *terminalOutputReader) record(p []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ch := range string(p) {
+		switch ch {
+		case '\n':
+			r.appendLine(r.current.String())
+			r.current.Reset()
+		case '\r':
+			continue
+		default:
+			r.current.WriteRune(ch)
+		}
+	}
+}
+
+func (r *terminalOutputReader) appendLine(line string) {
+	r.scrollback = append(r.scrollback, line)
+	if r.maxLines > 0 && len(r.scrollback) > r.maxLines {
+		copy(r.scrollback, r.scrollback[len(r.scrollback)-r.maxLines:])
+		r.scrollback = r.scrollback[:r.maxLines]
+	}
+}
+
+func (r *terminalOutputReader) visibleRows() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rows := make([]string, 0, len(r.scrollback)+1)
+	rows = append(rows, r.scrollback...)
+	if r.current.Len() > 0 {
+		rows = append(rows, r.current.String())
+	}
+	return rows
 }
 
 func (r *terminalOutputReader) close() {

@@ -3,13 +3,16 @@ package embeddedterm
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	bubbleemulator "github.com/taigrr/bubbleterm/emulator"
 )
 
 func TestTerminalRunsCommandAndRendersLiveOutput(t *testing.T) {
@@ -132,6 +135,35 @@ func TestTerminalVisibleLinesFitRequestedWidth(t *testing.T) {
 	}
 }
 
+func TestTerminalVisibleLinesAfterExitCanGrowViewport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf 'one\\ntwo\\nthree\\nfour\\nfive\\n'"},
+		Width:   20,
+		Height:  2,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := ansi.Strip(strings.Join(term.VisibleLines(20, 5, Viewport{Mode: ViewportLive}), "\n"))
+	for _, want := range []string{"one", "two", "three", "four", "five"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("visible lines = %q, want retained output %q after viewport grows", got, want)
+		}
+	}
+}
+
 func TestTerminalWaitDrainsFinalOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
@@ -157,6 +189,34 @@ func TestTerminalWaitDrainsFinalOutput(t *testing.T) {
 	got := strings.Join(term.VisibleLines(80, 80, Viewport{Mode: ViewportLive}), "\n")
 	if !strings.Contains(got, "done") {
 		t.Fatalf("visible lines missing final output marker")
+	}
+}
+
+func TestTerminalStartCommandCleansUpProcessWhenEmulatorCreationFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	originalFactory := newEmulatorFromPipes
+	t.Cleanup(func() {
+		newEmulatorFromPipes = originalFactory
+	})
+	newEmulatorFromPipes = func(int, int, io.Reader, io.WriteCloser) (*bubbleemulator.Emulator, error) {
+		return nil, errors.New("emulator failed")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", "sleep 30")
+	term, err := NewManager().StartCommand(ctx, cmd, 20, 2)
+	if err == nil {
+		_ = term.Close()
+		t.Fatal("StartCommand error = nil, want emulator creation failure")
+	}
+	if !strings.Contains(err.Error(), "emulator failed") {
+		t.Fatalf("StartCommand error = %v, want emulator failure", err)
+	}
+	if cmd.ProcessState == nil {
+		t.Fatal("command process state is nil, want process waited after emulator creation failure")
 	}
 }
 
