@@ -113,6 +113,11 @@ func (p Pane[T]) ItemCount() int {
 	return len(p.items)
 }
 
+// Items returns the source items before filtering.
+func (p Pane[T]) Items() []T {
+	return p.items
+}
+
 // SelectedIndex returns the cursor position within the filtered view.
 func (p Pane[T]) SelectedIndex() int {
 	return p.selected

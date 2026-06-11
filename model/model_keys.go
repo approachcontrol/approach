@@ -36,6 +36,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if next, cmd, handled := m.handleEmbeddedTerminalKey(msg); handled {
+		return next, cmd
+	}
+
 	m = m.clearAnyStatus()
 
 	if m.searchActive {
@@ -1107,6 +1111,9 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	ctx, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil
+	}
+	if ctx.Command != agent.CommandCodexApp {
+		return next.resumeSessionInEmbeddedTerminal(ctx, record)
 	}
 	return next.launchAgentWithContext(ctx)
 }

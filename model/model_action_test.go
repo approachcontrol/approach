@@ -1,16 +1,22 @@
 package model_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/creack/pty"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/embeddedterm"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
@@ -3958,13 +3964,595 @@ func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
 	}
 }
 
+type fakeEmbeddedTerminal struct {
+	lines        []string
+	visibleCalls [][2]int
+	writes       []string
+	resizes      [][2]int
+	state        string
+}
+
+func (t *fakeEmbeddedTerminal) VisibleLines(width, height int) []string {
+	t.visibleCalls = append(t.visibleCalls, [2]int{width, height})
+	return t.lines
+}
+func (t *fakeEmbeddedTerminal) Write(p []byte) (int, error) {
+	t.writes = append(t.writes, string(p))
+	return len(p), nil
+}
+func (t *fakeEmbeddedTerminal) Resize(width, height int) error {
+	t.resizes = append(t.resizes, [2]int{width, height})
+	return nil
+}
+func (t *fakeEmbeddedTerminal) Terminate() error { t.state = "terminated"; return nil }
+func (t *fakeEmbeddedTerminal) Wait(context.Context) error {
+	return nil
+}
+func (t *fakeEmbeddedTerminal) State() string {
+	if t.state == "" {
+		return "running"
+	}
+	return t.state
+}
+
+func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}}
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			got = ctx
+			return fakeTerm, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("CLI session resume should use embedded terminal, not external launcher")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{
+			Provider:     sessions.ProviderCodex,
+			SessionID:    "codex-session-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/feat",
+			CWD:          "/dev/alpha-worktrees/feat/subdir",
+			Branch:       "feature/api",
+			Commit:       "abc123",
+			PlanID:       "plan-1",
+			PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+		},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
+	}
+	if got.Command != "codex" ||
+		got.ResumeSessionID != "codex-session-1" ||
+		got.WorkingDir != "/dev/alpha-worktrees/feat/subdir" ||
+		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.PlanID != "plan-1" ||
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
+		t.Fatalf("unexpected embedded resume context: %#v", got)
+	}
+	view := m.View()
+	for _, want := range []string{"1 codex feature/api running", "agent output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("embedded terminal view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Provider") || strings.Contains(view, "Summary") {
+		t.Fatalf("embedded terminal view should hide saved-session table:\n%s", view)
+	}
+}
+
+func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	var term *embeddedterm.Terminal
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			var err error
+			term, err = embeddedterm.NewManager().Start(context.Background(), embeddedterm.StartRequest{
+				Command: "sh",
+				Args:    []string{"-c", "printf real-pty-output; sleep 1"},
+				Width:   40,
+				Height:  5,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return model.NewRealEmbeddedTerminalForTest(term), nil
+		},
+	})
+	t.Cleanup(func() {
+		if term != nil {
+			_ = term.Terminate()
+		}
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(m.View(), "real-pty-output") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("embedded terminal view never showed real PTY output:\n%s", m.View())
+}
+
+func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return nil, pty.ErrUnsupported
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{
+			Provider:     sessions.ProviderCodex,
+			SessionID:    "codex-session-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/feat",
+			Branch:       "feature/api",
+		},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected external resume command when embedded PTY is unsupported")
+	}
+	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "/dev/alpha-worktrees/feat" {
+		t.Fatalf("unexpected fallback resume context: %#v", got)
+	}
+}
+
+func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatalf("plain terminal key should not return wtui command, got %T", cmd)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlW})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnd})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDelete})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgUp})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlRight})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	want := []string{
+		"a", " ",
+		"\x01", "\x05", "\x12", "\x17",
+		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[1;5D", "\x1b[1;5C",
+		"\x1bf", "\x1b\x1b[D",
+		"\x03", "\a",
+	}
+	if !reflect.DeepEqual(fakeTerm.writes, want) {
+		t.Fatalf("terminal writes = %#v, want %#v", fakeTerm.writes, want)
+	}
+}
+
+func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{}
+	var started [2]int
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = [2]int{width, height}
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	wantStartWidth := 180 - ui.LeftPaneWidth - ui.ShortcutPaneWidth - 2
+	if started[0] != wantStartWidth {
+		t.Fatalf("embedded terminal start width = %d, want %d", started[0], wantStartWidth)
+	}
+	_ = m.View()
+	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1][0] != wantStartWidth {
+		t.Fatalf("embedded terminal visible width calls = %#v, want latest width %d", fakeTerm.visibleCalls, wantStartWidth)
+	}
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 12})
+	wantResizeWidth := 160 - ui.LeftPaneWidth - ui.ShortcutPaneWidth - 2
+	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1][0] != wantResizeWidth {
+		t.Fatalf("embedded terminal resize calls = %#v, want latest width %d", fakeTerm.resizes, wantResizeWidth)
+	}
+}
+
+func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"codex-session-1":  {lines: []string{"first output"}},
+		"claude-session-2": {lines: []string{"second output"}},
+	}
+	var started []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = append(started, ctx.ResumeSessionID)
+			return terms[ctx.ResumeSessionID], nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
+		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if cmd != nil {
+		t.Fatalf("opening picker should not return command, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayAgentSelect {
+		t.Fatalf("expected picker overlay, got %d", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
+		t.Fatalf("picker view missing sessions:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected picker submit command")
+	}
+	m, _ = update(m, cmd())
+
+	if want := []string{"codex-session-1", "claude-session-2"}; !reflect.DeepEqual(started, want) {
+		t.Fatalf("started = %#v, want %#v", started, want)
+	}
+	view := m.View()
+	for _, want := range []string{"1 codex feature/api running", "2 claude docs running", "second output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("embedded terminal view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"codex-session-1":  {lines: []string{"first output"}},
+		"claude-session-2": {lines: []string{"second output"}},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			return terms[ctx.ResumeSessionID], nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
+		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, tick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if tick == nil {
+		t.Fatal("expected first embedded terminal to schedule repaint tick")
+	}
+
+	terms["codex-session-1"].state = "exited"
+	m, stopped := update(m, tick())
+	if stopped != nil {
+		t.Fatalf("exited terminal should stop repaint loop, got %T", stopped)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected picker submit command")
+	}
+	_, restarted := update(m, cmd())
+	if restarted == nil {
+		t.Fatal("opening a new running terminal after all PTYs exited should restart repaint tick")
+	}
+}
+
+func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"codex-session-1":  {lines: []string{"first output"}},
+		"claude-session-2": {lines: []string{"second output"}},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			return terms[ctx.ResumeSessionID], nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
+		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+
+	view := m.View()
+	if !strings.Contains(view, "first output") {
+		t.Fatalf("switch to terminal 1 should render first terminal:\n%s", view)
+	}
+	if strings.Contains(view, "second output") {
+		t.Fatalf("switch to terminal 1 should hide second terminal body:\n%s", view)
+	}
+}
+
+func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"done"}, state: "exited"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	view := m.View()
+	if strings.Contains(view, "done") || strings.Contains(view, "1 codex") {
+		t.Fatalf("dismissed terminal should be removed:\n%s", view)
+	}
+	if !strings.Contains(view, "Provider") {
+		t.Fatalf("with no embedded terminals, sessions table should return:\n%s", view)
+	}
+}
+
+func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"running"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected terminate confirmation, got %d", m.Overlay())
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected terminate confirmation command")
+	}
+	m, _ = update(m, cmd())
+
+	if fakeTerm.State() != "terminated" {
+		t.Fatalf("terminal state = %q, want terminated", fakeTerm.State())
+	}
+	if strings.Contains(m.View(), "running") {
+		t.Fatalf("terminated terminal should be dismissed:\n%s", m.View())
+	}
+}
+
+func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd != nil {
+		t.Fatalf("ctrl+c should go to the PTY, got command %T", cmd)
+	}
+	if !reflect.DeepEqual(fakeTerm.writes, []string{"\x03"}) {
+		t.Fatalf("terminal writes = %#v, want ctrl-c", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil {
+		t.Fatalf("running terminal quit should open confirmation, got command %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected quit confirmation, got %d", m.Overlay())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected quit confirmation command")
+	}
+	m, cmd = update(m, cmd())
+	if cmd == nil {
+		t.Fatal("expected tea.Quit after confirmed embedded terminal quit")
+	}
+	if fakeTerm.State() != "terminated" {
+		t.Fatalf("terminal state = %q, want terminated", fakeTerm.State())
+	}
+}
+
+func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
+
+	if len(fakeTerm.resizes) == 0 {
+		t.Fatal("expected resize call on embedded terminal")
+	}
+	got := fakeTerm.resizes[len(fakeTerm.resizes)-1]
+	if got[0] <= 0 || got[1] <= 0 {
+		t.Fatalf("resize dimensions = %#v, want positive", got)
+	}
+}
+
+func TestModel_EmbeddedTerminalResizeSkipsExitedPTYs(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "exited"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
+
+	if len(fakeTerm.resizes) != 0 {
+		t.Fatalf("exited terminal should not receive resize calls, got %#v", fakeTerm.resizes)
+	}
+}
+
+func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T) {
+	first := &fakeEmbeddedTerminal{}
+	second := &fakeEmbeddedTerminal{}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			if starts == 1 {
+				return first, nil
+			}
+			return second, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, firstTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if firstTick == nil {
+		t.Fatal("expected first embedded terminal to schedule repaint tick")
+	}
+
+	first.state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, secondTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if secondTick == nil {
+		t.Fatal("expected reopened embedded terminal to schedule repaint tick")
+	}
+
+	m, staleCmd := update(m, firstTick())
+	if staleCmd != nil {
+		t.Fatalf("stale repaint tick should not reschedule, got %T", staleCmd)
+	}
+	_, liveCmd := update(m, secondTick())
+	if liveCmd == nil {
+		t.Fatal("current repaint tick should continue while terminal is active")
+	}
+}
+
+func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, tick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if tick == nil {
+		t.Fatal("expected embedded terminal to schedule repaint tick")
+	}
+
+	fakeTerm.state = "exited"
+	_, cmd := update(m, tick())
+	if cmd != nil {
+		t.Fatalf("exited embedded terminal should stop repaint loop, got %T", cmd)
+	}
+}
+
 func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SessionStateRoot: "/state/wtui/sessions/v1",
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+			return &fakeEmbeddedTerminal{}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -3988,17 +4576,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
-		t.Fatal("expected session resume command")
-	}
-	msg, ok := cmd().(model.AgentResultMsg)
-	if !ok {
-		t.Fatalf("expected AgentResultMsg from resume command, got %T", msg)
-	}
-	if msg.Err != "" {
-		t.Fatalf("expected successful resume command, got %q", msg.Err)
-	}
-	if msg.LaunchContext != got {
-		t.Fatalf("AgentResultMsg context = %#v, want launched context %#v", msg.LaunchContext, got)
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
 
 	if got.Command != "claude" ||
@@ -4010,7 +4588,8 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		got.Commit != "abc123" ||
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
+		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
+		!got.Embedded {
 		t.Fatalf("unexpected resume launch context: %#v", got)
 	}
 	if got.FlowID != "" || got.FlowPhaseID != "" {
@@ -4028,8 +4607,8 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
 		},
-		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("false"), Detached: true}, nil
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return nil, errors.New("embedded start failed")
 		},
 	})
 	m = inRightPane(m)
@@ -4046,14 +4625,12 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd == nil {
-		t.Fatal("expected session resume command")
+	if cmd != nil {
+		t.Fatalf("embedded start failure should not return command, got %T", cmd)
 	}
-	result, ok := cmd().(model.AgentResultMsg)
-	if !ok || result.Err == "" {
-		t.Fatalf("expected failing AgentResultMsg, got %#v", result)
+	if !strings.Contains(m.View(), "embedded start failed") {
+		t.Fatalf("expected embedded start failure in status:\n%s", m.View())
 	}
-	m, _ = update(m, result)
 	if len(phaseUpdates) != 0 {
 		t.Fatalf("ordinary session resume should not update Flow phase, got %#v", phaseUpdates)
 	}
@@ -4062,9 +4639,9 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+			return &fakeEmbeddedTerminal{}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -4075,11 +4652,10 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
-		t.Fatal("expected session resume command")
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
-	_ = cmd()
 
-	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" {
+	if got.Command != "codex" || got.ResumeSessionID != "codex-session-1" || got.WorktreePath != "" || got.WorkingDir != "/dev/alpha/subdir" || !got.Embedded {
 		t.Fatalf("unexpected cwd fallback resume context: %#v", got)
 	}
 }
@@ -4117,9 +4693,9 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex-app",
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+			return &fakeEmbeddedTerminal{}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -4135,9 +4711,8 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
-		t.Fatal("expected claude resume command")
+		t.Fatal("embedded claude resume should schedule terminal repaint ticks")
 	}
-	_ = cmd()
 
 	if got.Command != "claude" ||
 		got.ResumeSessionID != "claude-session-1" ||

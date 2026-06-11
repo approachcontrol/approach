@@ -42,8 +42,9 @@ are already implemented and should be treated as the baseline product:
   from the worktrees view.
 - Agent-session capture and browsing for Claude Code and Codex hook payloads,
   with inline worktree-scoped session lists, normalized transcript paging,
-  session resume actions, raw session ID copying, and user-state storage outside
-  repos.
+  full sessions-view embedded PTY resumes for CLI Codex/Claude sessions,
+  `codex-app` deep-link resumes, raw session ID copying, and user-state storage
+  outside repos.
 - Saved agent plans persisted through the `wtui plan` CLI and browsed in the
   plans pane with per-phase progress, phase expansion, plan-path copying, and
   plan Markdown editing plus editable launch instructions for whole-plan or

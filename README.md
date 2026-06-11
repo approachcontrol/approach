@@ -92,7 +92,7 @@ filter matches, or a load failure with details in the status bar.
 | `c` | Open VSCode at worktree path |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan and Flow phase rows |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
-| `r` | Resume selected agent session (sessions view) or selected attached Flow phase session (flows view) |
+| `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
@@ -143,7 +143,7 @@ the sessions and `enter` resumes the selected session from its recorded `cwd` or
 worktree path. Filtering worktrees, refreshing the worktree list, switching
 modes, or changing repos closes the inline list. The full sessions view in mode
 `6` remains repo-scoped and keeps transcript, summary, resume, and copy-id
-actions.
+actions when no embedded terminal is active.
 
 ### Branches view (mode 2)
 
@@ -189,6 +189,16 @@ status, or summary. Press `o` to page the normalized transcript in `less -R`,
 or `y` to copy the raw provider session ID. `enter` also pages the selected
 transcript.
 
+Resuming a CLI `codex` or `claude` session from the full sessions view opens a
+runtime-only embedded terminal in the sessions pane. While embedded terminals
+exist, the saved-session table is hidden and the pane shows a compact numbered
+terminal header plus the active terminal screen. Keys go directly to the active
+PTY; press `ctrl+g` for wtui commands: `ctrl+g 1`-`9` switches terminals,
+`ctrl+g l` opens a saved-session picker, `ctrl+g x` dismisses an exited
+terminal or confirms termination of a running one, `ctrl+g q` or `ctrl+g esc`
+quits with cleanup, and `ctrl+g ctrl+g` sends a literal `ctrl+g` to the agent.
+Embedded terminals are not restored after wtui restarts.
+
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
 `~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset. Transcripts
@@ -197,11 +207,12 @@ uses restrictive file permissions for created session files. Provider session ID
 are stored in hashed directory names instead of raw path components.
 When resuming a session, wtui runs the provider resume command from the recorded
 session `cwd` when present, falling back to the captured worktree path, while
-preserving the stored worktree metadata for subsequent hooks. Sessions missing a
-provider session ID cannot be resumed; wtui reports this in the status line
-instead of starting a fresh provider session. Hook payloads without a usable
-session ID are rejected at capture time, so no unusable session records are
-stored.
+preserving the stored worktree metadata for subsequent hooks. `codex-app`
+resumes keep using the existing macOS deep-link path rather than an embedded
+terminal. Sessions missing a provider session ID cannot be resumed; wtui reports
+this in the status line instead of starting a fresh provider session. Hook
+payloads without a usable session ID are rejected at capture time, so no
+unusable session records are stored.
 
 ### Plans view (mode 7)
 
