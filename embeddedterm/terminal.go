@@ -296,7 +296,7 @@ func (t *Terminal) waitLoop() {
 
 func (t *Terminal) readLoop(ptmx *os.File, emu *vt.SafeEmulator) {
 	defer close(t.readDone)
-	filter := kittyQueryFilter{writer: ptmx}
+	filter := terminalQueryFilter{writer: ptmx}
 	buf := make([]byte, 4096)
 	for {
 		n, err := ptmx.Read(buf)
@@ -446,12 +446,12 @@ func waitForCommandExit(cmd *exec.Cmd, timeout time.Duration) error {
 	}
 }
 
-type kittyQueryFilter struct {
+type terminalQueryFilter struct {
 	writer  io.Writer
 	pending []byte
 }
 
-func (f *kittyQueryFilter) Filter(p []byte, final bool) []byte {
+func (f *terminalQueryFilter) Filter(p []byte, final bool) []byte {
 	queries := []struct {
 		sequence string
 		response string

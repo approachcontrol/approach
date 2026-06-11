@@ -106,9 +106,9 @@ func TestTerminalBridgesTerminalQueryResponses(t *testing.T) {
 	}
 }
 
-func TestKittyQueryFilterAnswersAndStrips(t *testing.T) {
+func TestTerminalQueryFilterAnswersAndStrips(t *testing.T) {
 	var responses strings.Builder
-	filter := kittyQueryFilter{writer: &responses}
+	filter := terminalQueryFilter{writer: &responses}
 
 	got := filter.Filter([]byte("before\x1b[?uafter"), false)
 	want := "beforeafter"
@@ -120,9 +120,9 @@ func TestKittyQueryFilterAnswersAndStrips(t *testing.T) {
 	}
 }
 
-func TestKittyQueryFilterHandlesSplitSequence(t *testing.T) {
+func TestTerminalQueryFilterHandlesSplitSequence(t *testing.T) {
 	var responses strings.Builder
-	filter := kittyQueryFilter{writer: &responses}
+	filter := terminalQueryFilter{writer: &responses}
 
 	got := filter.Filter([]byte("before\x1b[?"), false)
 	if string(got) != "before" {
@@ -141,8 +141,8 @@ func TestKittyQueryFilterHandlesSplitSequence(t *testing.T) {
 	}
 }
 
-func TestKittyQueryFilterCapsPendingBytes(t *testing.T) {
-	filter := kittyQueryFilter{
+func TestTerminalQueryFilterCapsPendingBytes(t *testing.T) {
+	filter := terminalQueryFilter{
 		writer:  io.Discard,
 		pending: []byte(strings.Repeat("\x1b", maxPendingSequenceBytes+1)),
 	}
@@ -272,7 +272,7 @@ func TestTerminalVisibleLinesAfterExitCanGrowViewport(t *testing.T) {
 	got := ansi.Strip(strings.Join(term.VisibleLines(20, 5), "\n"))
 	for _, want := range []string{"one", "two", "three", "four", "five"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("visible lines = %q, want retained output %q after viewport grows", got, want)
+			t.Fatalf("visible lines = %q, want post-exit output %q after viewport grows", got, want)
 		}
 	}
 }
@@ -512,7 +512,7 @@ func TestTerminalScrollbackIsBounded(t *testing.T) {
 	}
 }
 
-func TestTerminalRetainedOutputRestoresNormalScreenAfterAltScreen(t *testing.T) {
+func TestTerminalPostExitSnapshotRestoresNormalScreenAfterAltScreen(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
 	}
@@ -544,7 +544,7 @@ func TestTerminalRetainedOutputRestoresNormalScreenAfterAltScreen(t *testing.T) 
 	}
 }
 
-func TestTerminalRetainedOutputAppliesCursorClears(t *testing.T) {
+func TestTerminalPostExitSnapshotAppliesCursorClears(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
 	}
@@ -570,11 +570,11 @@ func TestTerminalRetainedOutputAppliesCursorClears(t *testing.T) {
 		t.Fatalf("visible lines = %q, want stale overwritten text hidden", got)
 	}
 	if !strings.Contains(got, "new") {
-		t.Fatalf("visible lines = %q, want cursor-updated text retained", got)
+		t.Fatalf("visible lines = %q, want cursor-updated text in post-exit output", got)
 	}
 }
 
-func TestTerminalRetainedLongLineIsBoundedToTerminalGrid(t *testing.T) {
+func TestTerminalPostExitSnapshotLongLineIsBoundedToTerminalGrid(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
 	}
@@ -926,7 +926,7 @@ func TestTerminalTerminatePreservesVisibleOutput(t *testing.T) {
 	}
 	got := strings.Join(term.VisibleLines(40, 3), "\n")
 	if !strings.Contains(got, "before-terminate") {
-		t.Fatalf("visible lines after terminate = %q, want retained output", got)
+		t.Fatalf("visible lines after terminate = %q, want post-exit output", got)
 	}
 }
 

@@ -399,10 +399,12 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if ctx.Command == agent.CommandCodexApp {
 		return next.launchAgentWithContext(ctx)
 	}
-	needsTick := !next.hasRunningEmbeddedTerminal()
-	var opened bool
-	var err error
-	next, opened, err = next.openEmbeddedTerminal(ctx, record)
+	return next.resumeSessionInEmbeddedTerminal(ctx, record)
+}
+
+func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
+	needsTick := !m.hasRunningEmbeddedTerminal()
+	next, opened, err := m.openEmbeddedTerminal(ctx, record)
 	if err != nil && embeddedterm.IsUnsupported(err) {
 		return next.launchAgentWithContext(ctx)
 	}

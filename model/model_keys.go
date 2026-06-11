@@ -8,7 +8,6 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/agent"
-	"github.com/brian-bell/wtui/embeddedterm"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model/modal"
@@ -1114,17 +1113,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		needsTick := !next.hasRunningEmbeddedTerminal()
-		var opened bool
-		var err error
-		next, opened, err = next.openEmbeddedTerminal(ctx, record)
-		if err != nil && embeddedterm.IsUnsupported(err) {
-			return next.launchAgentWithContext(ctx)
-		}
-		if opened && needsTick {
-			return next.startEmbeddedTerminalTick()
-		}
-		return next, nil
+		return next.resumeSessionInEmbeddedTerminal(ctx, record)
 	}
 	return next.launchAgentWithContext(ctx)
 }
