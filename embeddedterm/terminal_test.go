@@ -43,6 +43,35 @@ func TestTerminalRunsCommandAndRendersLiveOutput(t *testing.T) {
 	}
 }
 
+func TestTerminalRendersOutputWhileCommandIsRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	term, err := NewManager().Start(ctx, StartRequest{
+		Command: "sh",
+		Args:    []string{"-c", "printf live-output; sleep 1"},
+		Width:   40,
+		Height:  5,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer term.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		lines := term.VisibleLines(40, 5, Viewport{Mode: ViewportLive})
+		if strings.Contains(strings.Join(lines, "\n"), "live-output") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("visible lines never showed live output: %#v", term.VisibleLines(40, 5, Viewport{Mode: ViewportLive}))
+}
+
 func TestTerminalRendersCursorUpdatesAndClears(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

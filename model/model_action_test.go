@@ -7,13 +7,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/embeddedterm"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
@@ -3969,6 +3972,23 @@ type fakeEmbeddedTerminal struct {
 	state        string
 }
 
+type realTestEmbeddedTerminal struct {
+	term *embeddedterm.Terminal
+}
+
+func (t realTestEmbeddedTerminal) VisibleLines(width, height int) []string {
+	return t.term.VisibleLines(width, height, embeddedterm.Viewport{Mode: embeddedterm.ViewportLive})
+}
+func (t realTestEmbeddedTerminal) Write(p []byte) (int, error) { return t.term.Write(p) }
+func (t realTestEmbeddedTerminal) Resize(width, height int) error {
+	return t.term.Resize(width, height)
+}
+func (t realTestEmbeddedTerminal) Terminate() error { return t.term.Terminate() }
+func (t realTestEmbeddedTerminal) Wait(ctx context.Context) error {
+	return t.term.Wait(ctx)
+}
+func (t realTestEmbeddedTerminal) State() string { return string(t.term.State()) }
+
 func (t *fakeEmbeddedTerminal) VisibleLines(width, height int) []string {
 	t.visibleCalls = append(t.visibleCalls, [2]int{width, height})
 	return t.lines
@@ -4044,6 +4064,49 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	if strings.Contains(view, "Provider") || strings.Contains(view, "Summary") {
 		t.Fatalf("embedded terminal view should hide saved-session table:\n%s", view)
 	}
+}
+
+func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	var term *embeddedterm.Terminal
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			var err error
+			term, err = embeddedterm.NewManager().Start(context.Background(), embeddedterm.StartRequest{
+				Command: "sh",
+				Args:    []string{"-c", "printf real-pty-output; sleep 1"},
+				Width:   40,
+				Height:  5,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return realTestEmbeddedTerminal{term: term}, nil
+		},
+	})
+	t.Cleanup(func() {
+		if term != nil {
+			_ = term.Terminate()
+		}
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(m.View(), "real-pty-output") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("embedded terminal view never showed real PTY output:\n%s", m.View())
 }
 
 func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.T) {
