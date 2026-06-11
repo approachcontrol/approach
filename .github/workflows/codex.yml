@@ -283,7 +283,7 @@ jobs:
 
       - name: Run Codex
         id: run_codex
-        uses: openai/codex-action@9cdb6f3861cdefafeeaec70dfb42687be5ca62d3
+        uses: openai/codex-action@v1.8
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           codex-version: ${{ github.event.inputs.codex_version || '' }}
