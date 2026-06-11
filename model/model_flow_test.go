@@ -1438,6 +1438,38 @@ func TestModel_FlowTerminalFocusRoutesKeysToPTYAndTabReturnsToList(t *testing.T)
 	}
 }
 
+func TestModel_FlowTerminalCtrlGTabIsUnknownPrefixCommandNotFocusSwitch(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
+		t.Fatalf("status = %q, want unknown prefix command", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
+		t.Fatalf("terminal writes = %#v, want focus to stay on terminal", fakeTerm.writes)
+	}
+}
+
 func TestModel_FlowListQuitWithRunningEmbeddedTerminalConfirmsAndTerminates(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{

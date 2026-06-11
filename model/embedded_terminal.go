@@ -344,8 +344,7 @@ func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) 
 
 func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedTerminalScope) (Model, tea.Cmd, bool) {
 	key := msg.String()
-	if scope == embeddedTerminalScopeFlow && key == "tab" {
-		m.terminalPrefixActive = false
+	if scope == embeddedTerminalScopeFlow && key == "tab" && !m.terminalPrefixActive {
 		m.flowFocus = flowFocusList
 		return m, nil, true
 	}

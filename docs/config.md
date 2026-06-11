@@ -293,7 +293,9 @@ Flow, `r` to resume an attached provider session from the selected phase row,
 externally. While a Flow terminal is open, `tab` switches focus between the
 Flow list and terminal; terminal focus forwards ordinary keys to the PTY and
 keeps `ctrl+g` prefix commands available. Embedded headless output is rendered
-as readable terminal text rather than raw provider event JSON. Expanded rows
+as readable terminal text rather than raw provider event JSON; `codex exec`
+streams progress while it runs, whereas `claude --print` only prints its result
+once the run completes. Expanded rows
 group child implementation phases directly under Implementation. New launches
 record a launch ID and Flow/plan environment metadata for the agent; CLI
 phase-session resumes also record a fresh launch ID, while `codex-app` resumes

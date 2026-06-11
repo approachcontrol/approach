@@ -296,8 +296,11 @@ tracking. Press `a` on a Flow with a ready phase to launch the configured agent
 through the classic external terminal, multiplexer, or `codex-app` deep-link
 route. Press `i` on a ready phase to launch CLI `codex` or `claude` in a
 runtime-only embedded headless terminal inside the flows pane; `codex-app`
-continues to use the external deep-link route. Embedded headless output streams
-as readable terminal text, not raw JSON events. While a Flow terminal is open,
+continues to use the external deep-link route. Embedded headless output is
+readable terminal text, not raw JSON events: `codex exec` streams progress as
+it works, while `claude --print` prints its result when the run completes, so a
+Claude phase can show an empty terminal until it finishes (the terminal tab
+still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them, ordinary keys go to the PTY only when the
 terminal is focused, and `ctrl+g` opens terminal commands such as close,

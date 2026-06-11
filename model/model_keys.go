@@ -1109,6 +1109,21 @@ func (m Model) readyFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model)
 }
 
 func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
+		return PlanLaunchRequestedMsg{LaunchContext: ctx}
+	})
+}
+
+func (m Model) prepareFlowPhaseEmbeddedHeadlessLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
+		ctx.FlowLaunchTracked = true
+		ctx.Embedded = true
+		ctx.Headless = true
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
+	})
+}
+
+func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		planBody := ""
 		if record.PlanID != "" && flowPhasePromptNeedsPlanBody(phase.PhaseID) {
@@ -1125,7 +1140,7 @@ func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowsto
 		}); err != nil {
 			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
 		}
-		return PlanLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		return wrap(actions.AgentLaunchContext{
 			Command:          m.agentCommand,
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
@@ -1138,44 +1153,7 @@ func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowsto
 			FlowID:           record.FlowID,
 			FlowPhaseID:      phase.PhaseID,
 			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody, m.flowPromptTemplates),
-		}}
-	}
-}
-
-func (m Model) prepareFlowPhaseEmbeddedHeadlessLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
-	return func() tea.Msg {
-		planBody := ""
-		if record.PlanID != "" && flowPhasePromptNeedsPlanBody(phase.PhaseID) {
-			body, err := m.readPlan(record.PlanID)
-			if err != nil {
-				return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to read linked plan %s: %v", record.PlanID, err)}
-			}
-			planBody = body
-		}
-		if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-			FlowID:   record.FlowID,
-			PhaseID:  phase.PhaseID,
-			LaunchID: launchID,
-		}); err != nil {
-			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
-		}
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
-			Command:           m.agentCommand,
-			LaunchID:          launchID,
-			RepoPath:          repoPath,
-			WorktreePath:      worktreePath,
-			Branch:            record.Branch,
-			Commit:            record.Commit,
-			SessionStateRoot:  m.sessionStateRoot,
-			PlanID:            record.PlanID,
-			PlanPath:          planPath,
-			FlowID:            record.FlowID,
-			FlowPhaseID:       phase.PhaseID,
-			FlowLaunchTracked: true,
-			Embedded:          true,
-			Headless:          true,
-			InitialPrompt:     flowPhasePrompt(record, phase, planPath, planBody, m.flowPromptTemplates),
-		}}
+		})
 	}
 }
 
