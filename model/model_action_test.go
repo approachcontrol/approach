@@ -4210,6 +4210,47 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	}
 }
 
+func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"codex-session-1":  {lines: []string{"first output"}},
+		"claude-session-2": {lines: []string{"second output"}},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			return terms[ctx.ResumeSessionID], nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
+		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, tick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if tick == nil {
+		t.Fatal("expected first embedded terminal to schedule repaint tick")
+	}
+
+	terms["codex-session-1"].state = "exited"
+	m, stopped := update(m, tick())
+	if stopped != nil {
+		t.Fatalf("exited terminal should stop repaint loop, got %T", stopped)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected picker submit command")
+	}
+	_, restarted := update(m, cmd())
+	if restarted == nil {
+		t.Fatal("opening a new running terminal after all PTYs exited should restart repaint tick")
+	}
+}
+
 func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 	terms := map[string]*fakeEmbeddedTerminal{
 		"codex-session-1":  {lines: []string{"first output"}},

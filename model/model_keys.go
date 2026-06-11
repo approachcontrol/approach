@@ -1114,7 +1114,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	if ctx.Command != agent.CommandCodexApp {
-		needsTick := len(next.embeddedTerminals) == 0
+		needsTick := !next.hasRunningEmbeddedTerminal()
 		var opened bool
 		var err error
 		next, opened, err = next.openEmbeddedTerminal(ctx, record)

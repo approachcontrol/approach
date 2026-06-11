@@ -397,7 +397,7 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if ctx.Command == agent.CommandCodexApp {
 		return next.launchAgentWithContext(ctx)
 	}
-	needsTick := len(next.embeddedTerminals) == 0
+	needsTick := !next.hasRunningEmbeddedTerminal()
 	var opened bool
 	var err error
 	next, opened, err = next.openEmbeddedTerminal(ctx, record)
