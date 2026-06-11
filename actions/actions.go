@@ -622,6 +622,7 @@ type AgentLaunchContext struct {
 	FlowPhaseID       string
 	FlowLaunchTracked bool
 	Embedded          bool
+	Headless          bool
 	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
@@ -750,7 +751,10 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded)
+	if ctx.Headless && resumeSessionID != "" {
+		return nil, nil, fmt.Errorf("headless agent launch does not support session resume")
+	}
+	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded, ctx.Headless)
 	if ctx.InitialPrompt != "" {
 		args = append(args, ctx.InitialPrompt)
 	}
@@ -956,14 +960,17 @@ func ResolveWorktreeCommit(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func agentLaunchArgs(command, resumeSessionID string, embedded bool) []string {
+func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
 		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
 		args := []string{"--config", hookConfig}
-		if embedded {
+		if embedded && !headless {
 			args = slices.Insert(args, 0, "--no-alt-screen")
+		}
+		if headless {
+			args = append(args, "exec")
 		}
 		if resumeSessionID != "" {
 			args = append(args, "resume", resumeSessionID)
@@ -973,6 +980,9 @@ func agentLaunchArgs(command, resumeSessionID string, embedded bool) []string {
 		hookCommand := wtuiSessionHookCommand("claude")
 		settings := claudeSessionHookSettings(hookCommand)
 		args := []string{"--settings", settings}
+		if headless {
+			args = slices.Insert(args, 0, "--print")
+		}
 		if resumeSessionID != "" {
 			args = append(args, "--resume", resumeSessionID)
 		}

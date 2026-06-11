@@ -287,12 +287,20 @@ flows pane (mode `8`), which is the startup default. The pane shows linked plan
 IDs when present; press `n` to create a new Flow, `x` to expand or collapse
 read-only phase detail rows, `o` to open the linked plan body from the selected
 Flow, `r` to resume an attached provider session from the selected phase row,
-and `a` to launch the selected ready phase. Expanded rows group child
-implementation phases directly under Implementation. New launches record a
-launch ID and Flow/plan environment metadata for the agent; CLI phase-session
-resumes also record a fresh launch ID, while `codex-app` resumes navigate to
-the existing app thread without additional launch tracking. Other Flow mutation
-remains CLI/agent-driven in v1.
+`a` to launch the selected ready phase through the classic external route, and
+`i` to launch the selected ready phase in an embedded headless terminal for CLI
+`codex` or `claude`. `codex-app` remains URL/deep-link based and launches
+externally. While a Flow terminal is open, `tab` switches focus between the
+Flow list and terminal; terminal focus forwards ordinary keys to the PTY and
+keeps `ctrl+g` prefix commands available. Embedded headless output is rendered
+as readable terminal text rather than raw provider event JSON; `codex exec`
+streams progress while it runs, whereas `claude --print` only prints its result
+once the run completes. Expanded rows
+group child implementation phases directly under Implementation. New launches
+record a launch ID and Flow/plan environment metadata for the agent; CLI
+phase-session resumes also record a fresh launch ID, while `codex-app` resumes
+navigate to the existing app thread without additional launch tracking. Other
+Flow mutation remains CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
@@ -448,10 +456,11 @@ manually afterward.
 
 ## Agent Session Hooks
 
-Agents launched from wtui with `a`, `N`, or session resume `r` are wired
-automatically. wtui passes Claude Code or Codex a session-end hook that calls
-the current wtui binary, and it appends the environment metadata listed below so
-the hook can associate the session with the selected repo and worktree.
+Agents launched from wtui with `a`, Flow embedded launch `i`, `N`, or session
+resume `r` are wired automatically. wtui passes Claude Code or Codex a
+session-end hook that calls the current wtui binary, and it appends the
+environment metadata listed below so the hook can associate the session with
+the selected repo and worktree.
 
 wtui can also ingest hook payloads from manual provider configuration:
 
@@ -530,12 +539,13 @@ Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with
 `claude ... --resume <session-id>`, while preserving the same wtui hook and
 metadata environment wiring as fresh launches. In the full sessions view, those
-CLI resumes run inside runtime-only embedded PTYs in the sessions pane; other
-agent launches and `codex-app` resumes keep using their existing external
-terminal or deep-link transports. The TUI refuses to resume a stored session
-whose provider session ID is blank (it reports this in the status line
-instead), and command construction trims resume session IDs and rejects
-whitespace-only ones, so a resume command never carries a blank `--resume`
+CLI resumes run inside runtime-only embedded PTYs in the sessions pane. Fresh
+Flow launches with `i` run CLI agents headlessly inside runtime-only embedded
+PTYs in the flows pane. Other agent launches and `codex-app` resumes keep using
+their existing external terminal or deep-link transports. The TUI refuses to
+resume a stored session whose provider session ID is blank (it reports this in
+the status line instead), and command construction trims resume session IDs and
+rejects whitespace-only ones, so a resume command never carries a blank `--resume`
 argument.
 
 Hook payloads whose `session_id` is blank or whitespace-only are rejected at

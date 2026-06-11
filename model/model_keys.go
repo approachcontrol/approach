@@ -214,7 +214,7 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "f":
 		return m.startFetchVisibleRepos()
 	case "q", "ctrl+c", "esc":
-		return m, tea.Quit
+		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
 }
@@ -311,6 +311,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
+		if m.mode == ui.ModeFlows {
+			return m.handleLaunchFlowPhaseEmbeddedHeadless()
+		}
 	case "x":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleToggleWorktreeSessions()
@@ -322,6 +325,11 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleToggleFlowPhases()
 		}
 	case "tab":
+		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+			m.flowFocus = flowFocusTerminal
+			m.terminalPrefixActive = false
+			return m, nil
+		}
 		m.activePane = 0
 		if m.mode == ui.ModePlans {
 			m = m.clearSelectedPlanPhase()
@@ -387,7 +395,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "c":
 		return m.handleOpenCode()
 	case "q", "ctrl+c", "esc":
-		return m, tea.Quit
+		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
 }
@@ -1024,18 +1032,47 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLaunchFlowPhase() (tea.Model, tea.Cmd) {
+	target, ok, next := m.readyFlowPhaseLaunchTarget()
+	if !ok {
+		return next, nil
+	}
+	launchID := newLaunchID()
+	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+}
+
+func (m Model) handleLaunchFlowPhaseEmbeddedHeadless() (tea.Model, tea.Cmd) {
+	if agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
+		return m.handleLaunchFlowPhase()
+	}
+	target, ok, next := m.readyFlowPhaseLaunchTarget()
+	if !ok {
+		return next, nil
+	}
+	launchID := newLaunchID()
+	return next, next.prepareFlowPhaseEmbeddedHeadlessLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+}
+
+type flowPhaseLaunchTarget struct {
+	record       flowstore.FlowRecord
+	phase        flowstore.FlowPhase
+	repoPath     string
+	worktreePath string
+	planPath     string
+}
+
+func (m Model) readyFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
 	record, ok := m.selectedFlow()
 	if !ok {
-		return m, nil
+		return flowPhaseLaunchTarget{}, false, m
 	}
 	phase, ok := readyFlowPhase(record)
 	if !ok {
 		m = m.setStatus(statusOther, flowNotReadyMessage(record))
-		return m, nil
+		return flowPhaseLaunchTarget{}, false, m
 	}
 	if m.agentCommand == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
-		return m, nil
+		return flowPhaseLaunchTarget{}, false, m
 	}
 	repoPath := record.RepoPath
 	if repoPath == "" {
@@ -1047,7 +1084,7 @@ func (m Model) handleLaunchFlowPhase() (tea.Model, tea.Cmd) {
 	}
 	if worktreePath == "" {
 		m = m.setStatus(statusOther, "Cannot determine launch path for this flow")
-		return m, nil
+		return flowPhaseLaunchTarget{}, false, m
 	}
 	planPath := record.PlanPath
 	if record.PlanID != "" && planPath == "" {
@@ -1055,18 +1092,38 @@ func (m Model) handleLaunchFlowPhase() (tea.Model, tea.Cmd) {
 		planPath, err = m.planMarkdownPath(record.PlanID)
 		if err != nil {
 			m = m.setStatus(statusOther, err.Error())
-			return m, nil
+			return flowPhaseLaunchTarget{}, false, m
 		}
 	}
 	if phase.PhaseID == "plan-review" && record.PlanID == "" {
 		m = m.setStatus(statusOther, "Plan Review needs a linked plan before launch")
-		return m, nil
+		return flowPhaseLaunchTarget{}, false, m
 	}
-	launchID := newLaunchID()
-	return m, m.prepareFlowPhaseLaunch(record, phase, repoPath, worktreePath, planPath, launchID)
+	return flowPhaseLaunchTarget{
+		record:       record,
+		phase:        phase,
+		repoPath:     repoPath,
+		worktreePath: worktreePath,
+		planPath:     planPath,
+	}, true, m
 }
 
 func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
+		return PlanLaunchRequestedMsg{LaunchContext: ctx}
+	})
+}
+
+func (m Model) prepareFlowPhaseEmbeddedHeadlessLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
+		ctx.FlowLaunchTracked = true
+		ctx.Embedded = true
+		ctx.Headless = true
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
+	})
+}
+
+func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		planBody := ""
 		if record.PlanID != "" && flowPhasePromptNeedsPlanBody(phase.PhaseID) {
@@ -1083,7 +1140,7 @@ func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowsto
 		}); err != nil {
 			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
 		}
-		return PlanLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		return wrap(actions.AgentLaunchContext{
 			Command:          m.agentCommand,
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
@@ -1096,7 +1153,7 @@ func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowsto
 			FlowID:           record.FlowID,
 			FlowPhaseID:      phase.PhaseID,
 			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody, m.flowPromptTemplates),
-		}}
+		})
 	}
 }
 
@@ -1685,6 +1742,27 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 	return m.runAgentLaunchWithContext(ctx, launch)
 }
 
+func (m Model) launchFlowEmbeddedHeadlessWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	ctx.Embedded = true
+	ctx.Headless = true
+	ctx.FlowLaunchTracked = true
+	needsTick := !m.hasRunningEmbeddedTerminal()
+	next, opened, err := m.openFlowEmbeddedTerminal(ctx)
+	if err != nil || !opened {
+		errText := "Maximum embedded terminals reached"
+		if err != nil {
+			errText = err.Error()
+		}
+		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
+		next = next.setStatus(statusOther, errText)
+		return next, nil
+	}
+	if needsTick {
+		return next.startEmbeddedTerminalTick()
+	}
+	return next, nil
+}
+
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	ctx.FlowLaunchTracked = true
 	if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
@@ -2029,6 +2107,8 @@ func (m Model) resetModeCursors() Model {
 	m.flows = m.flows.ResetSelection()
 	m = m.setExpandedPlanID("")
 	m = m.setExpandedFlowID("")
+	m.flowFocus = flowFocusList
+	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
 	return m
@@ -2048,6 +2128,8 @@ func (m Model) resetRightPaneCursors() Model {
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
 	m = m.setExpandedFlowID("")
+	m.flowFocus = flowFocusList
+	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
 	return m
@@ -2092,6 +2174,17 @@ func (m Model) flowContentHeight() int {
 	height := m.height - ui.FlowContentOverhead
 	if height <= 0 {
 		return 1
+	}
+	if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+		listHeight, _ := ui.FlowSplitPanelHeights(m.rightContentHeight())
+		// The split renderer spends TableHeaderRows of the list panel on the
+		// header, so only the remainder holds data rows.
+		if rows := listHeight - ui.TableHeaderRows; rows > 0 {
+			return rows
+		}
+		if listHeight > 0 {
+			return 1
+		}
 	}
 	return height
 }

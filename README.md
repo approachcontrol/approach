@@ -45,7 +45,7 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 
 ### Keys
 
-The UI has two panes: repos on the left, content on the right. `tab` switches focus between them. The active pane is highlighted with a blue border.
+The UI has two panes: repos on the left, content on the right. `tab` switches focus between them. When a Flow embedded terminal is open, `tab` also switches focus between the Flow list and that terminal while the right pane remains active. The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
 
@@ -82,7 +82,7 @@ filter matches, or a load failure with details in the status bar.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or launch the selected ready Flow phase |
+| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or launch the selected ready Flow phase through the classic external route |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -96,7 +96,7 @@ filter matches, or a load failure with details in the status bar.
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
-| `i` | Alias for plan implementation launch |
+| `i` | Alias for plan implementation launch; in flows view, launch the selected ready Flow phase in an embedded headless terminal for CLI agents |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -197,7 +197,9 @@ PTY; press `ctrl+g` for wtui commands: `ctrl+g 1`-`9` switches terminals,
 `ctrl+g l` opens a saved-session picker, `ctrl+g x` dismisses an exited
 terminal or confirms termination of a running one, `ctrl+g q` or `ctrl+g esc`
 quits with cleanup, and `ctrl+g ctrl+g` sends a literal `ctrl+g` to the agent.
-Embedded terminals are not restored after wtui restarts.
+Quitting wtui from anywhere while embedded terminals are still running asks for
+confirmation and terminates them first. Embedded terminals are not restored
+after wtui restarts.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
@@ -291,10 +293,21 @@ selected Flow ID, or the selected phase ID when a phase row is selected. Press
 session; CLI resumes are recorded as a fresh Flow phase launch attempt, while
 `codex-app` resumes navigate to the existing app thread without extra launch
 tracking. Press `a` on a Flow with a ready phase to launch the configured agent
-for that phase. When Implementation is still gated by Plan Review, wtui reports
-the Plan Review state and notes instead of launching. When PR Creation is
-complete but structured PR metadata is missing, Autoreview remains pending and
-the Flow row shows `autoreview:missing-pr`.
+through the classic external terminal, multiplexer, or `codex-app` deep-link
+route. Press `i` on a ready phase to launch CLI `codex` or `claude` in a
+runtime-only embedded headless terminal inside the flows pane; `codex-app`
+continues to use the external deep-link route. Embedded headless output is
+readable terminal text, not raw JSON events: `codex exec` streams progress as
+it works, while `claude --print` prints its result when the run completes, so a
+Claude phase can show an empty terminal until it finishes (the terminal tab
+still shows `running`). While a Flow terminal is open,
+the Flow list uses a smaller top panel and the terminal uses a bottom panel;
+`tab` switches focus between them, ordinary keys go to the PTY only when the
+terminal is focused, and `ctrl+g` opens terminal commands such as close,
+switch, quit, or sending a literal `ctrl+g`. When Implementation is still gated
+by Plan Review, wtui reports the Plan Review state and notes instead of
+launching. When PR Creation is complete but structured PR metadata is missing,
+Autoreview remains pending and the Flow row shows `autoreview:missing-pr`.
 Expanded phase rows group child implementation phases directly under
 Implementation.
 
@@ -477,14 +490,15 @@ foundation fields for provider, launch, and agent settings.
 
 ### Agent session hooks
 
-CLI agents launched from wtui with `a`, `N`, or session resume `r` are wired
-automatically: wtui passes Claude Code or Codex a session-end hook that calls
-the current wtui binary, and it exports `WTUI_*` metadata so hook records can be
-associated with the repo, worktree, branch, and launch. `codex-app` opens via
-macOS deep link instead; wtui scrubs inherited `WTUI_*` from `open` and includes
-prompt-only launch metadata with copyable `--state-root` command examples. New
-`codex-app` threads use the repo path for Codex App project identity when wtui
-knows it, while the selected worktree remains available in the prompt metadata.
+CLI agents launched from wtui with `a`, Flow embedded launch `i`, `N`, or
+session resume `r` are wired automatically: wtui passes Claude Code or Codex a
+session-end hook that calls the current wtui binary, and it exports `WTUI_*`
+metadata so hook records can be associated with the repo, worktree, branch, and
+launch. `codex-app` opens via macOS deep link instead; wtui scrubs inherited
+`WTUI_*` from `open` and includes prompt-only launch metadata with copyable
+`--state-root` command examples. New `codex-app` threads use the repo path for
+Codex App project identity when wtui knows it, while the selected worktree
+remains available in the prompt metadata.
 
 For manual agent sessions that are not launched by wtui, configure Claude Code
 or Codex hooks to call wtui:

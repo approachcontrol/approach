@@ -299,6 +299,10 @@ type PlanLaunchRequestedMsg struct {
 	Request       uint64
 }
 
+type FlowEmbeddedLaunchRequestedMsg struct {
+	LaunchContext actions.AgentLaunchContext
+}
+
 type FlowTitleSubmittedMsg struct {
 	Title string
 }
