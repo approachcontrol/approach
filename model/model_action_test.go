@@ -3961,13 +3961,17 @@ func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
 }
 
 type fakeEmbeddedTerminal struct {
-	lines   []string
-	writes  []string
-	resizes [][2]int
-	state   string
+	lines        []string
+	visibleCalls [][2]int
+	writes       []string
+	resizes      [][2]int
+	state        string
 }
 
-func (t *fakeEmbeddedTerminal) VisibleLines(int, int) []string { return t.lines }
+func (t *fakeEmbeddedTerminal) VisibleLines(width, height int) []string {
+	t.visibleCalls = append(t.visibleCalls, [2]int{width, height})
+	return t.lines
+}
 func (t *fakeEmbeddedTerminal) Write(p []byte) (int, error) {
 	t.writes = append(t.writes, string(p))
 	return len(p), nil
@@ -4059,13 +4063,47 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("plain terminal key should not return wtui command, got %T", cmd)
 	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 
-	want := []string{"a", "\x03", "\a"}
+	want := []string{"a", " ", "\x03", "\a"}
 	if !reflect.DeepEqual(fakeTerm.writes, want) {
 		t.Fatalf("terminal writes = %#v, want %#v", fakeTerm.writes, want)
+	}
+}
+
+func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{}
+	var started [2]int
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = [2]int{width, height}
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	wantStartWidth := 180 - ui.LeftPaneWidth - ui.ShortcutPaneWidth - 2
+	if started[0] != wantStartWidth {
+		t.Fatalf("embedded terminal start width = %d, want %d", started[0], wantStartWidth)
+	}
+	_ = m.View()
+	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1][0] != wantStartWidth {
+		t.Fatalf("embedded terminal visible width calls = %#v, want latest width %d", fakeTerm.visibleCalls, wantStartWidth)
+	}
+
+	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 12})
+	wantResizeWidth := 160 - ui.LeftPaneWidth - ui.ShortcutPaneWidth - 2
+	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1][0] != wantResizeWidth {
+		t.Fatalf("embedded terminal resize calls = %#v, want latest width %d", fakeTerm.resizes, wantResizeWidth)
 	}
 }
 

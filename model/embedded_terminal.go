@@ -127,7 +127,18 @@ func (m Model) embeddedTerminalLines() []string {
 		return nil
 	}
 	height := m.embeddedTerminalContentHeight()
-	return slot.Terminal.VisibleLines(m.contentWidth(), height)
+	return slot.Terminal.VisibleLines(m.embeddedTerminalWidth(), height)
+}
+
+func (m Model) embeddedTerminalWidth() int {
+	width := m.contentWidth()
+	if m.width >= ui.LeftPaneWidth+ui.ShortcutPaneWidth+ui.MinContentPaneWidth && m.height >= 3 {
+		width -= ui.ShortcutPaneWidth
+	}
+	if width < 0 {
+		return 0
+	}
+	return width
 }
 
 func (m Model) embeddedTerminalContentHeight() int {
@@ -157,7 +168,7 @@ func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessi
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
 		return m, false
 	}
-	term, err := m.startEmbeddedTerminal(ctx, m.contentWidth(), m.embeddedTerminalContentHeight())
+	term, err := m.startEmbeddedTerminal(ctx, m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
 		return m, false
@@ -176,7 +187,7 @@ func (m Model) resizeEmbeddedTerminals() Model {
 	if len(m.embeddedTerminals) == 0 {
 		return m
 	}
-	width := m.contentWidth()
+	width := m.embeddedTerminalWidth()
 	height := m.embeddedTerminalContentHeight()
 	for _, slot := range m.embeddedTerminals {
 		if slot.Terminal == nil {
@@ -412,6 +423,9 @@ func (m Model) writeToActiveTerminal(p []byte) Model {
 func keyBytes(msg tea.KeyMsg) []byte {
 	if msg.Type == tea.KeyRunes {
 		return []byte(string(msg.Runes))
+	}
+	if msg.Type == tea.KeySpace {
+		return []byte{' '}
 	}
 	switch msg.String() {
 	case "enter":
