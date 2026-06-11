@@ -2,7 +2,7 @@ name: Codex
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -16,11 +16,7 @@ on:
         required: false
         type: string
       instructions:
-        description: Optional instructions for the ship workflow.
-        required: false
-        type: string
-      autoreview_parallel_tests:
-        description: Optional test command Codex should run as part of the autoreview gate.
+        description: Optional extra instructions for Codex.
         required: false
         type: string
       codex_version:
@@ -29,22 +25,162 @@ on:
         type: string
 
 jobs:
-  autoreview_ship:
-    if: |
-      (github.event_name == 'pull_request' && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '@codex') || contains(github.event.comment.body, '@autoreview')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review_comment' && (contains(github.event.comment.body, '@codex') || contains(github.event.comment.body, '@autoreview')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && (contains(github.event.review.body, '@codex') || contains(github.event.review.body, '@autoreview')) && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association)) ||
-      github.event_name == 'workflow_dispatch'
-    uses: brian-bell/skills/.github/workflows/autoreview-ship.yml@main
+  resolve_pr:
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      base_ref: ${{ steps.resolve.outputs.base_ref }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      title: ${{ steps.resolve.outputs.title }}
+      body: ${{ steps.resolve.outputs.body }}
+    steps:
+      - name: Resolve pull request
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const eventName = context.eventName;
+            const payload = context.payload;
+
+            function includesCodexMention(body) {
+              return typeof body === 'string' && body.includes('@codex');
+            }
+
+            let shouldRun = false;
+            let pr = payload.pull_request;
+
+            if (eventName === 'pull_request') {
+              shouldRun = !pr.draft;
+            } else if (eventName === 'issue_comment') {
+              shouldRun = Boolean(payload.issue?.pull_request && includesCodexMention(payload.comment?.body));
+              if (shouldRun) {
+                const response = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: payload.issue.number,
+                });
+                pr = response.data;
+              }
+            } else if (eventName === 'pull_request_review_comment') {
+              shouldRun = includesCodexMention(payload.comment?.body);
+            } else if (eventName === 'pull_request_review') {
+              shouldRun = includesCodexMention(payload.review?.body);
+            } else if (eventName === 'workflow_dispatch') {
+              const requested = core.getInput('pr_number');
+              if (requested) {
+                const response = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: Number(requested),
+                });
+                pr = response.data;
+              } else {
+                const pulls = await github.rest.pulls.list({
+                  owner,
+                  repo,
+                  state: 'open',
+                  sort: 'updated',
+                  direction: 'desc',
+                  per_page: 1,
+                });
+                pr = pulls.data[0];
+              }
+              shouldRun = Boolean(pr);
+            }
+
+            if (shouldRun && pr.head.repo.full_name !== `${owner}/${repo}`) {
+              core.warning('Skipping Codex for forked pull request because this workflow uses repository secrets.');
+              shouldRun = false;
+            }
+
+            core.setOutput('should_run', String(shouldRun));
+            core.setOutput('pr_number', pr?.number ? String(pr.number) : '');
+            core.setOutput('base_ref', pr?.base?.ref || '');
+            core.setOutput('base_sha', pr?.base?.sha || '');
+            core.setOutput('head_sha', pr?.head?.sha || '');
+            core.setOutput('title', pr?.title || '');
+            core.setOutput('body', pr?.body || '');
+
+  codex:
+    runs-on: ubuntu-latest
+    needs: resolve_pr
+    if: needs.resolve_pr.outputs.should_run == 'true'
+    permissions:
+      contents: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ needs.resolve_pr.outputs.pr_number }}/merge
+          persist-credentials: false
+
+      - name: Pre-fetch base and head refs
+        env:
+          PR_BASE_REF: ${{ needs.resolve_pr.outputs.base_ref }}
+          PR_NUMBER: ${{ needs.resolve_pr.outputs.pr_number }}
+        run: |
+          git fetch --no-tags origin \
+            "$PR_BASE_REF" \
+            "+refs/pull/$PR_NUMBER/head"
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@main
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-version: ${{ github.event.inputs.codex_version || '' }}
+          sandbox: read-only
+          allow-bot-users: "chatgpt-codex-connector[bot]"
+          output-file: codex-output.md
+          prompt: |
+            This is PR #${{ needs.resolve_pr.outputs.pr_number }} for ${{ github.repository }}.
+
+            Review ONLY the changes introduced by this pull request.
+            Focus on correctness, regressions, security issues, and missing tests.
+            Keep findings concise, actionable, and grounded in file/line references when possible.
+
+            Useful commands:
+            - git log --oneline ${{ needs.resolve_pr.outputs.base_sha }}...${{ needs.resolve_pr.outputs.head_sha }}
+            - git diff --stat ${{ needs.resolve_pr.outputs.base_sha }}...${{ needs.resolve_pr.outputs.head_sha }}
+            - git diff ${{ needs.resolve_pr.outputs.base_sha }}...${{ needs.resolve_pr.outputs.head_sha }}
+
+            Pull request title:
+            ${{ needs.resolve_pr.outputs.title }}
+
+            Pull request body:
+            ----
+            ${{ needs.resolve_pr.outputs.body }}
+
+            Additional instructions:
+            ${{ github.event.inputs.instructions || '' }}
+
+  post_feedback:
+    runs-on: ubuntu-latest
+    needs: [resolve_pr, codex]
+    if: needs.codex.outputs.final_message != ''
+    permissions:
       issues: write
-      actions: read
-    secrets: inherit
-    with:
-      pr_number: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.inputs.pr_number || '' }}
-      instructions: ${{ github.event_name == 'pull_request' && 'Automatic PR submission autoreview.' || github.event.inputs.instructions || '' }}
-      autoreview_parallel_tests: ${{ github.event.inputs.autoreview_parallel_tests || '' }}
-      codex_version: ${{ github.event.inputs.codex_version || '' }}
+      pull-requests: write
+    steps:
+      - name: Post Codex feedback
+        uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+          PR_NUMBER: ${{ needs.resolve_pr.outputs.pr_number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body: process.env.CODEX_FINAL_MESSAGE,
+            });
