@@ -143,7 +143,15 @@ func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
 	if desc.beforeStart != nil {
 		m = desc.beforeStart(m)
 	}
-	return m, m.fetchList(desc, request)
+	cmd := m.fetchList(desc, request)
+	if desc.mode == ui.ModeFlows && m.mode == ui.ModeFlows {
+		m.flowRefreshTickGen++
+		m.flowRefreshInFlight = 0
+		if cmd != nil {
+			m.flowRefreshInFlight = request
+		}
+	}
+	return m, cmd
 }
 
 func (m Model) fetchMode(mode ui.Mode, request uint64) tea.Cmd {

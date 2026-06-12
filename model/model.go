@@ -99,6 +99,8 @@ type Model struct {
 	activeFlowTerminalNum     int
 	flowFocus                 flowFocus
 	embeddedTerminalTickGen   uint64
+	flowRefreshTickGen        uint64
+	flowRefreshInFlight       uint64
 	terminalPrefixActive      bool
 	terminalConfirmID         embeddedTerminalID
 	terminalConfirmScope      embeddedTerminalScope
@@ -309,6 +311,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
 		flowHeadless:          true,
+		flowRefreshTickGen:    1,
 		mode:                  startupMode(opts.StartupMode),
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:    opts.PlanPromptTemplate,
@@ -339,6 +342,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	for mode := ui.ModeWorktrees; mode <= ui.ModeFlows; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
+	}
+	if m.mode == ui.ModeFlows {
+		if _, ok := m.currentRepoPath(); ok {
+			m.flowRefreshInFlight = m.currentListRequest(ui.ModeFlows)
+		}
 	}
 	return m
 }
@@ -427,7 +435,14 @@ func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mo
 func (m Model) AgentCommand() string            { return m.agentCommand }
 
 func (m Model) Init() tea.Cmd {
-	return m.fetchForMode()
+	fetchCmd := m.fetchForMode()
+	if m.mode != ui.ModeFlows {
+		return fetchCmd
+	}
+	if fetchCmd != nil {
+		return fetchCmd
+	}
+	return m.flowRefreshTickCmd()
 }
 
 func (m Model) View() string {
@@ -482,6 +497,9 @@ func (m Model) View() string {
 		SelectPrompt:               modalView.Prompt,
 		SelectItems:                uiSelectItems(modalView.SelectItems),
 		SelectSelected:             modalView.SelectIndex,
+		SelectWidth:                modalView.SelectLayout.Width,
+		SelectHeight:               modalView.SelectLayout.Height,
+		SelectPlacement:            uiSelectPlacement(modalView.SelectLayout.Placement),
 		BranchScroll:               branchScroll,
 		RepoScroll:                 repoScroll,
 		StashScroll:                stashScroll,
@@ -673,7 +691,7 @@ func (m Model) overlayState() ui.OverlayState {
 	case modal.Input:
 		return ui.OverlayInput
 	case modal.Select:
-		return ui.OverlayAgentSelect
+		return ui.OverlaySelect
 	case modal.Diff:
 		switch view.DiffKind {
 		case modal.DiffStash:
@@ -700,6 +718,17 @@ func uiInputMode(mode modal.InputMode) ui.InputMode {
 		return ui.InputMultiLine
 	}
 	return ui.InputSingleLine
+}
+
+func uiSelectPlacement(placement modal.Placement) ui.SelectPlacement {
+	switch placement {
+	case modal.PlacementTopCenter:
+		return ui.SelectPlacementTopCenter
+	case modal.PlacementBottomCenter:
+		return ui.SelectPlacementBottomCenter
+	default:
+		return ui.SelectPlacementCenter
+	}
 }
 
 func uiSelectItems(items []modal.SelectItem) []ui.SelectItem {
@@ -761,6 +790,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.embeddedTerminalTickCmd()
 		}
 		return m, nil
+	case flowRefreshTickMsg:
+		if msg.Generation != m.flowRefreshTickGen || m.mode != ui.ModeFlows {
+			return m, nil
+		}
+		return m.startFlowRefreshFetch()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -830,7 +864,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PlanResultMsg:
 		return m.handlePlanResult(msg), nil
 	case FlowResultMsg:
-		return m.handleFlowResult(msg), nil
+		next := m.handleFlowResult(msg)
+		return next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
 	case PlanReadResultMsg:
 		return m.handlePlanReadResult(msg)
 	case WorktreeDiffResultMsg:
@@ -924,7 +959,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ForceDeleteFailedMsg:
 		return m.handleForceDeleteFailed(msg), nil
 	case FetchErrorMsg:
-		return m.handleFetchError(msg), nil
+		next := m.handleFetchError(msg)
+		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
 		next := m.handleActionFailed(msg)
 		if next.mode == ui.ModeFlows && next.isCurrentRepo(msg.RepoPath) {

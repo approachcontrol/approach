@@ -260,6 +260,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode < ui.ModeFlows {
 			m.mode++
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 	case "1":
@@ -308,7 +311,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode != ui.ModeFlows {
 			m.mode = ui.ModeFlows
 			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeFlows)
+			return m.startFlowsModeFetchWithRefreshTick()
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -431,6 +434,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		if m.mode != targetMode {
 			m.mode = targetMode
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 		return m, nil
@@ -444,6 +450,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		}
 		m.mode++
 		m = m.resetModeCursors()
+		if m.mode == ui.ModeFlows {
+			return m.startFlowsModeFetchWithRefreshTick()
+		}
 		return m.startFetchForMode()
 	}
 
@@ -717,10 +726,11 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
-	m.modal = modal.OpenSelect(
+	m.modal = modal.OpenSelectWithLayout(
 		"Choose interactive helper",
 		agentSelectItems(),
 		selectedAgentIndex(m.agentCommand),
+		modal.Layout{Width: 32, Height: 6, Placement: modal.PlacementCenter},
 		func(value string) tea.Cmd { return m.setAgent(agent.Normalize(value)) },
 	)
 	return m, nil
@@ -1749,7 +1759,13 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
-	want := artifacts.NormalizePhaseID(phaseID)
+	requested := strings.TrimSpace(phaseID)
+	for _, phase := range record.Phases {
+		if phase.PhaseID == requested {
+			return phase, true
+		}
+	}
+	want := artifacts.NormalizePhaseID(requested)
 	for _, phase := range record.Phases {
 		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return phase, true
