@@ -99,6 +99,7 @@ type Model struct {
 	activeFlowTerminalNum     int
 	flowFocus                 flowFocus
 	embeddedTerminalTickGen   uint64
+	flowRefreshTickGen        uint64
 	terminalPrefixActive      bool
 	terminalConfirmID         embeddedTerminalID
 	terminalConfirmScope      embeddedTerminalScope
@@ -309,6 +310,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
 		flowHeadless:          true,
+		flowRefreshTickGen:    1,
 		mode:                  startupMode(opts.StartupMode),
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:    opts.PlanPromptTemplate,
@@ -427,7 +429,11 @@ func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mo
 func (m Model) AgentCommand() string            { return m.agentCommand }
 
 func (m Model) Init() tea.Cmd {
-	return m.fetchForMode()
+	fetchCmd := m.fetchForMode()
+	if m.mode != ui.ModeFlows {
+		return fetchCmd
+	}
+	return batchCommands(fetchCmd, m.flowRefreshTickCmd())
 }
 
 func (m Model) View() string {
@@ -761,6 +767,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.embeddedTerminalTickCmd()
 		}
 		return m, nil
+	case flowRefreshTickMsg:
+		if msg.Generation != m.flowRefreshTickGen || m.mode != ui.ModeFlows {
+			return m, nil
+		}
+		next, fetchCmd := m.startFetchMode(ui.ModeFlows)
+		return next, batchCommands(fetchCmd, next.flowRefreshTickCmd())
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:

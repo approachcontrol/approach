@@ -1042,15 +1042,43 @@ func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 		return m
 	}
 	selectedFlowID := m.selectedFlowID()
+	expandedFlowID := m.expandedFlowID
+	selectedFlowPhaseID := m.selectedFlowPhaseID
 	m.flows = m.flows.SetItems(msg.Flows)
 	if selectedFlowID != "" {
 		m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool {
 			return record.FlowID == selectedFlowID
 		})
 	}
-	m = m.setExpandedFlowID("")
+	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.clampSelectionsAfterFilter()
 	return m
+}
+
+func (m Model) restoreExpandedFlowSelection(flowID, phaseID string) Model {
+	if flowID == "" {
+		return m.setExpandedFlowID("")
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID != flowID {
+		return m.setExpandedFlowID("")
+	}
+	if phaseID != "" && !flowRecordHasPhase(record, phaseID) {
+		return m.setExpandedFlowID("")
+	}
+	m.expandedFlowID = flowID
+	m.selectedFlowPhaseID = phaseID
+	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
+	return m.reflowFlows()
+}
+
+func flowRecordHasPhase(record flowstore.FlowRecord, phaseID string) bool {
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if phase.PhaseID == phaseID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) (Model, tea.Cmd) {

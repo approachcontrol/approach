@@ -260,6 +260,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode < ui.ModeFlows {
 			m.mode++
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 	case "1":
@@ -308,7 +311,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode != ui.ModeFlows {
 			m.mode = ui.ModeFlows
 			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeFlows)
+			return m.startFlowsModeFetchWithRefreshTick()
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -431,6 +434,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		if m.mode != targetMode {
 			m.mode = targetMode
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 		return m, nil
@@ -444,6 +450,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		}
 		m.mode++
 		m = m.resetModeCursors()
+		if m.mode == ui.ModeFlows {
+			return m.startFlowsModeFetchWithRefreshTick()
+		}
 		return m.startFetchForMode()
 	}
 
