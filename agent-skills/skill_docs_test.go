@@ -199,6 +199,78 @@ func TestWtuiFlowCreateSkillDocumentsAgentContract(t *testing.T) {
 	}
 }
 
+func TestWtuiFlowCreateSkillGuardsPersistenceFailures(t *testing.T) {
+	root := repoRoot(t)
+	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+	createBlock := fencedBashBlockContaining(t, skill, "FLOW_JSON=$(wtui flow create")
+	importBlock := fencedBashBlockContaining(t, skill, "PLAN_ID=$(printf")
+
+	requireContainsAll(t, "flow creation persistence guards", skill, []string{
+		"if ! FLOW_JSON=$(wtui flow create",
+		"if ! FLOW_ID=$(printf '%s' \"$FLOW_JSON\" | python3",
+		"if ! wtui flow read --flow-id \"$FLOW_ID\"",
+		"case \"${WTUI_REPO_PATH:-}\" in",
+		"absolute WTUI_REPO_PATH",
+		"exit 1",
+	})
+	assertGuardedFailureBodies(t, createBlock, "if ! FLOW_JSON=$(wtui flow create", 2, []string{
+		"wtui flow create failed",
+		"exit 1",
+	})
+	assertGuardedFailureBodies(t, createBlock, "if ! FLOW_ID=$(printf", 1, []string{
+		"flow_id",
+		"exit 1",
+	})
+	assertGuardedFailureBodies(t, createBlock, `if ! wtui flow read --flow-id "$FLOW_ID"`, 1, []string{
+		"wtui flow read failed",
+		"exit 1",
+	})
+
+	requireContainsAll(t, "plan import persistence guards", skill, []string{
+		"record_plan_import_failure",
+		"if ! PLAN_ID=$(printf '%s' \"${PLAN_MARKDOWN:-}\" | wtui plan save",
+		"if ! wtui flow plan set",
+		"if ! wtui plan read --plan-id \"$PLAN_ID\"",
+		"if ! wtui flow phase complete",
+		"wtui flow phase block failed after plan import failure",
+		"exit 1",
+	})
+	for _, guard := range []string{
+		"if ! PLAN_ID=$(printf",
+		"if ! wtui flow plan set",
+		`if ! wtui plan read --plan-id "$PLAN_ID"`,
+		"if ! wtui flow phase complete",
+	} {
+		assertGuardedFailureBodies(t, importBlock, guard, 1, []string{
+			"record_plan_import_failure",
+			"exit 1",
+		})
+	}
+
+	readbackIndex := strings.Index(skill, `if ! wtui plan read --plan-id "$PLAN_ID"`)
+	completeIndex := strings.Index(skill, "if ! wtui flow phase complete")
+	if readbackIndex < 0 || completeIndex < 0 || completeIndex < readbackIndex {
+		t.Fatal("skill should guard plan readback before attempting to complete the Flow plan phase")
+	}
+}
+
+func TestWtuiFlowCreateSkillExamplesAreUnsetSafe(t *testing.T) {
+	root := repoRoot(t)
+	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+
+	requireContainsAll(t, "unset-safe shell variables", skill, []string{
+		"${FLOW_TITLE:-}",
+		"${FLOW_INSTRUCTIONS_FILE:-}",
+		"${FLOW_INSTRUCTIONS:-}",
+		"${WTUI_REPO_PATH:-}",
+		"${WTUI_WORKTREE_PATH:-}",
+		"${WTUI_BRANCH:-}",
+		"${WTUI_COMMIT:-}",
+		"${FLOW_ID:-}",
+		"${PLAN_MARKDOWN:-}",
+	})
+}
+
 func TestWtuiFlowCreateSkillMatchesImplementedCLIContract(t *testing.T) {
 	root := repoRoot(t)
 	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
@@ -226,6 +298,18 @@ func TestWtuiFlowSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
 	root := repoRoot(t)
 	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
 
+	assertSkillKeepsPlanAndFlowStateRootsTogether(t, skill)
+}
+
+func TestWtuiFlowCreateSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
+	root := repoRoot(t)
+	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+
+	assertSkillKeepsPlanAndFlowStateRootsTogether(t, skill)
+}
+
+func assertSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T, skill string) {
+	t.Helper()
 	requireContainsAll(t, "shared artifact root setup", skill, []string{
 		"WTUI_ARTIFACT_ROOT",
 		"WTUI_FLOW_STATE_ROOT",
@@ -352,44 +436,117 @@ func hasRunnableCommandExample(markdown, command string) bool {
 	return false
 }
 
+func fencedBashBlockContaining(t *testing.T, markdown, text string) string {
+	t.Helper()
+	for _, block := range fencedBashBlocks(markdown) {
+		if strings.Contains(block, text) {
+			return block
+		}
+	}
+	t.Fatalf("no fenced bash block contains %q", text)
+	return ""
+}
+
+func assertGuardedFailureBodies(t *testing.T, block, guard string, wantCount int, wants []string) {
+	t.Helper()
+	searchFrom := 0
+	for count := 0; count < wantCount; count++ {
+		start := strings.Index(block[searchFrom:], guard)
+		if start < 0 {
+			t.Fatalf("guard %q occurrence %d missing in block:\n%s", guard, count+1, block)
+		}
+		start += searchFrom
+		thenIndex := strings.Index(block[start:], "then")
+		if thenIndex < 0 {
+			t.Fatalf("guard %q occurrence %d missing then body", guard, count+1)
+		}
+		bodyStart := start + thenIndex + len("then")
+		bodyEnd := guardedBodyEnd(block[bodyStart:])
+		if bodyEnd < 0 {
+			t.Fatalf("guard %q occurrence %d missing closing fi", guard, count+1)
+		}
+		body := block[bodyStart : bodyStart+bodyEnd]
+		for _, want := range wants {
+			if !strings.Contains(body, want) {
+				t.Fatalf("guard %q occurrence %d body missing %q:\n%s", guard, count+1, want, body)
+			}
+		}
+		searchFrom = bodyStart + bodyEnd
+	}
+	if extra := strings.Index(block[searchFrom:], guard); extra >= 0 {
+		t.Fatalf("guard %q has more than %d occurrences", guard, wantCount)
+	}
+}
+
+func guardedBodyEnd(text string) int {
+	offset := 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if strings.TrimSpace(line) == "fi" {
+			return offset
+		}
+		offset += len(line)
+	}
+	return -1
+}
+
 func assertRunnableExampleFlagsExist(t *testing.T, markdown, cliSource, command string) {
 	t.Helper()
-	for _, flagName := range runnableCommandFlags(markdown, command) {
-		if !cliHasFlag(cliSource, flagName) {
-			t.Fatalf("runnable wtui %s example documents --%s but CLI does not expose it", command, flagName)
+	for _, use := range runnableCommandFlagUses(markdown, command) {
+		source, ok := commandFlagSource(cliSource, append([]string{command}, use.Subcommands...))
+		if !ok {
+			t.Fatalf("runnable %s example has no CLI contract mapping", use.Command())
+		}
+		if !cliHasFlag(source, use.FlagName) {
+			t.Fatalf("runnable %s example documents --%s but that CLI command does not expose it", use.Command(), use.FlagName)
 		}
 	}
 }
 
-func runnableCommandFlags(markdown, command string) []string {
-	var flags []string
+type runnableCommandFlagUse struct {
+	TopCommand  string
+	Subcommands []string
+	FlagName    string
+}
+
+func (u runnableCommandFlagUse) Command() string {
+	return "wtui " + strings.Join(append([]string{u.TopCommand}, u.Subcommands...), " ")
+}
+
+func runnableCommandFlagUses(markdown, command string) []runnableCommandFlagUse {
+	var uses []runnableCommandFlagUse
 	seen := map[string]bool{}
 	flagPattern := regexp.MustCompile(`--([A-Za-z0-9][A-Za-z0-9-]*)`)
 
 	for _, block := range fencedBashBlocks(markdown) {
-		var activeCommand string
+		var activeSubcommands []string
 		continues := false
 		for _, line := range strings.Split(block, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 				if !continues {
-					activeCommand = ""
+					activeSubcommands = nil
 				}
 				continue
 			}
 
-			if hasRunnableWtuiCommand(trimmed, command) {
-				activeCommand = command
+			if subcommands, ok := runnableWtuiSubcommands(trimmed, command); ok {
+				activeSubcommands = subcommands
 			} else if !continues {
-				activeCommand = ""
+				activeSubcommands = nil
 			}
 
-			if activeCommand == command {
-				for _, match := range flagPattern.FindAllStringSubmatch(trimmed, -1) {
+			if len(activeSubcommands) > 0 {
+				unquoted := stripShellQuotedSpans(trimmed)
+				for _, match := range flagPattern.FindAllStringSubmatch(unquoted, -1) {
 					flagName := match[1]
-					if !seen[flagName] {
-						flags = append(flags, flagName)
-						seen[flagName] = true
+					key := strings.Join(activeSubcommands, " ") + "\x00" + flagName
+					if !seen[key] {
+						uses = append(uses, runnableCommandFlagUse{
+							TopCommand:  command,
+							Subcommands: append([]string(nil), activeSubcommands...),
+							FlagName:    flagName,
+						})
+						seen[key] = true
 					}
 				}
 			}
@@ -398,20 +555,133 @@ func runnableCommandFlags(markdown, command string) []string {
 		}
 	}
 
-	return flags
+	return uses
+}
+
+func stripShellQuotedSpans(line string) string {
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range line {
+		switch {
+		case escaped:
+			b.WriteRune(' ')
+			escaped = false
+		case quote != '\'' && r == '\\':
+			b.WriteRune(' ')
+			escaped = true
+		case quote != 0:
+			b.WriteRune(' ')
+			if r == quote {
+				quote = 0
+			}
+		case r == '\'' || r == '"':
+			b.WriteRune(' ')
+			quote = r
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func hasRunnableWtuiCommand(line, command string) bool {
+	_, ok := runnableWtuiSubcommands(line, command)
+	return ok
+}
+
+func runnableWtuiSubcommands(line, command string) ([]string, bool) {
 	pattern := "wtui " + command + " "
-	if strings.HasPrefix(line, pattern) {
-		return true
+	index := strings.Index(line, pattern)
+	if index < 0 {
+		return nil, false
 	}
-	for _, marker := range []string{"| ", "$(", "! "} {
-		if strings.Contains(line, marker+pattern) {
-			return true
+
+	if index > 0 {
+		prefix := line[:index]
+		startsRunnableCommand := false
+		for _, marker := range []string{"| ", "$(", "! "} {
+			if strings.HasSuffix(prefix, marker) {
+				startsRunnableCommand = true
+				break
+			}
+		}
+		if !startsRunnableCommand {
+			return nil, false
 		}
 	}
-	return false
+
+	fields := strings.Fields(line[index:])
+	if len(fields) < 3 || fields[0] != "wtui" || fields[1] != command {
+		return nil, false
+	}
+	var subcommands []string
+	for _, field := range fields[2:] {
+		field = strings.Trim(field, `"'();`)
+		if field == "" || field == `\` || strings.HasPrefix(field, "-") || strings.HasPrefix(field, "$") || strings.ContainsAny(field, "[]{}") {
+			break
+		}
+		subcommands = append(subcommands, field)
+	}
+	if len(subcommands) == 0 {
+		return nil, false
+	}
+	return subcommands, true
+}
+
+func commandFlagSource(cliSource string, commandParts []string) (string, bool) {
+	functionName, ok := commandFunctionName(commandParts)
+	if !ok {
+		return "", false
+	}
+	return functionSource(cliSource, functionName)
+}
+
+func commandFunctionName(commandParts []string) (string, bool) {
+	key := strings.Join(commandParts, " ")
+	functions := map[string]string{
+		"flow create":                "runFlowCreate",
+		"flow read":                  "runFlowRead",
+		"flow phase set":             "runFlowPhaseSet",
+		"flow phase complete":        "runFlowPhaseAction",
+		"flow phase block":           "runFlowPhaseAction",
+		"flow phase needs-attention": "runFlowPhaseAction",
+		"flow phase restart":         "runFlowPhaseRestart",
+		"flow phase add-child":       "runFlowPhaseAddChild",
+		"flow plan set":              "runFlowPlanSet",
+		"flow pr set":                "runFlowPRSet",
+		"flow merge set":             "runFlowMergeSet",
+		"plan save":                  "runPlanSave",
+		"plan read":                  "runPlanRead",
+		"plan phase set":             "runPlanPhase",
+	}
+	functionName, ok := functions[key]
+	return functionName, ok
+}
+
+func functionSource(source, functionName string) (string, bool) {
+	start := strings.Index(source, "func "+functionName+"(")
+	if start < 0 {
+		return "", false
+	}
+	bodyStart := strings.Index(source[start:], "{")
+	if bodyStart < 0 {
+		return "", false
+	}
+	bodyStart += start
+	depth := 0
+	for i := bodyStart; i < len(source); i++ {
+		switch source[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 func cliHasFlag(cliSource, flagName string) bool {
