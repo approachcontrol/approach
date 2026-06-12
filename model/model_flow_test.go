@@ -165,6 +165,38 @@ func TestModel_SelectedAwaitingFlowPhaseAdvertisesResetShortcut(t *testing.T) {
 	}
 }
 
+func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) {
+	flow := flowWithAwaitingImplementation()
+	flow.Phases[2].LaunchIDs = []string{"launch-orphan"}
+	flow.Phases[2].Sessions = []flowstore.Session{
+		{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"},
+	}
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "implementation:session-mismatch") {
+		t.Fatalf("mismatched selected Flow phase should render session-mismatch:\n%s", view)
+	}
+	if strings.Contains(view, "reset ready") {
+		t.Fatalf("session-mismatch Flow phase should hide reset shortcut:\n%s", view)
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("x on session-mismatch phase returned cmd=%T overlay=%d", cmd, m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called for session-mismatch phase")
+	}
+}
+
 func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
 	awaiting := flowWithAwaitingImplementation()
 	reset := flowWithPhaseDetails()

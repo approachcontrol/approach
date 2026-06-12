@@ -1159,6 +1159,7 @@ func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.F
 func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
 	return phase.Status == flowstore.PhaseRunning &&
 		flowstore.PhaseAwaitingSession(phase) &&
+		!flowstore.PhaseSessionLaunchMismatch(phase) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID) &&
 		!m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, phase.PhaseID)
 }

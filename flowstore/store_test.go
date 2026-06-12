@@ -954,6 +954,37 @@ func TestStoreResetAwaitingSessionPhaseRejectsIneligiblePhases(t *testing.T) {
 			want:    "requires latest launch without an attached session",
 		},
 		{
+			name: "attached session launch mismatch",
+			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
+				t.Helper()
+				record, err := store.Create(flowstore.FlowRecord{
+					Title:        "Mismatched session reset rejection",
+					Instructions: "do not reset mismatched sessions",
+					RepoPath:     filepath.Join(t.TempDir(), "repo"),
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
+						{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Order: 2},
+						{
+							PhaseID:   "implementation",
+							Title:     "Implementation",
+							Status:    flowstore.PhaseRunning,
+							Order:     3,
+							LaunchIDs: []string{"launch-orphan"},
+							Sessions: []flowstore.Session{
+								{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale"},
+							},
+						},
+					},
+				})
+				if err != nil {
+					t.Fatalf("Create(mismatched) error = %v", err)
+				}
+				return record
+			},
+			phaseID: "implementation",
+			want:    "requires attached sessions to match phase launch ids",
+		},
+		{
 			name: "missing phase",
 			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
 				t.Helper()

@@ -2451,24 +2451,7 @@ func flowPhaseAwaitingSession(phase flowstore.FlowPhase) bool {
 }
 
 func flowPhaseSessionMismatch(phase flowstore.FlowPhase) bool {
-	if len(phase.Sessions) == 0 {
-		return false
-	}
-	launches := make(map[string]struct{}, len(phase.LaunchIDs))
-	for _, launchID := range phase.LaunchIDs {
-		if launchID != "" {
-			launches[launchID] = struct{}{}
-		}
-	}
-	for _, session := range phase.Sessions {
-		if session.LaunchID == "" {
-			return true
-		}
-		if _, ok := launches[session.LaunchID]; !ok {
-			return true
-		}
-	}
-	return false
+	return flowstore.PhaseSessionLaunchMismatch(phase)
 }
 
 func flowPhaseSessionSummary(phase flowstore.FlowPhase) string {

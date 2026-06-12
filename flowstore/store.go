@@ -787,6 +787,9 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		if !PhaseAwaitingSession(phase) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires latest launch without an attached session")
 		}
+		if PhaseSessionLaunchMismatch(phase) {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
+		}
 		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires satisfied predecessors for %s", phase.PhaseID)
 		}
