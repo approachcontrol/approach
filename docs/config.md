@@ -291,10 +291,12 @@ configured agent for that selected ready phase. Headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `codex exec` or `claude --print`, while headless off runs interactive `codex` or
-`claude` in the same embedded Flow terminal. `codex-app` remains URL/deep-link
-based and launches externally. Press `r` to resume an attached provider session
-from the selected phase row; CLI resumes open in runtime-only embedded PTYs in
-the flows pane, while `codex-app` resumes navigate externally. While a Flow
+`claude` in the same embedded Flow terminal. The same command mode applies to
+the initial Plan launch when creating a new Flow. `codex-app` remains
+URL/deep-link based and launches externally. Press `r` to resume an attached
+provider session from the selected phase row; CLI resumes open in runtime-only
+embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
+While a Flow
 terminal is open, `tab` switches focus between the Flow list and terminal;
 terminal focus forwards ordinary keys to the PTY and keeps `ctrl+g` prefix
 commands available. Embedded headless output is rendered as readable terminal

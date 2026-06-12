@@ -1775,6 +1775,68 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 	}
 }
 
+func TestAgentCommandBuildsEmbeddedInteractiveCodexCommand(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	if len(args) != 5 {
+		t.Fatalf("args = %#v, want command plus no-alt-screen, hook config, and prompt", args)
+	}
+	if args[0] != "codex" || args[1] != "--no-alt-screen" || args[2] != "--config" || args[4] != "Implement this phase." {
+		t.Fatalf("unexpected embedded interactive codex args: %#v", args)
+	}
+	if slices.Contains(args, "exec") {
+		t.Fatalf("embedded interactive codex args should not include exec, got %#v", args)
+	}
+	if !strings.Contains(args[3], "session-hook --provider codex") {
+		t.Fatalf("expected codex hook config in args, got %#v", args)
+	}
+}
+
+func TestAgentCommandBuildsEmbeddedInteractiveClaudeCommand(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "claude",
+		LaunchID:         "launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	if len(args) != 4 {
+		t.Fatalf("args = %#v, want command plus hook settings and prompt", args)
+	}
+	if args[0] != "claude" || args[1] != "--settings" || args[3] != "Implement this phase." {
+		t.Fatalf("unexpected embedded interactive claude args: %#v", args)
+	}
+	if slices.Contains(args, "--print") {
+		t.Fatalf("embedded interactive claude args should not include --print, got %#v", args)
+	}
+	if !strings.Contains(args[2], "session-hook --provider claude") {
+		t.Fatalf("expected claude hook settings in args, got %#v", args)
+	}
+}
+
 func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",

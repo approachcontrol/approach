@@ -326,66 +326,70 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesThatPhaseByDefaultHeadless(t *tes
 }
 
 func TestModel_EnterOnSelectedFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *testing.T) {
-	var launchUpdate flowstore.PhaseLaunchUpdate
-	var started actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
-		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
-		},
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatalf("headless-off Flow CLI launch should start an embedded terminal, not LaunchAgent: %#v", ctx)
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-			started = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
-		},
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return nil, nil
-		},
-	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
-		FlowID:       "flow-1",
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/flow-interactive",
-		Branch:       "flow/interactive",
-		Commit:       "abc123",
-		Status:       flowstore.StatusInProgress,
-		Phases: []flowstore.FlowPhase{
-			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
-		},
-	}})
-	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before selected Flow phase launch returned command %T, want nil", cmd)
-	}
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			var launchUpdate flowstore.PhaseLaunchUpdate
+			var started actions.AgentLaunchContext
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand:     command,
+				SessionStateRoot: "/state/wtui/sessions/v1",
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					launchUpdate = update
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
+				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+					t.Fatalf("headless-off Flow CLI launch should start an embedded terminal, not LaunchAgent: %#v", ctx)
+					return actions.TerminalLaunchSpec{}, nil
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+					started = ctx
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return nil, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: "/dev/alpha-worktrees/flow-interactive",
+				Branch:       "flow/interactive",
+				Commit:       "abc123",
+				Status:       flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
+				},
+			}})
+			m = selectFlowPhaseByID(t, m, "implementation")
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+			if cmd != nil {
+				t.Fatalf("h before selected Flow phase launch returned command %T, want nil", cmd)
+			}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("enter on selected Flow phase should prepare an embedded interactive launch")
-	}
-	m, cmd = update(m, cmd())
-	if cmd == nil {
-		t.Fatal("expected embedded selected-phase launch to return repaint/fetch command")
-	}
-	if started.Command != "codex" ||
-		started.FlowID != "flow-1" ||
-		started.FlowPhaseID != "implementation" ||
-		started.WorktreePath != "/dev/alpha-worktrees/flow-interactive" ||
-		started.Branch != "flow/interactive" ||
-		started.Commit != "abc123" ||
-		started.SessionStateRoot != "/state/wtui/sessions/v1" {
-		t.Fatalf("embedded launch context = %#v", started)
-	}
-	if !started.Embedded || started.Headless || !started.FlowLaunchTracked {
-		t.Fatalf("headless-off selected-phase launch should be embedded, interactive, and tracked: %#v", started)
-	}
-	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
-		t.Fatalf("launch IDs = context %q update %#v", started.LaunchID, launchUpdate)
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			if cmd == nil {
+				t.Fatal("enter on selected Flow phase should prepare an embedded interactive launch")
+			}
+			m, cmd = update(m, cmd())
+			if cmd == nil {
+				t.Fatal("expected embedded selected-phase launch to return repaint/fetch command")
+			}
+			if started.Command != command ||
+				started.FlowID != "flow-1" ||
+				started.FlowPhaseID != "implementation" ||
+				started.WorktreePath != "/dev/alpha-worktrees/flow-interactive" ||
+				started.Branch != "flow/interactive" ||
+				started.Commit != "abc123" ||
+				started.SessionStateRoot != "/state/wtui/sessions/v1" {
+				t.Fatalf("embedded launch context = %#v", started)
+			}
+			if !started.Embedded || started.Headless || !started.FlowLaunchTracked {
+				t.Fatalf("headless-off selected-phase launch should be embedded, interactive, and tracked: %#v", started)
+			}
+			if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
+				t.Fatalf("launch IDs = context %q update %#v", started.LaunchID, launchUpdate)
+			}
+		})
 	}
 }
 
@@ -4081,6 +4085,71 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			}
 			if view := m.View(); !strings.Contains(view, "agent output") {
 				t.Fatalf("flow terminal view missing agent output:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestModel_NewFlowCLIPlanLaunchHonorsHeadlessToggle(t *testing.T) {
+	for _, command := range []string{"codex", "claude"} {
+		t.Run(command, func(t *testing.T) {
+			var started actions.AgentLaunchContext
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand:     command,
+				SessionStateRoot: "/state/wtui/sessions/v1",
+				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+						Command:          req.AgentCommand,
+						LaunchID:         "launch-1",
+						RepoPath:         req.RepoPath,
+						WorktreePath:     "/dev/alpha-worktrees/flow-interactive-plan",
+						Branch:           "flow/interactive-plan",
+						SessionStateRoot: req.SessionStateRoot,
+						FlowID:           "flow-1",
+						FlowPhaseID:      req.PlanPhaseID,
+					}}, nil
+				},
+				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+					t.Fatalf("new Flow CLI launch should start an embedded terminal, not external launcher: %#v", ctx)
+					return actions.TerminalLaunchSpec{}, nil
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+					started = ctx
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return nil, nil
+				},
+			})
+			m = inRightPane(m)
+			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+			if cmd != nil {
+				t.Fatalf("h before new Flow launch returned command %T, want nil", cmd)
+			}
+
+			m, cmd = submitNewFlowPrompts(t, m, "Interactive Plan", "Write the plan", "main")
+			if cmd == nil {
+				t.Fatal("expected flow creation command")
+			}
+			msg := cmd()
+			launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+			if !ok {
+				t.Fatalf("creation command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+			}
+			m, cmd = update(m, launchMsg)
+			if cmd == nil {
+				t.Fatal("expected embedded launch repaint/fetch command")
+			}
+
+			if started.Command != command ||
+				started.FlowID != "flow-1" ||
+				started.FlowPhaseID != "plan" ||
+				!started.Embedded ||
+				started.Headless ||
+				!started.FlowLaunchTracked {
+				t.Fatalf("headless-off new Flow plan launch context = %#v", started)
 			}
 		})
 	}

@@ -436,15 +436,15 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
 		}
-		return flowPlanLaunchMessage(result.LaunchContext)
+		return flowPlanLaunchMessage(result.LaunchContext, m.flowHeadless)
 	}
 }
 
-func flowPlanLaunchMessage(ctx actions.AgentLaunchContext) tea.Msg {
+func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, headless bool) tea.Msg {
 	switch agent.Normalize(ctx.Command) {
 	case agent.CommandCodex, agent.CommandClaude:
 		ctx.Embedded = true
-		ctx.Headless = true
+		ctx.Headless = headless
 		ctx.FlowLaunchTracked = true
 		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
 	default:

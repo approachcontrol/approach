@@ -75,8 +75,8 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
-| `←`/`→`/`l` | Cycle through modes; use arrows in flows view because `h` toggles Flow CLI command mode |
-| `h` | Cycle to the previous mode outside flows view; toggle Flow CLI command mode in flows view |
+| `←`/`→`/`l` | Cycle through modes; use arrows in flows view because `h` toggles Flow headless/interactive command mode |
+| `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, expand/collapse plan or Flow phases, or launch the selected launchable Flow phase |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -299,7 +299,8 @@ extra launch tracking. Flow headless mode is on by default: selected CLI
 `codex` and `claude` phase launches run in a runtime-only embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `codex exec` or `claude --print`, while headless off runs interactive `codex` or
-`claude` in the same embedded Flow terminal. `codex-app` always uses the
+`claude` in the same embedded Flow terminal. The same command mode applies to
+the initial Plan launch when creating a new Flow. `codex-app` always uses the
 external deep-link route. Embedded headless output is readable terminal text,
 not raw JSON events: `codex exec` streams progress as it works, while
 `claude --print` prints its result when the run completes, so a Claude phase can
