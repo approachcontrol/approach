@@ -2877,8 +2877,7 @@ func renderInputDialog(params inputRenderParams, width, height int) []string {
 func inputDialogBodyLines(params inputRenderParams, contentWidth int) []string {
 	label := inputDialogLabel(params.prompt)
 	if params.value == "" {
-		line := label + params.placeholder + activeModeStyle.Render("█")
-		return wrapPlainText(line, contentWidth)
+		return inputDialogPlaceholderLines(label, params.placeholder, contentWidth)
 	}
 
 	value := insertCursorGlyph(params.value, params.cursor)
@@ -2894,6 +2893,55 @@ func inputDialogBodyLines(params inputRenderParams, contentWidth int) []string {
 		return []string{label + activeModeStyle.Render("█")}
 	}
 	return lines
+}
+
+func inputDialogPlaceholderLines(label, placeholder string, contentWidth int) []string {
+	lines := wrapPlainText(label+placeholder, contentWidth)
+	styled := styleInputDialogPlaceholderLines(lines, label, placeholder)
+	cursor := activeModeStyle.Render("█")
+	if len(styled) == 0 {
+		return []string{cursor}
+	}
+	last := len(styled) - 1
+	if lipgloss.Width(styled[last]+cursor) <= contentWidth {
+		styled[last] += cursor
+		return styled
+	}
+	return append(styled, cursor)
+}
+
+func styleInputDialogPlaceholderLines(lines []string, label, placeholder string) []string {
+	normalizedLabel := strings.Join(strings.Fields(label), " ")
+	normalizedPlaceholder := strings.Join(strings.Fields(placeholder), " ")
+	placeholderStart := len([]rune(normalizedLabel))
+	if normalizedLabel != "" && normalizedPlaceholder != "" {
+		placeholderStart++
+	}
+
+	plainRunes := []rune(strings.Join(strings.Fields(label+placeholder), " "))
+	styled := make([]string, len(lines))
+	offset := 0
+	for i, line := range lines {
+		for offset < len(plainRunes) && unicode.IsSpace(plainRunes[offset]) {
+			offset++
+		}
+		lineStart := offset
+		styled[i] = styleInputDialogPlaceholderLine(line, lineStart, placeholderStart)
+		offset += len([]rune(line))
+	}
+	return styled
+}
+
+func styleInputDialogPlaceholderLine(line string, lineStart, placeholderStart int) string {
+	runes := []rune(line)
+	split := placeholderStart - lineStart
+	if split <= 0 {
+		return placeholderStyle.Render(line)
+	}
+	if split >= len(runes) {
+		return line
+	}
+	return string(runes[:split]) + placeholderStyle.Render(string(runes[split:]))
 }
 
 func inputDialogLabel(prompt string) string {
