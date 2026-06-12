@@ -4165,6 +4165,8 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDelete})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgUp})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlLeft})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlRight})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
@@ -4176,7 +4178,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	want := []string{
 		"a", " ",
 		"\x01", "\x05", "\x12", "\x17",
-		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[1;5D", "\x1b[1;5C",
+		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[D", "\x1b[C", "\x1b[1;5D", "\x1b[1;5C",
 		"\x1bf", "\x1b\x1b[D",
 		"\x03", "\a",
 	}

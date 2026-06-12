@@ -235,7 +235,6 @@ type RenderParams struct {
 	ExpandedFlowID             string
 	SelectedPlanPhaseID        string
 	SelectedFlowPhaseID        string
-	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	OverlayText                string
@@ -421,7 +420,6 @@ func Render(p RenderParams) string {
 		FlowSelected:               flowSelected,
 		FlowPhaseSelected:          flowPhaseSelected,
 		FlowPlanLinked:             flowPlanLinked,
-		FlowHeadless:               p.FlowHeadless,
 		FlowPhaseLaunchReady:       p.FlowPhaseLaunchReady,
 		FlowPhaseResumableSelected: p.FlowPhaseResumableSelected,
 		TransientError:             p.TransientError,
@@ -675,7 +673,6 @@ type statusBarParams struct {
 	FlowSelected               bool
 	FlowPhaseSelected          bool
 	FlowPlanLinked             bool
-	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	TransientError             string
@@ -904,6 +901,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 			if sp.Mode == ModeSessions {
 				hints = slices.Insert(hints, 1, shortcutHint{Key: "l", Label: "sessions"})
+			} else {
+				hints = slices.Insert(hints, 1, shortcutHint{Key: "left/right", Label: "terminal"})
 			}
 		}
 		sections := []shortcutSection{{Title: "Terminal", Hints: hints}}
@@ -1057,11 +1056,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeFlows:
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
-			headlessLabel := "headless off"
-			if sp.FlowHeadless {
-				headlessLabel = "headless on"
-			}
-			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel})
 			if sp.FlowSelected {
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
