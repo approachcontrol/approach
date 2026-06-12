@@ -1158,6 +1158,199 @@ func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
 	}
 }
 
+func TestStoreAddPhaseLaunchIDResumePreservesCompletedPhase(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Resume completed phase",
+		Instructions: "resume a session on a finished review loop",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/resume-completed",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "review-loop",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: flowstore.OutcomeApproved,
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(review-loop completed) error = %v", err)
+	}
+	if got := phaseByID(t, record, "pr-creation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("pr-creation status before resume = %q, want ready", got)
+	}
+
+	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "review-loop",
+		LaunchID: "launch-resume-1",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(review-loop resume) error = %v", err)
+	}
+
+	phase := phaseByID(t, resumed, "review-loop")
+	if phase.Status != flowstore.PhaseCompleted || phase.Outcome != flowstore.OutcomeApproved {
+		t.Fatalf("review-loop after resume = %#v, want completed with approved outcome", phase)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-resume-1" {
+		t.Fatalf("launch ids = %#v", phase.LaunchIDs)
+	}
+	if got := phaseByID(t, resumed, "pr-creation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("pr-creation status after resume = %q, want ready", got)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDResumePreservesSkippedPhase(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Resume skipped phase",
+		Instructions: "resume a session on a skipped review loop",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/resume-skipped",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "review-loop",
+		Status:  flowstore.PhaseSkipped,
+		Notes:   "Review covered during implementation.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(review-loop skipped) error = %v", err)
+	}
+
+	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "review-loop",
+		LaunchID: "launch-resume-1",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(review-loop resume) error = %v", err)
+	}
+
+	phase := phaseByID(t, resumed, "review-loop")
+	if phase.Status != flowstore.PhaseSkipped || phase.Notes != "Review covered during implementation." {
+		t.Fatalf("review-loop after resume = %#v, want skipped with original notes", phase)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-resume-1" {
+		t.Fatalf("launch ids = %#v", phase.LaunchIDs)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDResumeRefreshesReadinessForCustomGraph(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-terminal-resume",
+		Title:        "Custom terminal resume",
+		Instructions: "resume a terminal phase in a custom graph",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "beta", Title: "Beta", Status: flowstore.PhasePending, Order: 2, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if got := phaseByID(t, record, "beta").Status; got != flowstore.PhasePending {
+		t.Fatalf("beta status before resume = %q, want pending to prove Create did not refresh custom graph", got)
+	}
+
+	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "alpha",
+		LaunchID: "launch-resume-1",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(alpha resume) error = %v", err)
+	}
+
+	alpha := phaseByID(t, resumed, "alpha")
+	if alpha.Status != flowstore.PhaseCompleted {
+		t.Fatalf("alpha after resume = %#v, want completed", alpha)
+	}
+	if len(alpha.LaunchIDs) != 1 || alpha.LaunchIDs[0] != "launch-resume-1" {
+		t.Fatalf("alpha launch ids = %#v", alpha.LaunchIDs)
+	}
+	if got := phaseByID(t, resumed, "beta").Status; got != flowstore.PhaseReady {
+		t.Fatalf("beta status after resume = %q, want ready", got)
+	}
+	if resumed.Status != flowstore.StatusInProgress {
+		t.Fatalf("flow status after resume = %q, want in_progress", resumed.Status)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDResumeStillRestartsNeedsAttentionPhase(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Resume needs-attention phase",
+		Instructions: "resume a session to keep fixing a flagged phase",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/resume-needs-attention",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Status:  flowstore.PhaseNeedsAttention,
+		Notes:   "Tests are failing.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(implementation needs_attention) error = %v", err)
+	}
+
+	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "implementation",
+		LaunchID: "launch-resume-1",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(implementation resume) error = %v", err)
+	}
+
+	phase := phaseByID(t, resumed, "implementation")
+	if phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("implementation after resume = %#v, want running", phase)
+	}
+	if !strings.Contains(phase.Notes, "Relaunched after needs_attention") {
+		t.Fatalf("implementation notes = %q, want relaunch note", phase.Notes)
+	}
+}
+
 func TestStoreSetPhaseAllowsSkippedWithNotesAndIdempotentUpdates(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
@@ -2405,6 +2598,74 @@ func TestStoreAddPhaseLaunchIDReopeningMergeClearsTerminalMergeMetadata(t *testi
 	}
 	if relaunched.Status != flowstore.StatusInProgress {
 		t.Fatalf("relaunched flow status = %q, want in_progress", relaunched.Status)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDResumePreservesTerminalMergeMetadata(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Resume merge",
+		Instructions: "resume a completed merge session",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/resume-merge",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     189,
+		URL:        "https://github.com/brian-bell/wtui/pull/189",
+		HeadBranch: "flow/resume-merge",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "autoreview", "merge")
+	mergedAt := time.Date(2026, 6, 12, 11, 12, 13, 0, time.UTC)
+	record, err = store.SetMerge(flowstore.MergeUpdate{
+		FlowID:   record.FlowID,
+		Status:   flowstore.MergeMerged,
+		Commit:   "abcdef0123456789",
+		MergedAt: mergedAt,
+	})
+	if err != nil {
+		t.Fatalf("SetMerge() error = %v", err)
+	}
+
+	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "merge",
+		LaunchID: "launch-merge-resume",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(merge resume) error = %v", err)
+	}
+
+	phase := phaseByID(t, resumed, "merge")
+	if phase.Status != flowstore.PhaseCompleted {
+		t.Fatalf("merge phase after resume = %#v, want completed", phase)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-merge-resume" {
+		t.Fatalf("merge launch ids = %#v", phase.LaunchIDs)
+	}
+	if resumed.Merge.Status != flowstore.MergeMerged ||
+		resumed.Merge.Commit != "abcdef0123456789" ||
+		resumed.Merge.MergedAt == nil ||
+		!resumed.Merge.MergedAt.Equal(mergedAt) {
+		t.Fatalf("resumed merge metadata = %#v, want original merged metadata", resumed.Merge)
+	}
+	if resumed.Status != flowstore.StatusMerged {
+		t.Fatalf("resumed flow status = %q, want merged", resumed.Status)
 	}
 }
 
