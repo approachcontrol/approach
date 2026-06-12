@@ -42,6 +42,7 @@ type Model struct {
 	expandedFlowID            string
 	selectedPlanPhaseID       string
 	selectedFlowPhaseID       string
+	flowHeadless              bool
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -304,6 +305,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessions:              newSessionPane(),
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
+		flowHeadless:          true,
 		mode:                  startupMode(opts.StartupMode),
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:    opts.PlanPromptTemplate,
@@ -515,6 +517,7 @@ func (m Model) View() string {
 		ExpandedFlowID:             m.expandedFlowID,
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
+		FlowHeadless:               m.flowHeadless,
 		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
 		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
 		OverlayText:                modalView.Text,
@@ -869,6 +872,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
+		if msg.Request != 0 {
+			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
+				return m, nil
+			}
+			m = m.clearFlowCreateRequest(msg.Request)
+		}
 		next, launchCmd := m.launchFlowEmbeddedHeadlessWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
@@ -1074,8 +1083,8 @@ func (m Model) selectedFlowPhaseLaunchReady() bool {
 	if !ok {
 		return false
 	}
-	_, ok = readyFlowPhase(record)
-	return ok
+	phase, ok := m.selectedFlowPhase()
+	return ok && flowPhaseCanLaunch(record, phase)
 }
 
 func (m Model) clearSelectedPlanPhase() Model {

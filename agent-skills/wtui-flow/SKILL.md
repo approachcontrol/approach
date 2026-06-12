@@ -365,7 +365,7 @@ wtui flow phase complete \
 
 ## Merge Phase
 
-Goal: merge deliberately after review approval.
+Goal: merge a single pr deliberately.
 
 Do not merge silently. Read the Flow first and verify the top-level `pr` object
 contains provider, number, URL, head branch, and base branch. After the explicit
