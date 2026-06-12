@@ -308,8 +308,11 @@ run completes. Expanded rows
 group child implementation phases directly under Implementation. New launches
 record a launch ID and Flow/plan environment metadata for the agent; CLI
 phase-session resumes also record a fresh launch ID, while `codex-app` resumes
-navigate to the existing app thread without additional launch tracking. Other
-Flow mutation remains CLI/agent-driven in v1.
+navigate to the existing app thread without additional launch tracking. With
+destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
+record under the Flow artifact store; it leaves linked plans, sessions,
+transcripts, worktrees, repositories, branches, and checked-out code intact.
+Other phase and progression mutation remains CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
@@ -425,14 +428,22 @@ The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` has highest precedence for the shared artifact root; if
 it is set, the TUI reads sessions, plans, and flows from that root.
 
-The canonical provider-agnostic Flow skill lives at
-`agent-skills/wtui-flow/`, beside `agent-skills/wtui-plan-persist/`. Install or
-symlink `wtui-flow` into the user-level skill directory for supported agents
-such as Codex or Claude; for Codex, a typical target is
-`~/.codex/skills/wtui-flow`. The skill activates when `WTUI_FLOW_ID` and
-`WTUI_FLOW_PHASE_ID` are present, reads the active flow with
+The canonical provider-agnostic Flow phase skill lives at
+`agent-skills/wtui-flow/`, beside `agent-skills/wtui-plan-persist/`. The
+companion creation skill lives at `agent-skills/wtui-flow-create/`. Install or
+symlink both `wtui-flow` and `wtui-flow-create` into the user-level skill
+directory for supported agents such as Codex or Claude; for Codex, typical
+targets are `~/.codex/skills/wtui-flow` and
+`~/.codex/skills/wtui-flow-create`. `wtui-flow` activates when `WTUI_FLOW_ID`
+and `WTUI_FLOW_PHASE_ID` are present, reads the active flow with
 `wtui flow read --flow-id "$WTUI_FLOW_ID"`, and documents the implemented
 `wtui flow` / `wtui plan` commands for phase persistence and saved-plan linkage.
+`wtui-flow-create` is for ad hoc sessions where the user asks to create a Flow
+from the current task or an already-written plan. It creates the Flow, can save
+and link an imported plan, and reports persistence failures explicitly. In v1,
+the imported ad hoc session itself is not attached to the Flow; the created
+Flow and linked plan are persisted artifacts, and future phase launches or
+resumes are tracked normally.
 
 ### `[bootstrap]`
 

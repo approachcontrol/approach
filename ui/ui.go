@@ -417,9 +417,11 @@ func renderApplication(p RenderParams) string {
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
+	flowDeletableSelected := flowSelected && p.SelectedFlowPhaseID == ""
 	if p.FlowTerminalFocused {
 		flowSelected = false
 		selectedFlowPhaseID = ""
+		flowDeletableSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
 	flowPhaseSelected := selectedFlowPhaseID != ""
@@ -454,6 +456,7 @@ func renderApplication(p RenderParams) string {
 		PlanPhaseSelected:          planPhaseSelected,
 		FlowSelected:               flowSelected,
 		FlowPhaseSelected:          flowPhaseSelected,
+		FlowDeletableSelected:      flowDeletableSelected,
 		FlowPlanLinked:             flowPlanLinked,
 		FlowHeadless:               p.FlowHeadless,
 		FlowPhaseLaunchReady:       p.FlowPhaseLaunchReady,
@@ -708,6 +711,7 @@ type statusBarParams struct {
 	PlanPhaseSelected          bool
 	FlowSelected               bool
 	FlowPhaseSelected          bool
+	FlowDeletableSelected      bool
 	FlowPlanLinked             bool
 	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
@@ -1146,6 +1150,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 					}
 					actions = append(actions, shortcutHint{Key: "y", Label: "copy id"})
+					if sp.Destructive && sp.FlowDeletableSelected {
+						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
+					}
 				}
 			}
 		}
@@ -1158,7 +1165,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions, shortcutHint{Key: "F", Label: "pull"})
 		}
 	}
-	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes) {
+	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes || sp.Mode == ModeFlows) {
 		actions = append([]shortcutHint{{Key: "D", Label: "destructive mode"}}, actions...)
 	}
 	var sections []shortcutSection
@@ -1335,8 +1342,8 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	base := footerHintsForKeys(hints, "tab", "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
-	coreActions := footerHintsForKeys(hints, "h", "enter")
-	actions := footerHintsForKeys(hints, "n", "h", "enter", "o", "y", "r", "f", "F")
+	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "d")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),

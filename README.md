@@ -84,7 +84,7 @@ filter matches, or a load failure with details in the status bar.
 | `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
-| `d` | Delete worktree/branch or drop stash — requires destructive mode |
+| `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
 | `f` | Fetch with `--prune` (worktrees and branches views) |
@@ -288,24 +288,28 @@ by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow. On a Flow row, `enter` expands or collapses phase
 detail rows; `o` pages the linked plan body in `less -R`, and wtui shows a
-status message when the selected Flow has no linked plan. On an expanded phase
-row, `enter` launches the configured agent for that selected phase when it is
-ready, and it never falls back to another ready phase in the same Flow. Press
-`y` to copy the selected Flow ID, or the selected phase ID when a phase row is
-selected. Press `r` on an expanded phase row with an attached provider session
-to resume that session; CLI resumes are recorded as a fresh Flow phase launch
-attempt, while `codex-app` resumes navigate to the existing app thread without
-extra launch tracking. Flow headless mode is on by default: selected CLI
-`codex` and `claude` phase launches run in a runtime-only embedded terminal
-inside the flows pane. Press `h` to choose the CLI command mode: headless runs
-`codex exec` or `claude --print`, while headless off runs interactive `codex` or
-`claude` in the same embedded Flow terminal. The same command mode applies to
-the initial Plan launch when creating a new Flow. `codex-app` always uses the
-external deep-link route. Embedded headless output is readable terminal text,
-not raw JSON events: `codex exec` streams progress as it works, while
-`claude --print` prints its result when the run completes, so a Claude phase can
-show an empty terminal until it finishes (the terminal tab still shows
-`running`). While a Flow terminal is open,
+status message when the selected Flow has no linked plan. With destructive mode
+enabled (`D`), `d` deletes only the selected top-level Flow record under the
+Flow artifact store; it does not remove repositories, worktrees, branches,
+checked-out code, linked plans, sessions, transcripts, or active embedded
+terminals. Expanded phase rows cannot be deleted with this action. On an
+expanded phase row, `enter` launches the configured agent for that selected
+phase when it is ready, and it never falls back to another ready phase in the
+same Flow. Press `y` to copy the selected Flow ID, or the selected phase ID
+when a phase row is selected. Press `r` on an expanded phase row with an
+attached provider session to resume that session; CLI resumes are recorded as a
+fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
+existing app thread without extra launch tracking. Flow headless mode is on by
+default: selected CLI `codex` and `claude` phase launches run in a runtime-only
+embedded terminal inside the flows pane. Press `h` to choose the CLI command
+mode: headless runs `codex exec` or `claude --print`, while headless off runs
+interactive `codex` or `claude` in the same embedded Flow terminal. The same
+command mode applies to the initial Plan launch when creating a new Flow.
+`codex-app` always uses the external deep-link route. Embedded headless output
+is readable terminal text, not raw JSON events: `codex exec` streams progress
+as it works, while `claude --print` prints its result when the run completes,
+so a Claude phase can show an empty terminal until it finishes (the terminal tab
+still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them. Flow terminal focus starts in wtui command
 mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
@@ -437,12 +441,19 @@ The flow state root is resolved with this precedence: `--state-root` >
 relocates the shared artifact root for sessions, plans, and flows.
 
 Flow-launched agents should use the canonical `wtui-flow` skill source at
-`agent-skills/wtui-flow/`. Install or symlink it beside
-`agent-skills/wtui-plan-persist/` in the user-level skill directory for your
-agent, such as `~/.codex/skills/wtui-flow` for Codex or the equivalent Claude
-skills directory. The skill activates when `WTUI_FLOW_ID` and
-`WTUI_FLOW_PHASE_ID` are present, reads the active flow before updates, and uses
-the implemented `wtui flow` and `wtui plan` commands for persistence.
+`agent-skills/wtui-flow/`. Ad hoc planning sessions that need to create a new
+Flow from the current task or an already-written plan should use
+`wtui-flow-create` from `agent-skills/wtui-flow-create/`. Install or symlink
+both skills beside `agent-skills/wtui-plan-persist/` in the user-level skill
+directory for your agent, such as `~/.codex/skills/wtui-flow` and
+`~/.codex/skills/wtui-flow-create` for Codex or the equivalent Claude skills
+directory. `wtui-flow` activates when `WTUI_FLOW_ID` and `WTUI_FLOW_PHASE_ID`
+are present, reads the active flow before updates, and uses the implemented
+`wtui flow` and `wtui plan` commands for persistence. `wtui-flow-create` works
+outside a Flow-launched session by calling `wtui flow create`, optionally saving
+and linking an existing plan. In v1, that import persists the Flow and linked
+plan artifacts but does not attach the current ad hoc provider session to the
+Flow; future phase launches and resumes are tracked normally.
 
 ## Configuration
 

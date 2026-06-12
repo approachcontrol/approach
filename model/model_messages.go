@@ -320,6 +320,20 @@ type FlowCreateFailedMsg struct {
 	Request  uint64
 }
 
+type FlowDeletedMsg struct {
+	RepoPath string
+	FlowID   string
+	Title    string
+}
+
+type FlowDeleteFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Title    string
+	Err      string
+	NotFound bool
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)
@@ -1053,6 +1067,55 @@ func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.clampSelectionsAfterFilter()
 	return m
+}
+
+func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	m = m.clearDeletedFlowState(msg.FlowID)
+	return m.startFetchMode(ui.ModeFlows)
+}
+
+func (m Model) handleFlowDeleteFailed(msg FlowDeleteFailedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	if msg.NotFound {
+		m = m.clearDeletedFlowState(msg.FlowID)
+		m = m.setStatus(statusOther, fmt.Sprintf("Flow already deleted: %s", flowDisplayName(msg.Title, msg.FlowID)))
+		return m.startFetchMode(ui.ModeFlows)
+	}
+	errText := msg.Err
+	if strings.TrimSpace(errText) == "" {
+		errText = fmt.Sprintf("Unable to delete Flow %s", flowDisplayName(msg.Title, msg.FlowID))
+	}
+	m = m.setStatus(statusOther, errText)
+	return m, nil
+}
+
+func (m Model) clearDeletedFlowState(flowID string) Model {
+	if flowID == "" {
+		return m
+	}
+	if m.expandedFlowID == flowID {
+		m = m.setExpandedFlowID("")
+	}
+	if selectedID := m.selectedFlowID(); selectedID == flowID {
+		m = m.clearSelectedFlowPhase()
+	}
+	return m
+}
+
+func flowDisplayName(title, flowID string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return flowID
+	}
+	if flowID == "" {
+		return title
+	}
+	return fmt.Sprintf("%s (%s)", title, flowID)
 }
 
 func (m Model) restoreExpandedFlowSelection(flowID, phaseID string) Model {

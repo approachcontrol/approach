@@ -452,6 +452,21 @@ func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, headless bool) tea.Ms
 	}
 }
 
+func (m Model) deleteFlowCommand(repoPath, flowID, title string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.deleteFlow(flowID); err != nil {
+			return FlowDeleteFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   flowID,
+				Title:    title,
+				Err:      err.Error(),
+				NotFound: flowstore.IsNotFound(err),
+			}
+		}
+		return FlowDeletedMsg{RepoPath: repoPath, FlowID: flowID, Title: title}
+	}
+}
+
 func (m Model) moveWorktree(oldPath, input string) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {

@@ -821,6 +821,317 @@ func TestModel_FlowListErrorShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_FlowDeleteRequiresDestructiveMode(t *testing.T) {
+	deleted := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		DeleteFlow: func(string) error {
+			deleted = true
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Delete me",
+		Status:   flowstore.StatusPending,
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	if cmd != nil {
+		t.Fatalf("d without destructive mode returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("d without destructive mode opened overlay %d", m.Overlay())
+	}
+	if deleted {
+		t.Fatal("DeleteFlow should not run while destructive mode is disabled")
+	}
+}
+
+func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
+	deleted := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		DeleteFlow: func(string) error {
+			deleted = true
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Delete me",
+		Status:   flowstore.StatusPending,
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd != nil {
+		t.Fatalf("opening Flow delete confirm returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected Flow delete confirm overlay, got %d", m.Overlay())
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+
+	if cmd != nil {
+		t.Fatalf("canceling Flow delete returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("canceling Flow delete left overlay %d", m.Overlay())
+	}
+	if deleted {
+		t.Fatal("DeleteFlow should not run when delete confirmation is canceled")
+	}
+}
+
+func TestModel_FlowDeleteConfirmDeletesCapturedFlowAndRefreshes(t *testing.T) {
+	deleted := []string{}
+	listCalls := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		DeleteFlow: func(flowID string) error {
+			deleted = append(deleted, flowID)
+			return nil
+		},
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listCalls++
+			return []flowstore.FlowRecord{{
+				FlowID:   "flow-2",
+				RepoPath: filter.RepoPath,
+				Title:    "Keep me",
+				Status:   flowstore.StatusPending,
+			}}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Delete me", Status: flowstore.StatusPending},
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Keep me", Status: flowstore.StatusPending},
+	})
+	m = expandSelectedFlowWithEnter(t, m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd != nil {
+		t.Fatalf("opening Flow delete confirm returned command %T, want nil", cmd)
+	}
+	prompt := m.ConfirmPrompt()
+	for _, want := range []string{"Delete Flow Delete me (flow-1)", "Flow data only", "worktrees/code stay"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("delete prompt %q missing %q", prompt, want)
+		}
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("confirming Flow delete should return command")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(model.FlowDeletedMsg)
+	if !ok {
+		t.Fatalf("delete command returned %T, want FlowDeletedMsg", rawMsg)
+	}
+	if msg.RepoPath != "/dev/alpha" || msg.FlowID != "flow-1" || msg.Title != "Delete me" {
+		t.Fatalf("FlowDeletedMsg = %#v, want captured repo/flow/title", msg)
+	}
+	if len(deleted) != 1 || deleted[0] != "flow-1" {
+		t.Fatalf("deleted flow ids = %#v, want [flow-1]", deleted)
+	}
+
+	m, cmd = update(m, msg)
+	if cmd == nil {
+		t.Fatal("FlowDeletedMsg should refresh flows")
+	}
+	if m.ExpandedFlowID() != "" || m.SelectedFlowPhaseID() != "" {
+		t.Fatalf("deleted expanded Flow state = expanded %q phase %q, want cleared", m.ExpandedFlowID(), m.SelectedFlowPhaseID())
+	}
+	m, _ = update(m, cmd())
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-2" {
+		t.Fatalf("flows after delete refresh = %#v, want only flow-2", got)
+	}
+	if listCalls != 1 {
+		t.Fatalf("ListFlows calls = %d, want 1 refresh", listCalls)
+	}
+}
+
+func TestModel_FlowDeleteIgnoresSelectedPhaseRows(t *testing.T) {
+	deleted := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		DeleteFlow: func(string) error {
+			deleted = true
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = selectFlowPhaseByID(t, m, "plan")
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	if cmd != nil {
+		t.Fatalf("d on selected Flow phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("d on selected Flow phase opened overlay %d", m.Overlay())
+	}
+	if deleted {
+		t.Fatal("DeleteFlow should not run for selected phase rows")
+	}
+}
+
+func TestModel_FlowDeleteFailureHandling(t *testing.T) {
+	t.Run("not found refreshes stale list", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		m := model.NewWithOptions(testRepos(), model.Options{
+			DeleteFlow: func(string) error {
+				return store.Delete("missing-flow")
+			},
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return nil, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			RepoPath: "/dev/alpha",
+			Title:    "Already gone",
+			Status:   flowstore.StatusPending,
+		}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal("confirming Flow delete should return command")
+		}
+		rawMsg := cmd()
+		msg, ok := rawMsg.(model.FlowDeleteFailedMsg)
+		if !ok {
+			t.Fatalf("delete command returned %T, want FlowDeleteFailedMsg", rawMsg)
+		}
+		if !msg.NotFound || msg.FlowID != "flow-1" || msg.RepoPath != "/dev/alpha" {
+			t.Fatalf("FlowDeleteFailedMsg = %#v, want not-found for captured Flow", msg)
+		}
+
+		m, cmd = update(m, msg)
+		if cmd == nil {
+			t.Fatal("not-found Flow delete should refresh flows")
+		}
+		if !strings.Contains(m.TransientError(), "Flow already deleted") {
+			t.Fatalf("status after not-found delete = %q, want stale-list warning", m.TransientError())
+		}
+		m, _ = update(m, cmd())
+		if got := m.Flows(); len(got) != 0 {
+			t.Fatalf("flows after not-found refresh = %#v, want empty", got)
+		}
+	})
+
+	t.Run("other errors do not refresh as completed work", func(t *testing.T) {
+		m := model.NewWithOptions(testRepos(), model.Options{
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				t.Fatal("ListFlows should not run for non-not-found delete failure")
+				return nil, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			RepoPath: "/dev/alpha",
+			Title:    "Delete me",
+			Status:   flowstore.StatusPending,
+		}})
+
+		m, cmd := update(m, model.FlowDeleteFailedMsg{
+			RepoPath: "/dev/alpha",
+			FlowID:   "flow-1",
+			Title:    "Delete me",
+			Err:      "disk full",
+		})
+
+		if cmd != nil {
+			t.Fatalf("non-not-found FlowDeleteFailedMsg returned command %T, want nil", cmd)
+		}
+		if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
+			t.Fatalf("flows after failed delete = %#v, want unchanged", got)
+		}
+		if !strings.Contains(m.TransientError(), "disk full") {
+			t.Fatalf("status after failed delete = %q, want error text", m.TransientError())
+		}
+	})
+
+	t.Run("stale repo result is ignored", func(t *testing.T) {
+		m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{}), []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			RepoPath: "/dev/alpha",
+			Title:    "Delete me",
+			Status:   flowstore.StatusPending,
+		}})
+
+		m, cmd := update(m, model.FlowDeletedMsg{RepoPath: "/dev/bravo", FlowID: "flow-1", Title: "Delete me"})
+
+		if cmd != nil {
+			t.Fatalf("stale FlowDeletedMsg returned command %T, want nil", cmd)
+		}
+		if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
+			t.Fatalf("flows after stale delete result = %#v, want unchanged", got)
+		}
+	})
+}
+
+func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
+	deleted := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		DeleteFlow: func(string) error {
+			deleted = true
+			return nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	for i := 0; i < 10 && m.SelectedFlowPhaseID() != ""; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	}
+	if m.SelectedFlowPhaseID() != "" {
+		t.Fatalf("selected Flow phase = %q, want top-level Flow row", m.SelectedFlowPhaseID())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("confirming Flow delete should return command")
+	}
+	msg := cmd()
+	m, cmd = update(m, msg)
+	if cmd == nil {
+		t.Fatal("Flow delete result should refresh flows")
+	}
+	m, _ = update(m, cmd())
+
+	if !deleted {
+		t.Fatal("DeleteFlow should run")
+	}
+	if fakeTerm.State() != "running" {
+		t.Fatalf("embedded terminal state = %q, want running", fakeTerm.State())
+	}
+	if !strings.Contains(m.View(), "flow output") {
+		t.Fatalf("active Flow terminal output disappeared after Flow delete:\n%s", m.View())
+	}
+}
+
 func TestModel_RightNavigationReachesFlowsWithoutChangingExistingModeNumbers(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
