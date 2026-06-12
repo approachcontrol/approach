@@ -93,6 +93,18 @@ func TestEmbeddedTerminalWidthHelpersReserveSidePadding(t *testing.T) {
 	}
 }
 
+func forceTrueColor(t *testing.T) {
+	t.Helper()
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+}
+
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {
@@ -2431,6 +2443,8 @@ func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 }
 
 func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
+	forceTrueColor(t)
+
 	view := Render(RenderParams{
 		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
 		Width:            80,
@@ -2440,8 +2454,89 @@ func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 		InputPrompt:      "Create worktree from",
 		InputPlaceholder: WorktreeInputPlaceholder,
 	})
-	if !strings.Contains(view, "branch, tag, or new branch name") {
-		t.Error("worktree input dialog should show placeholder when input is empty")
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "Create worktree from: "+WorktreeInputPlaceholder) {
+		t.Fatalf("worktree input dialog should show prompt and placeholder when input is empty:\n%s", stripped)
+	}
+	if !strings.Contains(view, placeholderStyle.Render(WorktreeInputPlaceholder)) {
+		t.Fatalf("worktree input placeholder should use placeholder style:\n%q", view)
+	}
+	if !strings.Contains(view, activeModeStyle.Render("█")) {
+		t.Fatalf("worktree input cursor should use active style:\n%q", view)
+	}
+	if strings.Contains(view, placeholderStyle.Render("Create worktree from: ")) {
+		t.Fatalf("prompt label should not use placeholder style:\n%q", view)
+	}
+	if strings.Contains(view, placeholderStyle.Render("█")) {
+		t.Fatalf("cursor should not use placeholder style:\n%q", view)
+	}
+}
+
+func TestRender_InputDialogWrappedPlaceholderUsesPlaceholderStyle(t *testing.T) {
+	forceTrueColor(t)
+
+	placeholder := "alpha beta gamma delta epsilon zeta"
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            36,
+		Height:           18,
+		Mode:             ModeWorktrees,
+		Overlay:          OverlayInput,
+		InputPrompt:      "Create worktree from",
+		InputPlaceholder: placeholder,
+	})
+
+	stripped := ansi.Strip(view)
+	for _, want := range []string{
+		"Create worktree from: alpha",
+		"beta gamma delta epsilon",
+		"zeta█",
+	} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("wrapped placeholder missing %q:\n%s", want, stripped)
+		}
+	}
+	for _, segment := range []string{"alpha", "beta gamma delta epsilon", "zeta"} {
+		if !strings.Contains(view, placeholderStyle.Render(segment)) {
+			t.Fatalf("wrapped placeholder segment %q should use placeholder style:\n%q", segment, view)
+		}
+	}
+	if !strings.Contains(view, activeModeStyle.Render("█")) {
+		t.Fatalf("wrapped placeholder cursor should use active style:\n%q", view)
+	}
+	if strings.Contains(view, placeholderStyle.Render("Create worktree from: ")) {
+		t.Fatalf("wrapped prompt label should not use placeholder style:\n%q", view)
+	}
+	if strings.Contains(view, placeholderStyle.Render("█")) {
+		t.Fatalf("wrapped cursor should not use placeholder style:\n%q", view)
+	}
+	requireLinesWithinWidth(t, strippedLines(view), 36)
+}
+
+func TestRender_InputDialogNonEmptyDoesNotRenderPlaceholderStyle(t *testing.T) {
+	forceTrueColor(t)
+
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             ModeWorktrees,
+		Overlay:          OverlayInput,
+		InputPrompt:      "Create worktree from",
+		InputPlaceholder: WorktreeInputPlaceholder,
+		InputValue:       "feature/new",
+		InputCursor:      len([]rune("feature/new")),
+	})
+
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "Create worktree from: feature/new") {
+		t.Fatalf("input dialog should show typed input:\n%s", stripped)
+	}
+	if strings.Contains(stripped, WorktreeInputPlaceholder) {
+		t.Fatalf("non-empty input should not render placeholder text:\n%s", stripped)
+	}
+	if strings.Contains(view, placeholderStyle.Render("feature/new")) {
+		t.Fatalf("typed input should not use placeholder style:\n%q", view)
 	}
 }
 
