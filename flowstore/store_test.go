@@ -107,6 +107,127 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 	}
 }
 
+func TestStoreAutoModeDefaultsOffAndMissingFieldReadsAndLists(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Add auto mode",
+		Instructions: "toggle the flow",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if record.AutoMode {
+		t.Fatalf("created AutoMode = true, want false")
+	}
+
+	meta := filepath.Join(root, "flows", record.FlowID, "meta.json")
+	metaJSON, err := os.ReadFile(meta)
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) error = %v", err)
+	}
+	if strings.Contains(string(metaJSON), "auto_mode") {
+		t.Fatalf("default-off flow should omit auto_mode for old-record compatibility:\n%s", metaJSON)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.AutoMode {
+		t.Fatalf("read AutoMode = true, want false")
+	}
+	listed, err := store.List(flowstore.FlowFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].AutoMode {
+		t.Fatalf("List() = %#v, want one default-off flow", listed)
+	}
+}
+
+func TestStoreSetAutoModePersistsTrueThenFalse(t *testing.T) {
+	root := t.TempDir()
+	times := []time.Time{
+		time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 1, 0, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 2, 0, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 3, 0, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 4, 0, 0, time.UTC),
+	}
+	i := 0
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now: func() time.Time {
+			tm := times[i]
+			i++
+			return tm
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Add auto mode",
+		Instructions: "toggle the flow",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	enabled, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: true})
+	if err != nil {
+		t.Fatalf("SetAutoMode(true) error = %v", err)
+	}
+	if !enabled.AutoMode || !enabled.UpdatedAt.After(record.UpdatedAt) || enabled.Status != record.Status {
+		t.Fatalf("enabled flow = %#v, want auto on, later updated_at, status unchanged from %#v", enabled, record)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read(enabled) error = %v", err)
+	}
+	if !read.AutoMode {
+		t.Fatalf("read AutoMode = false, want true")
+	}
+	meta := filepath.Join(root, "flows", record.FlowID, "meta.json")
+	metaJSON, err := os.ReadFile(meta)
+	if err != nil {
+		t.Fatalf("ReadFile(enabled meta.json) error = %v", err)
+	}
+	if !strings.Contains(string(metaJSON), `"auto_mode": true`) {
+		t.Fatalf("enabled flow should persist auto_mode true:\n%s", metaJSON)
+	}
+
+	disabled, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: false})
+	if err != nil {
+		t.Fatalf("SetAutoMode(false) error = %v", err)
+	}
+	if disabled.AutoMode || !disabled.UpdatedAt.After(enabled.UpdatedAt) || disabled.Status != record.Status {
+		t.Fatalf("disabled flow = %#v, want auto off, later updated_at, status unchanged from %#v", disabled, enabled)
+	}
+	read, err = store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read(disabled) error = %v", err)
+	}
+	if read.AutoMode {
+		t.Fatalf("read AutoMode = true, want false")
+	}
+	metaJSON, err = os.ReadFile(meta)
+	if err != nil {
+		t.Fatalf("ReadFile(disabled meta.json) error = %v", err)
+	}
+	if strings.Contains(string(metaJSON), "auto_mode") {
+		t.Fatalf("disabled flow should omit auto_mode:\n%s", metaJSON)
+	}
+}
+
 func assertMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -835,6 +956,70 @@ func TestStoreAddPhaseLaunchIDMarksPhaseRunning(t *testing.T) {
 	}
 	if updated.Status != flowstore.StatusInProgress {
 		t.Fatalf("flow status = %q, want in_progress", updated.Status)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDAutoLaunchRequiresEnabledReadyPhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Auto launch guard",
+		Instructions: "only launch when still eligible",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "implementation",
+		LaunchID:   "auto-disabled",
+		AutoLaunch: true,
+	})
+	if !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("AddPhaseLaunchID(auto disabled) error = %v, want auto launch outdated", err)
+	}
+
+	record, err = store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: true})
+	if err != nil {
+		t.Fatalf("SetAutoMode(true) error = %v", err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "implementation",
+		LaunchID:   "auto-1",
+		AutoLaunch: true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(auto ready) error = %v", err)
+	}
+	phase := phaseByID(t, record, "implementation")
+	if phase.Status != flowstore.PhaseRunning || len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "auto-1" {
+		t.Fatalf("implementation after auto launch = %#v, want running with auto-1", phase)
+	}
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "implementation",
+		LaunchID:   "auto-stale",
+		AutoLaunch: true,
+	})
+	if !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("AddPhaseLaunchID(auto running) error = %v, want auto launch outdated", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase = phaseByID(t, read, "implementation")
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "auto-1" {
+		t.Fatalf("stale auto launch mutated launch ids = %#v", phase.LaunchIDs)
 	}
 }
 

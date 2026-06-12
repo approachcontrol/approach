@@ -282,6 +282,7 @@ type RenderParams struct {
 	SelectedPlanPhaseID         string
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
+	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
@@ -445,8 +446,10 @@ func renderApplication(p RenderParams) string {
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
+	flowAutoModeSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
+		flowAutoModeSelected = p.FlowAutoModeSelected
 	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
@@ -456,6 +459,7 @@ func renderApplication(p RenderParams) string {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
+		flowAutoModeSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
 	flowPhaseSelected := selectedFlowPhaseID != ""
@@ -493,6 +497,7 @@ func renderApplication(p RenderParams) string {
 		FlowDeletableSelected:       flowDeletableSelected,
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
+		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
 		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
@@ -751,6 +756,7 @@ type statusBarParams struct {
 	FlowDeletableSelected       bool
 	FlowPlanLinked              bool
 	FlowHeadless                bool
+	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
@@ -1181,6 +1187,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
+				autoHint := flowAutoModeShortcutHint(sp.FlowAutoModeSelected)
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
 						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
@@ -1192,6 +1199,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.FlowPhaseResumableSelected {
 						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 					}
+					actions = append(actions, autoHint)
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 					if sp.FlowPlanLinked {
@@ -1201,6 +1209,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.Destructive && sp.FlowDeletableSelected {
 						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 					}
+					actions = append(actions, autoHint)
 				}
 			}
 			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
@@ -1236,6 +1245,13 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	sections = append(sections, shortcutSection{Title: "Global", Hints: global})
 	return sections
+}
+
+func flowAutoModeShortcutHint(enabled bool) shortcutHint {
+	if enabled {
+		return shortcutHint{Key: "m", Label: "auto: on", SuccessSuffix: "on"}
+	}
+	return shortcutHint{Key: "m", Label: "auto: off"}
 }
 
 func shortcutsMuted(sp statusBarParams) bool {
@@ -2268,14 +2284,30 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			}
 		}
 		rowSelected := i == selected && selectedPhaseID == ""
+		statusCell := statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
+		branchCell := branchStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+		phaseCell := diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
+		planCell := statusStyle.Render(fitSessionColumn(plan, flowPlanWidth))
+		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
+		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
+		titleCell := stashMsgStyle.Render(record.Title)
+		if record.AutoMode && !rowSelected {
+			statusCell = flowAutoModeStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
+			branchCell = flowAutoModeStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+			phaseCell = flowAutoModeStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
+			planCell = flowAutoModeStyle.Render(fitSessionColumn(plan, flowPlanWidth))
+			prCell = flowAutoModeStyle.Render(fitSessionColumn(pr, flowPRWidth))
+			updatedCell = flowAutoModeStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
+			titleCell = flowAutoModeStyle.Render(record.Title)
+		}
 		line := formatFlowColumns(flowRowPrefix(false, active.hasFlow(record.FlowID)),
-			statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth)),
-			branchStyle.Render(fitSessionColumn(branch, flowBranchWidth)),
-			diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth)),
-			statusStyle.Render(fitSessionColumn(plan, flowPlanWidth)),
-			statusStyle.Render(fitSessionColumn(pr, flowPRWidth)),
-			stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth)),
-			stashMsgStyle.Render(record.Title),
+			statusCell,
+			branchCell,
+			phaseCell,
+			planCell,
+			prCell,
+			updatedCell,
+			titleCell,
 		)
 		if rowSelected {
 			line = renderSelectedFlowColumns(selectedFlowRowPrefix(active.hasFlow(record.FlowID)),

@@ -94,6 +94,15 @@ standard graph; hand-authored records without one keep their stored statuses
 until a phase-affecting mutation touches them. Agents never need to know which
 phase becomes ready next; they only report their own phase.
 
+Flow auto mode is layered on top of this derived readiness. It is a persisted
+per-Flow TUI setting, not a status and not a transition-table rule. When enabled,
+the TUI watches accepted Flow refreshes for a phase that newly became
+`completed`, then launches the first currently `ready` non-Merge phase in that
+same Flow through the normal launch path. It does not launch on
+`skipped`, `blocked`, `needs_attention`, failed launches, or missing PR metadata,
+and it deliberately stops before Merge even when Autoreview completion makes
+Merge `ready`.
+
 Walking phases in order, a `pending` phase becomes `ready` once every
 predecessor satisfies its downstream gate:
 
@@ -145,6 +154,8 @@ even if the linked-plan sync later fails.
 - The persisted schema is unchanged: `schema_version` stays `1` and no status
   strings were added, removed, or renamed. Existing Flow JSON needs no
   migration.
+- `auto_mode` is additive and omitted when false. Existing Flow JSON without the
+  field reads as auto mode off.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
   `ResetAwaitingSessionPhase`) re-derive readiness for any graph, and records
@@ -163,7 +174,8 @@ states (`recover-worktree`, `await-session`, `session-mismatch`,
 `missing-session-id`, `missing-pr`) are layered on top, rendered prefixed
 with the phase ID like any phase state (for example `autoreview:missing-pr`),
 and are display-only; they never change persisted phase status. See
-`docs/config.md` for the pane behavior.
+`docs/config.md` for the pane behavior. Flows with auto mode enabled receive a
+subtle non-selected row highlight, while selected-row styling remains dominant.
 
 When `await-session` is caused by an orphaned latest launch and predecessor
 gates still hold, the selected phase row can be reset with `x` after

@@ -27,15 +27,35 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
+		"Usage: wtui flow <create|list|read|phase|plan|pr|merge|auto> [flags]",
 		"wtui flow read --flow-id",
 		"wtui flow phase complete --flow-id",
 		"wtui flow phase block --flow-id",
 		"wtui flow phase needs-attention --flow-id",
 		"wtui flow phase restart --flow-id",
 		"wtui flow phase set --flow-id",
+		"wtui flow auto set --flow-id",
 		"wtui flow pr set --flow-id",
 		"wtui flow merge set --flow-id",
+	})
+}
+
+func TestRunFlowAutoHelpPrintsUsageAndExamplesWithoutLoadingConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "auto", "--help"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for flow auto help")
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	requireContainsAll(t, stdout.String(), []string{
+		"Usage: wtui flow auto set [flags]",
+		"wtui flow auto set --flow-id",
+		"--enabled true",
 	})
 }
 
@@ -263,7 +283,7 @@ func TestRunFlowUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "phaze"; did you mean "phase"?`,
-		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
+		"Usage: wtui flow <create|list|read|phase|plan|pr|merge|auto> [flags]",
 	})
 }
 
@@ -517,6 +537,94 @@ func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
 	}
 	if read.PlanID != "" || read.PlanPath != "" {
 		t.Fatalf("rejected plan link should not mutate record: %#v", read)
+	}
+}
+
+func TestRunFlowAutoSetPrintsJSONRecord(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "Auto mode",
+		"--instructions", "toggle automatic launch",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--json",
+		"--state-root", root,
+	})
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "auto", "set",
+		"--flow-id", created.FlowID,
+		"--enabled", "true",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var enabled flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &enabled); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if !enabled.AutoMode {
+		t.Fatalf("AutoMode = false, want true")
+	}
+
+	stdout.Reset()
+	err = run([]string{
+		"wtui", "flow", "auto", "set",
+		"--flow-id", created.FlowID,
+		"--enabled", "false",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var disabled flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &disabled); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if disabled.AutoMode {
+		t.Fatalf("AutoMode = true, want false")
+	}
+}
+
+func TestRunFlowAutoSetValidatesInputs(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "Auto validation",
+		"--instructions", "validate toggle",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--json",
+		"--state-root", root,
+	})
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing flow id",
+			args: []string{"wtui", "flow", "auto", "set", "--enabled", "true", "--state-root", root},
+			want: "requires --flow-id",
+		},
+		{
+			name: "missing enabled",
+			args: []string{"wtui", "flow", "auto", "set", "--flow-id", created.FlowID, "--state-root", root},
+			want: "requires --enabled true|false",
+		},
+		{
+			name: "invalid enabled",
+			args: []string{"wtui", "flow", "auto", "set", "--flow-id", created.FlowID, "--enabled", "maybe", "--state-root", root},
+			want: "invalid --enabled",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

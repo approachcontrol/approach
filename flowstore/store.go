@@ -23,7 +23,10 @@ const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
 
-var errFlowNotFound = errors.New("flow not found")
+var (
+	errFlowNotFound       = errors.New("flow not found")
+	errAutoLaunchOutdated = errors.New("auto launch outdated")
+)
 
 const (
 	StatusPending        = "pending"
@@ -75,6 +78,12 @@ type StoreOptions struct {
 // IsNotFound reports whether err means the requested Flow record does not exist.
 func IsNotFound(err error) bool {
 	return errors.Is(err, errFlowNotFound)
+}
+
+// IsAutoLaunchOutdated reports whether err means an automatic launch request
+// lost its race with newer Flow state and should be ignored.
+func IsAutoLaunchOutdated(err error) bool {
+	return errors.Is(err, errAutoLaunchOutdated)
 }
 
 // FlowPhase is one phase in the persisted Flow pipeline.
@@ -141,6 +150,13 @@ type Merge struct {
 	MergedAt *time.Time `json:"merged_at,omitempty"`
 }
 
+// AutoModeUpdate changes whether the TUI may automatically launch ready phases
+// for a single Flow after successful phase completion.
+type AutoModeUpdate struct {
+	FlowID  string
+	Enabled bool
+}
+
 // FlowRecord is the persisted task workflow record.
 type FlowRecord struct {
 	SchemaVersion int         `json:"schema_version"`
@@ -157,6 +173,7 @@ type FlowRecord struct {
 	PlanPath      string      `json:"plan_path,omitempty"`
 	PR            PullRequest `json:"pr,omitempty"`
 	Merge         Merge       `json:"merge,omitempty"`
+	AutoMode      bool        `json:"auto_mode,omitempty"`
 	Phases        []FlowPhase `json:"phases"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
@@ -217,10 +234,11 @@ type StartMetadataUpdate struct {
 // status (completed, skipped) records the launch without reopening the phase,
 // while non-resume launches always mark the phase running.
 type PhaseLaunchUpdate struct {
-	FlowID   string
-	PhaseID  string
-	LaunchID string
-	Resume   bool
+	FlowID     string
+	PhaseID    string
+	LaunchID   string
+	Resume     bool
+	AutoLaunch bool
 }
 
 // PhaseResetUpdate identifies one UI-owned phase recovery mutation.
@@ -659,6 +677,21 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 	})
 }
 
+// SetAutoMode enables or disables TUI-owned automatic phase launching for one Flow.
+func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.AutoMode == update.Enabled {
+			return record, nil
+		}
+		record.AutoMode = update.Enabled
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
 // SetStartMetadata persists branch/worktree/plan metadata discovered while
 // starting a Flow. Empty fields leave existing values unchanged.
 func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error) {
@@ -720,6 +753,11 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
+		if update.AutoLaunch {
+			if err := validateAutoPhaseLaunch(record, phase); err != nil {
+				return FlowRecord{}, err
+			}
+		}
 		if update.Resume && PhaseStatusTerminal(phase.Status) {
 			// Resuming a finished phase's session is read-back, not new work:
 			// record the launch so the session can re-link, but leave the
@@ -761,6 +799,20 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+func validateAutoPhaseLaunch(record FlowRecord, phase FlowPhase) error {
+	phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+	switch {
+	case !record.AutoMode:
+		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, errAutoLaunchOutdated)
+	case phaseID == "" || phaseID == "merge":
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+	case phase.Status != PhaseReady:
+		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, errAutoLaunchOutdated)
+	default:
+		return nil
+	}
 }
 
 // ResetAwaitingSessionPhase removes an orphaned latest launch attempt from a
