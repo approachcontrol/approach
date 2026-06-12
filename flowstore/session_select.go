@@ -48,6 +48,29 @@ func PhaseAwaitingSession(phase FlowPhase) bool {
 	return true
 }
 
+// PhaseSessionLaunchMismatch reports whether any attached session cannot be
+// matched back to one of the phase launch attempts.
+func PhaseSessionLaunchMismatch(phase FlowPhase) bool {
+	if len(phase.Sessions) == 0 {
+		return false
+	}
+	launches := make(map[string]struct{}, len(phase.LaunchIDs))
+	for _, launchID := range phase.LaunchIDs {
+		if launchID != "" {
+			launches[launchID] = struct{}{}
+		}
+	}
+	for _, session := range phase.Sessions {
+		if session.LaunchID == "" {
+			return true
+		}
+		if _, ok := launches[session.LaunchID]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 func LatestPhaseLaunchID(phase FlowPhase) string {
 	for i := len(phase.LaunchIDs) - 1; i >= 0; i-- {
 		if phase.LaunchIDs[i] != "" {

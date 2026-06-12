@@ -578,7 +578,7 @@ func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 		ActivePane:             1,
 	})
 
-	if !strings.Contains(view, "ctrl+g") {
+	if !strings.Contains(view, "ctrl+]") {
 		t.Fatalf("embedded terminal prefix cue missing:\n%s", view)
 	}
 }
@@ -599,13 +599,13 @@ func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
 		EmbeddedTerminalActive: true,
 	}, 26, 12)
 	normalText := ansi.Strip(normal)
-	if !strings.Contains(normalText, "ctrl+g commands") {
+	if !strings.Contains(normalText, "ctrl+] commands") {
 		t.Fatalf("embedded terminal should expose prefix shortcut:\n%s", normalText)
 	}
 	if strings.Contains(normalText, "x      close") {
-		t.Fatalf("embedded terminal should hide prefix-only close shortcut until ctrl+g mode:\n%s", normalText)
+		t.Fatalf("embedded terminal should hide prefix-only close shortcut until ctrl+] mode:\n%s", normalText)
 	}
-	if want := statusStyle.Render("ctrl+g"); !strings.Contains(normal, want) {
+	if want := statusStyle.Render("ctrl+]"); !strings.Contains(normal, want) {
 		t.Fatalf("embedded terminal shortcut key should render muted while terminal input is active:\n%q\nmissing %q", normal, want)
 	}
 
@@ -616,7 +616,7 @@ func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
 		EmbeddedTerminalPrefix: true,
 	}, 26, 12)
 	prefixText := ansi.Strip(prefix)
-	for _, want := range []string{"ctrl+g send", "l      sessions", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "l      sessions", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(prefixText, want) {
 			t.Fatalf("embedded terminal prefix shortcuts missing %q:\n%s", want, prefixText)
 		}

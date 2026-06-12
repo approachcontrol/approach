@@ -59,6 +59,45 @@ func TestPhaseAwaitingSessionReportsNewestLaunchWithoutAttachedSession(t *testin
 	}
 }
 
+func TestPhaseSessionLaunchMismatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		phase flowstore.FlowPhase
+		want  bool
+	}{
+		{
+			name: "older matched session and newer orphan launch",
+			phase: flowstore.FlowPhase{
+				LaunchIDs: []string{"launch-old", "launch-orphan"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old"}},
+			},
+		},
+		{
+			name: "stale session outside phase launches",
+			phase: flowstore.FlowPhase{
+				LaunchIDs: []string{"launch-orphan"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale"}},
+			},
+			want: true,
+		},
+		{
+			name: "attached session missing launch id",
+			phase: flowstore.FlowPhase{
+				LaunchIDs: []string{"launch-orphan"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-stale"}},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := flowstore.PhaseSessionLaunchMismatch(tc.phase); got != tc.want {
+				t.Fatalf("PhaseSessionLaunchMismatch() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLatestPhaseSessionDistinguishesMalformedLatestSession(t *testing.T) {
 	phase := flowstore.FlowPhase{
 		LaunchIDs: []string{"launch-new"},

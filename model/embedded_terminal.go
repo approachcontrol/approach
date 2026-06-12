@@ -20,6 +20,15 @@ import (
 
 const embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
 
+// terminalCommandKey toggles wtui command handling inside embedded terminals.
+// It must stay off keys interactive agents bind themselves (Claude Code and
+// Codex both use ctrl+g, ctrl+b, ctrl+r, ctrl+t, ...); ctrl+] is the
+// telnet-style escape neither claims.
+const (
+	terminalCommandKey         = "ctrl+]"
+	terminalCommandLiteralByte = 0x1d
+)
+
 type EmbeddedTerminal interface {
 	VisibleLines(width, height int) []string
 	Write([]byte) (int, error)
@@ -415,8 +424,8 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 				return m.cycleEmbeddedTerminalForScope(scope, -1), nil, true
 			case "right":
 				return m.cycleEmbeddedTerminalForScope(scope, 1), nil, true
-			case "ctrl+g":
-				return m.writeToActiveTerminalForScope(scope, []byte{0x07}), nil, true
+			case terminalCommandKey:
+				return m.writeToActiveTerminalForScope(scope, []byte{terminalCommandLiteralByte}), nil, true
 			case "i":
 				m.terminalPrefixActive = false
 				return m, nil, true
@@ -431,7 +440,7 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 				return m.setStatus(statusOther, "Unknown terminal prefix command"), nil, true
 			}
 		}
-		if key == "ctrl+g" {
+		if key == terminalCommandKey {
 			m.terminalPrefixActive = true
 			return m, nil, true
 		}
@@ -440,8 +449,8 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 	if m.terminalPrefixActive {
 		m.terminalPrefixActive = false
 		switch key {
-		case "ctrl+g":
-			return m.writeToActiveTerminalForScope(scope, []byte{0x07}), nil, true
+		case terminalCommandKey:
+			return m.writeToActiveTerminalForScope(scope, []byte{terminalCommandLiteralByte}), nil, true
 		case "l":
 			if scope == embeddedTerminalScopeSession {
 				return m.openEmbeddedSessionPicker(), nil, true
@@ -458,7 +467,7 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 			return m.setStatus(statusOther, "Unknown terminal prefix command"), nil, true
 		}
 	}
-	if key == "ctrl+g" {
+	if key == terminalCommandKey {
 		m.terminalPrefixActive = true
 		return m, nil, true
 	}
