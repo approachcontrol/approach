@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -1467,6 +1468,121 @@ func TestModel_FlowTerminalCtrlGTabIsUnknownPrefixCommandNotFocusSwitch(t *testi
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
 		t.Fatalf("terminal writes = %#v, want focus to stay on terminal", fakeTerm.writes)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{lines: []string{"flow first output"}, state: "running"},
+		{lines: []string{"flow second output"}, state: "running"},
+		{lines: []string{"flow third output"}, state: "running"},
+	}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	launch := func() {
+		t.Helper()
+		var cmd tea.Cmd
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+		if cmd == nil {
+			t.Fatal("flows-mode i should prepare an embedded launch")
+		}
+		m, _ = update(m, cmd())
+	}
+	launch()
+	launch()
+	launch()
+	if starts != 3 {
+		t.Fatalf("embedded terminal starts = %d, want 3", starts)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	terms[1].state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	view := m.View()
+	for _, want := range []string{"1 codex implementation running", "2 codex implementation running", "flow first output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renumbered Flow terminal view missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"3 codex", "flow second output"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("dismissed Flow terminal should not remain visible with %q:\n%s", unwanted, view)
+		}
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if view = m.View(); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
+		t.Fatalf("switching to renumbered Flow terminal 2 should show former third terminal:\n%s", view)
+	}
+}
+
+func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T) {
+	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session output"}, state: "exited"}
+	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			if ctx.ResumeSessionID != "" {
+				return sessionTerm, nil
+			}
+			return flowTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	if view := m.View(); !strings.Contains(view, "1 codex implementation running") {
+		t.Fatalf("Flow terminal should start with scope-local tab 1:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if view := m.View(); !strings.Contains(view, "1 codex feature/session exited") {
+		t.Fatalf("session terminal should also use scope-local tab 1:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if strings.Contains(m.View(), "session output") {
+		t.Fatalf("dismissed session terminal should be removed:\n%s", m.View())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
+	view := m.View()
+	for _, want := range []string{"1 codex implementation running", "flow output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("Flow terminal with matching display number should survive session close, missing %q:\n%s", want, view)
+		}
 	}
 }
 
