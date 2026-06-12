@@ -248,9 +248,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "right":
 		return m.handleHorizontalNavigation(1)
 	case "h":
-		if m.mode == ui.ModeFlows {
-			return m.handleToggleFlowHeadless()
-		}
 		if m.mode > ui.ModeWorktrees {
 			m.mode--
 			m = m.resetModeCursors()
@@ -342,7 +339,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "tab":
 		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = false
+			m.terminalPrefixActive = true
 			return m, nil
 		}
 		m.activePane = 0
@@ -586,14 +583,6 @@ func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
 		return m.handleToggleFlowPhases()
 	}
 	return m.handleLaunchSelectedFlowPhase()
-}
-
-func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
-		return m, nil
-	}
-	m.flowHeadless = !m.flowHeadless
-	return m, nil
 }
 
 func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
@@ -1073,7 +1062,7 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	launchID := newLaunchID()
-	if next.flowHeadless && agent.Normalize(next.agentCommand) != agent.CommandCodexApp {
+	if agent.Normalize(next.agentCommand) != agent.CommandCodexApp {
 		return next, next.prepareFlowPhaseEmbeddedHeadlessLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 	}
 	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
