@@ -428,11 +428,11 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 		Height:              12,
 		Mode:                ModeFlows,
 		ActivePane:          1,
-		FlowReasoningEffort: "high",
+		FlowReasoningEffort: "codex effort: high",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "E      effort: high") {
+	if !strings.Contains(pane, "E      codex effort: high") {
 		t.Fatalf("flows shortcut pane should expose reasoning effort:\n%s", pane)
 	}
 }
@@ -442,8 +442,8 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 		effort string
 		want   string
 	}{
-		{effort: "app default", want: "effort: app"},
-		{effort: "choose agent", want: "effort: choose"},
+		{effort: "codex-app default", want: "codex-app default"},
+		{effort: "choose agent", want: "choose agent"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.effort, func(t *testing.T) {

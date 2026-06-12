@@ -787,10 +787,10 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 	}
 	items := reasoningEffortSelectItems(command)
 	m.modal = modal.OpenSelectWithLayout(
-		"Choose reasoning effort",
+		fmt.Sprintf("Choose %s reasoning effort", command),
 		items,
 		selectedReasoningEffortIndex(command, m.ReasoningEffortFor(command)),
-		modal.Layout{Width: 32, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		modal.Layout{Width: 36, Height: len(items) + 3, Placement: modal.PlacementCenter},
 		func(value string) tea.Cmd { return m.setReasoningEffort(command, value) },
 	)
 	return m, nil

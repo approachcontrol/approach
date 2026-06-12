@@ -1158,7 +1158,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					}
 				}
 			}
-			actions = append(actions, shortcutHint{Key: "E", Label: "effort: " + flowReasoningEffortShortcutValue(sp.FlowReasoningEffort)})
+			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1197,17 +1197,12 @@ func shortcutsMuted(sp statusBarParams) bool {
 	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
 }
 
-func flowReasoningEffortShortcutValue(value string) string {
-	switch strings.TrimSpace(value) {
-	case "":
-		return "default"
-	case "app default":
-		return "app"
-	case "choose agent":
-		return "choose"
-	default:
-		return strings.TrimSpace(value)
+func flowReasoningEffortShortcutLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "effort: default"
 	}
+	return value
 }
 
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {

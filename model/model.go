@@ -481,11 +481,12 @@ func (m Model) launchReasoningEffortFor(command string) string {
 }
 
 func (m Model) flowReasoningEffortLabel() string {
-	switch agent.Normalize(m.agentCommand) {
+	command := agent.Normalize(m.agentCommand)
+	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return reasoningEffortDisplay(m.ReasoningEffortFor(m.agentCommand))
+		return fmt.Sprintf("%s effort: %s", command, reasoningEffortDisplay(m.ReasoningEffortFor(command)))
 	case agent.CommandCodexApp:
-		return "app default"
+		return "codex-app default"
 	default:
 		return "choose agent"
 	}

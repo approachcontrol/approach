@@ -3113,6 +3113,56 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 	}
 }
 
+func TestModel_FlowEffortKeyDoesNotOpenPickerWhileFlowTerminalFocused(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-one",
+		Title:        "Flow one",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("terminal command-mode E opened overlay %d", m.Overlay())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("terminal command-mode E should not write to PTY: %#v", fakeTerm.writes)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
+		t.Fatalf("status = %q, want unknown terminal command", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("terminal input-mode E opened overlay %d", m.Overlay())
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "E" {
+		t.Fatalf("terminal input-mode E writes = %#v, want E", fakeTerm.writes)
+	}
+}
+
 func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{

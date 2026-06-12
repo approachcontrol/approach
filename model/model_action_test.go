@@ -3421,7 +3421,7 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		t.Fatalf("expected effort select overlay, got %d", m.Overlay())
 	}
 	view := m.View()
-	for _, want := range []string{"Choose reasoning effort", "default", "low", "medium", "high", "xhigh"} {
+	for _, want := range []string{"Choose codex reasoning effort", "default", "low", "medium", "high", "xhigh"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("codex effort picker missing %q:\n%s", want, view)
 		}
@@ -3457,6 +3457,44 @@ func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 	}
 	if view := m.View(); !strings.Contains(view, "max") {
 		t.Fatalf("claude effort picker should include max:\n%s", view)
+	}
+	if view := m.View(); !strings.Contains(view, "Choose claude reasoning effort") {
+		t.Fatalf("claude effort picker should name provider:\n%s", view)
+	}
+}
+
+func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("search E returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("search E opened overlay %d", m.Overlay())
+	}
+	if got := m.ItemSearch(); got != "E" {
+		t.Fatalf("search query after E = %q, want E", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected agent select overlay, got %d", m.Overlay())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("modal E returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("modal E changed overlay to %d, want select", m.Overlay())
+	}
+	view := m.View()
+	if !strings.Contains(view, "Choose interactive helper") || strings.Contains(view, "reasoning effort") {
+		t.Fatalf("modal E should keep existing agent picker:\n%s", view)
 	}
 }
 
