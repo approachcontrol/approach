@@ -248,6 +248,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "right":
 		return m.handleHorizontalNavigation(1)
 	case "h":
+		if m.mode == ui.ModeFlows {
+			return m.handleToggleFlowHeadless()
+		}
 		if m.mode > ui.ModeWorktrees {
 			m.mode--
 			m = m.resetModeCursors()
@@ -592,6 +595,14 @@ func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
 		return m.handleToggleFlowPhases()
 	}
 	return m.handleLaunchSelectedFlowPhase()
+}
+
+func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	m.flowHeadless = !m.flowHeadless
+	return m, nil
 }
 
 func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
@@ -1075,8 +1086,9 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	launchID := newLaunchID()
-	if agent.Normalize(next.agentCommand) != agent.CommandCodexApp {
-		return next, next.prepareFlowPhaseEmbeddedHeadlessLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	switch agent.Normalize(next.agentCommand) {
+	case agent.CommandCodex, agent.CommandClaude:
+		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
 	}
 	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 }
@@ -1150,11 +1162,11 @@ func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowsto
 	})
 }
 
-func (m Model) prepareFlowPhaseEmbeddedHeadlessLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+func (m Model) prepareFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
 	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
 		ctx.FlowLaunchTracked = true
 		ctx.Embedded = true
-		ctx.Headless = true
+		ctx.Headless = headless
 		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
 	})
 }
@@ -1789,9 +1801,8 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 	return m.runAgentLaunchWithContext(ctx, launch)
 }
 
-func (m Model) launchFlowEmbeddedHeadlessWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	ctx.Embedded = true
-	ctx.Headless = true
 	ctx.FlowLaunchTracked = true
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err := m.openFlowEmbeddedTerminal(ctx)
@@ -1812,6 +1823,8 @@ func (m Model) launchFlowEmbeddedHeadlessWithContext(ctx actions.AgentLaunchCont
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	ctx.FlowLaunchTracked = true
+	ctx.Embedded = true
+	ctx.Headless = false
 	updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   ctx.FlowID,
 		PhaseID:  ctx.FlowPhaseID,
@@ -1829,14 +1842,25 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	if phase, ok := flowPhaseByID(updated, ctx.FlowPhaseID); ok {
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
-	launch, err := m.launchAgent(ctx)
-	if err != nil {
-		errText := err.Error()
-		m, errText = m.markFlowLaunchNeedsAttention(ctx, errText)
-		m = m.setStatus(statusOther, errText)
-		return m, nil
+	needsTick := !m.hasRunningEmbeddedTerminal()
+	next, opened, err := m.openFlowEmbeddedTerminal(ctx)
+	if err != nil || !opened {
+		errText := "Maximum embedded terminals reached"
+		if err != nil {
+			errText = err.Error()
+		}
+		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
+		next = next.setStatus(statusOther, errText)
+		if next.mode == ui.ModeFlows {
+			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+			return next, fetchCmd
+		}
+		return next, nil
 	}
-	next, launchCmd := m.runAgentLaunchWithContext(ctx, launch)
+	var launchCmd tea.Cmd
+	if needsTick {
+		next, launchCmd = next.startEmbeddedTerminalTick()
+	}
 	if next.mode == ui.ModeFlows {
 		next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 		return next, tea.Batch(fetchCmd, launchCmd)

@@ -428,13 +428,14 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 		RepoSelected:   true,
 		FlowSelected:   true,
 		FlowPlanLinked: true,
+		FlowHeadless:   true,
 	})
-	for _, want := range []string{"enter: phases", "o: open", "y: copy id"} {
+	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "y: copy id"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
 		}
 	}
-	for _, notWant := range []string{"h: headless", "x: phases", "a: launch phase", "i: embed phase"} {
+	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("selected flow hint should not include %q, got %q", notWant, bar)
 		}
@@ -537,7 +538,7 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 	}
 }
 
-func TestRender_FlowsModeShowsLaunchShortcutForLaunchableSelectedPhase(t *testing.T) {
+func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
@@ -559,15 +560,16 @@ func TestRender_FlowsModeShowsLaunchShortcutForLaunchableSelectedPhase(t *testin
 		ExpandedFlowID:       "flow-1",
 		SelectedFlowPhaseID:  "implementation",
 		FlowPhaseLaunchReady: true,
+		FlowHeadless:         false,
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  launch phase", "y      copy phase id"} {
+	for _, want := range []string{"enter  launch phase", "h      headless off", "y      copy phase id"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
 	}
-	for _, notWant := range []string{"h      headless", "x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
+	for _, notWant := range []string{"x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
 		if strings.Contains(pane, notWant) {
 			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
 		}
@@ -635,20 +637,21 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	}
 }
 
-func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithoutHeadlessOrLegacyHints(t *testing.T) {
+func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:        80,
 		Mode:         ModeFlows,
 		ActivePane:   1,
 		RepoSelected: true,
 		FlowSelected: true,
+		FlowHeadless: true,
 	})
-	for _, want := range []string{"←/→ pane/view", "enter: phases"} {
+	for _, want := range []string{"←/→ pane/view", "h: headless on", "enter: phases"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
 		}
 	}
-	for _, notWant := range []string{"h: headless", "x: phases", "a: launch phase", "i: embed phase"} {
+	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("narrow Flow footer should not include %q: %q", notWant, bar)
 		}
@@ -707,7 +710,7 @@ func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+g send", "left/right terminal", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+g send", "i      input", "left/right terminal", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}
@@ -1040,14 +1043,15 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 		}},
 		ActivePane:   1,
 		FlowSelected: 0,
+		FlowHeadless: true,
 	})
 
-	for _, want := range []string{"plan-review", "changes_requested", "1/3", "enter", "phases"} {
+	for _, want := range []string{"plan-review", "changes_requested", "1/3", "enter", "phases", "headless on"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("flows gate view missing %q:\n%s", want, view)
 		}
 	}
-	for _, notWant := range []string{"headless on", "headless off", "launch phase", "phase status", "embed phase", "x      phases", "a      launch"} {
+	for _, notWant := range []string{"headless off", "launch phase", "phase status", "embed phase", "x      phases", "a      launch"} {
 		if strings.Contains(view, notWant) {
 			t.Fatalf("gated flows view should not advertise %q:\n%s", notWant, view)
 		}

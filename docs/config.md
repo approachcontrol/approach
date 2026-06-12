@@ -287,17 +287,24 @@ flows pane (mode `8`), which is the startup default. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row, `enter`
 expands or collapses read-only phase detail rows; `o` opens the linked plan
 body from the selected Flow. On an expanded phase row, `enter` launches the
-configured agent for that selected ready phase. Selected CLI `codex` and
-`claude` phase launches always run in an embedded headless terminal inside the
-flows pane. `codex-app` remains URL/deep-link based and launches externally.
-Press `r` to resume an attached provider session from the selected phase row.
+configured agent for that selected ready phase. Headless mode is on by default:
+selected CLI `codex` and `claude` phase launches run in an embedded terminal
+inside the flows pane. Press `h` to choose the CLI command mode: headless runs
+`codex exec` or `claude --print`, while headless off runs interactive `codex` or
+`claude` in the same embedded Flow terminal. The same command mode applies to
+the initial Plan launch when creating a new Flow. `codex-app` remains
+URL/deep-link based and launches externally. Press `r` to resume an attached
+provider session from the selected phase row; CLI resumes open in runtime-only
+embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and
 terminal. Terminal focus starts in wtui command mode: `left`/`right` cycles Flow
 terminals, `1`-`9` switches by number, `x` closes, `q`/`esc` quits, unknown
 ordinary keys do not pass through to the PTY, and `ctrl+g` sends a literal
-`ctrl+g`. Embedded headless output is rendered as readable terminal text rather
-than raw provider event JSON; `codex exec` streams progress while it runs,
-whereas `claude --print` only prints its result once the run completes. Expanded rows
+`ctrl+g`; `i` enters terminal input mode. In input mode, keys pass through to the
+PTY and `ctrl+g` returns to command mode. Embedded headless output is rendered as
+readable terminal text rather than raw provider event JSON; `codex exec` streams
+progress while it runs, whereas `claude --print` only prints its result once the
+run completes. Expanded rows
 group child implementation phases directly under Implementation. New launches
 record a launch ID and Flow/plan environment metadata for the agent; CLI
 phase-session resumes also record a fresh launch ID, while `codex-app` resumes
@@ -553,10 +560,14 @@ Session resume uses the stored provider session ID. Codex resumes with
 `claude ... --resume <session-id>`, while preserving the same wtui hook and
 metadata environment wiring as fresh launches. In the full sessions view, those
 CLI resumes run inside runtime-only embedded PTYs in the sessions pane. Fresh
-Flow selected-phase launches run CLI agents headlessly inside runtime-only
-embedded PTYs in the flows pane. Other non-Flow agent launches and `codex-app`
-Flow launches or resumes keep using their existing external terminal or
-deep-link transports. The TUI refuses to
+Flow selected-phase launches and Flow phase-session resumes run CLI agents
+inside runtime-only embedded PTYs in the flows pane; Flow headless mode chooses
+headless provider commands (`codex exec` / `claude --print`) versus interactive
+provider commands (`codex` / `claude`) inside that embedded terminal. Flow
+phase-session resumes also run inside runtime-only embedded PTYs in the flows
+pane. Other non-Flow agent launches keep using their existing external terminal
+transport, and `codex-app` Flow launches and resumes keep using deep-link
+transport. The TUI refuses to
 resume a stored session whose provider session ID is blank (it reports this in
 the status line instead), and command construction trims resume session IDs and
 rejects whitespace-only ones, so a resume command never carries a blank `--resume`

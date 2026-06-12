@@ -42,6 +42,7 @@ type Model struct {
 	expandedFlowID            string
 	selectedPlanPhaseID       string
 	selectedFlowPhaseID       string
+	flowHeadless              bool
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -322,6 +323,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessions:              newSessionPane(),
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
+		flowHeadless:          true,
 		flowRefreshTickGen:    1,
 		mode:                  startupMode(opts.StartupMode),
 		agentCommand:          agent.Normalize(opts.AgentCommand),
@@ -551,6 +553,7 @@ func (m Model) View() string {
 		ExpandedFlowID:             m.expandedFlowID,
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
+		FlowHeadless:               m.flowHeadless,
 		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
 		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
 		OverlayText:                modalView.Text,
@@ -933,7 +936,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
-		next, launchCmd := m.launchFlowEmbeddedHeadlessWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)

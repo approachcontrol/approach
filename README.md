@@ -75,7 +75,8 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
-| `←`/`→`/`h`/`l` | Cycle through modes |
+| `←`/`→`/`l` | Cycle through modes; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
+| `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, expand/collapse plan or Flow phases, or launch the selected launchable Flow phase |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -298,21 +299,27 @@ same Flow. Press `y` to copy the selected Flow ID, or the selected phase ID
 when a phase row is selected. Press `r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
-existing app thread without extra launch tracking. Selected CLI `codex` and
-`claude` phase launches always run in a runtime-only embedded headless terminal
-inside the flows pane. `codex-app` always uses the external deep-link route.
-Embedded headless output is readable terminal text, not raw JSON events:
-`codex exec` streams progress as it works, while `claude --print` prints its
-result when the run completes, so a Claude phase can show an empty terminal
-until it finishes (the terminal tab still shows `running`). While a Flow terminal is open,
+existing app thread without extra launch tracking. Flow headless mode is on by
+default: selected CLI `codex` and `claude` phase launches run in a runtime-only
+embedded terminal inside the flows pane. Press `h` to choose the CLI command
+mode: headless runs `codex exec` or `claude --print`, while headless off runs
+interactive `codex` or `claude` in the same embedded Flow terminal. The same
+command mode applies to the initial Plan launch when creating a new Flow.
+`codex-app` always uses the external deep-link route. Embedded headless output
+is readable terminal text, not raw JSON events: `codex exec` streams progress
+as it works, while `claude --print` prints its result when the run completes,
+so a Claude phase can show an empty terminal until it finishes (the terminal tab
+still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them. Flow terminal focus starts in wtui command
 mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
 closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
-and `ctrl+g` sends a literal `ctrl+g`. When Implementation is still gated by
-Plan Review, wtui reports the Plan Review state and notes instead of
-launching. When PR Creation is complete but structured PR metadata is missing,
-Autoreview remains pending and the Flow row shows `autoreview:missing-pr`.
+`ctrl+g` sends a literal `ctrl+g`, and `i` enters terminal input mode. In input
+mode, keys pass through to the PTY and `ctrl+g` returns to command mode. When
+Implementation is still gated by Plan Review, wtui reports the Plan Review state
+and notes instead of launching. When PR Creation is complete but structured PR
+metadata is missing, Autoreview remains pending and the Flow row shows
+`autoreview:missing-pr`.
 Expanded phase rows group child implementation phases directly under
 Implementation.
 

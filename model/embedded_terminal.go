@@ -405,28 +405,37 @@ func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) 
 func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedTerminalScope) (Model, tea.Cmd, bool) {
 	key := msg.String()
 	if scope == embeddedTerminalScopeFlow {
-		m.terminalPrefixActive = true
-		switch key {
-		case "tab":
-			m.flowFocus = flowFocusList
-			m.terminalPrefixActive = false
-			return m, nil, true
-		case "left":
-			return m.cycleEmbeddedTerminalForScope(scope, -1), nil, true
-		case "right":
-			return m.cycleEmbeddedTerminalForScope(scope, 1), nil, true
-		case "ctrl+g":
-			return m.writeToActiveTerminalForScope(scope, []byte{0x07}), nil, true
-		case "x":
-			return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
-		case "q", "esc":
-			next, cmd := m.handleEmbeddedTerminalQuitPrefix()
-			return next, cmd, true
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			return m.switchEmbeddedTerminalForScope(scope, int(key[0]-'0')), nil, true
-		default:
-			return m.setStatus(statusOther, "Unknown terminal prefix command"), nil, true
+		if m.terminalPrefixActive {
+			switch key {
+			case "tab":
+				m.flowFocus = flowFocusList
+				m.terminalPrefixActive = false
+				return m, nil, true
+			case "left":
+				return m.cycleEmbeddedTerminalForScope(scope, -1), nil, true
+			case "right":
+				return m.cycleEmbeddedTerminalForScope(scope, 1), nil, true
+			case "ctrl+g":
+				return m.writeToActiveTerminalForScope(scope, []byte{0x07}), nil, true
+			case "i":
+				m.terminalPrefixActive = false
+				return m, nil, true
+			case "x":
+				return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
+			case "q", "esc":
+				next, cmd := m.handleEmbeddedTerminalQuitPrefix()
+				return next, cmd, true
+			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+				return m.switchEmbeddedTerminalForScope(scope, int(key[0]-'0')), nil, true
+			default:
+				return m.setStatus(statusOther, "Unknown terminal prefix command"), nil, true
+			}
 		}
+		if key == "ctrl+g" {
+			m.terminalPrefixActive = true
+			return m, nil, true
+		}
+		return m.writeToActiveTerminalForScope(scope, keyBytes(msg)), nil, true
 	}
 	if m.terminalPrefixActive {
 		m.terminalPrefixActive = false

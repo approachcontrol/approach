@@ -250,6 +250,7 @@ type RenderParams struct {
 	ExpandedFlowID             string
 	SelectedPlanPhaseID        string
 	SelectedFlowPhaseID        string
+	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	OverlayText                string
@@ -457,6 +458,7 @@ func renderApplication(p RenderParams) string {
 		FlowPhaseSelected:          flowPhaseSelected,
 		FlowDeletableSelected:      flowDeletableSelected,
 		FlowPlanLinked:             flowPlanLinked,
+		FlowHeadless:               p.FlowHeadless,
 		FlowPhaseLaunchReady:       p.FlowPhaseLaunchReady,
 		FlowPhaseResumableSelected: p.FlowPhaseResumableSelected,
 		TransientError:             p.TransientError,
@@ -711,6 +713,7 @@ type statusBarParams struct {
 	FlowPhaseSelected          bool
 	FlowDeletableSelected      bool
 	FlowPlanLinked             bool
+	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	TransientError             string
@@ -726,11 +729,12 @@ type statusBarParams struct {
 }
 
 type shortcutHint struct {
-	Key     string
-	Label   string
-	Warning bool
-	Inline  bool
-	Muted   bool
+	Key           string
+	Label         string
+	SuccessSuffix string
+	Warning       bool
+	Inline        bool
+	Muted         bool
 }
 
 type shortcutSection struct {
@@ -889,8 +893,35 @@ func renderShortcutPaneHint(hint shortcutHint, width int) string {
 		labelStyle = statusStyle
 	}
 	key := padShortcutKey(keyStyle.Render(hint.Key), shortcutKeyColumnWidth)
-	label := labelStyle.Render(hint.Label)
+	label := renderShortcutHintLabel(hint, labelStyle)
 	return ansi.Truncate(" "+key+" "+label, width, "")
+}
+
+func renderShortcutHintLabel(hint shortcutHint, labelStyle lipgloss.Style) string {
+	return renderShortcutHintLabelWithRestore(hint, labelStyle, "")
+}
+
+func renderShortcutHintLabelWithRestore(hint shortcutHint, labelStyle lipgloss.Style, restoreSequence string) string {
+	if hint.SuccessSuffix == "" || hint.Warning || hint.Muted {
+		return labelStyle.Render(hint.Label)
+	}
+	prefix, ok := strings.CutSuffix(hint.Label, hint.SuccessSuffix)
+	if !ok {
+		return labelStyle.Render(hint.Label)
+	}
+	return labelStyle.Render(prefix) + shortcutSuccessStyle.Render(hint.SuccessSuffix) + restoreSequence
+}
+
+// styleStartSequence returns the zero-width ANSI prefix for restoring a style
+// after a nested styled segment resets terminal attributes.
+func styleStartSequence(style lipgloss.Style) string {
+	const marker = "\x00"
+	rendered := style.Render(marker)
+	before, _, ok := strings.Cut(rendered, marker)
+	if !ok {
+		return ""
+	}
+	return before
 }
 
 func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
@@ -940,7 +971,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			if sp.Mode == ModeSessions {
 				hints = slices.Insert(hints, 1, shortcutHint{Key: "l", Label: "sessions"})
 			} else {
-				hints = slices.Insert(hints, 1, shortcutHint{Key: "left/right", Label: "terminal"})
+				hints = slices.Insert(hints, 1,
+					shortcutHint{Key: "i", Label: "input"},
+					shortcutHint{Key: "left/right", Label: "terminal"},
+				)
 			}
 		}
 		sections := []shortcutSection{{Title: "Terminal", Hints: hints}}
@@ -1094,6 +1128,13 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeFlows:
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+			headlessLabel := "headless off"
+			headlessSuccessSuffix := ""
+			if sp.FlowHeadless {
+				headlessLabel = "headless on"
+				headlessSuccessSuffix = "on"
+			}
+			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
@@ -1545,14 +1586,13 @@ func renderFooterHint(hint shortcutHint) string {
 		return mergedStyle.Render("merged")
 	}
 
-	text := hint.Key + shortcutSeparator(hint) + " " + hint.Label
 	if hint.Warning {
-		return dirtyRedStyle.Render(text)
+		return dirtyRedStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
 	if hint.Muted {
-		return statusStyle.Render(text)
+		return statusStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
-	return text
+	return hint.Key + shortcutSeparator(hint) + " " + renderShortcutHintLabelWithRestore(hint, lipgloss.NewStyle(), styleStartSequence(statusStyle))
 }
 
 func styledDotForLabel(label string) string {
