@@ -1074,6 +1074,7 @@ func TestModel_AKeyOnFlowLaunchesReadyPlanReviewWithLinkedPlanContext(t *testing
 	}
 	wantPrompt := strings.Join([]string{
 		"Use the review loop skill to review the saved plan.",
+		"Use the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
 		"",
 		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-review",

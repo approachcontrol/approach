@@ -1502,7 +1502,7 @@ func flowPhasePromptNeedsPlanBody(phaseID string) bool {
 }
 
 func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalArtifactPrompt("Use the review loop skill to review the saved plan.", planPath, record, phase)
+	return flowMinimalArtifactPrompt("Use the review loop skill to review the saved plan.\nUse the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
 }
 
 func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
