@@ -577,6 +577,60 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 	}
 }
 
+func TestRender_FlowsModeStylesHeadlessOnIndicator(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Headless flow",
+			Status: flowstore.StatusInProgress,
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+		FlowHeadless: true,
+	})
+
+	headlessLine := rawLineContaining(view, "headless on")
+	if headlessLine == "" {
+		t.Fatalf("headless shortcut missing:\n%s", view)
+	}
+	if !strings.Contains(ansi.Strip(headlessLine), "h      headless on") {
+		t.Fatalf("headless shortcut should keep readable text, got %q", headlessLine)
+	}
+	wantOn := lipgloss.NewStyle().Foreground(lipgloss.Color("#35F06D")).Bold(true).Render("on")
+	if !strings.Contains(headlessLine, wantOn) {
+		t.Fatalf("headless on indicator should render bright green:\n%q\nmissing %q", headlessLine, wantOn)
+	}
+
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        80,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
+	})
+	if !strings.Contains(ansi.Strip(bar), "h: headless on") {
+		t.Fatalf("narrow footer should keep readable headless shortcut, got %q", bar)
+	}
+	if !strings.Contains(bar, wantOn) {
+		t.Fatalf("narrow footer headless on indicator should render bright green:\n%q\nmissing %q", bar, wantOn)
+	}
+}
+
 func TestStatusBar_FlowsModeNarrowFooterShowsEnterAndHeadlessWithoutLegacyHints(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:        80,

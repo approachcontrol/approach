@@ -691,11 +691,12 @@ type statusBarParams struct {
 }
 
 type shortcutHint struct {
-	Key     string
-	Label   string
-	Warning bool
-	Inline  bool
-	Muted   bool
+	Key           string
+	Label         string
+	SuccessSuffix string
+	Warning       bool
+	Inline        bool
+	Muted         bool
 }
 
 type shortcutSection struct {
@@ -854,8 +855,19 @@ func renderShortcutPaneHint(hint shortcutHint, width int) string {
 		labelStyle = statusStyle
 	}
 	key := padShortcutKey(keyStyle.Render(hint.Key), shortcutKeyColumnWidth)
-	label := labelStyle.Render(hint.Label)
+	label := renderShortcutHintLabel(hint, labelStyle)
 	return ansi.Truncate(" "+key+" "+label, width, "")
+}
+
+func renderShortcutHintLabel(hint shortcutHint, labelStyle lipgloss.Style) string {
+	if hint.SuccessSuffix == "" || hint.Warning || hint.Muted {
+		return labelStyle.Render(hint.Label)
+	}
+	prefix, ok := strings.CutSuffix(hint.Label, hint.SuccessSuffix)
+	if !ok {
+		return labelStyle.Render(hint.Label)
+	}
+	return labelStyle.Render(prefix) + shortcutSuccessStyle.Render(hint.SuccessSuffix)
 }
 
 func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
@@ -1058,10 +1070,12 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 			headlessLabel := "headless off"
+			headlessSuccessSuffix := ""
 			if sp.FlowHeadless {
 				headlessLabel = "headless on"
+				headlessSuccessSuffix = "on"
 			}
-			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel})
+			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
@@ -1510,14 +1524,13 @@ func renderFooterHint(hint shortcutHint) string {
 		return mergedStyle.Render("merged")
 	}
 
-	text := hint.Key + shortcutSeparator(hint) + " " + hint.Label
 	if hint.Warning {
-		return dirtyRedStyle.Render(text)
+		return dirtyRedStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
 	if hint.Muted {
-		return statusStyle.Render(text)
+		return statusStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
-	return text
+	return hint.Key + shortcutSeparator(hint) + " " + renderShortcutHintLabel(hint, lipgloss.NewStyle())
 }
 
 func styledDotForLabel(label string) string {
