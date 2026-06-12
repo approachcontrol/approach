@@ -94,6 +94,7 @@ type Model struct {
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
+	nextEmbeddedTerminalID    int
 	activeEmbeddedTerminalNum int
 	activeFlowTerminalNum     int
 	flowFocus                 flowFocus
