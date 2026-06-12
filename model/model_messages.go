@@ -301,6 +301,7 @@ type PlanLaunchRequestedMsg struct {
 
 type FlowEmbeddedLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
+	Request       uint64
 }
 
 type FlowTitleSubmittedMsg struct {

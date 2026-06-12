@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/actions"
+	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
@@ -435,7 +436,19 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
 		}
-		return PlanLaunchRequestedMsg{LaunchContext: result.LaunchContext}
+		return flowPlanLaunchMessage(result.LaunchContext)
+	}
+}
+
+func flowPlanLaunchMessage(ctx actions.AgentLaunchContext) tea.Msg {
+	switch agent.Normalize(ctx.Command) {
+	case agent.CommandCodex, agent.CommandClaude:
+		ctx.Embedded = true
+		ctx.Headless = true
+		ctx.FlowLaunchTracked = true
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
+	default:
+		return PlanLaunchRequestedMsg{LaunchContext: ctx}
 	}
 }
 
