@@ -78,6 +78,7 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`→`/`l` | Cycle through modes; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
+| `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, expand/collapse plan or Flow phases, or launch the selected launchable Flow phase |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -136,6 +137,8 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `✗` red: stale — worktree directory no longer exists
 
 Press `A` to choose `codex`, `codex-app`, or `claude` from a picker; wtui persists the choice to config.
+In flows view, press `E` to choose the selected CLI agent's reasoning effort
+for future launches.
 Press `a` to launch the selected agent in the current non-stale worktree, or
 `N` to create a worktree and launch the agent there immediately. Press `n` to
 create a worktree without launching an agent. Enter an existing branch, tag, or
@@ -318,8 +321,12 @@ default: selected CLI `codex` and `claude` phase launches run in a runtime-only
 embedded terminal inside the flows pane. Press `h` to choose the CLI command
 mode: headless runs `codex exec` or `claude --print`, while headless off runs
 interactive `codex` or `claude` in the same embedded Flow terminal. The same
-command mode applies to the initial Plan launch when creating a new Flow.
-`codex-app` always uses the external deep-link route. Embedded headless output
+command mode applies to the initial Plan launch when creating a new Flow. Press
+`E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
+the current value. Codex CLI launches use `--config
+model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
+session resumes do not receive effort flags. `codex-app` always uses the
+external deep-link route and keeps app-side/default reasoning. Embedded headless output
 is readable terminal text, not raw JSON events: `codex exec` streams progress
 as it works, while `claude --print` prints its result when the run completes,
 so a Claude phase can show an empty terminal until it finishes (the terminal tab
@@ -496,6 +503,8 @@ max_depth = 2
 
 [agent]
 command = "codex"
+codex_reasoning_effort = "high"
+claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
 [flow_prompts]
@@ -517,9 +526,12 @@ script = ".wtui/bootstrap"
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. The scan root is
 cleaned before scanning; explicit relative roots preserve relative repo paths
 for compatibility. The same root is resolved to an absolute path when used as
-the parent directory for left-pane repo creation. `[agent].plan_prompt`
-customizes the editable instructions shown before launching an agent from the
-plans pane, while `[flow_prompts]` customizes Flow phase launch templates.
+the parent directory for left-pane repo creation.
+`[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
+configure provider-specific effort for new CLI agent launches; empty or
+`default` keeps provider defaults. `[agent].plan_prompt` customizes the
+editable instructions shown before launching an agent from the plans pane, while
+`[flow_prompts]` customizes Flow phase launch templates.
 `[editor].command` customizes the editor used by the plans pane edit action.
 See [docs/config.md](docs/config.md) for the full config reference, including
 sessions storage, bootstrap hook settings, terminal settings, and parsed

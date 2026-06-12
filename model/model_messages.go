@@ -299,6 +299,17 @@ type AgentSetFailedMsg struct {
 	Err     string
 }
 
+type AgentReasoningEffortSetMsg struct {
+	Command string
+	Effort  string
+}
+
+type AgentReasoningEffortSetFailedMsg struct {
+	Command string
+	Effort  string
+	Err     string
+}
+
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
@@ -906,6 +917,23 @@ func (m Model) handleAgentSetFailed(msg AgentSetFailedMsg) Model {
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to persist agent selection"
+	}
+	m = m.setStatus(statusOther, errText)
+	return m
+}
+
+func (m Model) handleAgentReasoningEffortSet(msg AgentReasoningEffortSetMsg) Model {
+	m = m.withReasoningEffort(msg.Command, msg.Effort)
+	m = m.clearStatus(statusOther)
+	return m
+}
+
+func (m Model) handleAgentReasoningEffortSetFailed(msg AgentReasoningEffortSetFailedMsg) Model {
+	// Keep the selection usable for this session even when persistence fails.
+	m = m.withReasoningEffort(msg.Command, msg.Effort)
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to persist reasoning effort"
 	}
 	m = m.setStatus(statusOther, errText)
 	return m

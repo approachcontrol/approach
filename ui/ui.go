@@ -282,6 +282,7 @@ type RenderParams struct {
 	SelectedPlanPhaseID         string
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
+	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -492,6 +493,7 @@ func renderApplication(p RenderParams) string {
 		FlowDeletableSelected:       flowDeletableSelected,
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
+		FlowReasoningEffort:         p.FlowReasoningEffort,
 		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
@@ -749,6 +751,7 @@ type statusBarParams struct {
 	FlowDeletableSelected       bool
 	FlowPlanLinked              bool
 	FlowHeadless                bool
+	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -1200,6 +1203,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					}
 				}
 			}
+			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1236,6 +1240,14 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 
 func shortcutsMuted(sp statusBarParams) bool {
 	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
+}
+
+func flowReasoningEffortShortcutLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "effort: default"
+	}
+	return value
 }
 
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {
@@ -1388,10 +1400,13 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "d")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
+		appendParts(base, upDown, arrow, actionsWithoutEffort),
+		appendParts(base, arrow, actionsWithoutEffort),
 		appendParts(base, arrow, actions),
 		appendParts(base, arrow, coreActions),
 		appendParts(arrow, coreActions),

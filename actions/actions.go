@@ -627,6 +627,7 @@ type AgentLaunchContext struct {
 	FlowPhaseTerminal bool
 	Embedded          bool
 	Headless          bool
+	ReasoningEffort   string
 	// InitialPrompt is passed to providers when they support a launch-time prompt.
 	InitialPrompt string
 }
@@ -758,7 +759,16 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	if ctx.Headless && resumeSessionID != "" {
 		return nil, nil, fmt.Errorf("headless agent launch does not support session resume")
 	}
-	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded, ctx.Headless)
+	reasoningEffort := agent.NormalizeReasoningEffort(ctx.ReasoningEffort)
+	if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
+		if err := agent.ValidateReasoningEffort(command, reasoningEffort); err != nil {
+			return nil, nil, err
+		}
+		if resumeSessionID != "" {
+			return nil, nil, fmt.Errorf("reasoning effort cannot be set for session resume")
+		}
+	}
+	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded, ctx.Headless, reasoningEffort)
 	if ctx.InitialPrompt != "" {
 		args = append(args, ctx.InitialPrompt)
 	}
@@ -964,12 +974,15 @@ func ResolveWorktreeCommit(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool) []string {
+func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, reasoningEffort string) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
 		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
 		args := []string{"--config", hookConfig}
+		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
+			args = append(args, "--config", "model_reasoning_effort="+reasoningEffort)
+		}
 		if embedded && !headless {
 			args = slices.Insert(args, 0, "--no-alt-screen")
 		}
@@ -984,6 +997,9 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool) [
 		hookCommand := wtuiSessionHookCommand("claude")
 		settings := claudeSessionHookSettings(hookCommand)
 		args := []string{"--settings", settings}
+		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
+			args = append(args, "--effort", reasoningEffort)
+		}
 		if headless {
 			args = slices.Insert(args, 0, "--print")
 		}

@@ -18,6 +18,7 @@ type FlowStartRequest struct {
 	Instructions     string
 	BaseRef          string
 	AgentCommand     string
+	ReasoningEffort  string
 	SessionStateRoot string
 	PlanPhaseID      string
 	PlanPhaseTitle   string
@@ -172,6 +173,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          req.AgentCommand,
+		ReasoningEffort:  req.ReasoningEffort,
 		LaunchID:         launchID,
 		RepoPath:         req.RepoPath,
 		WorktreePath:     worktree.WorktreePath,

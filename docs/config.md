@@ -25,6 +25,7 @@ exist:
 | Plan editor command | `[editor].command` | `EDITOR` | unset |
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
@@ -61,6 +62,8 @@ prefer_multiplexer = true
 
 [agent]
 command = "codex"
+codex_reasoning_effort = "high"
+claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
 [flow_prompts]
@@ -182,7 +185,16 @@ value immediately, creating the config file if needed.
 | Key | Type | Description |
 |-----|------|-------------|
 | `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
+| `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `minimal`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
+| `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional one-line template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
+
+In the flows pane, `E` opens a provider-specific reasoning-effort picker for
+the selected CLI agent and persists the corresponding key. New Codex CLI
+launches use `--config model_reasoning_effort=<effort>`; new Claude Code
+launches use `--effort <effort>`. Session resumes do not receive effort flags.
+`codex-app` launches keep app-side/default reasoning because the current deep
+link path cannot carry a verified effort setting.
 
 ### `[flow_prompts]`
 
@@ -303,8 +315,10 @@ selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `codex exec` or `claude --print`, while headless off runs interactive `codex` or
 `claude` in the same embedded Flow terminal. The same command mode applies to
-the initial Plan launch when creating a new Flow. `codex-app` remains
-URL/deep-link based and launches externally. Press `r` to resume an attached
+the initial Plan launch when creating a new Flow. Press `E` to choose the
+configured CLI agent's reasoning effort for future launches; the shortcut pane
+shows the current value. `codex-app` remains URL/deep-link based, launches
+externally, and uses app-side/default reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and

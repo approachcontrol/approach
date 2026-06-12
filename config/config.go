@@ -55,8 +55,10 @@ type LaunchConfig struct {
 
 // AgentConfig stores the user's preferred interactive coding agent.
 type AgentConfig struct {
-	Command    string `toml:"command"`
-	PlanPrompt string `toml:"plan_prompt"`
+	Command               string `toml:"command"`
+	PlanPrompt            string `toml:"plan_prompt"`
+	CodexReasoningEffort  string `toml:"codex_reasoning_effort"`
+	ClaudeReasoningEffort string `toml:"claude_reasoning_effort"`
 }
 
 // FlowPromptConfig stores optional launch prompt templates for Flow phases.
@@ -181,6 +183,18 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}
 	}
+	if cfg.Agent.CodexReasoningEffort != "" {
+		cfg.Agent.CodexReasoningEffort = agent.NormalizeReasoningEffort(cfg.Agent.CodexReasoningEffort)
+		if err := agent.ValidateReasoningEffort(agent.CommandCodex, cfg.Agent.CodexReasoningEffort); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+	if cfg.Agent.ClaudeReasoningEffort != "" {
+		cfg.Agent.ClaudeReasoningEffort = agent.NormalizeReasoningEffort(cfg.Agent.ClaudeReasoningEffort)
+		if err := agent.ValidateReasoningEffort(agent.CommandClaude, cfg.Agent.ClaudeReasoningEffort); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
 
 	if cfg.Sessions.Root != "" {
 		root, err := expandHome(cfg.Sessions.Root, opts.homeDir)
@@ -268,6 +282,33 @@ func SaveAgentCommand(command string, options ...Option) error {
 	return saveAgentCommandTo(path, command, options...)
 }
 
+// SaveAgentReasoningEffort persists the selected provider-specific reasoning
+// effort to wtui's default config file, creating the config directory when
+// needed. An empty effort is saved as "default".
+func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
+	command = agent.Normalize(command)
+	if command != agent.CommandCodex && command != agent.CommandClaude {
+		if err := agent.Validate(command); err != nil {
+			return err
+		}
+		return fmt.Errorf("reasoning effort is configurable only for codex or claude")
+	}
+	effort = agent.NormalizeReasoningEffort(effort)
+	if effort == "" {
+		effort = agent.ReasoningEffortDefault
+	}
+	if err := agent.ValidateReasoningEffort(command, effort); err != nil {
+		return err
+	}
+
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return saveAgentReasoningEffortTo(path, command, effort, options...)
+}
+
 func writableDefaultPath(opts loadOptions) (string, error) {
 	paths, err := defaultPaths(opts)
 	if err != nil {
@@ -284,6 +325,22 @@ func writableDefaultPath(opts loadOptions) (string, error) {
 }
 
 func saveAgentCommandTo(path, command string, options ...Option) error {
+	return saveAgentConfigTo(path, options, func(data []byte) []byte {
+		return patchAgentCommand(data, command)
+	})
+}
+
+func saveAgentReasoningEffortTo(path, command, effort string, options ...Option) error {
+	key := "codex_reasoning_effort"
+	if command == agent.CommandClaude {
+		key = "claude_reasoning_effort"
+	}
+	return saveAgentConfigTo(path, options, func(data []byte) []byte {
+		return patchAgentReasoningEffort(data, key, effort)
+	})
+}
+
+func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte) error {
 	opts := defaultOptions(options...)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -294,7 +351,7 @@ func saveAgentCommandTo(path, command string, options ...Option) error {
 		return err
 	}
 
-	data = patchAgentCommand(data, command)
+	data = patch(data)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
 	}
@@ -305,8 +362,16 @@ func saveAgentCommandTo(path, command string, options ...Option) error {
 }
 
 func patchAgentCommand(data []byte, command string) []byte {
+	return patchAgentAssignment(data, "command", agentCommandLine(command))
+}
+
+func patchAgentReasoningEffort(data []byte, key, effort string) []byte {
+	return patchAgentAssignment(data, key, agentReasoningEffortLine(key, effort))
+}
+
+func patchAgentAssignment(data []byte, key, assignmentLine string) []byte {
 	if len(data) == 0 {
-		return []byte("[agent]\n" + agentCommandLine(command))
+		return []byte("[agent]\n" + assignmentLine)
 	}
 
 	lines := strings.SplitAfter(string(data), "\n")
@@ -319,7 +384,7 @@ func patchAgentCommand(data []byte, command string) []byte {
 		}
 		if isTableHeader(trimmed) {
 			if inAgent {
-				return []byte(strings.Join(insertLine(lines, i, agentCommandLine(command)), ""))
+				return []byte(strings.Join(insertLine(lines, i, assignmentLine), ""))
 			}
 			inAgent = trimmed == "[agent]"
 			if inAgent {
@@ -327,14 +392,14 @@ func patchAgentCommand(data []byte, command string) []byte {
 			}
 			continue
 		}
-		if inAgent && isCommandAssignment(line) {
-			lines[i] = replaceCommandAssignment(line, command)
+		if inAgent && isAgentAssignment(line, key) {
+			lines[i] = replaceAgentAssignment(line, assignmentLine)
 			return []byte(strings.Join(lines, ""))
 		}
 	}
 
 	if inAgent {
-		return []byte(strings.Join(insertLine(lines, agentHeader+1, agentCommandLine(command)), ""))
+		return []byte(strings.Join(insertLine(lines, agentHeader+1, assignmentLine), ""))
 	}
 
 	text := string(data)
@@ -344,30 +409,34 @@ func patchAgentCommand(data []byte, command string) []byte {
 	if strings.TrimSpace(text) != "" && !strings.HasSuffix(text, "\n\n") {
 		text += "\n"
 	}
-	return []byte(text + "[agent]\n" + agentCommandLine(command))
+	return []byte(text + "[agent]\n" + assignmentLine)
 }
 
 func isTableHeader(line string) bool {
 	return strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]")
 }
 
-func isCommandAssignment(line string) bool {
+func isAgentAssignment(line, key string) bool {
 	eq := strings.Index(line, "=")
 	if eq == -1 {
 		return false
 	}
-	return strings.TrimSpace(line[:eq]) == "command"
+	return strings.TrimSpace(line[:eq]) == key
 }
 
-func replaceCommandAssignment(line, command string) string {
+func replaceAgentAssignment(line, assignmentLine string) string {
 	body := strings.TrimRight(line, "\r\n")
 	ending := line[len(body):]
 	indent := body[:len(body)-len(strings.TrimLeft(body, " \t"))]
-	return indent + strings.TrimSuffix(agentCommandLine(command), "\n") + ending
+	return indent + strings.TrimSuffix(assignmentLine, "\n") + ending
 }
 
 func agentCommandLine(command string) string {
 	return fmt.Sprintf("command = %q\n", command)
+}
+
+func agentReasoningEffortLine(key, effort string) string {
+	return fmt.Sprintf("%s = %q\n", key, effort)
 }
 
 func insertLine(lines []string, index int, line string) []string {

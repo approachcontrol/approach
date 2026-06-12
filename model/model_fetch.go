@@ -466,6 +466,7 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 			Instructions:     instructions,
 			BaseRef:          baseRef,
 			AgentCommand:     m.agentCommand,
+			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 			SessionStateRoot: m.sessionStateRoot,
 			PlanPhaseID:      flowPlanPhaseID,
 			PlanPhaseTitle:   "Plan",
