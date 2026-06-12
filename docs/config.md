@@ -36,8 +36,10 @@ exist:
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
 Session roots must resolve to absolute paths so captured transcripts stay out of
-repositories.
-`WORKTREE_ROOT` is passed through as provided by the environment.
+repositories. The scan root is cleaned before repository discovery; explicit
+relative roots, including `WORKTREE_ROOT`, preserve relative repo paths for
+compatibility. The same root is resolved from wtui's current working directory
+when used as the parent directory for left-pane repo creation.
 
 ## Example
 
@@ -96,11 +98,20 @@ Controls repository discovery.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `root` | string | Directory to scan for git repositories. |
+| `root` | string | Directory to scan for git repositories and parent directory for repos created from the left pane. |
 | `max_depth` | integer | Scan depth below `root`; `1` scans immediate children, `2` also scans one level deeper. |
 
 When `max_depth` is omitted or set to `0`, wtui uses the scanner default of `2`.
 Values greater than `2` behave like `2`.
+
+Pressing `n` in the left repo pane creates a new local Git repository directly
+under the resolved scan root. If the form's GitHub checkbox is enabled, wtui
+also runs `gh repo create <name> --public|--private --source <path> --remote origin`;
+`gh` must be installed and authenticated. A GitHub failure after local creation
+keeps the local repository and allows retrying only the GitHub/origin setup.
+Repo names must be one path segment: they cannot be empty, `.`, `..`, start
+with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
+worktree directories).
 
 ### `[editor]`
 
