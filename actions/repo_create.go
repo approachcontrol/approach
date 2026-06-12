@@ -169,6 +169,9 @@ func validateRepoCreateRootAndName(root, name string) (string, string, error) {
 	if strings.HasPrefix(name, "-") {
 		return "", "", fmt.Errorf("repo name cannot start with '-'")
 	}
+	if strings.HasSuffix(name, "-worktrees") {
+		return "", "", fmt.Errorf("repo name cannot end with '-worktrees'")
+	}
 	if filepath.Clean(name) != name {
 		return "", "", fmt.Errorf("repo name must be a single path segment")
 	}

@@ -51,6 +51,7 @@ func TestCreateRepoRejectsInvalidNames(t *testing.T) {
 		{name: "dot", repo: "."},
 		{name: "dot dot", repo: ".."},
 		{name: "leading dash", repo: "-repo"},
+		{name: "reserved worktrees suffix", repo: "app-worktrees"},
 		{name: "existing destination", repo: "existing"},
 	}
 
