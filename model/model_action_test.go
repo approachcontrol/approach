@@ -4210,6 +4210,10 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	if started != wantStartSize {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], wantStartWidth, wantStartHeight)
 	}
+	wantPaddedStartWidth := ui.RightContentWidth(180, 14, false) - ui.EmbeddedTerminalFrameColumns - 2*ui.EmbeddedTerminalSidePadding
+	if started[0] != wantPaddedStartWidth {
+		t.Fatalf("embedded terminal start width = %d, want padded width %d", started[0], wantPaddedStartWidth)
+	}
 	_ = m.View()
 	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)

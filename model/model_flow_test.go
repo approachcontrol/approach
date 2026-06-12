@@ -1742,6 +1742,432 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesImplementationInEmbeddedHeadlessT
 	}
 }
 
+func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flow}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, tickBatch := update(m, cmd())
+	if tickBatch == nil {
+		t.Fatal("embedded launch should schedule repaint tick")
+	}
+	if view := m.View(); !strings.Contains(view, "agent output") {
+		t.Fatalf("running Flow terminal should render output before exit:\n%s", view)
+	}
+
+	fakeTerm.state = "exited"
+	for _, msg := range runBatchCmd(t, tickBatch) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			t.Fatalf("exited Flow terminal should not reschedule repaint, got %T", followup)
+		}
+	}
+
+	view := m.View()
+	if strings.Contains(view, "agent output") || strings.Contains(view, "1 codex implementation exited") {
+		t.Fatalf("exited Flow terminal should auto-close on repaint tick:\n%s", view)
+	}
+	if !strings.Contains(view, "flow/with-phases") || !strings.Contains(view, "implementation:ready") {
+		t.Fatalf("Flow list should be visible after the terminal auto-closes:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *testing.T) {
+	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session output"}, state: "running"}
+	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow output"}, state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			if ctx.ResumeSessionID != "" {
+				return sessionTerm, nil
+			}
+			return flowTerm, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flow}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, flowTick := update(m, cmd())
+	if flowTick == nil {
+		t.Fatal("first Flow terminal should schedule repaint tick")
+	}
+	if view := m.View(); !strings.Contains(view, "flow output") {
+		t.Fatalf("running Flow terminal should render output before exit:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if sessionTick != nil {
+		t.Fatal("opening a session while a Flow terminal is running should reuse the active repaint loop")
+	}
+
+	flowTerm.state = "exited"
+	gotFollowup := false
+	for _, msg := range runBatchCmd(t, flowTick) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			gotFollowup = true
+		}
+	}
+	if !gotFollowup {
+		t.Fatal("running session terminal should keep repaint loop alive after Flow auto-close")
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "session output") || !strings.Contains(view, "1 codex feature/session running") {
+		t.Fatalf("running session terminal should remain visible after Flow auto-close:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *testing.T) {
+	sessionTerm := &fakeEmbeddedTerminal{lines: []string{"session done"}, state: "exited"}
+	flowTerm := &fakeEmbeddedTerminal{lines: []string{"flow done"}, state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			if ctx.ResumeSessionID != "" {
+				return sessionTerm, nil
+			}
+			return flowTerm, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flow}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, tickBatch := update(m, cmd())
+	if tickBatch == nil {
+		t.Fatal("embedded launch should schedule repaint tick when no PTY is running")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if sessionTick != nil {
+		t.Fatal("opening an exited session while a Flow terminal is running should reuse the active repaint loop")
+	}
+
+	flowTerm.state = "exited"
+	for _, msg := range runBatchCmd(t, tickBatch) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			t.Fatalf("all-exited terminals should stop repaint loop, got %T", followup)
+		}
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "session done") || !strings.Contains(view, "1 codex feature/session exited") {
+		t.Fatalf("exited session terminal should remain visible after Flow auto-close:\n%s", view)
+	}
+	if strings.Contains(view, "flow done") {
+		t.Fatalf("Flow terminal output should not remain after auto-close:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	view = m.View()
+	if strings.Contains(view, "session done") || strings.Contains(view, "1 codex feature/session") {
+		t.Fatalf("exited session terminal should still be dismissible:\n%s", view)
+	}
+	if !strings.Contains(view, "Provider") {
+		t.Fatalf("sessions table should return after dismissing saved-session terminal:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{lines: []string{"flow first output"}, state: "running"},
+		{lines: []string{"flow second output"}, state: "running"},
+		{lines: []string{"flow third output"}, state: "running"},
+	}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	var firstTick tea.Cmd
+	for i := 0; i < len(terms); i++ {
+		var cmd tea.Cmd
+		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		if cmd == nil {
+			t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+		}
+		var tickBatch tea.Cmd
+		m, tickBatch = update(m, cmd())
+		if i == 0 {
+			firstTick = tickBatch
+		}
+	}
+	if starts != 3 {
+		t.Fatalf("embedded terminal starts = %d, want 3", starts)
+	}
+	if firstTick == nil {
+		t.Fatal("first Flow terminal should schedule repaint tick")
+	}
+	if view := m.View(); !strings.Contains(view, "flow third output") {
+		t.Fatalf("third Flow terminal should be active before auto-close:\n%s", view)
+	}
+
+	terms[1].state = "exited"
+	var gotFollowup bool
+	for _, msg := range runBatchCmd(t, firstTick) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			gotFollowup = true
+		}
+	}
+	if !gotFollowup {
+		t.Fatal("remaining running Flow terminals should keep repaint loop alive")
+	}
+
+	view := m.View()
+	for _, want := range []string{"1 codex implementation running", "2 codex implementation running", "flow third output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renumbered Flow terminal view missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"3 codex", "flow second output", "2 codex implementation exited"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("auto-closed Flow terminal should not remain visible with %q:\n%s", unwanted, view)
+		}
+	}
+	if strings.Contains(view, "flow first output") {
+		t.Fatalf("former third terminal should stay active after renumbering:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalAutoCloseClearsPrefixForRemovedActiveTerminal(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{lines: []string{"flow first output"}, state: "running"},
+		{lines: []string{"flow second output"}, state: "running"},
+	}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	var tickBatch tea.Cmd
+	for range terms {
+		var cmd tea.Cmd
+		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		if cmd == nil {
+			t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+		}
+		var nextTick tea.Cmd
+		m, nextTick = update(m, cmd())
+		if tickBatch == nil {
+			tickBatch = nextTick
+		}
+	}
+	if tickBatch == nil {
+		t.Fatal("first Flow terminal should schedule repaint tick")
+	}
+	if view := m.View(); !strings.Contains(view, "flow second output") {
+		t.Fatalf("second Flow terminal should be active before auto-close:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	terms[1].state = "exited"
+	gotFollowup := false
+	for _, msg := range runBatchCmd(t, tickBatch) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			gotFollowup = true
+		}
+	}
+	if !gotFollowup {
+		t.Fatal("remaining running Flow terminal should keep repaint loop alive")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if got := strings.Join(terms[0].writes, ""); got != "x" {
+		t.Fatalf("x after active Flow auto-close should write to promoted terminal, got writes %#v", terms[0].writes)
+	}
+	view := m.View()
+	if !strings.Contains(view, "flow first output") || strings.Contains(view, "Terminate embedded terminal?") {
+		t.Fatalf("promoted Flow terminal should remain visible without a close confirmation:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{lines: []string{"flow first output"}, state: "running"},
+		{lines: []string{"flow second output"}, state: "running"},
+	}
+	starts := 0
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flow, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flow}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	var tickBatch tea.Cmd
+	for range terms {
+		var cmd tea.Cmd
+		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+		if cmd == nil {
+			t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+		}
+		var nextTick tea.Cmd
+		m, nextTick = update(m, cmd())
+		if tickBatch == nil {
+			tickBatch = nextTick
+		}
+	}
+	if tickBatch == nil {
+		t.Fatal("first Flow terminal should schedule repaint tick")
+	}
+	if view := m.View(); !strings.Contains(view, "flow second output") {
+		t.Fatalf("second Flow terminal should be active before auto-close:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected terminate confirmation, got %d", m.Overlay())
+	}
+
+	terms[1].state = "exited"
+	gotFollowup := false
+	for _, msg := range runBatchCmd(t, tickBatch) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			gotFollowup = true
+		}
+	}
+	if !gotFollowup {
+		t.Fatal("remaining running Flow terminal should keep repaint loop alive")
+	}
+
+	if m.Overlay() == ui.OverlayConfirm || strings.Contains(m.View(), "Terminate embedded terminal?") {
+		t.Fatalf("auto-closing the confirmed Flow terminal should clear stale confirmation:\n%s", m.View())
+	}
+	view := m.View()
+	if !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
+		t.Fatalf("promoted Flow terminal should be visible after auto-close clears confirmation:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"failure output"}, state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flow}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, tickBatch := update(m, cmd())
+	if tickBatch == nil {
+		t.Fatal("embedded launch should schedule repaint tick")
+	}
+
+	fakeTerm.state = "failed"
+	for _, msg := range runBatchCmd(t, tickBatch) {
+		var followup tea.Cmd
+		m, followup = update(m, msg)
+		if followup != nil {
+			t.Fatalf("failed Flow terminal should stop repaint loop, got %T", followup)
+		}
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "failure output") || !strings.Contains(view, "1 codex implementation failed") {
+		t.Fatalf("failed Flow terminal should remain visible for error review:\n%s", view)
+	}
+}
+
 func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",

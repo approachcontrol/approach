@@ -65,6 +65,34 @@ func requireStyleColor(t *testing.T, name string, got lipgloss.TerminalColor, wa
 	}
 }
 
+func TestEmbeddedTerminalWidthHelpersReserveSidePadding(t *testing.T) {
+	tests := []struct {
+		outerWidth int
+		wantRender int
+		wantPTY    int
+	}{
+		{outerWidth: 0, wantRender: 0, wantPTY: 1},
+		{outerWidth: 1, wantRender: 0, wantPTY: 1},
+		{outerWidth: 2, wantRender: 0, wantPTY: 1},
+		{outerWidth: 3, wantRender: 1, wantPTY: 1},
+		{outerWidth: 4, wantRender: 2, wantPTY: 2},
+		{outerWidth: 5, wantRender: 1, wantPTY: 1},
+		{outerWidth: 6, wantRender: 2, wantPTY: 2},
+		{outerWidth: 120, wantRender: 116, wantPTY: 116},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("outer_width_%d", tt.outerWidth), func(t *testing.T) {
+			if got := EmbeddedTerminalRenderContentWidth(tt.outerWidth); got != tt.wantRender {
+				t.Fatalf("render content width = %d, want %d", got, tt.wantRender)
+			}
+			if got := EmbeddedTerminalPTYWidth(tt.outerWidth); got != tt.wantPTY {
+				t.Fatalf("PTY width = %d, want %d", got, tt.wantPTY)
+			}
+		})
+	}
+}
+
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {
@@ -293,7 +321,7 @@ func TestRender_SessionsModeShowsEmbeddedTerminalInsteadOfSessionRows(t *testing
 	if !strings.Contains(lines[top], "┌") || bottom <= body {
 		t.Fatalf("embedded terminal frame should wrap header and body in order, got indexes top=%d header=%d body=%d bottom=%d:\n%s", top, header, body, bottom, view)
 	}
-	if !strings.Contains(lines[header], "│1 codex feature/api running") || !strings.Contains(lines[body], "│agent output") {
+	if !strings.Contains(lines[header], "│ 1 codex feature/api running") || !strings.Contains(lines[body], "│ agent output") {
 		t.Fatalf("embedded terminal header/body should be inside inner border:\n%s\n%s", lines[header], lines[body])
 	}
 }
@@ -320,9 +348,9 @@ func TestRenderEmbeddedTerminalPaneWindowsLinesInsideBorder(t *testing.T) {
 	requireLinesWithinWidth(t, stripped, 28)
 	for index, want := range map[int]string{
 		0: "┌",
-		1: "│1 codex implementation",
-		2: "│terminal line 4",
-		3: "│terminal line 5",
+		1: "│ 1 codex implementation",
+		2: "│ terminal line 4",
+		3: "│ terminal line 5",
 		4: "└",
 	} {
 		if !strings.Contains(stripped[index], want) {
@@ -336,6 +364,39 @@ func TestRenderEmbeddedTerminalPaneWindowsLinesInsideBorder(t *testing.T) {
 	}
 }
 
+func TestRenderEmbeddedTerminalFramePreservesBorderWidthWithSidePadding(t *testing.T) {
+	for _, tt := range []struct {
+		width           int
+		wantContentLine string
+		wantTop         string
+		wantBottom      string
+	}{
+		{width: 1, wantContentLine: "│", wantTop: "┌", wantBottom: "└"},
+		{width: 2, wantContentLine: "││", wantTop: "┌┐", wantBottom: "└┘"},
+		{width: 3, wantContentLine: "│a│", wantTop: "┌─┐", wantBottom: "└─┘"},
+		{width: 4, wantContentLine: "│ab│", wantTop: "┌──┐", wantBottom: "└──┘"},
+		{width: 5, wantContentLine: "│ a │", wantTop: "┌───┐", wantBottom: "└───┘"},
+	} {
+		t.Run(fmt.Sprintf("width_%d", tt.width), func(t *testing.T) {
+			contentLine := stripLines([]string{renderEmbeddedTerminalFrameContentLine("abc", lipgloss.NewStyle(), EmbeddedTerminalRenderContentWidth(tt.width), tt.width)})[0]
+			if contentLine != tt.wantContentLine {
+				t.Fatalf("content line = %q, want %q", contentLine, tt.wantContentLine)
+			}
+
+			frame := stripLines(renderEmbeddedTerminalFrame([]string{"abc"}, false, tt.width, 3))
+			if len(frame) != 3 {
+				t.Fatalf("frame lines = %#v, want 3 lines", frame)
+			}
+			if frame[0] != tt.wantTop {
+				t.Fatalf("top border = %q, want %q", frame[0], tt.wantTop)
+			}
+			if frame[2] != tt.wantBottom {
+				t.Fatalf("bottom border = %q, want %q", frame[2], tt.wantBottom)
+			}
+		})
+	}
+}
+
 func TestRenderEmbeddedTerminalPaneSmallAllocations(t *testing.T) {
 	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", State: "running", Active: true}}
 	for _, tc := range []struct {
@@ -345,7 +406,7 @@ func TestRenderEmbeddedTerminalPaneSmallAllocations(t *testing.T) {
 		{height: 0, want: nil},
 		{height: 1, want: []string{"┌──────────┐"}},
 		{height: 2, want: []string{"┌──────────┐", "└──────────┘"}},
-		{height: 3, want: []string{"┌──────────┐", "│1 codex ru│", "└──────────┘"}},
+		{height: 3, want: []string{"┌──────────┐", "│ 1 codex  │", "└──────────┘"}},
 	} {
 		t.Run(fmt.Sprintf("height_%d", tc.height), func(t *testing.T) {
 			got := stripLines(renderEmbeddedTerminalPane(tabs, []string{"body"}, false, false, 12, tc.height))

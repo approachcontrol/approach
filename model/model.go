@@ -99,6 +99,8 @@ type Model struct {
 	flowFocus                 flowFocus
 	embeddedTerminalTickGen   uint64
 	terminalPrefixActive      bool
+	terminalConfirmID         embeddedTerminalID
+	terminalConfirmScope      embeddedTerminalScope
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
 	sessionStateRoot          string
 	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
@@ -751,6 +753,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.embeddedTerminalTickGen {
 			return m, nil
 		}
+		m = m.dismissExitedFlowEmbeddedTerminals()
 		if m.hasRunningEmbeddedTerminal() {
 			return m, m.embeddedTerminalTickCmd()
 		}

@@ -18,6 +18,8 @@ import (
 	"github.com/brian-bell/wtui/ui"
 )
 
+const embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
+
 type EmbeddedTerminal interface {
 	VisibleLines(width, height int) []string
 	Write([]byte) (int, error)
@@ -502,7 +504,9 @@ func (m Model) handleEmbeddedTerminalClosePrefix(scope embeddedTerminalScope) Mo
 	if !embeddedTerminalRunning(slot.Terminal) {
 		return m.dismissEmbeddedTerminal(slot.ID)
 	}
-	m.modal = modal.OpenConfirm("Terminate embedded terminal?", func() tea.Cmd {
+	m.terminalConfirmID = slot.ID
+	m.terminalConfirmScope = slot.Scope
+	m.modal = modal.OpenConfirm(embeddedTerminalTerminatePrompt, func() tea.Cmd {
 		return func() tea.Msg { return terminateEmbeddedTerminalMsg{ID: slot.ID} }
 	})
 	return m
@@ -518,6 +522,26 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 	default:
 		return false
 	}
+}
+
+func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
+	ids := make([]embeddedTerminalID, 0)
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+			continue
+		}
+		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
+			ids = append(ids, slot.ID)
+		}
+	}
+	for _, id := range ids {
+		m = m.dismissEmbeddedTerminal(id)
+	}
+	return m
+}
+
+func flowEmbeddedTerminalAutoCloses(state string) bool {
+	return state == "exited"
 }
 
 func (m Model) handleTerminateEmbeddedTerminal(msg terminateEmbeddedTerminalMsg) (Model, tea.Cmd) {
@@ -536,6 +560,7 @@ func (m Model) handleTerminateEmbeddedTerminal(msg terminateEmbeddedTerminalMsg)
 func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 	var removedScope embeddedTerminalScope
 	removed := false
+	prefixScope, prefixActive := m.embeddedTerminalPrefixScope()
 	activeID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeSession)
 	activeFlowID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeFlow)
 	next := m.embeddedTerminals[:0]
@@ -552,6 +577,7 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 	}
 	m.embeddedTerminals = next
 	m.renumberEmbeddedTerminalsForScope(removedScope)
+	m = m.clearEmbeddedTerminalConfirmFor(id, removedScope)
 	if len(m.embeddedTerminals) == 0 {
 		m.activeEmbeddedTerminalNum = 0
 		m.activeFlowTerminalNum = 0
@@ -561,15 +587,50 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		return m
 	}
 	if removedScope == embeddedTerminalScopeFlow {
+		if prefixActive && prefixScope == embeddedTerminalScopeFlow && activeFlowID == id {
+			m.terminalPrefixActive = false
+		}
 		m.activeFlowTerminalNum = m.activeEmbeddedTerminalNumberAfterRenumber(embeddedTerminalScopeFlow, activeFlowID, id)
 		if m.activeFlowTerminalNum == 0 {
 			m.flowFocus = flowFocusList
 			m.terminalPrefixActive = false
 		}
 	} else {
+		if prefixActive && prefixScope == embeddedTerminalScopeSession && activeID == id {
+			m.terminalPrefixActive = false
+		}
 		m.activeEmbeddedTerminalNum = m.activeEmbeddedTerminalNumberAfterRenumber(embeddedTerminalScopeSession, activeID, id)
 	}
 	return m
+}
+
+func (m Model) clearEmbeddedTerminalConfirmFor(id embeddedTerminalID, scope embeddedTerminalScope) Model {
+	if m.terminalConfirmID != id || m.terminalConfirmScope != scope {
+		return m
+	}
+	if view := m.modal.View(); view.Kind == modal.Confirm && view.Prompt == embeddedTerminalTerminatePrompt {
+		m.modal = modal.Modal{}
+	}
+	return m.clearEmbeddedTerminalConfirm()
+}
+
+func (m Model) clearEmbeddedTerminalConfirm() Model {
+	m.terminalConfirmID = 0
+	m.terminalConfirmScope = ""
+	return m
+}
+
+func (m Model) embeddedTerminalPrefixScope() (embeddedTerminalScope, bool) {
+	if !m.terminalPrefixActive {
+		return "", false
+	}
+	if m.mode == ui.ModeSessions && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
+		return embeddedTerminalScopeSession, true
+	}
+	if m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+		return embeddedTerminalScopeFlow, true
+	}
+	return "", false
 }
 
 func (m Model) activeEmbeddedTerminalIDForScope(scope embeddedTerminalScope) embeddedTerminalID {
