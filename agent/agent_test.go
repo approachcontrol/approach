@@ -37,3 +37,38 @@ func TestValidateUnsupportedAgentMentionsCodexApp(t *testing.T) {
 		}
 	}
 }
+
+func TestReasoningEffortChoicesAreProviderSpecific(t *testing.T) {
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{agent.CommandCodex, []string{"default", "low", "medium", "high", "xhigh"}},
+		{agent.CommandClaude, []string{"default", "low", "medium", "high", "xhigh", "max"}},
+		{agent.CommandCodexApp, []string{"default"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			got := agent.ReasoningEffortChoices(tt.command)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("ReasoningEffortChoices(%q) = %#v, want %#v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateReasoningEffortRejectsUnsupportedProviderValues(t *testing.T) {
+	if err := agent.ValidateReasoningEffort(agent.CommandCodex, "max"); err == nil {
+		t.Fatal("expected codex max effort to be rejected")
+	}
+	if err := agent.ValidateReasoningEffort(agent.CommandClaude, "xhigh"); err != nil {
+		t.Fatalf("expected claude xhigh effort to be accepted, got %v", err)
+	}
+	if err := agent.ValidateReasoningEffort(agent.CommandCodex, ""); err != nil {
+		t.Fatalf("expected empty codex effort to mean default, got %v", err)
+	}
+	if err := agent.ValidateReasoningEffort(agent.CommandClaude, " DEFAULT "); err != nil {
+		t.Fatalf("expected default claude effort to be accepted, got %v", err)
+	}
+}

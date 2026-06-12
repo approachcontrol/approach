@@ -327,6 +327,37 @@ func TestRuntimeArtifactRootFallsBackThroughPlanSessionConfig(t *testing.T) {
 	}
 }
 
+func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
+	root := t.TempDir()
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore sessions: %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore plans: %v", err)
+	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore flows: %v", err)
+	}
+
+	opts := modelOptionsFromConfig(config.Config{
+		Agent: config.AgentConfig{
+			Command:               "codex",
+			CodexReasoningEffort:  "high",
+			ClaudeReasoningEffort: "max",
+		},
+	}, nil, sessionStore, planStore, flowStore)
+
+	if opts.CodexReasoningEffort != "high" || opts.ClaudeReasoningEffort != "max" {
+		t.Fatalf("reasoning efforts = codex %q claude %q, want high/max", opts.CodexReasoningEffort, opts.ClaudeReasoningEffort)
+	}
+	if opts.SaveAgentReasoningEffort == nil {
+		t.Fatal("SaveAgentReasoningEffort should be wired")
+	}
+}
+
 func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("ZELLIJ", "")

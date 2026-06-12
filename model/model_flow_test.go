@@ -291,8 +291,9 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesThatPhaseByDefaultHeadless(t *tes
 	var started actions.AgentLaunchContext
 	launchAgentRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		AgentCommand:         "codex",
+		CodexReasoningEffort: "high",
+		SessionStateRoot:     "/state/wtui/sessions/v1",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -1276,7 +1277,9 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
-		SessionStateRoot: "/state/wtui",
+		AgentCommand:         "codex",
+		CodexReasoningEffort: "high",
+		SessionStateRoot:     "/state/wtui",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -1327,6 +1330,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		started.Branch != "flow/resume-sessions" ||
 		started.Commit != "abc123" ||
 		started.SessionStateRoot != "/state/wtui" ||
+		started.ReasoningEffort != "" ||
 		!started.Embedded ||
 		started.Headless ||
 		!started.FlowLaunchTracked {
@@ -2079,8 +2083,9 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesImplementationInEmbeddedHeadlessT
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	launchAgentRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		AgentCommand:         "codex",
+		CodexReasoningEffort: "high",
+		SessionStateRoot:     "/state/wtui/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Implementation launch should pass the plan path without pre-reading %q", planID)
 			return "", nil
@@ -2148,6 +2153,7 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesImplementationInEmbeddedHeadlessT
 		started.Branch != "flow/implementation" ||
 		started.Commit != "fed321" ||
 		started.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		started.ReasoningEffort != "high" ||
 		!started.Embedded ||
 		!started.Headless {
 		t.Fatalf("embedded launch context = %#v", started)
@@ -4537,18 +4543,27 @@ func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
+			wantEffort := "xhigh"
+			if command == "claude" {
+				wantEffort = "max"
+			}
 			var startRequest model.FlowStartRequest
 			var started actions.AgentLaunchContext
 			var startWidth, startHeight int
 			var calls []string
 			m := model.NewWithOptions(testRepos(), model.Options{
-				AgentCommand:     command,
-				SessionStateRoot: "/state/wtui/sessions/v1",
+				AgentCommand:          command,
+				CodexReasoningEffort:  "xhigh",
+				ClaudeReasoningEffort: "max",
+				SessionStateRoot:      "/state/wtui/sessions/v1",
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					calls = append(calls, "start-flow")
 					startRequest = req
 					if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build\nthe thing" || req.BaseRef != "main" {
 						t.Fatalf("StartFlowPlan request = %#v", req)
+					}
+					if req.ReasoningEffort != wantEffort {
+						t.Fatalf("StartFlowPlan reasoning effort = %q, want %q", req.ReasoningEffort, wantEffort)
 					}
 					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
 						Command:          req.AgentCommand,
@@ -4563,6 +4578,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						PlanPhaseStatus:  req.PlanPhaseStatus,
 						FlowID:           "flow-1",
 						FlowPhaseID:      req.PlanPhaseID,
+						ReasoningEffort:  req.ReasoningEffort,
 						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
 					}}, nil
 				},
@@ -4612,7 +4628,8 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				startRequest.SessionStateRoot != "/state/wtui/sessions/v1" ||
 				startRequest.PlanPhaseID != "plan" ||
 				startRequest.PlanPhaseTitle != "Plan" ||
-				startRequest.PlanPhaseStatus != flowstore.PhaseRunning {
+				startRequest.PlanPhaseStatus != flowstore.PhaseRunning ||
+				startRequest.ReasoningEffort != wantEffort {
 				t.Fatalf("start request metadata = %#v", startRequest)
 			}
 			if started.Command != command ||
@@ -4627,6 +4644,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				started.PlanPhaseTitle != "Plan" ||
 				started.PlanPhaseStatus != flowstore.PhaseRunning ||
 				started.LaunchID != "launch-1" ||
+				started.ReasoningEffort != wantEffort ||
 				!started.Embedded ||
 				!started.Headless ||
 				!started.FlowLaunchTracked {

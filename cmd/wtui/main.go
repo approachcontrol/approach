@@ -310,9 +310,11 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {
 	launchOpts := actions.LaunchOptions{TerminalCommand: cfg.Terminal.Command}
 	return model.Options{
-		AgentCommand:       cfg.Agent.Command,
-		StartupMode:        ui.ModeFlows,
-		PlanPromptTemplate: cfg.Agent.PlanPrompt,
+		AgentCommand:          cfg.Agent.Command,
+		CodexReasoningEffort:  cfg.Agent.CodexReasoningEffort,
+		ClaudeReasoningEffort: cfg.Agent.ClaudeReasoningEffort,
+		StartupMode:           ui.ModeFlows,
+		PlanPromptTemplate:    cfg.Agent.PlanPrompt,
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Plan:           cfg.FlowPrompts.Plan,
 			PlanReview:     cfg.FlowPrompts.PlanReview,
@@ -346,6 +348,9 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		RunBootstrapHook:     actions.RunBootstrapHook,
 		SaveAgentCommand: func(command string) error {
 			return config.SaveAgentCommand(command)
+		},
+		SaveAgentReasoningEffort: func(command, effort string) error {
+			return config.SaveAgentReasoningEffort(command, effort)
 		},
 	}
 }

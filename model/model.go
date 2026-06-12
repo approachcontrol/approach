@@ -73,6 +73,8 @@ type Model struct {
 	pendingBranchSelection    string
 	pendingWorktreeSelection  string
 	agentCommand              string
+	codexReasoningEffort      string
+	claudeReasoningEffort     string
 	planPromptTemplate        string
 	flowPromptTemplates       FlowPromptTemplates
 	scanRepos                 func() ([]scanner.Repo, error)
@@ -91,6 +93,7 @@ type Model struct {
 	pageText                  func(string) (actions.TerminalLaunchSpec, error)
 	editFile                  func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                 func(string) error
+	saveAgentReasoningEffort  func(string, string) error
 	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	startEmbeddedTerminal     EmbeddedTerminalStarter
@@ -141,33 +144,36 @@ type visibleRepoFetchState struct {
 // Options customizes production-only integrations while keeping New(repos)
 // simple for tests.
 type Options struct {
-	AgentCommand          string
-	StartupMode           ui.Mode
-	PlanPromptTemplate    string
-	FlowPromptTemplates   FlowPromptTemplates
-	ScanRepos             func() ([]scanner.Repo, error)
-	FetchRepo             func(string) error
-	ListSessions          func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
-	ReadTranscript        func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
-	ListPlans             func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
-	ListFlows             func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	StartFlowPlan         func(FlowStartRequest) (FlowStartResult, error)
-	SetFlowPhase          func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
-	AddFlowPhaseLaunchID  func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
-	DeleteFlow            func(flowID string) error
-	ReadPlan              func(string) (string, error)
-	PlanMarkdownPath      func(planID string) (string, error)
-	CopyToClipboard       func(text string) error
-	PageText              func(body string) (actions.TerminalLaunchSpec, error)
-	EditFile              func(path string) (actions.TerminalLaunchSpec, error)
-	SaveAgentCommand      func(string) error
-	LaunchTerminal        func(path string) (actions.TerminalLaunchSpec, error)
-	LaunchAgent           func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
-	StartEmbeddedTerminal EmbeddedTerminalStarter
-	FinalizeAgentSession  func(actions.AgentLaunchContext) error
-	SessionStateRoot      string
-	BootstrapHookForRepo  func(string) (actions.BootstrapHook, bool)
-	RunBootstrapHook      func(actions.BootstrapContext, actions.BootstrapHook) error
+	AgentCommand             string
+	CodexReasoningEffort     string
+	ClaudeReasoningEffort    string
+	StartupMode              ui.Mode
+	PlanPromptTemplate       string
+	FlowPromptTemplates      FlowPromptTemplates
+	ScanRepos                func() ([]scanner.Repo, error)
+	FetchRepo                func(string) error
+	ListSessions             func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	ReadTranscript           func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
+	ListPlans                func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	ListFlows                func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
+	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	DeleteFlow               func(flowID string) error
+	ReadPlan                 func(string) (string, error)
+	PlanMarkdownPath         func(planID string) (string, error)
+	CopyToClipboard          func(text string) error
+	PageText                 func(body string) (actions.TerminalLaunchSpec, error)
+	EditFile                 func(path string) (actions.TerminalLaunchSpec, error)
+	SaveAgentCommand         func(string) error
+	SaveAgentReasoningEffort func(string, string) error
+	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
+	LaunchAgent              func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	StartEmbeddedTerminal    EmbeddedTerminalStarter
+	FinalizeAgentSession     func(actions.AgentLaunchContext) error
+	SessionStateRoot         string
+	BootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
+	RunBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 // New creates a Model from discovered repos.
@@ -180,6 +186,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgent := opts.SaveAgentCommand
 	if saveAgent == nil {
 		saveAgent = func(string) error { return nil }
+	}
+	saveAgentReasoningEffort := opts.SaveAgentReasoningEffort
+	if saveAgentReasoningEffort == nil {
+		saveAgentReasoningEffort = func(string, string) error { return nil }
 	}
 	fetchRepo := opts.FetchRepo
 	if fetchRepo == nil {
@@ -313,45 +323,48 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
 	m := Model{
-		repos:                 newRepoPane().SetItems(repos),
-		rows:                  newBranchPane(),
-		stashes:               newStashPane(),
-		worktrees:             newWorktreePane(),
-		worktreeSessions:      newSessionPane(),
-		commits:               newCommitPane(),
-		reflogs:               newReflogPane(),
-		sessions:              newSessionPane(),
-		plans:                 newPlanPane(),
-		flows:                 newFlowPane(),
-		flowHeadless:          true,
-		flowRefreshTickGen:    1,
-		mode:                  startupMode(opts.StartupMode),
-		agentCommand:          agent.Normalize(opts.AgentCommand),
-		planPromptTemplate:    opts.PlanPromptTemplate,
-		flowPromptTemplates:   opts.FlowPromptTemplates,
-		scanRepos:             opts.ScanRepos,
-		fetchRepo:             fetchRepo,
-		listSessions:          listSessions,
-		readTranscript:        readTranscript,
-		listPlans:             listPlans,
-		listFlows:             listFlows,
-		startFlowPlan:         startFlowPlan,
-		setFlowPhase:          setFlowPhase,
-		addFlowPhaseLaunchID:  addFlowPhaseLaunchID,
-		deleteFlow:            deleteFlow,
-		readPlan:              readPlan,
-		planMarkdownPath:      planMarkdownPath,
-		copyToClipboard:       copyToClipboard,
-		pageText:              pageText,
-		editFile:              editFile,
-		saveAgent:             saveAgent,
-		launchTerminal:        launchTerminal,
-		launchAgent:           launchAgent,
-		startEmbeddedTerminal: startEmbeddedTerminal,
-		finalizeAgentSession:  finalizeAgentSession,
-		sessionStateRoot:      opts.SessionStateRoot,
-		bootstrapHookForRepo:  bootstrapHookForRepo,
-		runBootstrapHook:      runBootstrapHook,
+		repos:                    newRepoPane().SetItems(repos),
+		rows:                     newBranchPane(),
+		stashes:                  newStashPane(),
+		worktrees:                newWorktreePane(),
+		worktreeSessions:         newSessionPane(),
+		commits:                  newCommitPane(),
+		reflogs:                  newReflogPane(),
+		sessions:                 newSessionPane(),
+		plans:                    newPlanPane(),
+		flows:                    newFlowPane(),
+		flowHeadless:             true,
+		flowRefreshTickGen:       1,
+		mode:                     startupMode(opts.StartupMode),
+		agentCommand:             agent.Normalize(opts.AgentCommand),
+		codexReasoningEffort:     agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
+		claudeReasoningEffort:    agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
+		planPromptTemplate:       opts.PlanPromptTemplate,
+		flowPromptTemplates:      opts.FlowPromptTemplates,
+		scanRepos:                opts.ScanRepos,
+		fetchRepo:                fetchRepo,
+		listSessions:             listSessions,
+		readTranscript:           readTranscript,
+		listPlans:                listPlans,
+		listFlows:                listFlows,
+		startFlowPlan:            startFlowPlan,
+		setFlowPhase:             setFlowPhase,
+		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
+		deleteFlow:               deleteFlow,
+		readPlan:                 readPlan,
+		planMarkdownPath:         planMarkdownPath,
+		copyToClipboard:          copyToClipboard,
+		pageText:                 pageText,
+		editFile:                 editFile,
+		saveAgent:                saveAgent,
+		saveAgentReasoningEffort: saveAgentReasoningEffort,
+		launchTerminal:           launchTerminal,
+		launchAgent:              launchAgent,
+		startEmbeddedTerminal:    startEmbeddedTerminal,
+		finalizeAgentSession:     finalizeAgentSession,
+		sessionStateRoot:         opts.SessionStateRoot,
+		bootstrapHookForRepo:     bootstrapHookForRepo,
+		runBootstrapHook:         runBootstrapHook,
 	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeFlows; mode++ {
 		m.listRequestSeq++
@@ -447,6 +460,55 @@ func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
 func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
 func (m Model) AgentCommand() string            { return m.agentCommand }
+func (m Model) ReasoningEffortFor(command string) string {
+	switch agent.Normalize(command) {
+	case agent.CommandCodex:
+		return m.codexReasoningEffort
+	case agent.CommandClaude:
+		return m.claudeReasoningEffort
+	default:
+		return ""
+	}
+}
+
+func (m Model) launchReasoningEffortFor(command string) string {
+	switch agent.Normalize(command) {
+	case agent.CommandCodex, agent.CommandClaude:
+		return m.ReasoningEffortFor(command)
+	default:
+		return ""
+	}
+}
+
+func (m Model) flowReasoningEffortLabel() string {
+	switch agent.Normalize(m.agentCommand) {
+	case agent.CommandCodex, agent.CommandClaude:
+		return reasoningEffortDisplay(m.ReasoningEffortFor(m.agentCommand))
+	case agent.CommandCodexApp:
+		return "app default"
+	default:
+		return "choose agent"
+	}
+}
+
+func reasoningEffortDisplay(effort string) string {
+	effort = agent.NormalizeReasoningEffort(effort)
+	if effort == "" {
+		return agent.ReasoningEffortDefault
+	}
+	return effort
+}
+
+func (m Model) withReasoningEffort(command, effort string) Model {
+	effort = agent.NormalizeReasoningEffort(effort)
+	switch agent.Normalize(command) {
+	case agent.CommandCodex:
+		m.codexReasoningEffort = effort
+	case agent.CommandClaude:
+		m.claudeReasoningEffort = effort
+	}
+	return m
+}
 
 func (m Model) Init() tea.Cmd {
 	fetchCmd := m.fetchForMode()
@@ -554,6 +616,7 @@ func (m Model) View() string {
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
 		FlowHeadless:               m.flowHeadless,
+		FlowReasoningEffort:        m.flowReasoningEffortLabel(),
 		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
 		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
 		OverlayText:                modalView.Text,
@@ -918,6 +981,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentSet(msg), nil
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
+	case AgentReasoningEffortSetMsg:
+		return m.handleAgentReasoningEffortSet(msg), nil
+	case AgentReasoningEffortSetFailedMsg:
+		return m.handleAgentReasoningEffortSetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			return m, nil

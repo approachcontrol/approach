@@ -331,6 +331,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleResumeFlowPhaseSession()
 		}
 		return m.handleResumeSession()
+	case "E":
+		if m.mode == ui.ModeFlows {
+			return m.handleSetReasoningEffort()
+		}
 	case "i":
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
@@ -767,6 +771,61 @@ func (m Model) setAgent(command string) tea.Cmd {
 	}
 }
 
+func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
+	command := agent.Normalize(m.agentCommand)
+	if command == "" {
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting reasoning effort")
+		return m, nil
+	}
+	if command == agent.CommandCodexApp {
+		m = m.setStatus(statusOther, "Codex App uses app default reasoning effort")
+		return m, nil
+	}
+	if err := agent.Validate(command); err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	items := reasoningEffortSelectItems(command)
+	m.modal = modal.OpenSelectWithLayout(
+		"Choose reasoning effort",
+		items,
+		selectedReasoningEffortIndex(command, m.ReasoningEffortFor(command)),
+		modal.Layout{Width: 32, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd { return m.setReasoningEffort(command, value) },
+	)
+	return m, nil
+}
+
+func reasoningEffortSelectItems(command string) []modal.SelectItem {
+	choices := agent.ReasoningEffortChoices(command)
+	items := make([]modal.SelectItem, 0, len(choices))
+	for _, choice := range choices {
+		items = append(items, modal.SelectItem{Label: choice, Value: choice})
+	}
+	return items
+}
+
+func selectedReasoningEffortIndex(command, effort string) int {
+	effort = reasoningEffortDisplay(effort)
+	for i, choice := range agent.ReasoningEffortChoices(command) {
+		if choice == effort {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
+	command = agent.Normalize(command)
+	effort = agent.NormalizeReasoningEffort(effort)
+	return func() tea.Msg {
+		if err := m.saveAgentReasoningEffort(command, effort); err != nil {
+			return AgentReasoningEffortSetFailedMsg{Command: command, Effort: effort, Err: err.Error()}
+		}
+		return AgentReasoningEffortSetMsg{Command: command, Effort: effort}
+	}
+}
+
 func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return m, nil
@@ -1190,6 +1249,7 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 		}
 		return wrap(actions.AgentLaunchContext{
 			Command:          m.agentCommand,
+			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
 			WorktreePath:     worktreePath,
@@ -1396,6 +1456,7 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          m.agentCommand,
+		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     launchPath,
@@ -1953,6 +2014,7 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 	}
 	return actions.AgentLaunchContext{
 		Command:          m.agentCommand,
+		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     path,
