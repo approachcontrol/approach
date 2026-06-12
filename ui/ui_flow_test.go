@@ -96,6 +96,42 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeSplitTerminalTinyViewportDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("tiny Flow split terminal render should not panic: %v", r)
+		}
+	}()
+
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    120,
+		Height:   BranchContentOverhead - 1,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Tiny split terminal",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/tiny",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+			},
+		}},
+		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number:   1,
+			Provider: "codex",
+			Identity: "implementation",
+			State:    "running",
+			Active:   true,
+		}},
+		FlowEmbeddedTerminalLines: []string{"terminal output"},
+		ActivePane:                1,
+	})
+
+	requireLinesWithinWidth(t, strippedLines(view), 120)
+}
+
 func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 	records := []flowstore.FlowRecord{{
 		FlowID: "flow-1",

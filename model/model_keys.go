@@ -47,14 +47,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "/" {
-		m.searchActive = true
+		m = m.setSearchActive(true)
 		return m, nil
 	}
 
 	if key == "esc" && m.activeSearchQuery() != "" {
 		oldRepoPath, _ := m.currentRepoPath()
 		m = m.setActiveSearchQuery("")
-		m.searchActive = false
+		m = m.setSearchActive(false)
 		if m.activePane == 0 && oldRepoPath != "" {
 			m = m.selectFilteredRepo(oldRepoPath)
 		}
@@ -153,9 +153,9 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc":
 		m = m.setActiveSearchQuery("")
-		m.searchActive = false
+		m = m.setSearchActive(false)
 	case "enter":
-		m.searchActive = false
+		m = m.setSearchActive(false)
 	case "backspace", "ctrl+h":
 		q := m.activeSearchQuery()
 		if q != "" {
@@ -163,7 +163,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m = m.setActiveSearchQuery(string(runes[:len(runes)-1]))
 		} else {
 			m = m.setActiveSearchQuery("")
-			m.searchActive = false
+			m = m.setSearchActive(false)
 		}
 	case "ctrl+u":
 		m = m.setActiveSearchQuery("")
@@ -187,6 +187,14 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m Model) setSearchActive(active bool) Model {
+	if m.searchActive == active {
+		return m
+	}
+	m.searchActive = active
+	return m.resizeEmbeddedTerminals()
 }
 
 // --- Key handlers by context ---

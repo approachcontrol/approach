@@ -290,7 +290,7 @@ func EmbeddedTerminalRenderBodyHeight(outerHeight int) int {
 
 // EmbeddedTerminalPTYWidth returns the PTY width for an embedded terminal pane
 // allocation. PTY dimensions are clamped positive because the terminal backend
-// normalizes to positive sizes.
+// normalizes to positive sizes, even when a tiny frame leaves no drawable body.
 func EmbeddedTerminalPTYWidth(outerWidth int) int {
 	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
 		return width
@@ -299,7 +299,8 @@ func EmbeddedTerminalPTYWidth(outerWidth int) int {
 }
 
 // EmbeddedTerminalPTYHeight returns the PTY height for an embedded terminal
-// pane allocation, excluding the border and non-PTY header row.
+// pane allocation, excluding the border and non-PTY header row. Tiny panes with
+// no drawable body still receive the backend's positive minimum height.
 func EmbeddedTerminalPTYHeight(outerHeight int) int {
 	if height := EmbeddedTerminalRenderBodyHeight(outerHeight); height > 0 {
 		return height
@@ -2025,6 +2026,9 @@ const (
 )
 
 func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused bool) []string {
+	if height <= 0 {
+		return nil
+	}
 	listHeight, terminalHeight := FlowSplitPanelHeights(height)
 	lines := make([]string, 0, height)
 	if len(records) > 0 {

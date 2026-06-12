@@ -7,6 +7,5 @@ func NewRealEmbeddedTerminalForTest(term *embeddedterm.Terminal) EmbeddedTermina
 }
 
 func SetSearchActiveForTest(m Model, active bool) Model {
-	m.searchActive = active
-	return m
+	return m.setSearchActive(active)
 }

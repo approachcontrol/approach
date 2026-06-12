@@ -1308,6 +1308,87 @@ func TestModel_IKeyOnFlowLaunchesImplementationInEmbeddedHeadlessTerminal(t *tes
 	}
 }
 
+func TestModel_FlowEmbeddedTerminalResizesWhenSearchTogglesShortcutPane(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+		Title:        "Implement saved plan",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	wantHeight := flowTerminalPTYHeightForViewport(18)
+	wantSearchSize := [2]int{
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, true)),
+		wantHeight,
+	}
+	wantInactiveSize := [2]int{
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false)),
+		wantHeight,
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if !m.SearchActive() {
+		t.Fatal("slash should activate search while Flow terminal is visible but list-focused")
+	}
+	requireLatestResize(t, fakeTerm, wantSearchSize)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.SearchActive() {
+		t.Fatal("enter should leave search mode")
+	}
+	requireLatestResize(t, fakeTerm, wantInactiveSize)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	requireLatestResize(t, fakeTerm, wantSearchSize)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if m.SearchActive() {
+		t.Fatal("escape should leave search mode")
+	}
+	requireLatestResize(t, fakeTerm, wantInactiveSize)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	requireLatestResize(t, fakeTerm, wantSearchSize)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.SearchActive() {
+		t.Fatal("empty backspace should leave search mode")
+	}
+	requireLatestResize(t, fakeTerm, wantInactiveSize)
+}
+
+func requireLatestResize(t *testing.T, fakeTerm *fakeEmbeddedTerminal, want [2]int) {
+	t.Helper()
+	if len(fakeTerm.resizes) == 0 {
+		t.Fatalf("expected resize call %dx%d, got none", want[0], want[1])
+	}
+	if got := fakeTerm.resizes[len(fakeTerm.resizes)-1]; got != want {
+		t.Fatalf("latest resize = %dx%d, want %dx%d; all resizes = %#v", got[0], got[1], want[0], want[1], fakeTerm.resizes)
+	}
+}
+
+func flowTerminalPTYHeightForViewport(height int) int {
+	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
+	return ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
+}
+
 func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 	var started [2]int
 	m := model.NewWithOptions(testRepos(), model.Options{
