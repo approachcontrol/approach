@@ -135,6 +135,11 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 				msg.Request = request
 			}
 			return msg
+		case FlowEmbeddedLaunchRequestedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
 		case FlowCreateFailedMsg:
 			if msg.Request == 0 {
 				msg.Request = request

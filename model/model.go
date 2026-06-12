@@ -854,6 +854,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
+		if msg.Request != 0 {
+			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
+				return m, nil
+			}
+			m = m.clearFlowCreateRequest(msg.Request)
+		}
 		next, launchCmd := m.launchFlowEmbeddedHeadlessWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
