@@ -419,10 +419,11 @@ completed or explicitly skipped with notes. Flow phase launch prompts stay
 minimal: Plan Review and Implementation point to the saved plan artifact, while
 Review Loop and PR Creation include only the worktree, branch, and start commit
 metadata needed to inspect the changes. Built-in prompts tell Plan to produce
-only a plan, Implementation to use the `commit` skill, Review Loop to use the
-review-loop workflow and `commit` when revisions are made, PR Creation to use
-the `ship` skill, and Autoreview to use `ship` when fixes require commits or
-pushes without embedding phase-restart recipes. Use
+only a plan, Plan Review to use the review-loop skill with max 6 loops,
+Implementation to use the `commit` skill, Review Loop to use the review-loop
+workflow and `commit` when revisions are made, PR Creation to use the `ship`
+skill, and Autoreview to use `ship` when fixes require commits or pushes
+without embedding phase-restart recipes. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if notes are omitted, wtui records a standard rerun note.
 

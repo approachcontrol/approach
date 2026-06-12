@@ -2322,7 +2322,7 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesReadyPlanReviewWithLinkedPlanCont
 		t.Fatalf("launch context = %#v", launched)
 	}
 	wantPrompt := strings.Join([]string{
-		"Use the review loop skill to review the saved plan.",
+		"Use the review-loop skill to review the saved plan, max 6 loops.",
 		"Use the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
 		"",
 		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
@@ -2347,6 +2347,57 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesReadyPlanReviewWithLinkedPlanCont
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("minimum reliable prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
+	}
+}
+
+func TestModel_FlowPlanReviewPromptTemplateOverridesBuiltInPrompt(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			PlanReview: "Custom {phase_id} for {flow_id}: {plan_path} on {branch}; keep {unknown}",
+		},
+		ReadPlan: func(planID string) (string, error) {
+			t.Fatalf("templated Plan Review launch should not pre-read %q", planID)
+			return "", nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatalf("Flow phase CLI launch should start an embedded terminal, not LaunchAgent: %#v", ctx)
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			launched = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-template",
+		Branch:       "flow/template",
+		Commit:       "c0ffee",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/plans/plan-1/plan.md",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseReady},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
+		},
+	}})
+
+	m, cmd := prepareSelectedFlowPhaseHeadlessOffLaunch(t, m, "plan-review")
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare a plan-review launch")
+	}
+	runPreparedFlowEmbeddedLaunch(t, m, cmd)
+
+	want := "Custom plan-review for flow-1: /state/plans/plan-1/plan.md on flow/template; keep {unknown}"
+	if launched.InitialPrompt != want {
+		t.Fatalf("templated plan-review prompt = %q, want %q", launched.InitialPrompt, want)
 	}
 }
 
