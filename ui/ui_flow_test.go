@@ -184,7 +184,7 @@ func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 	if !strings.Contains(lines[listHeight], "┌") {
 		t.Fatalf("terminal top border should start at index %d:\n%s", listHeight, strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[listHeight+1], "│1 codex implementation running") {
+	if !strings.Contains(lines[listHeight+1], "│ 1 codex implementation running") {
 		t.Fatalf("terminal header should be first framed content row:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[listHeight+terminalHeight-1], "└") {

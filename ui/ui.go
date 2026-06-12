@@ -161,6 +161,9 @@ const (
 	// EmbeddedTerminalHeaderRows is the non-PTY tab/header row inside the
 	// embedded terminal frame.
 	EmbeddedTerminalHeaderRows = 1
+	// EmbeddedTerminalSidePadding is the horizontal padding between each
+	// embedded terminal border and its content.
+	EmbeddedTerminalSidePadding = 1
 )
 
 // StashPrefixWidth is the visible width consumed by the stash line prefix:
@@ -291,11 +294,24 @@ func RightContentWidth(width, height int, activeStatusQuery bool) int {
 	return rightContentWidth
 }
 
-// EmbeddedTerminalRenderContentWidth returns the inner width available inside
-// the embedded terminal frame.
+// EmbeddedTerminalRenderContentWidth returns the drawable content width after
+// the embedded terminal frame and effective side padding are reserved.
 func EmbeddedTerminalRenderContentWidth(outerWidth int) int {
-	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
+	available := outerWidth - EmbeddedTerminalFrameColumns
+	if available <= 0 {
+		return 0
+	}
+	width := available - 2*embeddedTerminalEffectiveSidePadding(outerWidth)
+	if width > 0 {
 		return width
+	}
+	return 0
+}
+
+func embeddedTerminalEffectiveSidePadding(outerWidth int) int {
+	available := outerWidth - EmbeddedTerminalFrameColumns
+	if available >= 2*EmbeddedTerminalSidePadding+1 {
+		return EmbeddedTerminalSidePadding
 	}
 	return 0
 }
@@ -314,7 +330,7 @@ func EmbeddedTerminalRenderBodyHeight(outerHeight int) int {
 // allocation. PTY dimensions are clamped positive because the terminal backend
 // normalizes to positive sizes, even when a tiny frame leaves no drawable body.
 func EmbeddedTerminalPTYWidth(outerWidth int) int {
-	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
+	if width := EmbeddedTerminalRenderContentWidth(outerWidth); width > 0 {
 		return width
 	}
 	return 1
@@ -1835,10 +1851,10 @@ func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, 
 	if outerHeight <= 0 {
 		return nil
 	}
-	innerWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
-	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), innerWidth)
+	contentWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), contentWidth)
 	if prefixActive {
-		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), innerWidth)
+		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), contentWidth)
 	}
 	bodyHeight := EmbeddedTerminalRenderBodyHeight(outerHeight)
 	if len(liveLines) > bodyHeight {
@@ -1853,7 +1869,7 @@ func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, 
 		contentLines = append(contentLines, header)
 	}
 	for _, line := range liveLines {
-		contentLines = append(contentLines, truncateToWidth(line, innerWidth))
+		contentLines = append(contentLines, truncateToWidth(line, contentWidth))
 	}
 	if len(contentLines) < contentHeight {
 		contentLines = append(contentLines, make([]string, contentHeight-len(contentLines))...)
@@ -1865,10 +1881,14 @@ func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth
 	if outerHeight <= 0 {
 		return nil
 	}
-	innerWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	contentWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	frameInnerWidth := outerWidth - EmbeddedTerminalFrameColumns
+	if frameInnerWidth < 0 {
+		frameInnerWidth = 0
+	}
 	style := embeddedTerminalBorderStyle(focused)
-	top := style.Render("┌" + strings.Repeat("─", innerWidth) + "┐")
-	bottom := style.Render("└" + strings.Repeat("─", innerWidth) + "┘")
+	top := style.Render("┌" + strings.Repeat("─", frameInnerWidth) + "┐")
+	bottom := style.Render("└" + strings.Repeat("─", frameInnerWidth) + "┘")
 	if outerWidth <= 1 {
 		top = style.Render("┌")
 		bottom = style.Render("└")
@@ -1881,7 +1901,7 @@ func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth
 				if i < len(contentLines) {
 					content = contentLines[i]
 				}
-				lines = append(lines, renderEmbeddedTerminalFrameContentLine(content, style, innerWidth, outerWidth))
+				lines = append(lines, renderEmbeddedTerminalFrameContentLine(content, style, contentWidth, outerWidth))
 			}
 		}
 		lines = append(lines, bottom)
@@ -1889,18 +1909,19 @@ func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth
 	return fitEmbeddedTerminalFrameLines(lines, outerWidth, outerHeight)
 }
 
-func renderEmbeddedTerminalFrameContentLine(content string, borderStyle lipgloss.Style, innerWidth, outerWidth int) string {
+func renderEmbeddedTerminalFrameContentLine(content string, borderStyle lipgloss.Style, contentWidth, outerWidth int) string {
 	if outerWidth <= 0 {
 		return ""
 	}
 	if outerWidth == 1 {
 		return borderStyle.Render("│")
 	}
-	content = truncateToWidth(content, innerWidth)
-	if padding := innerWidth - lipgloss.Width(content); padding > 0 {
+	content = truncateToWidth(content, contentWidth)
+	if padding := contentWidth - lipgloss.Width(content); padding > 0 {
 		content += strings.Repeat(" ", padding)
 	}
-	return borderStyle.Render("│") + content + borderStyle.Render("│")
+	sidePadding := strings.Repeat(" ", embeddedTerminalEffectiveSidePadding(outerWidth))
+	return borderStyle.Render("│") + sidePadding + content + sidePadding + borderStyle.Render("│")
 }
 
 func embeddedTerminalBorderStyle(focused bool) lipgloss.Style {
