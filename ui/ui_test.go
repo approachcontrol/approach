@@ -764,11 +764,39 @@ func TestRender_BranchesModeShowsAgentHintOnlyWhenTargetAvailable(t *testing.T) 
 	}
 }
 
-func TestStatusBar_WorktreeInputOverlayShowsInputHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, OverlayWorktreeInput, 1, false, false, false)
-	for _, hint := range []string{"enter: create", "esc: cancel", "backspace: delete"} {
+func TestStatusBar_InputOverlayShowsSingleLineHints(t *testing.T) {
+	bar := Render(RenderParams{
+		Width:       120,
+		Height:      8,
+		Mode:        ModeWorktrees,
+		Overlay:     OverlayInput,
+		InputPrompt: "Create worktree from",
+		InputMode:   InputSingleLine,
+	})
+	status := strings.Split(bar, "\n")[7]
+	for _, hint := range []string{"enter: submit", "esc: cancel", "bksp/del: edit"} {
 		if !strings.Contains(bar, hint) {
-			t.Errorf("expected hint %q in input overlay bar %q", hint, bar)
+			t.Errorf("expected hint %q in input overlay bar %q", hint, status)
+		}
+	}
+	if strings.Contains(status, "alt+enter") {
+		t.Fatalf("single-line input status should not show multi-line hint: %q", status)
+	}
+}
+
+func TestStatusBar_InputOverlayShowsMultiLineHints(t *testing.T) {
+	view := Render(RenderParams{
+		Width:       120,
+		Height:      8,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: LaunchInstructionsPrompt,
+		InputMode:   InputMultiLine,
+	})
+	status := strings.Split(view, "\n")[7]
+	for _, hint := range []string{"enter: submit", "alt+enter: newline", "esc: cancel"} {
+		if !strings.Contains(status, hint) {
+			t.Errorf("expected hint %q in multi-line input status %q", hint, status)
 		}
 	}
 }
@@ -787,17 +815,18 @@ func TestStatusBar_AgentSelectOverlayShowsSelectHints(t *testing.T) {
 
 func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    120,
-		Height:                   12,
-		Mode:                     ModePlans,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      LaunchInstructionsPrompt,
-		WorktreeInputPlaceholder: "launch instructions",
-		WorktreeInput:            "Implement the selected plan",
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            120,
+		Height:           12,
+		Mode:             ModePlans,
+		Overlay:          OverlayInput,
+		InputPrompt:      LaunchInstructionsPrompt,
+		InputPlaceholder: "launch instructions",
+		InputValue:       "Implement the selected plan",
+		InputMode:        InputMultiLine,
 	})
 	status := strings.Split(view, "\n")[11]
-	for _, hint := range []string{"enter: launch", "esc: cancel", "backspace: delete"} {
+	for _, hint := range []string{"enter: submit", "alt+enter: newline", "esc: cancel"} {
 		if !strings.Contains(status, hint) {
 			t.Errorf("expected hint %q in launch overlay bar %q", hint, status)
 		}
@@ -2180,14 +2209,16 @@ func TestRender_ForceConfirmDialogShowsPrompt(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    80,
-		Height:                   24,
-		Mode:                     1,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPlaceholder: WorktreeInputPlaceholder,
-		WorktreeInput:            "feature/new",
-		WorktreeInputErr:         "already exists",
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             1,
+		Overlay:          OverlayInput,
+		InputPrompt:      "Create worktree from",
+		InputPlaceholder: WorktreeInputPlaceholder,
+		InputValue:       "feature/new",
+		InputCursor:      len([]rune("feature/new")),
+		InputError:       "already exists",
 	})
 	if !strings.Contains(view, "Create worktree from: feature/new") {
 		t.Error("worktree input dialog should show typed input")
@@ -2199,27 +2230,185 @@ func TestRender_WorktreeInputDialogShowsInputAndError(t *testing.T) {
 
 func TestRender_WorktreeInputDialogShowsPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    80,
-		Height:                   24,
-		Mode:                     1,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPlaceholder: WorktreeInputPlaceholder,
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             1,
+		Overlay:          OverlayInput,
+		InputPrompt:      "Create worktree from",
+		InputPlaceholder: WorktreeInputPlaceholder,
 	})
 	if !strings.Contains(view, "branch, tag, or new branch name") {
 		t.Error("worktree input dialog should show placeholder when input is empty")
 	}
 }
 
+func TestRender_InputDialogWrapsLongSingleLineAndShowsCursorInPlace(t *testing.T) {
+	longWord := strings.Repeat("x", 90)
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       60,
+		Height:      18,
+		Mode:        ModeWorktrees,
+		Overlay:     OverlayInput,
+		InputPrompt: "New branch",
+		InputValue:  "feature/" + longWord,
+		InputCursor: len([]rune("feature/xxx")),
+		InputMode:   InputSingleLine,
+	})
+	stripped := ansi.Strip(view)
+	if strings.Contains(stripped, "feature/"+longWord) {
+		t.Fatalf("long input should wrap instead of rendering on one line:\n%s", view)
+	}
+	if !strings.Contains(stripped, "feature/xxx█") {
+		t.Fatalf("cursor should render at logical cursor position:\n%s", view)
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines[:len(lines)-1] {
+		trimmed := strings.TrimLeft(ansi.Strip(line), " ")
+		if trimmed == "" {
+			continue
+		}
+		if got := lipgloss.Width(trimmed); got > 60 {
+			t.Fatalf("modal line %d width = %d, want <= terminal width: %q", i, got, trimmed)
+		}
+	}
+}
+
+func TestRender_InputDialogPreservesMultiLineBreaksAndWrapsError(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            72,
+		Height:           18,
+		Mode:             ModePlans,
+		Overlay:          OverlayInput,
+		InputPrompt:      LaunchInstructionsPrompt,
+		InputPlaceholder: "launch instructions",
+		InputValue:       "first line\nsecond line with detail",
+		InputCursor:      len([]rune("first line\nsecond")),
+		InputMode:        InputMultiLine,
+		InputError:       "this validation message is intentionally long enough to wrap inside the input modal",
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "first line") || !strings.Contains(stripped, "second█ line with detail") {
+		t.Fatalf("multi-line input should preserve breaks and cursor position:\n%s", view)
+	}
+	if strings.Contains(stripped, "this validation message is intentionally long enough to wrap inside the input modal") {
+		t.Fatalf("validation error should wrap inside the modal:\n%s", view)
+	}
+	if !strings.Contains(stripped, "this validation message is") || !strings.Contains(stripped, "inside the input modal") {
+		t.Fatalf("wrapped validation error missing expected text:\n%s", view)
+	}
+}
+
+func TestRender_InputDialogPreservesEditableSpacing(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       90,
+		Height:      18,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: LaunchInstructionsPrompt,
+		InputValue:  "first  line\n  - second  item",
+		InputCursor: len([]rune("first  line\n  - second")),
+		InputMode:   InputMultiLine,
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "first  line") {
+		t.Fatalf("input dialog collapsed repeated spaces on first line:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "  - second█  item") {
+		t.Fatalf("input dialog should preserve leading and repeated spaces around cursor:\n%s", stripped)
+	}
+}
+
+func TestRender_InputDialogOverflowKeepsCursorVisible(t *testing.T) {
+	value := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+		"line four",
+		"line five",
+		"line six",
+		"line seven",
+		"target line",
+	}, "\n")
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       64,
+		Height:      10,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Instructions",
+		InputValue:  value,
+		InputCursor: len([]rune(value)) - len([]rune(" line")),
+		InputMode:   InputMultiLine,
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "target█ line") {
+		t.Fatalf("overflow window should keep cursor line visible:\n%s", view)
+	}
+	if !strings.Contains(stripped, shortcutOverflowMarker) {
+		t.Fatalf("overflowed input should show overflow marker:\n%s", view)
+	}
+}
+
+func TestRender_InputDialogTinyHeightKeepsCursorVisible(t *testing.T) {
+	value := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+	}, "\n")
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       64,
+		Height:      4,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Instructions",
+		InputValue:  value,
+		InputCursor: len([]rune("line one\nline")),
+		InputMode:   InputMultiLine,
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "line█ two") {
+		t.Fatalf("tiny input dialog should keep the cursor line visible:\n%s", stripped)
+	}
+}
+
+func TestRender_InputDialogTinyHeightWithErrorKeepsCursorVisible(t *testing.T) {
+	value := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+	}, "\n")
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       64,
+		Height:      4,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Instructions",
+		InputValue:  value,
+		InputCursor: len([]rune("line one\nline two\nline")),
+		InputMode:   InputMultiLine,
+		InputError:  "validation failed",
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "line█ three") {
+		t.Fatalf("tiny input dialog with error should keep the cursor line visible:\n%s", stripped)
+	}
+}
+
 func TestRender_WorktreeMoveInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    80,
-		Height:                   24,
-		Mode:                     1,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      WorktreeMovePrompt,
-		WorktreeInputPlaceholder: WorktreeMoveInputPlaceholder,
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             1,
+		Overlay:          OverlayInput,
+		InputPrompt:      WorktreeMovePrompt,
+		InputPlaceholder: WorktreeMoveInputPlaceholder,
 	})
 	if !strings.Contains(view, "Move worktree to:") {
 		t.Error("move input dialog should show move prompt")
@@ -2231,37 +2420,37 @@ func TestRender_WorktreeMoveInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 
 func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    80,
-		Height:                   24,
-		Mode:                     2,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      BranchPrompt,
-		WorktreeInputPlaceholder: BranchInputPlaceholder,
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             2,
+		Overlay:          OverlayInput,
+		InputPrompt:      BranchPrompt,
+		InputPlaceholder: BranchInputPlaceholder,
 	})
 	if !strings.Contains(view, "Create branch:") {
-		t.Error("branch input dialog should show branch-specific prompt")
+		t.Error("branch input dialog should show prompt")
 	}
 	if !strings.Contains(view, "branch name") {
-		t.Error("branch input dialog should show branch-specific placeholder")
+		t.Error("branch input dialog should show placeholder")
 	}
 }
 
 func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    80,
-		Height:                   24,
-		Mode:                     1,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      PRWorktreePrompt,
-		WorktreeInputPlaceholder: PRWorktreeInputPlaceholder,
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            80,
+		Height:           24,
+		Mode:             1,
+		Overlay:          OverlayInput,
+		InputPrompt:      PRWorktreePrompt,
+		InputPlaceholder: PRWorktreeInputPlaceholder,
 	})
 	if !strings.Contains(view, "Create PR worktree from:") {
-		t.Error("PR input dialog should show PR-specific prompt")
+		t.Error("PR input dialog should show prompt")
 	}
 	if !strings.Contains(view, "PR number or URL") {
-		t.Error("PR input dialog should show PR-specific placeholder")
+		t.Error("PR input dialog should show placeholder")
 	}
 }
 
@@ -2290,14 +2479,16 @@ func TestRender_AgentSelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
 	longInput := `Implement the saved wtui plan "Persist custom launch instructions" at /state/wtui/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    120,
-		Height:                   24,
-		Mode:                     ModePlans,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      LaunchInstructionsPrompt,
-		WorktreeInputPlaceholder: "launch instructions",
-		WorktreeInput:            longInput,
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            120,
+		Height:           24,
+		Mode:             ModePlans,
+		Overlay:          OverlayInput,
+		InputPrompt:      LaunchInstructionsPrompt,
+		InputPlaceholder: "launch instructions",
+		InputValue:       longInput,
+		InputCursor:      len([]rune(longInput)),
+		InputMode:        InputMultiLine,
 	})
 
 	if !strings.Contains(view, LaunchInstructionsPrompt) {
@@ -2306,7 +2497,7 @@ func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
 	if strings.Contains(view, longInput) {
 		t.Fatalf("launch instructions should wrap instead of rendering on one line:\n%s", view)
 	}
-	for _, want := range []string{"Implement the saved wtui plan", "Read the plan file", "then begin"} {
+	for _, want := range []string{"Implement the saved wtui plan", "Read the", "plan file", "then begin"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wrapped launch instructions missing %q:\n%s", want, view)
 		}
@@ -2334,17 +2525,19 @@ func TestRender_LaunchInstructionsInputDialogMarksOverflow(t *testing.T) {
 		"Finish by launching the selected agent with the edited instructions.",
 	}, " ")
 	view := Render(RenderParams{
-		Repos:                    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
-		Width:                    52,
-		Height:                   20,
-		Mode:                     ModePlans,
-		Overlay:                  OverlayWorktreeInput,
-		WorktreeInputPrompt:      LaunchInstructionsPrompt,
-		WorktreeInputPlaceholder: "launch instructions",
-		WorktreeInput:            longInput,
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:            52,
+		Height:           20,
+		Mode:             ModePlans,
+		Overlay:          OverlayInput,
+		InputPrompt:      LaunchInstructionsPrompt,
+		InputPlaceholder: "launch instructions",
+		InputValue:       longInput,
+		InputCursor:      len([]rune(longInput)),
+		InputMode:        InputMultiLine,
 	})
 
-	for _, want := range []string{"Start with the saved", shortcutOverflowMarker, "Finish by launching"} {
+	for _, want := range []string{shortcutOverflowMarker, "Finish by launching"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("overflowed launch instructions missing %q:\n%s", want, view)
 		}

@@ -728,7 +728,7 @@ func (m Model) handleWorktreeCreateFailed(msg WorktreeCreateFailedMsg) Model {
 		} else if msg.LaunchAgent {
 			prompt = "Create worktree and launch agent from"
 		}
-		m.modal = modal.OpenInput(
+		m.modal = modal.OpenSingleLineInput(
 			prompt,
 			placeholder,
 			msg.Input,
@@ -755,7 +755,7 @@ func (m Model) handleWorktreeMoveFailed(msg WorktreeMoveFailedMsg) Model {
 			errText = "Unable to move worktree"
 		}
 		oldPath := msg.OldPath
-		m.modal = modal.OpenInput(
+		m.modal = modal.OpenSingleLineInput(
 			ui.WorktreeMovePrompt,
 			ui.WorktreeMoveInputPlaceholder,
 			msg.Input,
@@ -909,7 +909,7 @@ func (m Model) handleBranchCreateFailed(msg BranchCreateFailedMsg) Model {
 		if msg.Err == "" {
 			errText = "Unable to create branch"
 		}
-		m.modal = modal.OpenInput(
+		m.modal = modal.OpenSingleLineInput(
 			ui.BranchPrompt,
 			ui.BranchInputPlaceholder,
 			msg.Input,

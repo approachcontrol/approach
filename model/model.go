@@ -408,6 +408,8 @@ func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
 func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
 func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
 func (m Model) WorktreeInput() string           { return m.modal.View().Input }
+func (m Model) InputMode() modal.InputMode      { return m.modal.View().InputMode }
+func (m Model) InputCursor() int                { return m.modal.View().InputCursor }
 func (m Model) WorktreeInputErr() string        { return m.modal.View().InputErr }
 func (m Model) BranchScroll() int               { return m.rows.Scroll() }
 func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
@@ -465,6 +467,12 @@ func (m Model) View() string {
 		OverlayScroll:              modalView.Scroll,
 		ConfirmPrompt:              modalView.Prompt,
 		ConfirmForce:               modalView.Force,
+		InputPrompt:                modalView.Prompt,
+		InputPlaceholder:           modalView.Placeholder,
+		InputValue:                 modalView.Input,
+		InputError:                 modalView.InputErr,
+		InputMode:                  uiInputMode(modalView.InputMode),
+		InputCursor:                modalView.InputCursor,
 		WorktreeInputPrompt:        modalView.Prompt,
 		WorktreeInputPlaceholder:   modalView.Placeholder,
 		WorktreeInput:              modalView.Input,
@@ -660,7 +668,7 @@ func (m Model) overlayState() ui.OverlayState {
 	case modal.Confirm:
 		return ui.OverlayConfirm
 	case modal.Input:
-		return ui.OverlayWorktreeInput
+		return ui.OverlayInput
 	case modal.Select:
 		return ui.OverlayAgentSelect
 	case modal.Diff:
@@ -682,6 +690,13 @@ func (m Model) overlayState() ui.OverlayState {
 		return ui.OverlayPlanText
 	}
 	return ui.OverlayNone
+}
+
+func uiInputMode(mode modal.InputMode) ui.InputMode {
+	if mode == modal.InputMultiLine {
+		return ui.InputMultiLine
+	}
+	return ui.InputSingleLine
 }
 
 func uiSelectItems(items []modal.SelectItem) []ui.SelectItem {

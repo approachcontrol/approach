@@ -11,6 +11,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -162,6 +163,9 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Fatalf("expected launch instructions input overlay, got %d", m.Overlay())
 	}
+	if got := m.InputMode(); got != modal.InputMultiLine {
+		t.Fatalf("launch instructions input mode = %v, want multi-line", got)
+	}
 	if !strings.Contains(m.View(), "Launch instructions") {
 		t.Fatalf("expected launch instructions prompt in view:\n%s", m.View())
 	}
@@ -204,6 +208,9 @@ func TestModel_AKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	}
 	if m.Overlay() != ui.OverlayWorktreeInput {
 		t.Fatalf("expected launch instructions input overlay, got %d", m.Overlay())
+	}
+	if got := m.InputMode(); got != modal.InputMultiLine {
+		t.Fatalf("launch instructions input mode = %v, want multi-line", got)
 	}
 	if !strings.Contains(m.WorktreeInput(), "Implement the saved wtui plan") {
 		t.Fatalf("expected plan launch prompt, got %q", m.WorktreeInput())
@@ -286,8 +293,17 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		Commit:       "abc123",
 	}}, ListRequest: m.ListRequest(ui.ModePlans)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if got := m.InputMode(); got != modal.InputMultiLine {
+		t.Fatalf("launch instructions input mode = %v, want multi-line", got)
+	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Custom launch instructions")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Custom instructions")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	for range len("Custom ") {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("launch")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -311,7 +327,7 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
 		got.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
-		got.InitialPrompt != "Custom launch instructions" {
+		got.InitialPrompt != "Custom launch\ninstructions" {
 		t.Fatalf("unexpected launch context: %#v", got)
 	}
 	if got.LaunchID == "" {

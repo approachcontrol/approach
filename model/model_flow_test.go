@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -2969,6 +2970,9 @@ func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 	if got := m.WorktreeInput(); got != "" {
 		t.Fatalf("initial title input = %q, want empty", got)
 	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Fatalf("title input mode = %v, want single-line", got)
+	}
 }
 
 func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
@@ -2984,7 +2988,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					calls = append(calls, "start-flow")
 					startRequest = req
-					if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build the thing" || req.BaseRef != "main" {
+					if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build\nthe thing" || req.BaseRef != "main" {
 						t.Fatalf("StartFlowPlan request = %#v", req)
 					}
 					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
@@ -3000,7 +3004,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						PlanPhaseStatus:  req.PlanPhaseStatus,
 						FlowID:           "flow-1",
 						FlowPhaseID:      req.PlanPhaseID,
-						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild the thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
 					}}, nil
 				},
 				LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -3022,29 +3026,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Add Flow Mode")})
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-			if cmd == nil {
-				t.Fatal("expected title submit command")
-			}
-			m, _ = update(m, cmd())
-			if got := m.ConfirmPrompt(); got != ui.FlowInstructionsPrompt {
-				t.Fatalf("prompt = %q, want %q", got, ui.FlowInstructionsPrompt)
-			}
-
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Build the thing")})
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-			if cmd == nil {
-				t.Fatal("expected instructions submit command")
-			}
-			m, _ = update(m, cmd())
-			if got := m.ConfirmPrompt(); got != ui.FlowBaseRefPrompt {
-				t.Fatalf("prompt = %q, want %q", got, ui.FlowBaseRefPrompt)
-			}
-
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
 			if cmd == nil {
 				t.Fatal("expected flow creation command")
 			}
@@ -3095,7 +3077,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				t.Fatalf("embedded terminal size = %dx%d, want positive", startWidth, startHeight)
 			}
 			prompt := strings.ToLower(started.InitialPrompt)
-			for _, want := range []string{"wtui-flow", "build the thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+			for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("launch prompt missing %q: %q", want, started.InitialPrompt)
 				}
@@ -3119,7 +3101,11 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 		AgentCommand:     "codex-app",
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			if req.RepoPath != "/dev/alpha" || req.AgentCommand != "codex-app" {
+			if req.RepoPath != "/dev/alpha" ||
+				req.AgentCommand != "codex-app" ||
+				req.Title != "Add Flow Mode" ||
+				req.Instructions != "Build\nthe thing" ||
+				req.BaseRef != "main" {
 				t.Fatalf("StartFlowPlan request = %#v", req)
 			}
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
@@ -3135,7 +3121,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 				PlanPhaseStatus:  req.PlanPhaseStatus,
 				FlowID:           "flow-1",
 				FlowPhaseID:      req.PlanPhaseID,
-				InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild the thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+				InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
 			}}, nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -3150,7 +3136,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "main")
+	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -3187,6 +3173,12 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 		launched.Headless ||
 		launched.FlowLaunchTracked {
 		t.Fatalf("codex-app launch context = %#v", launched)
+	}
+	prompt := strings.ToLower(launched.InitialPrompt)
+	for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
+		}
 	}
 }
 
@@ -3741,12 +3733,31 @@ func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, base
 		t.Fatal("expected title submit command")
 	}
 	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(instructions)})
+	if got := m.ConfirmPrompt(); got != ui.FlowInstructionsPrompt {
+		t.Fatalf("prompt = %q, want %q", got, ui.FlowInstructionsPrompt)
+	}
+	if got := m.InputMode(); got != modal.InputMultiLine {
+		t.Fatalf("instructions input mode = %v, want multi-line", got)
+	}
+	for i, line := range strings.Split(instructions, "\n") {
+		if line != "" {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
+		}
+		if i < strings.Count(instructions, "\n") {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+		}
+	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected instructions submit command")
 	}
 	m, _ = update(m, cmd())
+	if got := m.ConfirmPrompt(); got != ui.FlowBaseRefPrompt {
+		t.Fatalf("prompt = %q, want %q", got, ui.FlowBaseRefPrompt)
+	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Fatalf("base ref input mode = %v, want single-line", got)
+	}
 	if baseRef != "" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
 	}

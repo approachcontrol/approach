@@ -20,6 +20,7 @@ import (
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -145,6 +146,9 @@ func TestModel_MoveWorktreeOpensInputForMovableLinkedWorktree(t *testing.T) {
 	}
 	if m.WorktreeInput() != "" {
 		t.Fatalf("expected empty initial move input, got %q", m.WorktreeInput())
+	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Fatalf("move input mode = %v, want single-line", got)
 	}
 }
 
@@ -2189,6 +2193,9 @@ func TestModel_NKeyOpensWorktreeInput(t *testing.T) {
 	if m.WorktreeInput() != "" {
 		t.Errorf("expected empty worktree input, got %q", m.WorktreeInput())
 	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Errorf("worktree input mode = %v, want single-line", got)
+	}
 	if cmd != nil {
 		t.Errorf("expected nil cmd opening input, got %T", cmd)
 	}
@@ -2206,6 +2213,9 @@ func TestModel_PKeyOpensPullRequestWorktreeInput(t *testing.T) {
 	}
 	if m.WorktreeInput() != "" {
 		t.Errorf("expected empty PR input, got %q", m.WorktreeInput())
+	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Errorf("PR input mode = %v, want single-line", got)
 	}
 	if cmd != nil {
 		t.Errorf("expected nil cmd opening PR input, got %T", cmd)
@@ -2499,6 +2509,9 @@ func TestModel_NKeyInBranchesModeOpensBranchInput(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "Create branch:") {
 		t.Errorf("expected branch prompt in view, got %q", m.View())
+	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Errorf("branch input mode = %v, want single-line", got)
 	}
 	if cmd != nil {
 		t.Errorf("expected nil cmd opening input, got %T", cmd)
@@ -5205,8 +5218,11 @@ func TestModel_ShiftNOpensAgentWorktreeInput(t *testing.T) {
 	if !strings.Contains(m.View(), "launch agent") {
 		t.Fatalf("expected agent worktree prompt in view")
 	}
-	if !strings.Contains(m.View(), "branch, tag, or new branch name") {
+	if !strings.Contains(m.View(), "branch, tag") || !strings.Contains(m.View(), "new branch") {
 		t.Fatalf("expected worktree input placeholder in view")
+	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Fatalf("agent worktree input mode = %v, want single-line", got)
 	}
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening input, got %T", cmd)
