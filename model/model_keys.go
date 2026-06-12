@@ -707,6 +707,9 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmStashDrop()
 	}
+	if m.mode == ui.ModeFlows && len(m.filteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
+		return m.confirmFlowDelete()
+	}
 	if m.mode == ui.ModeBranches && len(m.filteredRepos()) > 0 {
 		return m.confirmBranchDelete()
 	}
@@ -2109,6 +2112,30 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 			return WorktreeRemovedMsg{RepoPath: repoPath, BranchName: branchName}
 		}
 	})
+	return m, nil
+}
+
+func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || m.selectedFlowPhaseID != "" {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return m, nil
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	flowID := record.FlowID
+	title := strings.TrimSpace(record.Title)
+	if title == "" {
+		title = flowID
+	}
+	m.modal = modal.OpenConfirm(
+		fmt.Sprintf("Delete Flow %s (%s)? Flow data only; worktrees/code stay. (y/n)", title, flowID),
+		func() tea.Cmd { return m.deleteFlowCommand(repoPath, flowID, title) },
+	)
 	return m, nil
 }
 

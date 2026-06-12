@@ -1829,7 +1829,7 @@ func TestStoreSetPhaseReportsLockTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	lockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
+	lockPath := flowLockPath(root, record.FlowID)
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("open lock file: %v", err)
@@ -1867,11 +1867,11 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	lockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
-	if err := os.WriteFile(lockPath, []byte("not a live lock\n"), 0o600); err != nil {
+	oldRecordLockPath := filepath.Join(root, "flows", record.FlowID, ".update.lock")
+	if err := os.WriteFile(oldRecordLockPath, []byte("not a live lock\n"), 0o600); err != nil {
 		t.Fatalf("write lock file: %v", err)
 	}
-	if err := os.Chmod(lockPath, 0o644); err != nil {
+	if err := os.Chmod(oldRecordLockPath, 0o644); err != nil {
 		t.Fatalf("loosen lock file: %v", err)
 	}
 
@@ -1886,6 +1886,14 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 	if updated.Phases[0].Status != flowstore.PhaseRunning {
 		t.Fatalf("phase status = %q, want running", updated.Phases[0].Status)
 	}
+	oldLockData, err := os.ReadFile(oldRecordLockPath)
+	if err != nil {
+		t.Fatalf("read old lock file: %v", err)
+	}
+	if string(oldLockData) != "not a live lock\n" {
+		t.Fatalf("old in-record lock marker was modified: %q", oldLockData)
+	}
+	lockPath := flowLockPath(root, record.FlowID)
 	lockData, err := os.ReadFile(lockPath)
 	if err != nil {
 		t.Fatalf("read lock file: %v", err)
@@ -1894,6 +1902,227 @@ func TestStoreSetPhaseIgnoresAbandonedLockMarker(t *testing.T) {
 		t.Fatalf("lock marker was not refreshed: %q", lockData)
 	}
 	assertMode(t, lockPath, 0o600)
+}
+
+func TestStoreDeleteRemovesOnlyFlowArtifacts(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo-worktrees", "flow-delete")
+	planDir := filepath.Join(root, "plans", "plan-1")
+	planPath := filepath.Join(planDir, "plan.md")
+	sessionDir := filepath.Join(root, "sessions", "session-1")
+	transcriptPath := filepath.Join(sessionDir, "transcript.jsonl")
+	for _, dir := range []string{repoPath, worktreePath, planDir, sessionDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(planPath, []byte("# Plan\n"), 0o600); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	if err := os.WriteFile(transcriptPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "delete-flow",
+		Title:        "Delete Flow",
+		Instructions: "remove only the flow artifact directory",
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		PlanID:       "plan-1",
+		PlanPath:     planPath,
+		Phases: []flowstore.FlowPhase{
+			{
+				PhaseID: "plan",
+				Title:   "Plan",
+				Status:  flowstore.PhaseCompleted,
+				Order:   1,
+				Sessions: []flowstore.Session{{
+					Provider:       "codex",
+					SessionID:      "session-1",
+					TranscriptPath: transcriptPath,
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if err := store.Delete(record.FlowID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "flows", record.FlowID)); !os.IsNotExist(err) {
+		t.Fatalf("flow directory still exists or stat failed with non-not-exist error: %v", err)
+	}
+	if _, err := store.Read(record.FlowID); !flowstore.IsNotFound(err) {
+		t.Fatalf("Read(deleted) error = %v, want not found", err)
+	}
+	records, err := store.List(flowstore.FlowFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("List() returned deleted flow: %#v", records)
+	}
+	for _, path := range []string{repoPath, worktreePath, planPath, sessionDir, transcriptPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("Delete() removed or damaged non-flow artifact %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(flowLockPath(root, record.FlowID)); err != nil {
+		t.Fatalf("Delete() should leave an out-of-record lock file: %v", err)
+	}
+}
+
+func TestStoreDeleteMissingFlowReportsNotFound(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Delete("../bad"); err == nil || !strings.Contains(err.Error(), "invalid flow id") {
+		t.Fatalf("Delete(invalid) error = %v, want invalid flow id", err)
+	}
+	if err := store.Delete("missing-flow"); !flowstore.IsNotFound(err) {
+		t.Fatalf("Delete(missing) error = %v, want not found", err)
+	}
+	if _, err := store.Read("missing-flow"); !flowstore.IsNotFound(err) {
+		t.Fatalf("Read(missing) error = %v, want not found", err)
+	}
+}
+
+func TestStoreMutatorsReportNotFoundAfterDelete(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("plan NewStore() error = %v", err)
+	}
+	planID, err := planStore.Save(planstore.PlanRecord{
+		PlanID:   "plan-1",
+		Title:    "Plan",
+		Status:   "approved",
+		Markdown: "# Plan\n",
+	})
+	if err != nil {
+		t.Fatalf("Save(plan) error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "stale-flow",
+		Title:        "Stale Flow",
+		Instructions: "delete before stale mutations return",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/stale",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := store.Delete(record.FlowID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "SetPhase",
+			run: func() error {
+				_, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "plan", Status: flowstore.PhaseRunning})
+				return err
+			},
+		},
+		{
+			name: "RestartPhase",
+			run: func() error {
+				_, err := store.RestartPhase(flowstore.PhaseRestartUpdate{FlowID: record.FlowID, PhaseID: "plan", Notes: "rerun"})
+				return err
+			},
+		},
+		{
+			name: "AddChildPhase",
+			run: func() error {
+				_, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+					FlowID:        record.FlowID,
+					ParentPhaseID: "implementation",
+					PhaseID:       "implementation-api",
+					Title:         "API",
+					Order:         10,
+				})
+				return err
+			},
+		},
+		{
+			name: "SetPlanLink",
+			run: func() error {
+				_, err := store.SetPlanLink(flowstore.PlanLinkUpdate{FlowID: record.FlowID, PlanID: planID})
+				return err
+			},
+		},
+		{
+			name: "SetPR",
+			run: func() error {
+				_, err := store.SetPR(flowstore.PRUpdate{
+					FlowID:     record.FlowID,
+					Provider:   "github",
+					Number:     12,
+					URL:        "https://github.com/brian-bell/wtui/pull/12",
+					HeadBranch: "flow/stale",
+					BaseBranch: "main",
+					Status:     "open",
+				})
+				return err
+			},
+		},
+		{
+			name: "SetMerge",
+			run: func() error {
+				_, err := store.SetMerge(flowstore.MergeUpdate{FlowID: record.FlowID, Status: flowstore.MergeBlocked})
+				return err
+			},
+		},
+		{
+			name: "SetStartMetadata",
+			run: func() error {
+				_, err := store.SetStartMetadata(flowstore.StartMetadataUpdate{FlowID: record.FlowID, Branch: "flow/stale"})
+				return err
+			},
+		},
+		{
+			name: "AddPhaseLaunchID",
+			run: func() error {
+				_, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-1"})
+				return err
+			},
+		},
+		{
+			name: "AttachSession",
+			run: func() error {
+				_, err := store.AttachSession(flowstore.SessionAttachUpdate{
+					FlowID:  record.FlowID,
+					PhaseID: "plan",
+					Session: flowstore.Session{Provider: "codex", SessionID: "session-1"},
+				})
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(); !flowstore.IsNotFound(err) {
+				t.Fatalf("%s() error = %v, want not found", tc.name, err)
+			}
+		})
+	}
 }
 
 func TestStoreSetPhaseConcurrentUpdatesDoNotOverwriteEachOther(t *testing.T) {
@@ -3527,4 +3756,8 @@ func assertPhaseOrder(t *testing.T, record flowstore.FlowRecord, phaseIDs []stri
 		}
 	}
 	t.Fatalf("phase order missing sequence %#v in %#v", phaseIDs, record.Phases)
+}
+
+func flowLockPath(root, flowID string) string {
+	return filepath.Join(root, "flows", ".locks", flowID+".lock")
 }

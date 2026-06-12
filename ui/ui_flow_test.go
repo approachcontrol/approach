@@ -577,6 +577,68 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 	}
 }
 
+func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
+	base := RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Delete flow",
+			Status: flowstore.StatusPending,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+		FlowHeadless: true,
+	}
+
+	readOnlyPane := shortcutPaneText(Render(base))
+	if !strings.Contains(readOnlyPane, "D      destructive mode") {
+		t.Fatalf("flows view should expose destructive-mode toggle before delete is enabled:\n%s", readOnlyPane)
+	}
+	if strings.Contains(readOnlyPane, "d      delete") {
+		t.Fatalf("read-only flows view should not expose delete shortcut:\n%s", readOnlyPane)
+	}
+
+	destructive := base
+	destructive.Destructive = true
+	destructivePane := shortcutPaneText(Render(destructive))
+	if !strings.Contains(destructivePane, "d      delete") {
+		t.Fatalf("destructive top-level Flow row should expose delete shortcut:\n%s", destructivePane)
+	}
+	if strings.Contains(destructivePane, "D      destructive mode") {
+		t.Fatalf("destructive flows view should not show read-only toggle hint:\n%s", destructivePane)
+	}
+
+	phase := destructive
+	phase.ExpandedFlowID = "flow-1"
+	phase.SelectedFlowPhaseID = "implementation"
+	if pane := shortcutPaneText(Render(phase)); strings.Contains(pane, "d      delete") {
+		t.Fatalf("selected Flow phase should not expose delete shortcut:\n%s", pane)
+	}
+
+	stalePhase := destructive
+	stalePhase.ExpandedFlowID = "flow-1"
+	stalePhase.SelectedFlowPhaseID = "old-phase"
+	if pane := shortcutPaneText(Render(stalePhase)); strings.Contains(pane, "d      delete") {
+		t.Fatalf("stale non-empty Flow phase selection should not expose delete shortcut:\n%s", pane)
+	}
+
+	terminalFocused := destructive
+	terminalFocused.FlowEmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
+	terminalFocused.FlowTerminalFocused = true
+	if pane := shortcutPaneText(Render(terminalFocused)); strings.Contains(pane, "d      delete") {
+		t.Fatalf("focused Flow terminal should not expose delete shortcut:\n%s", pane)
+	}
+}
+
 func TestRender_FlowsModeStylesHeadlessOnIndicator(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	previousDarkBackground := lipgloss.HasDarkBackground()
@@ -708,6 +770,40 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterAndHeadlessWithoutLegacyHints(
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("narrow Flow footer should not include %q: %q", notWant, bar)
 		}
+	}
+}
+
+func TestStatusBar_FlowsModeNarrowFooterPreservesDeleteSafetyHints(t *testing.T) {
+	readOnly := renderStatusBarWithState(statusBarParams{
+		Width:        80,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
+	})
+	if !strings.Contains(readOnly, "D: destructive mode") {
+		t.Fatalf("narrow read-only Flow footer should keep destructive-mode state, got %q", readOnly)
+	}
+	if strings.Contains(readOnly, "d: delete") {
+		t.Fatalf("narrow read-only Flow footer should not expose delete, got %q", readOnly)
+	}
+
+	destructive := renderStatusBarWithState(statusBarParams{
+		Width:                 80,
+		Mode:                  ModeFlows,
+		ActivePane:            1,
+		Destructive:           true,
+		RepoSelected:          true,
+		FlowSelected:          true,
+		FlowDeletableSelected: true,
+		FlowHeadless:          true,
+	})
+	if !strings.Contains(destructive, "d: delete") {
+		t.Fatalf("narrow destructive Flow footer should keep delete action, got %q", destructive)
+	}
+	if strings.Contains(destructive, "D: destructive mode") {
+		t.Fatalf("narrow destructive Flow footer should not show read-only toggle state, got %q", destructive)
 	}
 }
 
