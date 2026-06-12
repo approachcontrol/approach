@@ -860,6 +860,10 @@ func renderShortcutPaneHint(hint shortcutHint, width int) string {
 }
 
 func renderShortcutHintLabel(hint shortcutHint, labelStyle lipgloss.Style) string {
+	return renderShortcutHintLabelWithRestore(hint, labelStyle, "")
+}
+
+func renderShortcutHintLabelWithRestore(hint shortcutHint, labelStyle lipgloss.Style, restoreSequence string) string {
 	if hint.SuccessSuffix == "" || hint.Warning || hint.Muted {
 		return labelStyle.Render(hint.Label)
 	}
@@ -867,7 +871,19 @@ func renderShortcutHintLabel(hint shortcutHint, labelStyle lipgloss.Style) strin
 	if !ok {
 		return labelStyle.Render(hint.Label)
 	}
-	return labelStyle.Render(prefix) + shortcutSuccessStyle.Render(hint.SuccessSuffix)
+	return labelStyle.Render(prefix) + shortcutSuccessStyle.Render(hint.SuccessSuffix) + restoreSequence
+}
+
+// styleStartSequence returns the zero-width ANSI prefix for restoring a style
+// after a nested styled segment resets terminal attributes.
+func styleStartSequence(style lipgloss.Style) string {
+	const marker = "\x00"
+	rendered := style.Render(marker)
+	before, _, ok := strings.Cut(rendered, marker)
+	if !ok {
+		return ""
+	}
+	return before
 }
 
 func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
@@ -1530,7 +1546,7 @@ func renderFooterHint(hint shortcutHint) string {
 	if hint.Muted {
 		return statusStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
-	return hint.Key + shortcutSeparator(hint) + " " + renderShortcutHintLabel(hint, lipgloss.NewStyle())
+	return hint.Key + shortcutSeparator(hint) + " " + renderShortcutHintLabelWithRestore(hint, lipgloss.NewStyle(), styleStartSequence(statusStyle))
 }
 
 func styledDotForLabel(label string) string {
