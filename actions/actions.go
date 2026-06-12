@@ -621,9 +621,9 @@ type AgentLaunchContext struct {
 	FlowID            string
 	FlowPhaseID       string
 	FlowLaunchTracked bool
-	// FlowPhaseTerminal records that the launched phase was already in a
-	// terminal status (completed, skipped), so launch failures must not
-	// regress the phase to needs_attention.
+	// FlowPhaseTerminal records that the persisted phase kept a terminal
+	// status (completed, skipped) when the launch was recorded, so launch
+	// failures must not regress the phase to needs_attention.
 	FlowPhaseTerminal bool
 	Embedded          bool
 	Headless          bool

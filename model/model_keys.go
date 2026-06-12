@@ -1798,14 +1798,22 @@ func (m Model) launchFlowEmbeddedHeadlessWithContext(ctx actions.AgentLaunchCont
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	ctx.FlowLaunchTracked = true
-	if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+	updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   ctx.FlowID,
 		PhaseID:  ctx.FlowPhaseID,
 		LaunchID: ctx.LaunchID,
 		Resume:   true,
-	}); err != nil {
+	})
+	if err != nil {
 		m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", err))
 		return m, nil
+	}
+	// The store decided from the persisted record whether this resume preserved
+	// a terminal phase or reopened a running one; the snapshot the launch
+	// context was built from may be stale, so failure handling must follow the
+	// persisted status.
+	if phase, ok := flowPhaseByID(updated, ctx.FlowPhaseID); ok {
+		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
 	launch, err := m.launchAgent(ctx)
 	if err != nil {

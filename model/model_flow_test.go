@@ -1108,7 +1108,10 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseCompleted,
+			}}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
@@ -1156,7 +1159,10 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *te
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseRunning,
+			}}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
@@ -1197,6 +1203,100 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *te
 	}
 }
 
+func TestModel_RKeyOnFlowPhaseResumeFailureFlagsPhaseReopenedByStore(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			// The persisted phase changed to non-terminal since the list was
+			// fetched, so the store reopened it as running.
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseRunning,
+			}}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume reopened phase failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-reopened-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-reopened-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if len(phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one; the store reopened the phase, so a failed launch must flag it", phaseUpdates)
+	}
+	if update := phaseUpdates[0]; update.FlowID != "flow-1" ||
+		update.PhaseID != "review-loop" ||
+		update.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(update.Notes, "terminal unavailable") {
+		t.Fatalf("phase update = %#v", update)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			// An agent completed the phase since the list was fetched, so the
+			// store preserved its terminal status.
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseCompleted,
+			}}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume completed-in-store failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-completed-in-store",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-completed-in-store",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseNeedsAttention,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want none; the store preserved the completed phase, so a failed launch must not regress it", phaseUpdates)
+	}
+}
+
 func TestModel_RKeyOnFlowPhaseResumeRunFailureKeepsCompletedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var phaseUpdates []flowstore.PhaseUpdate
@@ -1206,7 +1306,10 @@ func TestModel_RKeyOnFlowPhaseResumeRunFailureKeepsCompletedPhase(t *testing.T) 
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseCompleted,
+			}}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
