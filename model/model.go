@@ -100,6 +100,8 @@ type Model struct {
 	flowFocus                 flowFocus
 	embeddedTerminalTickGen   uint64
 	terminalPrefixActive      bool
+	terminalConfirmID         embeddedTerminalID
+	terminalConfirmScope      embeddedTerminalScope
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
 	sessionStateRoot          string
 	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)

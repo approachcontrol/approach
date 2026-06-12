@@ -23,7 +23,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		view := m.modal.View()
 		var outcome modal.Outcome
+		terminalConfirmOpen := m.terminalConfirmID != 0
 		m.modal, outcome, cmd = m.modal.Update(msg)
+		if terminalConfirmOpen && !m.modal.IsOpen() {
+			m = m.clearEmbeddedTerminalConfirm()
+		}
 		if outcome == modal.Accepted && cmd != nil && isWorktreeCreateInput(view) {
 			var request uint64
 			m, request = m.nextWorktreeCreateRequest()
