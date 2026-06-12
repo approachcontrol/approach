@@ -1749,7 +1749,13 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
-	want := artifacts.NormalizePhaseID(phaseID)
+	requested := strings.TrimSpace(phaseID)
+	for _, phase := range record.Phases {
+		if phase.PhaseID == requested {
+			return phase, true
+		}
+	}
+	want := artifacts.NormalizePhaseID(requested)
 	for _, phase := range record.Phases {
 		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return phase, true

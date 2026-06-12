@@ -2740,6 +2740,27 @@ func TestRender_SelectOverlayAutoSizesFromPromptAndItems(t *testing.T) {
 	}
 }
 
+func TestRender_SelectOverlayAutoWidthFitsLongestUnselectedItem(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          40,
+		Height:         10,
+		Mode:           ModeWorktrees,
+		Overlay:        OverlaySelect,
+		SelectPrompt:   "Pick",
+		SelectItems:    []SelectItem{{Label: "tiny", Value: "tiny"}, {Label: "", Value: "fallback-value"}},
+		SelectSelected: 0,
+	})
+
+	bounds := requireSelectPanelBounds(t, view, "Pick")
+	if bounds.width != len("fallback-value")+4 {
+		t.Fatalf("auto select width = %d, want %d:\n%s", bounds.width, len("fallback-value")+4, ansi.Strip(view))
+	}
+	if !strings.Contains(ansi.Strip(view), "fallback-value") {
+		t.Fatalf("auto-sized select panel should not truncate longest unselected item:\n%s", ansi.Strip(view))
+	}
+}
+
 func TestRender_SelectOverlayPlacementsUseTerminalBody(t *testing.T) {
 	tests := []struct {
 		name      string

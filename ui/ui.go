@@ -2887,7 +2887,8 @@ func selectPanelContentLine(content string, width int) string {
 	}
 	innerWidth := width - 2
 	if width >= 4 {
-		if strings.HasPrefix(ansi.Strip(content), "> ") {
+		strippedContent := ansi.Strip(content)
+		if strings.HasPrefix(strippedContent, "> ") || strings.HasPrefix(strippedContent, "  ") {
 			content = truncateToWidth(content, innerWidth)
 			padding := innerWidth - lipgloss.Width(content)
 			if padding < 0 {
