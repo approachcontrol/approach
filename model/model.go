@@ -83,6 +83,7 @@ type Model struct {
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	deleteFlow                func(string) error
 	readPlan                  func(string) (string, error)
 	planMarkdownPath          func(string) (string, error)
 	copyToClipboard           func(string) error
@@ -152,6 +153,7 @@ type Options struct {
 	StartFlowPlan         func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase          func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID  func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	DeleteFlow            func(flowID string) error
 	ReadPlan              func(string) (string, error)
 	PlanMarkdownPath      func(planID string) (string, error)
 	CopyToClipboard       func(text string) error
@@ -218,6 +220,17 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.AddPhaseLaunchID(update)
+		}
+	}
+	deleteFlow := opts.DeleteFlow
+	if deleteFlow == nil {
+		root := opts.SessionStateRoot
+		deleteFlow = func(flowID string) error {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return err
+			}
+			return store.Delete(flowID)
 		}
 	}
 	readPlan := opts.ReadPlan
@@ -323,6 +336,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		startFlowPlan:         startFlowPlan,
 		setFlowPhase:          setFlowPhase,
 		addFlowPhaseLaunchID:  addFlowPhaseLaunchID,
+		deleteFlow:            deleteFlow,
 		readPlan:              readPlan,
 		planMarkdownPath:      planMarkdownPath,
 		copyToClipboard:       copyToClipboard,
@@ -863,6 +877,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FlowResultMsg:
 		next := m.handleFlowResult(msg)
 		return next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
+	case FlowDeletedMsg:
+		return m.handleFlowDeleted(msg)
+	case FlowDeleteFailedMsg:
+		return m.handleFlowDeleteFailed(msg)
 	case PlanReadResultMsg:
 		return m.handlePlanReadResult(msg)
 	case WorktreeDiffResultMsg:

@@ -83,7 +83,7 @@ filter matches, or a load failure with details in the status bar.
 | `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
-| `d` | Delete worktree/branch or drop stash — requires destructive mode |
+| `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
 | `f` | Fetch with `--prune` (worktrees and branches views) |
@@ -287,16 +287,20 @@ by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow. On a Flow row, `enter` expands or collapses phase
 detail rows; `o` pages the linked plan body in `less -R`, and wtui shows a
-status message when the selected Flow has no linked plan. On an expanded phase
-row, `enter` launches the configured agent for that selected phase when it is
-ready, and it never falls back to another ready phase in the same Flow. Press
-`y` to copy the selected Flow ID, or the selected phase ID when a phase row is
-selected. Press `r` on an expanded phase row with an attached provider session
-to resume that session; CLI resumes are recorded as a fresh Flow phase launch
-attempt, while `codex-app` resumes navigate to the existing app thread without
-extra launch tracking. Selected CLI `codex` and `claude` phase launches always
-run in a runtime-only embedded headless terminal inside the flows pane.
-`codex-app` always uses the external deep-link route.
+status message when the selected Flow has no linked plan. With destructive mode
+enabled (`D`), `d` deletes only the selected top-level Flow record under the
+Flow artifact store; it does not remove repositories, worktrees, branches,
+checked-out code, linked plans, sessions, transcripts, or active embedded
+terminals. Expanded phase rows cannot be deleted with this action. On an
+expanded phase row, `enter` launches the configured agent for that selected
+phase when it is ready, and it never falls back to another ready phase in the
+same Flow. Press `y` to copy the selected Flow ID, or the selected phase ID
+when a phase row is selected. Press `r` on an expanded phase row with an
+attached provider session to resume that session; CLI resumes are recorded as a
+fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
+existing app thread without extra launch tracking. Selected CLI `codex` and
+`claude` phase launches always run in a runtime-only embedded headless terminal
+inside the flows pane. `codex-app` always uses the external deep-link route.
 Embedded headless output is readable terminal text, not raw JSON events:
 `codex exec` streams progress as it works, while `claude --print` prints its
 result when the run completes, so a Claude phase can show an empty terminal

@@ -3,6 +3,7 @@ package flowstore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,6 +22,8 @@ import (
 const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
+
+var errFlowNotFound = errors.New("flow not found")
 
 const (
 	StatusPending        = "pending"
@@ -67,6 +70,11 @@ type StoreOptions struct {
 	Root        string
 	Now         func() time.Time
 	LockTimeout time.Duration
+}
+
+// IsNotFound reports whether err means the requested Flow record does not exist.
+func IsNotFound(err error) bool {
+	return errors.Is(err, errFlowNotFound)
 }
 
 // FlowPhase is one phase in the persisted Flow pipeline.
@@ -281,7 +289,13 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 		record.FlowID = id
 	} else if err := validateFlowID(record.FlowID); err != nil {
 		return FlowRecord{}, err
-	} else if _, err := os.Stat(s.flowDir(record.FlowID)); err == nil {
+	}
+	release, err := s.acquireFlowLock(record.FlowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	defer release()
+	if _, err := os.Stat(s.flowDir(record.FlowID)); err == nil {
 		return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
 	} else if !os.IsNotExist(err) {
 		return FlowRecord{}, fmt.Errorf("check flow id collision: %w", err)
@@ -309,7 +323,7 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 	}
 	record, ok := s.readRecord(flowID)
 	if !ok {
-		return FlowRecord{}, fmt.Errorf("flow %q not found", flowID)
+		return FlowRecord{}, flowNotFoundError(flowID)
 	}
 	return record, nil
 }
@@ -320,11 +334,6 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	if _, err := os.Stat(s.flowDir(update.FlowID)); os.IsNotExist(err) {
-		return FlowRecord{}, fmt.Errorf("flow %q not found", update.FlowID)
-	} else if err != nil {
-		return FlowRecord{}, fmt.Errorf("stat flow %q: %w", update.FlowID, err)
-	}
 	release, err := s.acquireFlowLock(update.FlowID)
 	if err != nil {
 		return FlowRecord{}, err
@@ -332,7 +341,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	defer release()
 	record, ok := s.readRecord(update.FlowID)
 	if !ok {
-		return FlowRecord{}, fmt.Errorf("flow %q not found", update.FlowID)
+		return FlowRecord{}, flowNotFoundError(update.FlowID)
 	}
 	// When a legacy record still holds duplicate rows for this logical phase,
 	// the first row wins: it is validated, updated, and kept, while the others
@@ -797,12 +806,29 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 	})
 }
 
-func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	if _, err := os.Stat(s.flowDir(flowID)); os.IsNotExist(err) {
-		return FlowRecord{}, fmt.Errorf("flow %q not found", flowID)
-	} else if err != nil {
-		return FlowRecord{}, fmt.Errorf("stat flow %q: %w", flowID, err)
+// Delete removes only the persisted Flow record directory.
+func (s *Store) Delete(flowID string) error {
+	if err := validateFlowID(flowID); err != nil {
+		return err
 	}
+	release, err := s.acquireFlowLock(flowID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	dir := s.flowDir(flowID)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return flowNotFoundError(flowID)
+	} else if err != nil {
+		return fmt.Errorf("stat flow %q: %w", flowID, err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("delete flow %q: %w", flowID, err)
+	}
+	return nil
+}
+
+func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	release, err := s.acquireFlowLock(flowID)
 	if err != nil {
 		return FlowRecord{}, err
@@ -810,7 +836,7 @@ func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (Fl
 	defer release()
 	record, ok := s.readRecord(flowID)
 	if !ok {
-		return FlowRecord{}, fmt.Errorf("flow %q not found", flowID)
+		return FlowRecord{}, flowNotFoundError(flowID)
 	}
 	record, err = mutate(record, s.now())
 	if err != nil {
@@ -834,7 +860,17 @@ func appendUnique(values []string, value string) []string {
 }
 
 func (s *Store) acquireFlowLock(flowID string) (func(), error) {
-	lockPath := filepath.Join(s.flowDir(flowID), ".update.lock")
+	if err := validateFlowID(flowID); err != nil {
+		return nil, err
+	}
+	lockDir := filepath.Join(s.root, "flows", ".locks")
+	if err := os.MkdirAll(lockDir, artifacts.DirPerm); err != nil {
+		return nil, fmt.Errorf("create flow lock directory: %w", err)
+	}
+	if err := os.Chmod(lockDir, artifacts.DirPerm); err != nil {
+		return nil, fmt.Errorf("secure flow lock directory: %w", err)
+	}
+	lockPath := filepath.Join(lockDir, flowID+".lock")
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, artifacts.FilePerm)
 	if err != nil {
 		return nil, fmt.Errorf("open flow lock: %w", err)
@@ -1404,6 +1440,10 @@ func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
 
 func (s *Store) flowDir(flowID string) string {
 	return artifacts.RecordDir(s.root, "flows", flowID)
+}
+
+func flowNotFoundError(flowID string) error {
+	return fmt.Errorf("flow %q not found: %w", flowID, errFlowNotFound)
 }
 
 func validateFlowID(flowID string) error {
