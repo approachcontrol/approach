@@ -43,6 +43,8 @@ prefer_multiplexer = true
 [agent]
 command = "codex"
 plan_prompt = "Implement {title} from {plan_path}"
+codex_reasoning_effort = " HIGH "
+claude_reasoning_effort = "max"
 
 [flow_prompts]
 plan = "Plan only: {instructions}"
@@ -99,6 +101,12 @@ timeout_seconds = 300
 	}
 	if cfg.Agent.PlanPrompt != "Implement {title} from {plan_path}" {
 		t.Fatalf("expected agent plan prompt to parse, got %q", cfg.Agent.PlanPrompt)
+	}
+	if cfg.Agent.CodexReasoningEffort != "high" {
+		t.Fatalf("expected normalized codex reasoning effort high, got %q", cfg.Agent.CodexReasoningEffort)
+	}
+	if cfg.Agent.ClaudeReasoningEffort != "max" {
+		t.Fatalf("expected claude reasoning effort max, got %q", cfg.Agent.ClaudeReasoningEffort)
 	}
 	if cfg.FlowPrompts.Plan != "Plan only: {instructions}" ||
 		cfg.FlowPrompts.Implementation != "Implement {plan_path} in {worktree_path}" ||
@@ -312,6 +320,57 @@ func TestLoadFrom_AcceptsCodexAppAgent(t *testing.T) {
 	}
 }
 
+func TestLoadFrom_AcceptsCodexMinimalReasoningEffort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[agent]\ncodex_reasoning_effort = \" minimal \"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.CodexReasoningEffort != "minimal" {
+		t.Fatalf("expected normalized codex reasoning effort minimal, got %q", cfg.Agent.CodexReasoningEffort)
+	}
+}
+
+func TestLoadFrom_RejectsInvalidReasoningEfforts(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "codex max",
+			body: "[agent]\ncodex_reasoning_effort = \"max\"\n",
+			want: "unsupported reasoning effort",
+		},
+		{
+			name: "claude unknown",
+			body: "[agent]\nclaude_reasoning_effort = \"turbo\"\n",
+			want: "unsupported reasoning effort",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := config.LoadFrom(path)
+			if err == nil {
+				t.Fatal("expected invalid reasoning effort error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %q, got %q", tt.want, err.Error())
+			}
+		})
+	}
+}
+
 func TestSaveAgentCommand_WritesCodexApp(t *testing.T) {
 	xdg := t.TempDir()
 	err := config.SaveAgentCommand("codex-app",
@@ -408,7 +467,7 @@ func TestSaveAgentCommand_UpdatesExistingAgentSection(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("[agent]\ncommand = \"codex\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[agent]\ncommand = \"codex\"\ncodex_reasoning_effort = \"high\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -437,6 +496,98 @@ func TestSaveAgentCommand_UpdatesExistingAgentSection(t *testing.T) {
 	}
 	if !strings.Contains(text, `command = "claude"`) {
 		t.Fatalf("expected updated agent command, got:\n%s", text)
+	}
+	if !strings.Contains(text, `codex_reasoning_effort = "high"`) {
+		t.Fatalf("expected saved agent command to preserve reasoning effort, got:\n%s", text)
+	}
+}
+
+func TestSaveAgentReasoningEffort_CreatesMissingConfig(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveAgentReasoningEffort("codex", "high",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentReasoningEffort returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `codex_reasoning_effort = "high"`) {
+		t.Fatalf("expected codex reasoning effort in saved config, got:\n%s", raw)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.CodexReasoningEffort != "high" {
+		t.Fatalf("expected saved codex effort high, got %q", cfg.Agent.CodexReasoningEffort)
+	}
+}
+
+func TestSaveAgentReasoningEffort_UpdatesExistingAgentSection(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "# keep me\n[agent]\n# keep agent note\ncommand = \"claude\"\nclaude_reasoning_effort = \"low\"\n\n[scan]\nroot = \"/src\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentReasoningEffort("claude", "max",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentReasoningEffort returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"# keep me", "# keep agent note", `command = "claude"`, `claude_reasoning_effort = "max"`, `root = "/src"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "codex_reasoning_effort") {
+		t.Fatalf("claude save should not add codex effort key, got:\n%s", text)
+	}
+}
+
+func TestSaveAgentReasoningEffort_RejectsUnsupportedEffort(t *testing.T) {
+	err := config.SaveAgentReasoningEffort("codex", "max",
+		config.WithGetenv(func(string) string { return t.TempDir() }),
+		config.WithHomeDir(func() (string, error) { return t.TempDir(), nil }),
+	)
+	if err == nil {
+		t.Fatal("expected unsupported effort error")
+	}
+	if !strings.Contains(err.Error(), "unsupported reasoning effort") {
+		t.Fatalf("expected unsupported effort error, got %q", err.Error())
 	}
 }
 

@@ -71,6 +71,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		PlanPhaseID:      "plan",
 		PlanPhaseTitle:   "Plan",
 		PlanPhaseStatus:  flowstore.PhaseRunning,
+		ReasoningEffort:  "high",
 	})
 	if err != nil {
 		t.Fatalf("StartPlan returned error: %v", err)
@@ -115,7 +116,8 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		ctx.FlowPhaseID != "plan" ||
 		ctx.PlanPhaseID != "plan" ||
 		ctx.PlanPhaseTitle != "Plan" ||
-		ctx.PlanPhaseStatus != flowstore.PhaseRunning {
+		ctx.PlanPhaseStatus != flowstore.PhaseRunning ||
+		ctx.ReasoningEffort != "high" {
 		t.Fatalf("launch context = %#v", ctx)
 	}
 	prompt := strings.ToLower(ctx.InitialPrompt)

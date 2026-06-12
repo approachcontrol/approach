@@ -268,8 +268,9 @@ func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
 func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		AgentCommand:         "codex",
+		CodexReasoningEffort: "xhigh",
+		SessionStateRoot:     "/state/wtui/sessions/v1",
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
@@ -327,6 +328,7 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
 		got.PlanID != "plan-1" ||
 		got.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		got.ReasoningEffort != "xhigh" ||
 		got.InitialPrompt != "Custom launch\ninstructions" {
 		t.Fatalf("unexpected launch context: %#v", got)
 	}

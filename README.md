@@ -64,6 +64,7 @@ filter matches, or a load failure with details in the status bar.
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
+| `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
 | `tab` | Switch focus to right pane |
 | `q`/`esc` | Quit |
 
@@ -77,6 +78,7 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `←`/`→`/`l` | Cycle through modes; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
+| `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, expand/collapse plan or Flow phases, or launch the selected launchable Flow phase |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -110,6 +112,18 @@ When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
 list captured when the key is pressed.
 
+Press `n` in the left repo pane to create a new repository directly under the
+resolved scan root. The form asks for a repo name, whether to create a GitHub
+repo (checked by default), and public/private visibility (public by default).
+Repo names must be one path segment: they cannot be empty, `.`, `..`, start
+with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
+worktree directories).
+wtui always creates the local Git repository first. When GitHub creation is
+enabled, wtui then runs `gh repo create <name> --public|--private --source <path> --remote origin`;
+`gh` must be installed and authenticated. If the GitHub step fails after local
+creation succeeds, wtui keeps the local repo and reopens the form so submitting
+again retries only the GitHub/origin setup against that existing local path.
+
 ### Worktrees view (mode 1)
 
 Shows all worktree checkouts for the selected repo. The main (root) worktree
@@ -123,6 +137,8 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `✗` red: stale — worktree directory no longer exists
 
 Press `A` to choose `codex`, `codex-app`, or `claude` from a picker; wtui persists the choice to config.
+In flows view, press `E` to choose the selected CLI agent's reasoning effort
+for future launches.
 Press `a` to launch the selected agent in the current non-stale worktree, or
 `N` to create a worktree and launch the agent there immediately. Press `n` to
 create a worktree without launching an agent. Enter an existing branch, tag, or
@@ -313,9 +329,13 @@ is on by default: selected CLI `codex` and `claude` phase launches run in a
 runtime-only embedded terminal inside the flows pane. Press `h` to choose the
 CLI command mode: headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
-terminal. The same
-command mode applies to the initial Plan launch when creating a new Flow.
-`codex-app` always uses the external deep-link route. Embedded headless output
+terminal. The same command mode applies to the initial Plan launch when creating
+a new Flow. Press
+`E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
+the current value. Codex CLI launches use `--config
+model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
+session resumes do not receive effort flags. `codex-app` always uses the
+external deep-link route and keeps app-side/default reasoning. Embedded headless output
 is readable terminal text, not raw JSON events: `codex exec` streams progress
 as it works, while `claude --print` prints its result when the run completes,
 so a Claude phase can show an empty terminal until it finishes (the terminal tab
@@ -495,6 +515,8 @@ max_depth = 2
 
 [agent]
 command = "codex"
+codex_reasoning_effort = "high"
+claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
 [flow_prompts]
@@ -513,9 +535,15 @@ repo_path = "~/projects/wtui"
 script = ".wtui/bootstrap"
 ```
 
-`WORKTREE_ROOT` overrides `[scan].root` when both are set. `[agent].plan_prompt`
-customizes the editable instructions shown before launching an agent from the
-plans pane, while `[flow_prompts]` customizes Flow phase launch templates.
+`WORKTREE_ROOT` overrides `[scan].root` when both are set. The scan root is
+cleaned before scanning; explicit relative roots preserve relative repo paths
+for compatibility. The same root is resolved to an absolute path when used as
+the parent directory for left-pane repo creation.
+`[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
+configure provider-specific effort for new CLI agent launches; empty or
+`default` keeps provider defaults. `[agent].plan_prompt` customizes the
+editable instructions shown before launching an agent from the plans pane, while
+`[flow_prompts]` customizes Flow phase launch templates.
 `[editor].command` customizes the editor used by the plans pane edit action.
 See [docs/config.md](docs/config.md) for the full config reference, including
 sessions storage, bootstrap hook settings, terminal settings, and parsed
@@ -523,7 +551,7 @@ foundation fields for provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos; depth defaults to 2 and can be reduced with `[scan].max_depth` |
+| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos and create new repos under; explicit relative paths are preserved for scanned repo identity and resolved from the current working directory for repo creation, depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 | `WTUI_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by wtui |
 | `WTUI_PLAN_STATE_ROOT` | `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `wtui plan`; set automatically for agents launched by wtui. In the TUI it relocates the whole artifact root, moving sessions, plans, and flows |

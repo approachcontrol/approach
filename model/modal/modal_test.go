@@ -647,6 +647,161 @@ func TestSelectCancelClosesWithoutSubmit(t *testing.T) {
 	}
 }
 
+func TestFormSnapshotsPurposeAndDefaultFieldState(t *testing.T) {
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "repo-create",
+		Title:   "New repo",
+		Fields: []modal.FormField{
+			{ID: "name", Kind: modal.FormText, Label: "Repo name", Placeholder: "repo-name"},
+			{ID: "github", Kind: modal.FormCheckbox, Label: "Create GitHub repo", Checked: true},
+			{ID: "visibility", Kind: modal.FormChoice, Label: "Visibility", Options: []modal.SelectItem{
+				{Label: "Public", Value: "public"},
+				{Label: "Private", Value: "private"},
+			}},
+		},
+	})
+
+	view := m.View()
+	if view.Kind != modal.Form {
+		t.Fatalf("kind = %v, want Form", view.Kind)
+	}
+	if view.Form.Purpose != "repo-create" || view.Form.Title != "New repo" {
+		t.Fatalf("unexpected form identity: %#v", view.Form)
+	}
+	if view.Form.FocusIndex != 0 {
+		t.Fatalf("focus index = %d, want 0", view.Form.FocusIndex)
+	}
+	if len(view.Form.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %#v", view.Form.Fields)
+	}
+	if view.Form.Fields[0].Value != "" || view.Form.Fields[0].Placeholder != "repo-name" {
+		t.Fatalf("unexpected text field: %#v", view.Form.Fields[0])
+	}
+	if !view.Form.Fields[1].Checked {
+		t.Fatalf("GitHub checkbox should default checked: %#v", view.Form.Fields[1])
+	}
+	if view.Form.Fields[2].SelectedIndex != 0 || view.Form.Fields[2].Options[0].Value != "public" {
+		t.Fatalf("visibility should default public: %#v", view.Form.Fields[2])
+	}
+}
+
+func TestFormEditsNavigatesTogglesAndSubmitsStructuredValues(t *testing.T) {
+	var submitted modal.FormValues
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "repo-create",
+		Title:   "New repo",
+		Fields: []modal.FormField{
+			{ID: "name", Kind: modal.FormText, Label: "Repo name"},
+			{ID: "github", Kind: modal.FormCheckbox, Label: "Create GitHub repo", Checked: true},
+			{ID: "visibility", Kind: modal.FormChoice, Label: "Visibility", Options: []modal.SelectItem{
+				{Label: "Public", Value: "public"},
+				{Label: "Private", Value: "private"},
+			}},
+		},
+		Submit: func(values modal.FormValues) tea.Cmd {
+			submitted = values
+			return func() tea.Msg { return sentinelMsg("created") }
+		},
+	})
+
+	m, _, _ = m.Update(keyRunes("  project  "))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if view := m.View().Form; view.FocusIndex != 1 {
+		t.Fatalf("tab focus = %d, want checkbox", view.FocusIndex)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if view := m.View().Form; view.FocusIndex != 2 {
+		t.Fatalf("down focus = %d, want visibility", view.FocusIndex)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+
+	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if out != modal.Accepted {
+		t.Fatalf("enter outcome = %v, want Accepted", out)
+	}
+	if next.IsOpen() {
+		t.Fatal("expected form closed after valid submit")
+	}
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	if submitted.Text != nil {
+		t.Fatalf("submit should be deferred until command runs, got %#v", submitted)
+	}
+	if got := cmd(); got != sentinelMsg("created") {
+		t.Fatalf("submit command returned %T %[1]v", got)
+	}
+	if submitted.Text["name"] != "project" {
+		t.Fatalf("submitted name = %q, want trimmed project", submitted.Text["name"])
+	}
+	if submitted.Checked["github"] {
+		t.Fatalf("submitted github = true, want false")
+	}
+	if submitted.Choice["visibility"] != "private" {
+		t.Fatalf("submitted visibility = %q, want private", submitted.Choice["visibility"])
+	}
+}
+
+func TestFormShiftTabNavigatesBackwards(t *testing.T) {
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "repo-create",
+		Title:   "New repo",
+		Fields: []modal.FormField{
+			{ID: "name", Kind: modal.FormText, Label: "Repo name"},
+			{ID: "github", Kind: modal.FormCheckbox, Label: "Create GitHub repo"},
+			{ID: "visibility", Kind: modal.FormChoice, Label: "Visibility", Options: []modal.SelectItem{
+				{Label: "Public", Value: "public"},
+				{Label: "Private", Value: "private"},
+			}},
+		},
+	})
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.View().Form.FocusIndex; got != 2 {
+		t.Fatalf("shift+tab focus = %d, want wrap to last field", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.View().Form.FocusIndex; got != 1 {
+		t.Fatalf("shift+tab focus = %d, want checkbox", got)
+	}
+}
+
+func TestFormInvalidSubmitStaysOpenWithError(t *testing.T) {
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "repo-create",
+		Title:   "New repo",
+		Fields: []modal.FormField{
+			{ID: "name", Kind: modal.FormText, Label: "Repo name"},
+			{ID: "github", Kind: modal.FormCheckbox, Label: "Create GitHub repo", Checked: true},
+		},
+		Validate: func(values modal.FormValues) error {
+			if values.Text["name"] == "" {
+				return errors.New("enter a repo name")
+			}
+			return nil
+		},
+		Submit: func(modal.FormValues) tea.Cmd {
+			t.Fatal("invalid form must not submit")
+			return nil
+		},
+	})
+
+	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if out != modal.Consumed {
+		t.Fatalf("enter outcome = %v, want Consumed", out)
+	}
+	if !next.IsOpen() {
+		t.Fatal("expected form to stay open")
+	}
+	if got := next.View().Form.Error; got != "enter a repo name" {
+		t.Fatalf("form error = %q, want validation error", got)
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil command, got %T", cmd)
+	}
+}
+
 func TestDiffScrollsClampsAndCloses(t *testing.T) {
 	m := modal.OpenDiff(modal.DiffWorktree, "line 1\nline 2")
 

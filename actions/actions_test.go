@@ -1775,6 +1775,126 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 	}
 }
 
+func TestAgentCommandCodexAddsReasoningEffortConfig(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "launch-1",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		Headless:         true,
+		ReasoningEffort:  "xhigh",
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	effortIndex := slices.Index(args, "model_reasoning_effort=xhigh")
+	execIndex := slices.Index(args, "exec")
+	if effortIndex == -1 || effortIndex == 0 || args[effortIndex-1] != "--config" {
+		t.Fatalf("expected codex reasoning effort config pair, got %#v", args)
+	}
+	if execIndex == -1 || effortIndex > execIndex {
+		t.Fatalf("expected codex effort config before exec, got %#v", args)
+	}
+	if args[len(args)-1] != "Implement this phase." {
+		t.Fatalf("expected prompt to remain final arg, got %#v", args)
+	}
+}
+
+func TestAgentCommandClaudeAddsReasoningEffortArg(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "claude",
+		LaunchID:         "launch-1",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		FlowID:           "flow-1",
+		FlowPhaseID:      "implementation",
+		Embedded:         true,
+		Headless:         true,
+		ReasoningEffort:  "max",
+		InitialPrompt:    "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	effortFlagIndex := slices.Index(args, "--effort")
+	if effortFlagIndex == -1 || effortFlagIndex+1 >= len(args) || args[effortFlagIndex+1] != "max" {
+		t.Fatalf("expected claude --effort max arg pair, got %#v", args)
+	}
+	if args[len(args)-1] != "Implement this phase." {
+		t.Fatalf("expected prompt to remain final arg, got %#v", args)
+	}
+}
+
+func TestAgentCommandDefaultReasoningEffortOmitsProviderArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		effort  string
+	}{
+		{name: "codex empty", command: "codex", effort: ""},
+		{name: "codex default", command: "codex", effort: "default"},
+		{name: "claude default", command: "claude", effort: " default "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+				Command:         tt.command,
+				WorktreePath:    "/repo/worktree",
+				ReasoningEffort: tt.effort,
+				InitialPrompt:   "Implement this phase.",
+			})
+			if err != nil {
+				t.Fatalf("AgentCommand returned error: %v", err)
+			}
+			if strings.Contains(strings.Join(cmd.Args, "\x00"), "model_reasoning_effort") {
+				t.Fatalf("default codex effort should not add config args, got %#v", cmd.Args)
+			}
+			if slices.Contains(cmd.Args, "--effort") {
+				t.Fatalf("default claude effort should not add --effort, got %#v", cmd.Args)
+			}
+		})
+	}
+}
+
+func TestAgentCommandRejectsUnsupportedReasoningEffort(t *testing.T) {
+	_, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:         "codex",
+		WorktreePath:    "/repo/worktree",
+		ReasoningEffort: "max",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported reasoning effort error")
+	}
+	if !strings.Contains(err.Error(), "unsupported reasoning effort") {
+		t.Fatalf("expected unsupported reasoning effort error, got %q", err.Error())
+	}
+}
+
+func TestAgentCommandRejectsResumeWithReasoningEffort(t *testing.T) {
+	_, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "claude",
+		WorktreePath:     "/repo/worktree",
+		ResumeSessionID:  "session-1",
+		ReasoningEffort:  "high",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err == nil {
+		t.Fatal("expected resume reasoning effort error")
+	}
+	if !strings.Contains(err.Error(), "reasoning effort") || !strings.Contains(err.Error(), "resume") {
+		t.Fatalf("expected resume reasoning effort error, got %q", err.Error())
+	}
+}
+
 func TestAgentCommandBuildsEmbeddedInteractiveCodexCommand(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",

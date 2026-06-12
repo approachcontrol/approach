@@ -33,6 +33,7 @@ const (
 	OverlayPlanText
 	OverlayInput
 	OverlaySelect
+	OverlayForm
 	OverlayAgentSelect   = OverlaySelect
 	OverlayWorktreeInput = OverlayInput
 )
@@ -71,6 +72,34 @@ const AgentInputPlaceholder = "codex, codex-app, or claude"
 type SelectItem struct {
 	Label string
 	Value string
+}
+
+type FormFieldKind int
+
+const (
+	FormText FormFieldKind = iota
+	FormCheckbox
+	FormChoice
+)
+
+type FormField struct {
+	ID            string
+	Kind          FormFieldKind
+	Label         string
+	Placeholder   string
+	Value         string
+	Cursor        int
+	Checked       bool
+	Options       []SelectItem
+	SelectedIndex int
+}
+
+type FormView struct {
+	Purpose    string
+	Title      string
+	Fields     []FormField
+	FocusIndex int
+	Error      string
 }
 
 type EmbeddedTerminalTab struct {
@@ -212,6 +241,7 @@ type RenderParams struct {
 	SelectWidth                 int
 	SelectHeight                int
 	SelectPlacement             SelectPlacement
+	Form                        FormView
 	BranchScroll                int
 	RepoScroll                  int
 	StashScroll                 int
@@ -253,6 +283,7 @@ type RenderParams struct {
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
+	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -266,6 +297,7 @@ type RenderParams struct {
 	RightEmptyMessage           string
 	FetchAvailable              bool
 	FetchVisibleAvailable       bool
+	RepoCreateAvailable         bool
 	PullAvailable               bool
 	WorktreeMoveAvailable       bool
 	WorktreeSessionsOpen        bool
@@ -466,6 +498,7 @@ func renderApplication(p RenderParams) string {
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowReasoningEffort:         p.FlowReasoningEffort,
 		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
@@ -476,6 +509,7 @@ func renderApplication(p RenderParams) string {
 		ItemSearch:                  p.ItemSearch,
 		FetchAvailable:              p.FetchAvailable,
 		FetchVisibleAvailable:       p.FetchVisibleAvailable,
+		RepoCreateAvailable:         p.RepoCreateAvailable,
 		PullAvailable:               p.PullAvailable,
 		AgentAvailable:              p.AgentAvailable,
 		NewAgent:                    p.NewAgentAvailable,
@@ -723,6 +757,7 @@ type statusBarParams struct {
 	FlowPlanLinked              bool
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
+	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -733,6 +768,7 @@ type statusBarParams struct {
 	ItemSearch                  string
 	FetchAvailable              bool
 	FetchVisibleAvailable       bool
+	RepoCreateAvailable         bool
 	PullAvailable               bool
 	AgentAvailable              bool
 	NewAgent                    bool
@@ -821,6 +857,8 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		return renderStatusText(width, "  enter: submit  esc: cancel  bksp/del: edit  left/right: move")
 	case overlay == OverlaySelect:
 		return renderStatusText(width, "  up/down select  enter: confirm  esc: cancel")
+	case overlay == OverlayForm:
+		return renderStatusText(width, "  tab/up/down: fields  space: toggle/select  enter: submit  esc: cancel")
 	case overlay != OverlayNone:
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
@@ -1009,6 +1047,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
 		actions = append(actions, shortcutHint{Key: "f", Label: "fetch visible"})
 	}
+	if sp.ActivePane == 0 && sp.RepoCreateAvailable {
+		actions = append(actions, shortcutHint{Key: "n", Label: "new repo"})
+	}
 	switch sp.Mode {
 	case ModeWorktrees:
 		if sp.ActivePane == 1 && sp.RepoSelected && !sp.StaleSelected {
@@ -1171,6 +1212,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					actions = append(actions, autoHint)
 				}
 			}
+			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1214,6 +1256,14 @@ func flowAutoModeShortcutHint(enabled bool) shortcutHint {
 
 func shortcutsMuted(sp statusBarParams) bool {
 	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
+}
+
+func flowReasoningEffortShortcutLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "effort: default"
+	}
+	return value
 }
 
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {
@@ -1366,10 +1416,13 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "d")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
+		appendParts(base, upDown, arrow, actionsWithoutEffort),
+		appendParts(base, arrow, actionsWithoutEffort),
 		appendParts(base, arrow, actions),
 		appendParts(base, arrow, coreActions),
 		appendParts(arrow, coreActions),
@@ -3033,6 +3086,10 @@ func renderOverlay(p RenderParams) string {
 		lines := renderInputDialog(inputParams, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
+	if p.Overlay == OverlayForm {
+		lines := renderFormDialog(p.Form, p.Width, contentHeight)
+		return strings.Join(lines, "\n") + "\n" + statusBar
+	}
 	if p.Overlay == OverlayPlanText {
 		lines := renderPlainTextOverlay(p.OverlayText, p.OverlayScroll, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
@@ -3097,6 +3154,114 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 		lines[mid] = strings.Repeat(" ", pad) + style.Render(prompt)
 	}
 	return lines
+}
+
+func renderFormDialog(form FormView, width, height int) []string {
+	lines := make([]string, height)
+	if width <= 0 || height <= 0 {
+		return lines
+	}
+	panelWidth := width - 4
+	if panelWidth > launchInstructionsMaxWidth {
+		panelWidth = launchInstructionsMaxWidth
+	}
+	if panelWidth < launchInstructionsMinWidth {
+		panelWidth = width
+	}
+	if panelWidth < 4 {
+		panelWidth = width
+	}
+	contentWidth := panelWidth - 4
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	content := formDialogBodyLines(form, contentWidth)
+	if form.Error != "" {
+		content = append(content, "")
+		for _, line := range wrapPlainText(form.Error, contentWidth) {
+			content = append(content, dirtyRedStyle.Render(line))
+		}
+	}
+	for i, line := range content {
+		content[i] = " " + fitSessionColumn(line, contentWidth) + " "
+	}
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(clearDarkTheme.activeBorder).
+		Width(contentWidth + 2).
+		Render(strings.Join(content, "\n"))
+	panelLines := strings.Split(panel, "\n")
+	top := (height - len(panelLines)) / 2
+	if top < 0 {
+		top = 0
+	}
+	for i, line := range panelLines {
+		row := top + i
+		if row >= len(lines) {
+			break
+		}
+		lines[row] = centeredLine(line, width)
+	}
+	return lines
+}
+
+func formDialogBodyLines(form FormView, width int) []string {
+	title := strings.TrimSpace(form.Title)
+	if title == "" {
+		title = "Form"
+	}
+	lines := []string{activeModeStyle.Render(truncateToWidth(title, width))}
+	for i, field := range form.Fields {
+		focused := i == form.FocusIndex
+		lines = append(lines, formFieldLines(field, focused, width)...)
+	}
+	return lines
+}
+
+func formFieldLines(field FormField, focused bool, width int) []string {
+	prefix := "  "
+	if focused {
+		prefix = "> "
+	}
+	label := strings.TrimSpace(field.Label)
+	if label == "" {
+		label = field.ID
+	}
+	switch field.Kind {
+	case FormCheckbox:
+		box := "[ ]"
+		if field.Checked {
+			box = "[x]"
+		}
+		return wrapPlainText(prefix+box+" "+label, width)
+	case FormChoice:
+		var options []string
+		for i, option := range field.Options {
+			marker := "( )"
+			if i == field.SelectedIndex {
+				marker = "(o)"
+			}
+			options = append(options, marker+" "+selectItemLabel(option))
+		}
+		line := prefix + label
+		if len(options) > 0 {
+			line += ": " + strings.Join(options, "  ")
+		}
+		return wrapPlainText(line, width)
+	default:
+		value := field.Value
+		if focused {
+			value = insertCursorGlyph(value, field.Cursor)
+		}
+		if value == "" {
+			value = placeholderStyle.Render(field.Placeholder)
+			if focused {
+				value += activeModeStyle.Render("█")
+			}
+		}
+		return wrapEditableInputLine(prefix+label+": "+value, width)
+	}
 }
 
 type inputRenderParams struct {

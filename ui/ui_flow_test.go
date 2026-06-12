@@ -478,6 +478,49 @@ func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:            0,
+		Width:               180,
+		Height:              12,
+		Mode:                ModeFlows,
+		ActivePane:          1,
+		FlowReasoningEffort: "codex effort: high",
+	})
+
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "E      codex effort: high") {
+		t.Fatalf("flows shortcut pane should expose reasoning effort:\n%s", pane)
+	}
+}
+
+func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.T) {
+	tests := []struct {
+		effort string
+		want   string
+	}{
+		{effort: "codex-app default", want: "codex-app default"},
+		{effort: "choose agent", want: "choose agent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.effort, func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+				Selected:            0,
+				Width:               180,
+				Height:              12,
+				Mode:                ModeFlows,
+				ActivePane:          1,
+				FlowReasoningEffort: tt.effort,
+			})
+			if pane := shortcutPaneText(view); !strings.Contains(pane, "E      "+tt.want) {
+				t.Fatalf("flows shortcut pane should expose effort %q as %q:\n%s", tt.effort, tt.want, pane)
+			}
+		})
+	}
+}
+
 func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:          120,

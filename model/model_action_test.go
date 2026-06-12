@@ -3400,13 +3400,174 @@ func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
 	}
 }
 
-func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
-	var gotPath, gotCommand string
+func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
+	var savedCommand, savedEffort string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
+		SaveAgentReasoningEffort: func(command, effort string) error {
+			savedCommand = command
+			savedEffort = effort
+			return nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening effort picker, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected effort select overlay, got %d", m.Overlay())
+	}
+	view := m.View()
+	for _, want := range []string{"Choose codex reasoning effort", "default", "minimal", "low", "medium", "high", "xhigh"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("codex effort picker missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "max") {
+		t.Fatalf("codex effort picker should not include max:\n%s", view)
+	}
+
+	for range 4 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save effort command")
+	}
+	m, _ = update(m, cmd())
+	if savedCommand != "codex" || savedEffort != "high" {
+		t.Fatalf("saved command/effort = %q/%q, want codex/high", savedCommand, savedEffort)
+	}
+	if got := m.ReasoningEffortFor("codex"); got != "high" {
+		t.Fatalf("session codex effort = %q, want high", got)
+	}
+}
+
+func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "claude"})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected effort select overlay, got %d", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "max") {
+		t.Fatalf("claude effort picker should include max:\n%s", view)
+	}
+	if view := m.View(); !strings.Contains(view, "Choose claude reasoning effort") {
+		t.Fatalf("claude effort picker should name provider:\n%s", view)
+	}
+}
+
+func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("search E returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("search E opened overlay %d", m.Overlay())
+	}
+	if got := m.ItemSearch(); got != "E" {
+		t.Fatalf("search query after E = %q, want E", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected agent select overlay, got %d", m.Overlay())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("modal E returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("modal E changed overlay to %d, want select", m.Overlay())
+	}
+	view := m.View()
+	if !strings.Contains(view, "Choose interactive helper") || strings.Contains(view, "reasoning effort") {
+		t.Fatalf("modal E should keep existing agent picker:\n%s", view)
+	}
+}
+
+func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		SaveAgentReasoningEffort: func(string, string) error {
+			return errors.New("disk full")
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	for range 2 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save effort command")
+	}
+	m, _ = update(m, cmd())
+	if got := m.ReasoningEffortFor("codex"); got != "low" {
+		t.Fatalf("expected failed save to keep session effort low, got %q", got)
+	}
+	if !strings.Contains(m.View(), "disk full") {
+		t.Fatal("expected save failure in status bar")
+	}
+}
+
+func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay without agent, got %d", m.Overlay())
+	}
+	if !strings.Contains(m.View(), "Press A to choose") {
+		t.Fatal("expected unset-agent status")
+	}
+}
+
+func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex-app"})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for codex-app effort, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay for codex-app effort, got %d", m.Overlay())
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Codex App uses app default") {
+		t.Fatalf("status = %q, want app default message", got)
+	}
+}
+
+func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
+	var gotPath, gotCommand, gotEffort string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:          "codex",
+		CodexReasoningEffort:  "high",
+		ClaudeReasoningEffort: "max",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			gotPath = ctx.WorktreePath
 			gotCommand = ctx.Command
+			gotEffort = ctx.ReasoningEffort
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
@@ -3421,6 +3582,9 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	}
 	if gotPath != "/dev/alpha" || gotCommand != "codex" {
 		t.Fatalf("expected launch /dev/alpha with codex, got path=%q command=%q", gotPath, gotCommand)
+	}
+	if gotEffort != "high" {
+		t.Fatalf("expected codex launch effort high, got %q", gotEffort)
 	}
 }
 
@@ -3484,11 +3648,13 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 }
 
 func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
-	var gotPath string
+	var gotPath, gotEffort string
 	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "claude",
+		AgentCommand:          "claude",
+		ClaudeReasoningEffort: "max",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			gotPath = ctx.WorktreePath
+			gotEffort = ctx.ReasoningEffort
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
 	})
@@ -3505,6 +3671,9 @@ func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
 	}
 	if gotPath != "/dev/alpha" {
 		t.Fatalf("expected launch from branch worktree path, got %q", gotPath)
+	}
+	if gotEffort != "max" {
+		t.Fatalf("expected claude launch effort max, got %q", gotEffort)
 	}
 }
 

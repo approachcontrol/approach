@@ -138,6 +138,23 @@ func (m Model) clearWorktreeCreateRequest(request uint64) Model {
 	return m
 }
 
+func (m Model) nextRepoCreateRequest() (Model, uint64) {
+	m.repoCreateSeq++
+	m.activeRepoCreate = m.repoCreateSeq
+	return m, m.activeRepoCreate
+}
+
+func (m Model) isCurrentRepoCreateRequest(request uint64) bool {
+	return request != 0 && request == m.activeRepoCreate
+}
+
+func (m Model) clearRepoCreateRequest(request uint64) Model {
+	if request != 0 && request == m.activeRepoCreate {
+		m.activeRepoCreate = 0
+	}
+	return m
+}
+
 func (m Model) nextFlowCreateRequest() (Model, uint64) {
 	m.flowCreateSeq++
 	m.activeFlowCreate = m.flowCreateSeq
@@ -227,6 +244,10 @@ func (m Model) canFetch() bool {
 
 func (m Model) canFetchVisibleRepos() bool {
 	return m.activePane == 0 && len(m.filteredRepos()) > 0
+}
+
+func (m Model) canCreateRepo() bool {
+	return m.activePane == 0 && strings.TrimSpace(m.repoCreateRoot) != ""
 }
 
 func (m Model) visibleRepoFetchProgressText() string {
@@ -359,6 +380,23 @@ func (m Model) createWorktree(input string, launchAgent bool, request uint64) te
 	}
 }
 
+func (m Model) repoCreate(opts actions.RepoCreateOptions, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.createRepo(opts)
+		if err != nil {
+			return RepoCreateFailedMsg{
+				Input:        opts.Name,
+				CreateGitHub: opts.CreateGitHub,
+				Visibility:   opts.Visibility,
+				Result:       result,
+				Err:          err.Error(),
+				Request:      request,
+			}
+		}
+		return RepoCreatedMsg{Name: opts.Name, Result: result, Request: request}
+	}
+}
+
 func (m Model) createBranch(input string) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
@@ -428,6 +466,7 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 			Instructions:     instructions,
 			BaseRef:          baseRef,
 			AgentCommand:     m.agentCommand,
+			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 			SessionStateRoot: m.sessionStateRoot,
 			PlanPhaseID:      flowPlanPhaseID,
 			PlanPhaseTitle:   "Plan",
