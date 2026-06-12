@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/sessions"
@@ -1743,8 +1744,9 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	want := artifacts.NormalizePhaseID(phaseID)
 	for _, phase := range record.Phases {
-		if phase.PhaseID == phaseID {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return phase, true
 		}
 	}

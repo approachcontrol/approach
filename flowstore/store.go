@@ -680,7 +680,8 @@ func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error)
 	})
 }
 
-// AddPhaseLaunchID records a launch attempt and marks the phase running.
+// AddPhaseLaunchID records a launch attempt. Fresh launches mark the phase
+// running; resume launches of terminal phases preserve the terminal status.
 func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
@@ -709,6 +710,8 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			record.Phases[phaseIndex] = phase
 			record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
 			record.UpdatedAt = now
+			record = refreshPhaseReadiness(record, now)
+			record.Status = DeriveStatus(record)
 			return record, nil
 		}
 		launchPhaseUpdate := PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}
