@@ -806,6 +806,9 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		if resetIndex := phaseIndexByID(record.Phases, update.PhaseID); resetIndex >= 0 {
 			resetPhase := record.Phases[resetIndex]
 			resetPhase.LaunchIDs = removePhaseLaunchID(resetPhase.LaunchIDs, removedLaunchID)
+			if PhaseSessionLaunchMismatch(resetPhase) {
+				return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
+			}
 			record.Phases[resetIndex] = resetPhase
 		}
 		record.UpdatedAt = now

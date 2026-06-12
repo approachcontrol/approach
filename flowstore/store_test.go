@@ -1015,6 +1015,39 @@ func TestStoreResetAwaitingSessionPhaseRejectsIneligiblePhases(t *testing.T) {
 			phaseID: "beta",
 			want:    "requires satisfied predecessors",
 		},
+		{
+			name: "duplicate row session references orphan launch",
+			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
+				t.Helper()
+				record, err := store.Create(flowstore.FlowRecord{
+					FlowID:       "duplicate-orphan-session-reset",
+					Title:        "Duplicate orphan session reset rejection",
+					Instructions: "do not reset when duplicate history attaches the orphan launch",
+					RepoPath:     filepath.Join(t.TempDir(), "repo"),
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+						{
+							PhaseID:   "Step-1",
+							Title:     "Step 1",
+							Status:    flowstore.PhaseCompleted,
+							Order:     2,
+							LaunchIDs: []string{"launch-orphan"},
+							Sessions: []flowstore.Session{
+								{Provider: "codex", SessionID: "session-orphan", LaunchID: "launch-orphan"},
+							},
+						},
+						{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
+						{PhaseID: "omega", Title: "Omega", Status: flowstore.PhasePending, Order: 3},
+					},
+				})
+				if err != nil {
+					t.Fatalf("Create(duplicate) error = %v", err)
+				}
+				return record
+			},
+			phaseID: "step-1",
+			want:    "requires attached sessions to match phase launch ids",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
