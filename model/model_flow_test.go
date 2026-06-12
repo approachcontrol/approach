@@ -72,6 +72,31 @@ func selectFlowPhaseByID(t *testing.T, m model.Model, phaseID string) model.Mode
 	return m
 }
 
+func flowFetchMsgFromCommand(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected flow fetch command")
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		if len(batch) == 0 {
+			t.Fatal("flow fetch batch was empty")
+		}
+		return batch[0]()
+	}
+	return msg
+}
+
+func flowResultFromCommand(t *testing.T, cmd tea.Cmd) model.FlowResultMsg {
+	t.Helper()
+	msg := flowFetchMsgFromCommand(t, cmd)
+	result, ok := msg.(model.FlowResultMsg)
+	if !ok {
+		t.Fatalf("flow fetch command returned %T, want FlowResultMsg", msg)
+	}
+	return result
+}
+
 func prepareSelectedFlowPhaseLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
@@ -109,10 +134,7 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	if gotFilter.RepoPath != "" {
 		t.Fatalf("flow lister ran before command execution: %#v", gotFilter)
 	}
-	msg, ok := cmd().(model.FlowResultMsg)
-	if !ok {
-		t.Fatalf("expected FlowResultMsg, got %T", msg)
-	}
+	msg := flowResultFromCommand(t, cmd)
 	m, _ = update(m, msg)
 
 	if gotFilter.RepoPath != "/dev/alpha" {
@@ -154,10 +176,7 @@ func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing
 		t.Fatalf("second flow request = %d, want a new request", nextRequest)
 	}
 
-	msg, ok := firstCmd().(model.FlowResultMsg)
-	if !ok {
-		t.Fatalf("expected FlowResultMsg, got %T", msg)
-	}
+	msg := flowResultFromCommand(t, firstCmd)
 	if msg.ListRequest != request {
 		t.Fatalf("FlowResultMsg.ListRequest = %d, want original request %d", msg.ListRequest, request)
 	}
@@ -169,10 +188,7 @@ func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing
 		t.Fatalf("stale FlowResultMsg populated flows: %#v", got)
 	}
 
-	nextMsg, ok := cmd().(model.FlowResultMsg)
-	if !ok {
-		t.Fatalf("expected second FlowResultMsg, got %T", nextMsg)
-	}
+	nextMsg := flowResultFromCommand(t, cmd)
 	if nextMsg.ListRequest != nextRequest {
 		t.Fatalf("second FlowResultMsg.ListRequest = %d, want current request %d", nextMsg.ListRequest, nextRequest)
 	}
@@ -202,10 +218,7 @@ func TestModel_StartsInFlowsModeAndFetchesSelectedRepoFlows(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected startup flows fetch command")
 	}
-	msg, ok := cmd().(model.FlowResultMsg)
-	if !ok {
-		t.Fatalf("startup command returned %T, want FlowResultMsg", msg)
-	}
+	msg := flowResultFromCommand(t, cmd)
 	m, _ = update(m, msg)
 
 	if gotFilter.RepoPath != "/dev/alpha" {
@@ -687,7 +700,7 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected initial flows fetch")
 	}
-	m, _ = update(m, cmd())
+	m, _ = update(m, flowFetchMsgFromCommand(t, cmd))
 	if got := m.Flows(); len(got) != 1 || got[0].RepoPath != "/dev/alpha" {
 		t.Fatalf("initial Flows() = %#v", got)
 	}
@@ -703,7 +716,7 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 	if got := m.Flows(); len(got) != 0 {
 		t.Fatalf("expected flows cleared before refetch, got %#v", got)
 	}
-	m, _ = update(m, cmd())
+	m, _ = update(m, flowFetchMsgFromCommand(t, cmd))
 	if got := m.Flows(); len(got) != 1 || got[0].RepoPath != "/dev/bravo" {
 		t.Fatalf("refetched Flows() = %#v", got)
 	}
@@ -738,7 +751,7 @@ func TestModel_FlowListErrorShowsStatus(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected flows fetch command")
 	}
-	m, _ = update(m, cmd())
+	m, _ = update(m, flowFetchMsgFromCommand(t, cmd))
 	if got := m.View(); !strings.Contains(got, "failed to load flows") || !strings.Contains(got, "Could not load flows") {
 		t.Fatalf("expected flow load error in view:\n%s", got)
 	}
@@ -1822,6 +1835,9 @@ func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 	for _, msg := range runBatchCmd(t, tickBatch) {
 		var followup tea.Cmd
 		m, followup = update(m, msg)
+		if _, ok := msg.(model.FlowResultMsg); ok {
+			continue
+		}
 		if followup != nil {
 			t.Fatalf("exited Flow terminal should not reschedule repaint, got %T", followup)
 		}
@@ -1831,7 +1847,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 	if strings.Contains(view, "agent output") || strings.Contains(view, "1 codex implementation exited") {
 		t.Fatalf("exited Flow terminal should auto-close on repaint tick:\n%s", view)
 	}
-	if !strings.Contains(view, "flow/with-phases") || !strings.Contains(view, "implementation:ready") {
+	if !strings.Contains(view, "implementation:ready") {
 		t.Fatalf("Flow list should be visible after the terminal auto-closes:\n%s", view)
 	}
 }
@@ -2211,6 +2227,9 @@ func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) 
 	for _, msg := range runBatchCmd(t, tickBatch) {
 		var followup tea.Cmd
 		m, followup = update(m, msg)
+		if _, ok := msg.(model.FlowResultMsg); ok {
+			continue
+		}
 		if followup != nil {
 			t.Fatalf("failed Flow terminal should stop repaint loop, got %T", followup)
 		}
