@@ -2030,7 +2030,7 @@ func TestModel_EnterOnSelectedFlowPhaseExplainsWhyImplementationIsNotReady(t *te
 		t.Fatalf("not-ready flow launch returned command %T, want nil", cmd)
 	}
 	status := m.TransientError()
-	for _, want := range []string{"implementation", "pending"} {
+	for _, want := range []string{"Implementation is not ready", "Plan Review", "changes_requested", "Clarify rollout steps"} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("status missing %q: %q", want, status)
 		}

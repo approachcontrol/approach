@@ -278,6 +278,18 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterAndHeadlessWithoutLegacyHints(
 	}
 }
 
+func TestStatusBar_FlowsModeNarrowTerminalFooterKeepsPrefixHint(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                  14,
+		Mode:                   ModeFlows,
+		ActivePane:             1,
+		EmbeddedTerminalActive: true,
+	})
+	if !strings.Contains(bar, "ctrl+g") {
+		t.Fatalf("narrow Flow terminal footer should keep prefix hint, got %q", bar)
+	}
+}
+
 func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

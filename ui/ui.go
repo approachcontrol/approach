@@ -1161,6 +1161,9 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 }
 
 func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	if sp.EmbeddedTerminalActive {
+		return renderGenericFooterShortcuts(sp, sections)
+	}
 	full := "  " + renderFooterHintList(footerSectionOrder(sections))
 	if lipgloss.Width(full) <= sp.Width {
 		return full

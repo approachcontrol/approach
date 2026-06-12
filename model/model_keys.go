@@ -1446,6 +1446,19 @@ func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.
 	if phase.PhaseID == "autoreview" && flowAutoreviewMissingPRTarget(record) {
 		return "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
 	}
+	if phase.PhaseID == "implementation" && phase.Status == flowstore.PhasePending {
+		if review, ok := flowPhaseByID(record, "plan-review"); ok {
+			return "Implementation is not ready; Plan Review is " + flowPhaseStatusDetail(review)
+		}
+	}
+	detail := flowPhaseStatusDetail(phase)
+	if phase.PhaseID == "" {
+		return "Selected Flow phase is not launchable; status is " + detail
+	}
+	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
+}
+
+func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
 	detail := strings.TrimSpace(phase.Status)
 	if detail == "" {
 		detail = "unknown"
@@ -1458,10 +1471,7 @@ func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.
 	} else if phase.Summary != "" {
 		detail += ": " + phase.Summary
 	}
-	if phase.PhaseID == "" {
-		return "Selected Flow phase is not launchable; status is " + detail
-	}
-	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
+	return detail
 }
 
 func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
