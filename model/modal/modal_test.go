@@ -479,6 +479,71 @@ func TestSelectSnapshotsPromptItemsAndInitialSelection(t *testing.T) {
 	}
 }
 
+func TestSelectDefaultsToAutoCenteredLayout(t *testing.T) {
+	view := modal.OpenSelect("Choose agent", []modal.SelectItem{
+		{Label: "codex", Value: "codex"},
+	}, 0, nil).View()
+
+	want := modal.Layout{Placement: modal.PlacementCenter}
+	if view.SelectLayout != want {
+		t.Fatalf("select layout = %#v, want %#v", view.SelectLayout, want)
+	}
+}
+
+func TestSelectCarriesExplicitLayoutWithoutChangingSelectionBehavior(t *testing.T) {
+	items := []modal.SelectItem{
+		{Label: "Codex", Value: "codex"},
+		{Label: "Claude", Value: "claude"},
+	}
+	layout := modal.Layout{Width: 32, Height: 6, Placement: modal.PlacementBottomCenter}
+	var submitted string
+	m := modal.OpenSelectWithLayout("Choose agent", items, 99, layout, func(value string) tea.Cmd {
+		submitted = value
+		return func() tea.Msg { return sentinelMsg("saved") }
+	})
+	items[0] = modal.SelectItem{Label: "mutated", Value: "mutated"}
+
+	view := m.View()
+	if view.SelectLayout != layout {
+		t.Fatalf("select layout = %#v, want %#v", view.SelectLayout, layout)
+	}
+	if view.SelectIndex != 0 {
+		t.Fatalf("out-of-range selected index = %d, want clamped 0", view.SelectIndex)
+	}
+	if got := view.SelectItems[0]; got.Label != "Codex" || got.Value != "codex" {
+		t.Fatalf("select items were not copied before caller mutation: %#v", view.SelectItems)
+	}
+
+	m, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if out != modal.Consumed || cmd != nil {
+		t.Fatalf("down outcome=%v cmd=%T, want consumed nil cmd", out, cmd)
+	}
+	view = m.View()
+	if view.SelectIndex != 1 {
+		t.Fatalf("down selected index = %d, want 1", view.SelectIndex)
+	}
+	if view.SelectLayout != layout {
+		t.Fatalf("layout changed after movement: %#v", view.SelectLayout)
+	}
+
+	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if out != modal.Accepted {
+		t.Fatalf("enter outcome = %v, want Accepted", out)
+	}
+	if next.IsOpen() {
+		t.Fatal("expected modal closed after enter")
+	}
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	if got := cmd(); got != sentinelMsg("saved") {
+		t.Fatalf("submit command returned %T %[1]v", got)
+	}
+	if submitted != "claude" {
+		t.Fatalf("submitted = %q, want claude", submitted)
+	}
+}
+
 func TestSelectMovesWithWrapping(t *testing.T) {
 	m := modal.OpenSelect("Choose agent", []modal.SelectItem{
 		{Label: "codex", Value: "codex"},

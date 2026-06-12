@@ -695,6 +695,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if update.PhaseID == "" {
 		return FlowRecord{}, fmt.Errorf("phase id is required")
@@ -704,7 +705,11 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
-		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		// Launch bookkeeping targets the requested phase row. Legacy records may
+		// contain an earlier stale duplicate whose id only matches after
+		// normalization; prefer the exact row before deciding whether a resume
+		// should preserve terminal state or restart active work.
+		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
@@ -758,6 +763,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
 	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
 	if update.PhaseID == "" {
 		return FlowRecord{}, fmt.Errorf("phase id is required")
@@ -774,7 +780,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		// still holds a stale duplicate ahead of the active row, collapsing
 		// into the first normalized match would silently drop the active
 		// row's status.
-		phaseIndex := phaseIndexPreferringExactID(record.Phases, update.PhaseID)
+		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}

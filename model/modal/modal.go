@@ -42,6 +42,20 @@ type SelectItem struct {
 	Value string
 }
 
+type Placement int
+
+const (
+	PlacementCenter Placement = iota
+	PlacementTopCenter
+	PlacementBottomCenter
+)
+
+type Layout struct {
+	Width     int
+	Height    int
+	Placement Placement
+}
+
 type InputMode int
 
 const (
@@ -52,43 +66,45 @@ const (
 // Modal is the single in-process state machine for transient modal UI. Its
 // zero value is closed.
 type Modal struct {
-	kind        Kind
-	prompt      string
-	placeholder string
-	force       bool
-	action      func() tea.Cmd
-	input       string
-	inputMode   InputMode
-	inputCursor int
-	inputColumn int
-	inputErr    string
-	validate    func(string) error
-	submit      func(string) tea.Cmd
-	selectItems []SelectItem
-	selectIndex int
-	diffKind    DiffKind
-	diff        string
-	text        string
-	scroll      int
-	request     uint64
+	kind         Kind
+	prompt       string
+	placeholder  string
+	force        bool
+	action       func() tea.Cmd
+	input        string
+	inputMode    InputMode
+	inputCursor  int
+	inputColumn  int
+	inputErr     string
+	validate     func(string) error
+	submit       func(string) tea.Cmd
+	selectItems  []SelectItem
+	selectIndex  int
+	selectLayout Layout
+	diffKind     DiffKind
+	diff         string
+	text         string
+	scroll       int
+	request      uint64
 }
 
 type View struct {
-	Kind        Kind
-	Prompt      string
-	Placeholder string
-	Force       bool
-	Input       string
-	InputMode   InputMode
-	InputCursor int
-	InputErr    string
-	SelectItems []SelectItem
-	SelectIndex int
-	DiffKind    DiffKind
-	Diff        string
-	Text        string
-	Scroll      int
-	Request     uint64
+	Kind         Kind
+	Prompt       string
+	Placeholder  string
+	Force        bool
+	Input        string
+	InputMode    InputMode
+	InputCursor  int
+	InputErr     string
+	SelectItems  []SelectItem
+	SelectIndex  int
+	SelectLayout Layout
+	DiffKind     DiffKind
+	Diff         string
+	Text         string
+	Scroll       int
+	Request      uint64
 }
 
 func OpenConfirm(prompt string, action func() tea.Cmd) Modal {
@@ -132,16 +148,21 @@ func OpenMultiLineInput(prompt, placeholder, initial string, validate func(strin
 }
 
 func OpenSelect(prompt string, items []SelectItem, selectedIndex int, submit func(string) tea.Cmd) Modal {
+	return OpenSelectWithLayout(prompt, items, selectedIndex, Layout{Placement: PlacementCenter}, submit)
+}
+
+func OpenSelectWithLayout(prompt string, items []SelectItem, selectedIndex int, layout Layout, submit func(string) tea.Cmd) Modal {
 	if selectedIndex < 0 || selectedIndex >= len(items) {
 		selectedIndex = 0
 	}
 	copiedItems := append([]SelectItem(nil), items...)
 	return Modal{
-		kind:        Select,
-		prompt:      prompt,
-		selectItems: copiedItems,
-		selectIndex: selectedIndex,
-		submit:      submit,
+		kind:         Select,
+		prompt:       prompt,
+		selectItems:  copiedItems,
+		selectIndex:  selectedIndex,
+		selectLayout: normalizeLayout(layout),
+		submit:       submit,
 	}
 }
 
@@ -197,22 +218,38 @@ func (m Modal) IsOpen() bool {
 
 func (m Modal) View() View {
 	return View{
-		Kind:        m.kind,
-		Prompt:      m.prompt,
-		Placeholder: m.placeholder,
-		Force:       m.force,
-		Input:       m.input,
-		InputMode:   m.inputMode,
-		InputCursor: clampInputCursor(m.input, m.inputCursor),
-		InputErr:    m.inputErr,
-		SelectItems: append([]SelectItem(nil), m.selectItems...),
-		SelectIndex: m.selectIndex,
-		DiffKind:    m.diffKind,
-		Diff:        m.diff,
-		Text:        m.text,
-		Scroll:      m.scroll,
-		Request:     m.request,
+		Kind:         m.kind,
+		Prompt:       m.prompt,
+		Placeholder:  m.placeholder,
+		Force:        m.force,
+		Input:        m.input,
+		InputMode:    m.inputMode,
+		InputCursor:  clampInputCursor(m.input, m.inputCursor),
+		InputErr:     m.inputErr,
+		SelectItems:  append([]SelectItem(nil), m.selectItems...),
+		SelectIndex:  m.selectIndex,
+		SelectLayout: m.selectLayout,
+		DiffKind:     m.diffKind,
+		Diff:         m.diff,
+		Text:         m.text,
+		Scroll:       m.scroll,
+		Request:      m.request,
 	}
+}
+
+func normalizeLayout(layout Layout) Layout {
+	if layout.Width < 0 {
+		layout.Width = 0
+	}
+	if layout.Height < 0 {
+		layout.Height = 0
+	}
+	switch layout.Placement {
+	case PlacementCenter, PlacementTopCenter, PlacementBottomCenter:
+	default:
+		layout.Placement = PlacementCenter
+	}
+	return layout
 }
 
 func (m Modal) Update(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {

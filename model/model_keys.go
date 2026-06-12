@@ -248,9 +248,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "right":
 		return m.handleHorizontalNavigation(1)
 	case "h":
-		if m.mode == ui.ModeFlows {
-			return m.handleToggleFlowHeadless()
-		}
 		if m.mode > ui.ModeWorktrees {
 			m.mode--
 			m = m.resetModeCursors()
@@ -260,6 +257,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode < ui.ModeFlows {
 			m.mode++
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 	case "1":
@@ -308,7 +308,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode != ui.ModeFlows {
 			m.mode = ui.ModeFlows
 			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeFlows)
+			return m.startFlowsModeFetchWithRefreshTick()
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -342,7 +342,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "tab":
 		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = false
+			m.terminalPrefixActive = true
 			return m, nil
 		}
 		m.activePane = 0
@@ -431,6 +431,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		if m.mode != targetMode {
 			m.mode = targetMode
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 		return m, nil
@@ -444,6 +447,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		}
 		m.mode++
 		m = m.resetModeCursors()
+		if m.mode == ui.ModeFlows {
+			return m.startFlowsModeFetchWithRefreshTick()
+		}
 		return m.startFetchForMode()
 	}
 
@@ -588,14 +594,6 @@ func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
 	return m.handleLaunchSelectedFlowPhase()
 }
 
-func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
-		return m, nil
-	}
-	m.flowHeadless = !m.flowHeadless
-	return m, nil
-}
-
 func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModePlans || len(m.filteredPlans()) == 0 {
 		return m, nil
@@ -720,10 +718,11 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
-	m.modal = modal.OpenSelect(
+	m.modal = modal.OpenSelectWithLayout(
 		"Choose interactive helper",
 		agentSelectItems(),
 		selectedAgentIndex(m.agentCommand),
+		modal.Layout{Width: 32, Height: 6, Placement: modal.PlacementCenter},
 		func(value string) tea.Cmd { return m.setAgent(agent.Normalize(value)) },
 	)
 	return m, nil
@@ -1076,7 +1075,7 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	launchID := newLaunchID()
-	if next.flowHeadless && agent.Normalize(next.agentCommand) != agent.CommandCodexApp {
+	if agent.Normalize(next.agentCommand) != agent.CommandCodexApp {
 		return next, next.prepareFlowPhaseEmbeddedHeadlessLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 	}
 	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
@@ -1751,7 +1750,13 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
-	want := artifacts.NormalizePhaseID(phaseID)
+	requested := strings.TrimSpace(phaseID)
+	for _, phase := range record.Phases {
+		if phase.PhaseID == requested {
+			return phase, true
+		}
+	}
+	want := artifacts.NormalizePhaseID(requested)
 	for _, phase := range record.Phases {
 		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return phase, true

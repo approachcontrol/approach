@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 
 	"github.com/brian-bell/wtui/actions"
@@ -3147,8 +3148,8 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 		t.Run(setup.name, func(t *testing.T) {
 			m := setup.fn(model.New(testRepos()))
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-			if m.Overlay() != ui.OverlayAgentSelect {
-				t.Fatalf("expected agent select overlay, got %d", m.Overlay())
+			if m.Overlay() != ui.OverlaySelect {
+				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
 			for _, want := range []string{"Choose interactive helper", "codex", "codex-app", "claude"} {
@@ -3156,6 +3157,7 @@ func TestModel_ShiftAOpensAgentSelectFromBothPanes(t *testing.T) {
 					t.Fatalf("expected agent select view to contain %q", want)
 				}
 			}
+			assertRenderedSelectPanel(t, view, "Choose interactive helper", 32, 6, 24, 8)
 			if cmd != nil {
 				t.Fatalf("expected nil cmd opening agent select, got %T", cmd)
 			}
@@ -3184,6 +3186,88 @@ func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
 			}
 		})
 	}
+}
+
+type renderedSelectPanelBounds struct {
+	x      int
+	y      int
+	width  int
+	height int
+}
+
+func assertRenderedSelectPanel(t *testing.T, view, prompt string, wantWidth, wantHeight, wantX, wantY int) {
+	t.Helper()
+	bounds := renderedSelectPanelBoundsForPrompt(t, view, prompt)
+	if bounds.width != wantWidth || bounds.height != wantHeight || bounds.x != wantX || bounds.y != wantY {
+		t.Fatalf("select panel bounds = x:%d y:%d w:%d h:%d, want x:%d y:%d w:%d h:%d:\n%s",
+			bounds.x, bounds.y, bounds.width, bounds.height,
+			wantX, wantY, wantWidth, wantHeight,
+			ansi.Strip(view))
+	}
+}
+
+func renderedSelectPanelBoundsForPrompt(t *testing.T, view, prompt string) renderedSelectPanelBounds {
+	t.Helper()
+	lines := strings.Split(ansi.Strip(view), "\n")
+	var found bool
+	var best renderedSelectPanelBounds
+	for y, line := range lines {
+		runes := []rune(line)
+		for x, r := range runes {
+			if r != '┌' {
+				continue
+			}
+			for right := x + 1; right < len(runes); right++ {
+				if runes[right] != '┐' {
+					continue
+				}
+				for bottom := y + 1; bottom < len(lines); bottom++ {
+					bottomRunes := []rune(lines[bottom])
+					if x >= len(bottomRunes) || right >= len(bottomRunes) {
+						continue
+					}
+					if bottomRunes[x] != '└' || bottomRunes[right] != '┘' {
+						continue
+					}
+					candidate := renderedSelectPanelBounds{
+						x:      x,
+						y:      y,
+						width:  right - x + 1,
+						height: bottom - y + 1,
+					}
+					if !renderedPanelContainsPrompt(lines, candidate, prompt) {
+						continue
+					}
+					if !found || candidate.width < best.width {
+						found = true
+						best = candidate
+					}
+				}
+			}
+		}
+	}
+	if found {
+		return best
+	}
+	t.Fatalf("select panel for prompt %q not found:\n%s", prompt, ansi.Strip(view))
+	return renderedSelectPanelBounds{}
+}
+
+func renderedPanelContainsPrompt(lines []string, bounds renderedSelectPanelBounds, prompt string) bool {
+	for row := bounds.y; row < bounds.y+bounds.height && row < len(lines); row++ {
+		runes := []rune(lines[row])
+		if bounds.x >= len(runes) {
+			continue
+		}
+		right := bounds.x + bounds.width
+		if right > len(runes) {
+			right = len(runes)
+		}
+		if strings.Contains(string(runes[bounds.x:right]), prompt) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestModel_AgentSelectSavesAndSetsCodex(t *testing.T) {
@@ -4165,6 +4249,8 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDelete})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgUp})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlLeft})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlRight})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
@@ -4176,7 +4262,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	want := []string{
 		"a", " ",
 		"\x01", "\x05", "\x12", "\x17",
-		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[1;5D", "\x1b[1;5C",
+		"\x1b[H", "\x1b[F", "\x1b[3~", "\x1b[5~", "\x1b[6~", "\x1b[D", "\x1b[C", "\x1b[1;5D", "\x1b[1;5C",
 		"\x1bf", "\x1b\x1b[D",
 		"\x03", "\a",
 	}
@@ -4314,11 +4400,13 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("opening picker should not return command, got %T", cmd)
 	}
-	if m.Overlay() != ui.OverlayAgentSelect {
+	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected picker overlay, got %d", m.Overlay())
 	}
 	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
 		t.Fatalf("picker view missing sessions:\n%s", view)
+	} else {
+		assertRenderedSelectPanel(t, view, "Resume session", 72, 12, 54, 0)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
