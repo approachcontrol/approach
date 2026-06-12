@@ -108,33 +108,50 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 		RepoSelected:   true,
 		FlowSelected:   true,
 		FlowPlanLinked: true,
+		FlowHeadless:   true,
 	})
-	for _, want := range []string{"x: phases", "o: open", "y: copy id"} {
+	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "y: copy id"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
 		}
 	}
+	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
+		if strings.Contains(bar, notWant) {
+			t.Fatalf("selected flow hint should not include %q, got %q", notWant, bar)
+		}
+	}
 }
 
-func TestStatusBar_FlowsModeDistinguishesPhaseStatusFromLaunch(t *testing.T) {
+func TestStatusBar_FlowsModeShowsLaunchOnlyForLaunchableSelectedPhase(t *testing.T) {
 	base := statusBarParams{
-		Width:          120,
-		Mode:           ModeFlows,
-		ActivePane:     1,
-		RepoSelected:   true,
-		FlowSelected:   true,
-		AgentAvailable: true,
+		Width:        120,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
 	}
 
+	flowRow := renderStatusBarWithState(base)
+	if strings.Contains(flowRow, "launch phase") {
+		t.Fatalf("Flow row should not expose launch action, got %q", flowRow)
+	}
+
+	base.FlowPhaseSelected = true
 	gated := renderStatusBarWithState(base)
-	if !strings.Contains(gated, "a: phase status") || strings.Contains(gated, "a: launch phase") {
-		t.Fatalf("gated Flow should expose status action, got %q", gated)
+	if strings.Contains(gated, "launch phase") {
+		t.Fatalf("gated Flow phase should not expose launch action, got %q", gated)
 	}
 
 	base.FlowPhaseLaunchReady = true
 	ready := renderStatusBarWithState(base)
-	if !strings.Contains(ready, "a: launch phase") || strings.Contains(ready, "a: phase status") {
-		t.Fatalf("ready Flow should expose launch action, got %q", ready)
+	if !strings.Contains(ready, "enter: launch phase") {
+		t.Fatalf("ready selected Flow phase should expose launch action, got %q", ready)
+	}
+	for _, notWant := range []string{"a: launch phase", "a: phase status", "i: embed phase"} {
+		if strings.Contains(ready, notWant) {
+			t.Fatalf("ready selected Flow phase should not include legacy hint %q, got %q", notWant, ready)
+		}
 	}
 }
 
@@ -199,6 +216,65 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 	}
 	if strings.Contains(pane, "y      copy id") {
 		t.Fatalf("selected Flow phase should not expose whole-flow copy shortcut:\n%s", view)
+	}
+}
+
+func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhase(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Launch phase flow",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:           1,
+		FlowSelected:         0,
+		ExpandedFlowID:       "flow-1",
+		SelectedFlowPhaseID:  "implementation",
+		FlowPhaseLaunchReady: true,
+		FlowHeadless:         false,
+	})
+
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"enter  launch phase", "h      headless off", "y      copy phase id"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
+		}
+	}
+	for _, notWant := range []string{"x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
+		if strings.Contains(pane, notWant) {
+			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
+		}
+	}
+}
+
+func TestStatusBar_FlowsModeNarrowFooterShowsEnterAndHeadlessWithoutLegacyHints(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        80,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
+	})
+	for _, want := range []string{"←/→ pane/view", "h: headless on", "enter: phases"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
+		}
+	}
+	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
+		if strings.Contains(bar, notWant) {
+			t.Fatalf("narrow Flow footer should not include %q: %q", notWant, bar)
+		}
 	}
 }
 
@@ -523,18 +599,20 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
 			},
 		}},
-		ActivePane:     1,
-		FlowSelected:   0,
-		AgentAvailable: true,
+		ActivePane:   1,
+		FlowSelected: 0,
+		FlowHeadless: true,
 	})
 
-	for _, want := range []string{"plan-review", "changes_requested", "1/3", "a", "phase status"} {
+	for _, want := range []string{"plan-review", "changes_requested", "1/3", "enter", "phases", "headless on"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("flows gate view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "launch phase") {
-		t.Fatalf("gated flows view should not advertise launchable phase:\n%s", view)
+	for _, notWant := range []string{"launch phase", "phase status", "embed phase", "x      phases", "a      launch"} {
+		if strings.Contains(view, notWant) {
+			t.Fatalf("gated flows view should not advertise %q:\n%s", notWant, view)
+		}
 	}
 }
 

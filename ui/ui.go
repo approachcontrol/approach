@@ -202,6 +202,7 @@ type RenderParams struct {
 	ExpandedFlowID             string
 	SelectedPlanPhaseID        string
 	SelectedFlowPhaseID        string
+	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	OverlayText                string
@@ -334,6 +335,7 @@ func Render(p RenderParams) string {
 		FlowSelected:               flowSelected,
 		FlowPhaseSelected:          flowPhaseSelected,
 		FlowPlanLinked:             flowPlanLinked,
+		FlowHeadless:               p.FlowHeadless,
 		FlowPhaseLaunchReady:       p.FlowPhaseLaunchReady,
 		FlowPhaseResumableSelected: p.FlowPhaseResumableSelected,
 		TransientError:             p.TransientError,
@@ -591,6 +593,7 @@ type statusBarParams struct {
 	FlowSelected               bool
 	FlowPhaseSelected          bool
 	FlowPlanLinked             bool
+	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	TransientError             string
@@ -960,28 +963,26 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeFlows:
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+			headlessLabel := "headless off"
+			if sp.FlowHeadless {
+				headlessLabel = "headless on"
+			}
+			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel})
 			if sp.FlowSelected {
-				actions = append(actions, shortcutHint{Key: "x", Label: "phases"})
-				if sp.FlowPlanLinked {
-					actions = append(actions, shortcutHint{Key: "o", Label: "open"})
-				}
 				if sp.FlowPhaseSelected {
+					if sp.FlowPhaseLaunchReady {
+						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
+					}
 					actions = append(actions, shortcutHint{Key: "y", Label: "copy phase id"})
+					if sp.FlowPhaseResumableSelected {
+						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
+					}
 				} else {
+					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+					if sp.FlowPlanLinked {
+						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
+					}
 					actions = append(actions, shortcutHint{Key: "y", Label: "copy id"})
-				}
-			}
-			if sp.FlowPhaseResumableSelected {
-				actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
-			}
-			if sp.AgentAvailable {
-				label := "phase status"
-				if sp.FlowPhaseLaunchReady {
-					label = "launch phase"
-				}
-				actions = append(actions, shortcutHint{Key: "a", Label: label})
-				if sp.FlowPhaseLaunchReady {
-					actions = append(actions, shortcutHint{Key: "i", Label: "embed phase"})
 				}
 			}
 		}
@@ -1078,6 +1079,9 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 	if sp.Mode == ModeBranches {
 		return renderBranchFooterShortcuts(sp, sections)
 	}
+	if sp.Mode == ModeFlows {
+		return renderFlowFooterShortcuts(sp, sections)
+	}
 	return renderGenericFooterShortcuts(sp, sections)
 }
 
@@ -1153,6 +1157,34 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 		}
 	}
 	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", "tab")))
+	return ansi.Truncate(candidate, sp.Width, "")
+}
+
+func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	full := "  " + renderFooterHintList(footerSectionOrder(sections))
+	if lipgloss.Width(full) <= sp.Width {
+		return full
+	}
+	hints := flattenShortcutHints(sections)
+	base := footerHintsForKeys(hints, "tab", "q/esc")
+	upDown := footerHintsForKeys(hints, "↑/↓")
+	arrow := footerHintsForKeys(hints, "←/→")
+	coreActions := footerHintsForKeys(hints, "h", "enter")
+	actions := footerHintsForKeys(hints, "n", "h", "enter", "o", "y", "r", "f", "F")
+
+	for _, parts := range [][]string{
+		appendParts(base, upDown, arrow, actions),
+		appendParts(base, arrow, actions),
+		appendParts(base, arrow, coreActions),
+		appendParts(arrow, coreActions),
+		appendParts(coreActions),
+		base,
+	} {
+		if candidate, ok := footerCandidate(sp.Width, parts); ok {
+			return candidate
+		}
+	}
+	candidate := "  " + strings.Join(appendParts(arrow, coreActions), " ")
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
