@@ -392,6 +392,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
 		}
+		if m.mode == ui.ModeFlows {
+			return m.handleToggleFlowAutoMode()
+		}
 	case "N":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(true)
@@ -638,6 +641,46 @@ func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
 		m = m.setExpandedFlowID(flowID)
 	}
 	return m, nil
+}
+
+func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return m, nil
+	}
+	return m, m.setFlowAutoModeCmd(repoPath, record.FlowID, !record.AutoMode)
+}
+
+func (m Model) setFlowAutoModeCmd(repoPath, flowID string, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowAutoMode(flowstore.AutoModeUpdate{
+			FlowID:  flowID,
+			Enabled: enabled,
+		})
+		if err != nil {
+			return FlowAutoModeSetFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   flowID,
+				Err:      fmt.Sprintf("failed to set Flow auto mode: %v", err),
+			}
+		}
+		return FlowAutoModeSetMsg{
+			RepoPath: repoPath,
+			FlowID:   flowID,
+			Flow:     flow,
+			Enabled:  enabled,
+		}
+	}
 }
 
 func (m Model) handleToggleWorktreeSessions() (tea.Model, tea.Cmd) {
@@ -1094,6 +1137,79 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
 	}
 	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+}
+
+func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
+	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previousFlows))
+	for _, record := range previousFlows {
+		if record.FlowID != "" {
+			previousByFlowID[record.FlowID] = record
+		}
+	}
+	for _, record := range currentFlows {
+		if !record.AutoMode || record.FlowID == "" {
+			continue
+		}
+		previous, ok := previousByFlowID[record.FlowID]
+		if !ok {
+			continue
+		}
+		completedPhase, ok := newlyCompletedFlowPhase(previous, record)
+		if !ok {
+			continue
+		}
+		if artifacts.NormalizePhaseID(completedPhase.PhaseID) == "autoreview" {
+			continue
+		}
+		phase, ok := nextAutoLaunchPhase(record)
+		if !ok {
+			continue
+		}
+		target, ok, next := m.flowPhaseLaunchTarget(record, phase)
+		if !ok {
+			return next, nil
+		}
+		launchID := newLaunchID()
+		switch agent.Normalize(next.agentCommand) {
+		case agent.CommandCodex, agent.CommandClaude:
+			return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+		}
+		return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	}
+	return m, nil
+}
+
+func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
+	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
+	for _, phase := range previous.Phases {
+		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
+			previousByPhaseID[phaseID] = phase
+		}
+	}
+	for _, phase := range flowstore.OrderedPhases(current.Phases) {
+		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+		if phaseID == "" || phase.Status != flowstore.PhaseCompleted {
+			continue
+		}
+		previousPhase, ok := previousByPhaseID[phaseID]
+		if ok && previousPhase.Status != flowstore.PhaseCompleted {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		switch artifacts.NormalizePhaseID(phase.PhaseID) {
+		case "", "merge":
+			continue
+		}
+		if phase.Status == flowstore.PhaseReady {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
 }
 
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {

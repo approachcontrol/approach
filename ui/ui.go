@@ -252,6 +252,7 @@ type RenderParams struct {
 	SelectedPlanPhaseID         string
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
+	FlowAutoModeSelected        bool
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -413,8 +414,10 @@ func renderApplication(p RenderParams) string {
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
+	flowAutoModeSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
+		flowAutoModeSelected = p.FlowAutoModeSelected
 	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
@@ -424,6 +427,7 @@ func renderApplication(p RenderParams) string {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
+		flowAutoModeSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
 	flowPhaseSelected := selectedFlowPhaseID != ""
@@ -461,6 +465,7 @@ func renderApplication(p RenderParams) string {
 		FlowDeletableSelected:       flowDeletableSelected,
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
+		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
@@ -717,6 +722,7 @@ type statusBarParams struct {
 	FlowDeletableSelected       bool
 	FlowPlanLinked              bool
 	FlowHeadless                bool
+	FlowAutoModeSelected        bool
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -1140,6 +1146,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
+				autoHint := flowAutoModeShortcutHint(sp.FlowAutoModeSelected)
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
 						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
@@ -1151,6 +1158,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.FlowPhaseResumableSelected {
 						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 					}
+					actions = append(actions, autoHint)
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 					if sp.FlowPlanLinked {
@@ -1160,6 +1168,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.Destructive && sp.FlowDeletableSelected {
 						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 					}
+					actions = append(actions, autoHint)
 				}
 			}
 		}
@@ -1194,6 +1203,13 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	sections = append(sections, shortcutSection{Title: "Global", Hints: global})
 	return sections
+}
+
+func flowAutoModeShortcutHint(enabled bool) shortcutHint {
+	if enabled {
+		return shortcutHint{Key: "m", Label: "auto: on", SuccessSuffix: "on"}
+	}
+	return shortcutHint{Key: "m", Label: "auto: off"}
 }
 
 func shortcutsMuted(sp statusBarParams) bool {
@@ -2234,6 +2250,8 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				updated,
 				record.Title,
 				width)
+		} else if record.AutoMode {
+			line = flowAutoModeStyle.Render(line)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {

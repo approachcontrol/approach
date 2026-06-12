@@ -141,6 +141,13 @@ type Merge struct {
 	MergedAt *time.Time `json:"merged_at,omitempty"`
 }
 
+// AutoModeUpdate changes whether the TUI may automatically launch ready phases
+// for a single Flow after successful phase completion.
+type AutoModeUpdate struct {
+	FlowID  string
+	Enabled bool
+}
+
 // FlowRecord is the persisted task workflow record.
 type FlowRecord struct {
 	SchemaVersion int         `json:"schema_version"`
@@ -157,6 +164,7 @@ type FlowRecord struct {
 	PlanPath      string      `json:"plan_path,omitempty"`
 	PR            PullRequest `json:"pr,omitempty"`
 	Merge         Merge       `json:"merge,omitempty"`
+	AutoMode      bool        `json:"auto_mode,omitempty"`
 	Phases        []FlowPhase `json:"phases"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
@@ -654,6 +662,21 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 		record.Merge = merge
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// SetAutoMode enables or disables TUI-owned automatic phase launching for one Flow.
+func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.AutoMode == update.Enabled {
+			return record, nil
+		}
+		record.AutoMode = update.Enabled
 		record.UpdatedAt = now
 		return record, nil
 	})
