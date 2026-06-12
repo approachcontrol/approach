@@ -72,6 +72,13 @@ func selectFlowPhaseByID(t *testing.T, m model.Model, phaseID string) model.Mode
 	return m
 }
 
+func prepareSelectedFlowPhaseLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
+	t.Helper()
+	m = selectFlowPhaseByID(t, m, phaseID)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	return m, cmd
+}
+
 func prepareSelectedFlowPhaseHeadlessOffLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
@@ -2050,7 +2057,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 	}
 }
 
-func TestModel_FlowEmbeddedTerminalAutoCloseClearsPrefixForRemovedActiveTerminal(t *testing.T) {
+func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(t *testing.T) {
 	terms := []*fakeEmbeddedTerminal{
 		{lines: []string{"flow first output"}, state: "running"},
 		{lines: []string{"flow second output"}, state: "running"},
@@ -2108,12 +2115,18 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsPrefixForRemovedActiveTerminal
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if got := strings.Join(terms[0].writes, ""); got != "x" {
-		t.Fatalf("x after active Flow auto-close should write to promoted terminal, got writes %#v", terms[0].writes)
+	if len(terms[0].writes) != 0 {
+		t.Fatalf("x after active Flow auto-close should stay in command mode, got writes %#v", terms[0].writes)
 	}
-	view := m.View()
-	if !strings.Contains(view, "flow first output") || strings.Contains(view, "Terminate embedded terminal?") {
-		t.Fatalf("promoted Flow terminal should remain visible without a close confirmation:\n%s", view)
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("x after active Flow auto-close should confirm promoted terminal close, got overlay %d", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Terminate embedded terminal?") {
+		t.Fatalf("close confirmation should be visible for promoted Flow terminal:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
+		t.Fatalf("promoted Flow terminal should remain visible after canceling close confirmation:\n%s", view)
 	}
 }
 
@@ -2650,7 +2663,7 @@ func TestModel_EnterOnSelectedFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNee
 	}
 }
 
-func TestModel_FlowTerminalFocusRoutesKeysToPTYAndTabReturnsToList(t *testing.T) {
+func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -2690,8 +2703,16 @@ func TestModel_FlowTerminalFocusRoutesKeysToPTYAndTabReturnsToList(t *testing.T)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
-		t.Fatalf("terminal writes after focus = %#v, want z", fakeTerm.writes)
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("Flow terminal command mode should not forward unknown command bytes: %#v", fakeTerm.writes)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
+		t.Fatalf("status = %q, want unknown terminal command", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\a" {
+		t.Fatalf("ctrl+g in Flow command mode should send a literal ctrl+g, writes = %#v", fakeTerm.writes)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -2704,7 +2725,7 @@ func TestModel_FlowTerminalFocusRoutesKeysToPTYAndTabReturnsToList(t *testing.T)
 	}
 }
 
-func TestModel_FlowTerminalCtrlGTabIsUnknownPrefixCommandNotFocusSwitch(t *testing.T) {
+func TestModel_FlowTerminalTabLeavesFocusEvenAfterCtrlG(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -2715,7 +2736,10 @@ func TestModel_FlowTerminalCtrlGTabIsUnknownPrefixCommandNotFocusSwitch(t *testi
 			return fakeTerm, nil
 		},
 	})
-	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		flowWithPhaseDetails(),
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusInProgress},
+	})
 
 	m = selectFlowPhaseByID(t, m, "implementation")
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -2727,13 +2751,109 @@ func TestModel_FlowTerminalCtrlGTabIsUnknownPrefixCommandNotFocusSwitch(t *testi
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
-		t.Fatalf("status = %q, want unknown prefix command", got)
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\a" {
+		t.Fatalf("ctrl+g should send literal byte before tab leaves focus, writes = %#v", fakeTerm.writes)
+	}
+	if got := m.TransientError(); strings.Contains(got, "Unknown terminal prefix command") {
+		t.Fatalf("tab should not be treated as an unknown terminal command, status = %q", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
-		t.Fatalf("terminal writes = %#v, want focus to stay on terminal", fakeTerm.writes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if len(fakeTerm.writes) != 1 {
+		t.Fatalf("list focus should not forward j to terminal: %#v", fakeTerm.writes)
+	}
+	if m.FlowSelected() != 1 {
+		t.Fatalf("flow selection = %d, want list focus to move to second flow", m.FlowSelected())
+	}
+}
+
+func TestModel_FlowTerminalFocusCyclesLeftRightWithoutWritingPTY(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{lines: []string{"flow first output"}, state: "running"},
+		{lines: []string{"flow second output"}, state: "running"},
+		{lines: []string{"flow third output"}, state: "running"},
+	}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	for _, phaseID := range []string{"one", "two", "three"} {
+		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			Command:      "codex",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha",
+			FlowID:       "flow-1",
+			FlowPhaseID:  phaseID,
+		}})
+	}
+	if starts != 3 {
+		t.Fatalf("embedded terminal starts = %d, want 3", starts)
+	}
+	if view := m.View(); !strings.Contains(view, "flow third output") {
+		t.Fatalf("newest Flow terminal should be active before cycling:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if view := m.View(); !strings.Contains(view, "flow second output") || strings.Contains(view, "flow third output") {
+		t.Fatalf("left should cycle to previous Flow terminal:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
+		t.Fatalf("left should cycle to previous Flow terminal again:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if view := m.View(); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
+		t.Fatalf("left should wrap to last Flow terminal:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow third output") {
+		t.Fatalf("right should wrap to first Flow terminal:\n%s", view)
+	}
+
+	for i, term := range terms {
+		if len(term.writes) != 0 {
+			t.Fatalf("Flow terminal %d received arrow writes: %#v", i+1, term.writes)
+		}
+	}
+}
+
+func TestModel_FlowTerminalLeftRightNoOpWithOneTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"only flow output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "implementation",
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("single Flow terminal should not receive left/right writes: %#v", fakeTerm.writes)
+	}
+	if got := m.TransientError(); strings.Contains(got, "No embedded terminal") {
+		t.Fatalf("single Flow terminal left/right should not report missing terminal: %q", got)
+	}
+	if view := m.View(); !strings.Contains(view, "only flow output") {
+		t.Fatalf("single Flow terminal should remain active after left/right:\n%s", view)
 	}
 }
 

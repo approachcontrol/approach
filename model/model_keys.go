@@ -342,7 +342,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "tab":
 		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = false
+			m.terminalPrefixActive = true
 			return m, nil
 		}
 		m.activePane = 0

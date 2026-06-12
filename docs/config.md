@@ -296,13 +296,13 @@ the initial Plan launch when creating a new Flow. `codex-app` remains
 URL/deep-link based and launches externally. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
-While a Flow
-terminal is open, `tab` switches focus between the Flow list and terminal;
-terminal focus forwards ordinary keys to the PTY and keeps `ctrl+g` prefix
-commands available. Embedded headless output is rendered as readable terminal
-text rather than raw provider event JSON; `codex exec` streams progress while it
-runs, whereas `claude --print` only prints its result once the run completes.
-Expanded rows
+While a Flow terminal is open, `tab` switches focus between the Flow list and
+terminal. Terminal focus starts in wtui command mode: `left`/`right` cycles Flow
+terminals, `1`-`9` switches by number, `x` closes, `q`/`esc` quits, unknown
+ordinary keys do not pass through to the PTY, and `ctrl+g` sends a literal
+`ctrl+g`. Embedded headless output is rendered as readable terminal text rather
+than raw provider event JSON; `codex exec` streams progress while it runs,
+whereas `claude --print` only prints its result once the run completes. Expanded rows
 group child implementation phases directly under Implementation. New launches
 record a launch ID and Flow/plan environment metadata for the agent; CLI
 phase-session resumes also record a fresh launch ID, while `codex-app` resumes
@@ -550,12 +550,14 @@ CLI resumes run inside runtime-only embedded PTYs in the sessions pane. Fresh
 Flow selected-phase launches and Flow phase-session resumes run CLI agents
 inside runtime-only embedded PTYs in the flows pane; Flow headless mode chooses
 headless provider commands (`codex exec` / `claude --print`) versus interactive
-provider commands (`codex` / `claude`) inside that embedded terminal. Other
-non-Flow agent launches keep using their existing external terminal transport,
-and `codex-app` Flow launches and resumes keep using deep-link transport. The
-TUI refuses to resume a stored session whose provider session ID is blank (it
-reports this in the status line instead), and command construction trims resume
-session IDs and rejects whitespace-only ones, so a resume command never carries a blank `--resume`
+provider commands (`codex` / `claude`) inside that embedded terminal. Flow
+phase-session resumes also run inside runtime-only embedded PTYs in the flows
+pane. Other non-Flow agent launches keep using their existing external terminal
+transport, and `codex-app` Flow launches and resumes keep using deep-link
+transport. The TUI refuses to
+resume a stored session whose provider session ID is blank (it reports this in
+the status line instead), and command construction trims resume session IDs and
+rejects whitespace-only ones, so a resume command never carries a blank `--resume`
 argument.
 
 Hook payloads whose `session_id` is blank or whitespace-only are rejected at

@@ -948,6 +948,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 			if sp.Mode == ModeSessions {
 				hints = slices.Insert(hints, 1, shortcutHint{Key: "l", Label: "sessions"})
+			} else {
+				hints = slices.Insert(hints, 1, shortcutHint{Key: "left/right", Label: "terminal"})
 			}
 		}
 		sections := []shortcutSection{{Title: "Terminal", Hints: hints}}

@@ -360,6 +360,38 @@ func (m Model) switchEmbeddedTerminalForScope(scope embeddedTerminalScope, numbe
 	return m.setStatus(statusOther, fmt.Sprintf("No embedded terminal %d", number))
 }
 
+func (m Model) cycleEmbeddedTerminalForScope(scope embeddedTerminalScope, direction int) Model {
+	if direction == 0 {
+		return m
+	}
+	activeNum := m.activeEmbeddedTerminalNumber(scope)
+	numbers := make([]int, 0, len(m.embeddedTerminals))
+	activeIndex := -1
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != scope {
+			continue
+		}
+		if slot.Number == activeNum {
+			activeIndex = len(numbers)
+		}
+		numbers = append(numbers, slot.Number)
+	}
+	if len(numbers) < 2 {
+		return m
+	}
+	if activeIndex < 0 {
+		activeIndex = 0
+	}
+	nextIndex := activeIndex + direction
+	if nextIndex < 0 {
+		nextIndex = len(numbers) - 1
+	}
+	if nextIndex >= len(numbers) {
+		nextIndex = 0
+	}
+	return m.switchEmbeddedTerminalForScope(scope, numbers[nextIndex])
+}
+
 func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	if m.mode == ui.ModeSessions && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
 		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeSession)
@@ -372,9 +404,29 @@ func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) 
 
 func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedTerminalScope) (Model, tea.Cmd, bool) {
 	key := msg.String()
-	if scope == embeddedTerminalScopeFlow && key == "tab" && !m.terminalPrefixActive {
-		m.flowFocus = flowFocusList
-		return m, nil, true
+	if scope == embeddedTerminalScopeFlow {
+		m.terminalPrefixActive = true
+		switch key {
+		case "tab":
+			m.flowFocus = flowFocusList
+			m.terminalPrefixActive = false
+			return m, nil, true
+		case "left":
+			return m.cycleEmbeddedTerminalForScope(scope, -1), nil, true
+		case "right":
+			return m.cycleEmbeddedTerminalForScope(scope, 1), nil, true
+		case "ctrl+g":
+			return m.writeToActiveTerminalForScope(scope, []byte{0x07}), nil, true
+		case "x":
+			return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
+		case "q", "esc":
+			next, cmd := m.handleEmbeddedTerminalQuitPrefix()
+			return next, cmd, true
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			return m.switchEmbeddedTerminalForScope(scope, int(key[0]-'0')), nil, true
+		default:
+			return m.setStatus(statusOther, "Unknown terminal prefix command"), nil, true
+		}
 	}
 	if m.terminalPrefixActive {
 		m.terminalPrefixActive = false
@@ -511,6 +563,7 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 	prefixScope, prefixActive := m.embeddedTerminalPrefixScope()
 	activeID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeSession)
 	activeFlowID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeFlow)
+	flowTerminalFocused := m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal
 	next := m.embeddedTerminals[:0]
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID != id {
@@ -535,12 +588,14 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		return m
 	}
 	if removedScope == embeddedTerminalScopeFlow {
-		if prefixActive && prefixScope == embeddedTerminalScopeFlow && activeFlowID == id {
-			m.terminalPrefixActive = false
-		}
 		m.activeFlowTerminalNum = m.activeEmbeddedTerminalNumberAfterRenumber(embeddedTerminalScopeFlow, activeFlowID, id)
 		if m.activeFlowTerminalNum == 0 {
 			m.flowFocus = flowFocusList
+			if flowTerminalFocused {
+				m.terminalPrefixActive = false
+			}
+		} else if flowTerminalFocused {
+			m.terminalPrefixActive = true
 		}
 	} else {
 		if prefixActive && prefixScope == embeddedTerminalScopeSession && activeID == id {
