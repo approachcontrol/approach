@@ -172,6 +172,291 @@ func TestInputInvalidSubmitStaysOpenWithError(t *testing.T) {
 	}
 }
 
+func TestSingleLineInputOpensWithCursorAtEndAndInsertsAtCursor(t *testing.T) {
+	m := modal.OpenSingleLineInput(
+		"New branch",
+		"branch name",
+		"feat",
+		nil,
+		nil,
+	)
+
+	view := m.View()
+	if view.InputMode != modal.InputSingleLine {
+		t.Fatalf("input mode = %v, want single-line", view.InputMode)
+	}
+	if view.InputCursor != 4 {
+		t.Fatalf("cursor = %d, want end of initial input", view.InputCursor)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(keyRunes("x"))
+
+	view = m.View()
+	if view.Input != "fexat" {
+		t.Fatalf("input = %q, want middle insertion", view.Input)
+	}
+	if view.InputCursor != 3 {
+		t.Fatalf("cursor = %d, want after inserted rune", view.InputCursor)
+	}
+}
+
+func TestSingleLineInputMovesCursorWithoutChangingText(t *testing.T) {
+	m := modal.OpenSingleLineInput("New branch", "branch name", "abcd", nil, nil)
+
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyLeft},
+		{Type: tea.KeyLeft},
+		{Type: tea.KeyRight},
+		{Type: tea.KeyHome},
+		{Type: tea.KeyEnd},
+		{Type: tea.KeyCtrlA},
+		{Type: tea.KeyCtrlE},
+	} {
+		var out modal.Outcome
+		m, out, _ = m.Update(key)
+		if out != modal.Consumed {
+			t.Fatalf("expected %q consumed, got %v", key.String(), out)
+		}
+	}
+
+	view := m.View()
+	if view.Input != "abcd" {
+		t.Fatalf("input = %q, want unchanged", view.Input)
+	}
+	if view.InputCursor != 4 {
+		t.Fatalf("cursor = %d, want end", view.InputCursor)
+	}
+}
+
+func TestSingleLineInputDeletesAroundCursorAndClearsInput(t *testing.T) {
+	m := modal.OpenSingleLineInput("New branch", "branch name", "abcd", nil, nil)
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if got := m.View().Input; got != "abcd" {
+		t.Fatalf("backspace at start changed input to %q", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	if got := m.View().Input; got != "bcd" {
+		t.Fatalf("delete at cursor input = %q, want %q", got, "bcd")
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	if got := m.View().Input; got != "bcd" {
+		t.Fatalf("delete at end changed input to %q", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if got := m.View().Input; got != "bc" {
+		t.Fatalf("backspace input = %q, want %q", got, "bc")
+	}
+
+	m = m.SetInputError("bad input")
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	view := m.View()
+	if view.Input != "" || view.InputErr != "" || view.InputCursor != 0 {
+		t.Fatalf("ctrl+u view = input %q err %q cursor %d, want cleared", view.Input, view.InputErr, view.InputCursor)
+	}
+}
+
+func TestSingleLineInputSubmitTrimsAndPreservesCursorOnInvalidSubmit(t *testing.T) {
+	m := modal.OpenSingleLineInput(
+		"New branch",
+		"branch name",
+		"   ",
+		func(input string) error {
+			if input == "" {
+				return errors.New("enter a branch name")
+			}
+			return nil
+		},
+		func(string) tea.Cmd {
+			t.Fatal("invalid input must not submit")
+			return nil
+		},
+	)
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+
+	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if out != modal.Consumed {
+		t.Fatalf("expected Consumed, got %v", out)
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil command, got %T", cmd)
+	}
+	view := next.View()
+	if view.InputErr != "enter a branch name" {
+		t.Fatalf("input error = %q, want validation error", view.InputErr)
+	}
+	if view.InputCursor != 2 {
+		t.Fatalf("cursor = %d, want preserved", view.InputCursor)
+	}
+
+	var submitted string
+	next = modal.OpenSingleLineInput("New branch", "branch name", "  feature/x  ", nil, func(input string) tea.Cmd {
+		submitted = input
+		return nil
+	})
+	next, out, cmd = next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if out != modal.Accepted {
+		t.Fatalf("expected Accepted, got %v", out)
+	}
+	if next.IsOpen() {
+		t.Fatal("expected modal closed after valid submit")
+	}
+	if cmd == nil {
+		t.Fatal("expected deferred submit command")
+	}
+	cmd()
+	if submitted != "feature/x" {
+		t.Fatalf("submitted = %q, want trimmed value", submitted)
+	}
+}
+
+func TestMultiLineInputOpensWithModeAndInsertsNewlineWithAltEnter(t *testing.T) {
+	var submitted string
+	m := modal.OpenMultiLineInput(
+		"Instructions",
+		"task instructions",
+		"hello",
+		nil,
+		func(input string) tea.Cmd {
+			submitted = input
+			return func() tea.Msg { return sentinelMsg("submitted") }
+		},
+	)
+
+	view := m.View()
+	if view.InputMode != modal.InputMultiLine {
+		t.Fatalf("input mode = %v, want multi-line", view.InputMode)
+	}
+	if view.Prompt != "Instructions" || view.Placeholder != "task instructions" || view.Input != "hello" {
+		t.Fatalf("unexpected input view: %#v", view)
+	}
+	if view.InputCursor != 5 {
+		t.Fatalf("cursor = %d, want end of initial input", view.InputCursor)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	var out modal.Outcome
+	var cmd tea.Cmd
+	m, out, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	if out != modal.Consumed {
+		t.Fatalf("alt+enter outcome = %v, want Consumed", out)
+	}
+	if cmd != nil {
+		t.Fatalf("alt+enter returned command %T", cmd)
+	}
+	view = m.View()
+	if view.Input != "hel\nlo" {
+		t.Fatalf("input = %q, want newline inserted at cursor", view.Input)
+	}
+	if view.InputCursor != 4 {
+		t.Fatalf("cursor = %d, want after inserted newline", view.InputCursor)
+	}
+
+	m, out, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if out != modal.Accepted {
+		t.Fatalf("enter outcome = %v, want Accepted", out)
+	}
+	if m.IsOpen() {
+		t.Fatal("plain enter should submit and close")
+	}
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	if got := cmd(); got != sentinelMsg("submitted") {
+		t.Fatalf("submit command returned %T %[1]v", got)
+	}
+	if submitted != "hel\nlo" {
+		t.Fatalf("submitted = %q, want internal newline preserved", submitted)
+	}
+}
+
+func TestMultiLineInputMovesVerticallyPreservingPreferredColumn(t *testing.T) {
+	m := modal.OpenMultiLineInput("Instructions", "task instructions", "abc\ndefgh\nxy", nil, nil)
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.View().InputCursor; got != 6 {
+		t.Fatalf("cursor after up = %d, want same column on previous line", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.View().InputCursor; got != 2 {
+		t.Fatalf("cursor after second up = %d, want same column on first line", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.View().InputCursor; got != 6 {
+		t.Fatalf("cursor after down = %d, want same preferred column", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.View().InputCursor; got != 12 {
+		t.Fatalf("cursor after clamped down = %d, want end of shorter line", got)
+	}
+}
+
+func TestMultiLineInputLeftRightAndDeletesCrossLineBoundaries(t *testing.T) {
+	m := modal.OpenMultiLineInput("Instructions", "task instructions", "ab\ncd", nil, nil)
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	view := m.View()
+	if view.Input != "abcd" {
+		t.Fatalf("backspace at line start input = %q, want joined lines", view.Input)
+	}
+	if view.InputCursor != 2 {
+		t.Fatalf("cursor after join = %d, want previous line end", view.InputCursor)
+	}
+
+	m = modal.OpenMultiLineInput("Instructions", "task instructions", "ab\ncd", nil, nil)
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	view = m.View()
+	if view.Input != "abcd" {
+		t.Fatalf("delete at line end input = %q, want joined lines", view.Input)
+	}
+	if view.InputCursor != 2 {
+		t.Fatalf("cursor after delete join = %d, want unchanged at join", view.InputCursor)
+	}
+
+	m = modal.OpenMultiLineInput("Instructions", "task instructions", "a\nb", nil, nil)
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if got := m.View().InputCursor; got != 2 {
+		t.Fatalf("left across newline cursor = %d, want before second-line rune", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if got := m.View().InputCursor; got != 3 {
+		t.Fatalf("right across newline cursor = %d, want end", got)
+	}
+}
+
+func TestMultiLineInputSubmitTrimsOuterWhitespaceOnly(t *testing.T) {
+	var submitted string
+	m := modal.OpenMultiLineInput("Instructions", "task instructions", "  first\n\nsecond  ", nil, func(input string) tea.Cmd {
+		submitted = input
+		return nil
+	})
+
+	_, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if out != modal.Accepted {
+		t.Fatalf("outcome = %v, want Accepted", out)
+	}
+	if cmd == nil {
+		t.Fatal("expected deferred submit command")
+	}
+	cmd()
+	if submitted != "first\n\nsecond" {
+		t.Fatalf("submitted = %q, want outer whitespace trimmed with internal newlines preserved", submitted)
+	}
+}
+
 func TestSelectSnapshotsPromptItemsAndInitialSelection(t *testing.T) {
 	items := []modal.SelectItem{
 		{Label: "Codex", Value: "codex"},

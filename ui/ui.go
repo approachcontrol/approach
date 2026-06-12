@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -29,8 +30,16 @@ const (
 	OverlayReflogDiff
 	OverlaySessionTranscript
 	OverlayPlanText
-	OverlayWorktreeInput
+	OverlayInput
 	OverlayAgentSelect
+	OverlayWorktreeInput = OverlayInput
+)
+
+type InputMode int
+
+const (
+	InputSingleLine InputMode = iota
+	InputMultiLine
 )
 
 const BranchPrompt = "New branch"
@@ -169,6 +178,12 @@ type RenderParams struct {
 	OverlayScroll              int
 	ConfirmPrompt              string
 	ConfirmForce               bool
+	InputPrompt                string
+	InputPlaceholder           string
+	InputValue                 string
+	InputError                 string
+	InputMode                  InputMode
+	InputCursor                int
 	WorktreeInputPrompt        string
 	WorktreeInputPlaceholder   string
 	WorktreeInput              string
@@ -214,6 +229,7 @@ type RenderParams struct {
 	ExpandedFlowID             string
 	SelectedPlanPhaseID        string
 	SelectedFlowPhaseID        string
+	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	OverlayText                string
@@ -371,6 +387,7 @@ func Render(p RenderParams) string {
 		Width:                      p.Width,
 		Mode:                       p.Mode,
 		Overlay:                    p.Overlay,
+		InputMode:                  inputRenderParamsFrom(p).mode,
 		WorktreeInputPrompt:        p.WorktreeInputPrompt,
 		ActivePane:                 p.ActivePane,
 		Destructive:                p.Destructive,
@@ -398,6 +415,7 @@ func Render(p RenderParams) string {
 		FlowSelected:               flowSelected,
 		FlowPhaseSelected:          flowPhaseSelected,
 		FlowPlanLinked:             flowPlanLinked,
+		FlowHeadless:               p.FlowHeadless,
 		FlowPhaseLaunchReady:       p.FlowPhaseLaunchReady,
 		FlowPhaseResumableSelected: p.FlowPhaseResumableSelected,
 		TransientError:             p.TransientError,
@@ -623,6 +641,7 @@ type statusBarParams struct {
 	Width                      int
 	Mode                       Mode
 	Overlay                    OverlayState
+	InputMode                  InputMode
 	WorktreeInputPrompt        string
 	ActivePane                 int
 	Destructive                bool
@@ -650,6 +669,7 @@ type statusBarParams struct {
 	FlowSelected               bool
 	FlowPhaseSelected          bool
 	FlowPlanLinked             bool
+	FlowHeadless               bool
 	FlowPhaseLaunchReady       bool
 	FlowPhaseResumableSelected bool
 	TransientError             string
@@ -739,11 +759,11 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	switch {
 	case overlay == OverlayConfirm:
 		return statusStyle.Width(width).Render("  y: confirm  n/esc: cancel")
-	case overlay == OverlayWorktreeInput:
-		if sp.WorktreeInputPrompt == LaunchInstructionsPrompt {
-			return statusStyle.Width(width).Render("  enter: launch  esc: cancel  backspace: delete")
+	case overlay == OverlayInput:
+		if sp.InputMode == InputMultiLine {
+			return renderStatusText(width, "  enter: submit  alt+enter: newline  esc: cancel  bksp/del: edit")
 		}
-		return statusStyle.Width(width).Render("  enter: create/set  esc: cancel  backspace: delete")
+		return renderStatusText(width, "  enter: submit  esc: cancel  bksp/del: edit  left/right: move")
 	case overlay == OverlayAgentSelect:
 		return statusStyle.Width(width).Render("  up/down select  enter: confirm  esc: cancel")
 	case overlay != OverlayNone:
@@ -756,6 +776,10 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		shortcuts = renderFooterShortcuts(sp, withoutShortcutKey(sections, "f5"))
 	}
 	return statusStyle.Width(width).Render(shortcuts)
+}
+
+func renderStatusText(width int, text string) string {
+	return statusStyle.Width(width).Render(ansi.Truncate(text, width, ""))
 }
 
 func renderShortcutPane(sp statusBarParams, width, height int) string {
@@ -1027,28 +1051,26 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	case ModeFlows:
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+			headlessLabel := "headless off"
+			if sp.FlowHeadless {
+				headlessLabel = "headless on"
+			}
+			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel})
 			if sp.FlowSelected {
-				actions = append(actions, shortcutHint{Key: "x", Label: "phases"})
-				if sp.FlowPlanLinked {
-					actions = append(actions, shortcutHint{Key: "o", Label: "open"})
-				}
 				if sp.FlowPhaseSelected {
+					if sp.FlowPhaseLaunchReady {
+						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
+					}
 					actions = append(actions, shortcutHint{Key: "y", Label: "copy phase id"})
+					if sp.FlowPhaseResumableSelected {
+						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
+					}
 				} else {
+					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+					if sp.FlowPlanLinked {
+						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
+					}
 					actions = append(actions, shortcutHint{Key: "y", Label: "copy id"})
-				}
-			}
-			if sp.FlowPhaseResumableSelected {
-				actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
-			}
-			if sp.AgentAvailable {
-				label := "phase status"
-				if sp.FlowPhaseLaunchReady {
-					label = "launch phase"
-				}
-				actions = append(actions, shortcutHint{Key: "a", Label: label})
-				if sp.FlowPhaseLaunchReady {
-					actions = append(actions, shortcutHint{Key: "i", Label: "embed phase"})
 				}
 			}
 		}
@@ -1145,6 +1167,9 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 	if sp.Mode == ModeBranches {
 		return renderBranchFooterShortcuts(sp, sections)
 	}
+	if sp.Mode == ModeFlows {
+		return renderFlowFooterShortcuts(sp, sections)
+	}
 	return renderGenericFooterShortcuts(sp, sections)
 }
 
@@ -1220,6 +1245,37 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 		}
 	}
 	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", "tab")))
+	return ansi.Truncate(candidate, sp.Width, "")
+}
+
+func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	if sp.EmbeddedTerminalActive {
+		return renderGenericFooterShortcuts(sp, sections)
+	}
+	full := "  " + renderFooterHintList(footerSectionOrder(sections))
+	if lipgloss.Width(full) <= sp.Width {
+		return full
+	}
+	hints := flattenShortcutHints(sections)
+	base := footerHintsForKeys(hints, "tab", "q/esc")
+	upDown := footerHintsForKeys(hints, "↑/↓")
+	arrow := footerHintsForKeys(hints, "←/→")
+	coreActions := footerHintsForKeys(hints, "h", "enter")
+	actions := footerHintsForKeys(hints, "n", "h", "enter", "o", "y", "r", "f", "F")
+
+	for _, parts := range [][]string{
+		appendParts(base, upDown, arrow, actions),
+		appendParts(base, arrow, actions),
+		appendParts(base, arrow, coreActions),
+		appendParts(arrow, coreActions),
+		appendParts(coreActions),
+		base,
+	} {
+		if candidate, ok := footerCandidate(sp.Width, parts); ok {
+			return candidate
+		}
+	}
+	candidate := "  " + strings.Join(appendParts(arrow, coreActions), " ")
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -2469,11 +2525,13 @@ func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
 }
 
 func renderOverlay(p RenderParams) string {
+	inputParams := inputRenderParamsFrom(p)
 	statusBar := renderStatusBarWithState(statusBarParams{
 		Width:                  p.Width,
 		Mode:                   p.Mode,
 		Overlay:                p.Overlay,
-		WorktreeInputPrompt:    p.WorktreeInputPrompt,
+		InputMode:              inputParams.mode,
+		WorktreeInputPrompt:    inputParams.prompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
 		TransientError:         p.TransientError,
@@ -2493,8 +2551,8 @@ func renderOverlay(p RenderParams) string {
 		lines := renderConfirmDialog(p.ConfirmPrompt, p.ConfirmForce, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
-	if p.Overlay == OverlayWorktreeInput {
-		lines := renderWorktreeInputDialog(p.WorktreeInputPrompt, p.WorktreeInputPlaceholder, p.WorktreeInput, p.WorktreeInputErr, p.Width, contentHeight)
+	if p.Overlay == OverlayInput {
+		lines := renderInputDialog(inputParams, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayAgentSelect {
@@ -2605,49 +2663,56 @@ func renderSelectDialog(prompt string, items []SelectItem, selected int, width, 
 	return lines
 }
 
-func renderWorktreeInputDialog(promptText, placeholder, input, errText string, width, height int) []string {
-	if promptText == LaunchInstructionsPrompt {
-		return renderLaunchInstructionsDialog(promptText, placeholder, input, errText, width, height)
-	}
-
-	lines := make([]string, height)
-	mid := height / 2
-	if mid >= len(lines) {
-		return lines
-	}
-
-	if promptText == "" {
-		promptText = "Create worktree from"
-	}
-	label := strings.TrimSpace(promptText) + ": "
-	if placeholder == "" {
-		placeholder = WorktreeInputPlaceholder
-	}
-	if promptText == BranchPrompt {
-		label = "Create branch: "
-	} else if promptText == PRWorktreePrompt {
-		label = "Create PR worktree from: "
-	}
-	value := input
-	if value == "" {
-		value = placeholderStyle.Render(placeholder)
-	}
-	line := label + value + activeModeStyle.Render("█")
-	lines[mid] = centeredLine(line, width)
-
-	if errText != "" && mid+1 < len(lines) {
-		lines[mid+1] = centeredLine(dirtyRedStyle.Render(errText), width)
-	}
-	return lines
+type inputRenderParams struct {
+	prompt      string
+	placeholder string
+	value       string
+	errText     string
+	mode        InputMode
+	cursor      int
 }
 
-func renderLaunchInstructionsDialog(promptText, placeholder, input, errText string, width, height int) []string {
+func inputRenderParamsFrom(p RenderParams) inputRenderParams {
+	usesNeutral := p.InputPrompt != "" ||
+		p.InputPlaceholder != "" ||
+		p.InputValue != "" ||
+		p.InputError != "" ||
+		p.InputCursor != 0 ||
+		p.InputMode != InputSingleLine
+	if usesNeutral {
+		return inputRenderParams{
+			prompt:      p.InputPrompt,
+			placeholder: p.InputPlaceholder,
+			value:       p.InputValue,
+			errText:     p.InputError,
+			mode:        p.InputMode,
+			cursor:      p.InputCursor,
+		}
+	}
+	cursor := p.InputCursor
+	if p.WorktreeInput != "" {
+		cursor = len([]rune(p.WorktreeInput))
+	}
+	return inputRenderParams{
+		prompt:      p.WorktreeInputPrompt,
+		placeholder: p.WorktreeInputPlaceholder,
+		value:       p.WorktreeInput,
+		errText:     p.WorktreeInputErr,
+		mode:        p.InputMode,
+		cursor:      cursor,
+	}
+}
+
+func renderInputDialog(params inputRenderParams, width, height int) []string {
 	lines := make([]string, height)
 	if width <= 0 || height <= 0 {
 		return lines
 	}
-	if placeholder == "" {
-		placeholder = "launch instructions"
+	if params.prompt == "" {
+		params.prompt = "Create worktree from"
+	}
+	if params.placeholder == "" {
+		params.placeholder = "input"
 	}
 
 	panelWidth := width - 4
@@ -2665,34 +2730,16 @@ func renderLaunchInstructionsDialog(promptText, placeholder, input, errText stri
 		contentWidth = 1
 	}
 
-	value := input
-	placeholderVisible := false
-	if value == "" {
-		value = placeholder
-		placeholderVisible = true
-	}
-	wrapWidth := contentWidth - lipgloss.Width("█")
-	if wrapWidth < 1 {
-		wrapWidth = 1
-	}
-	bodyLines := wrapPlainText(value, wrapWidth)
-	if len(bodyLines) > launchInstructionsMaxLines {
-		bodyLines = compactLaunchInstructionLines(bodyLines, launchInstructionsMaxLines)
-	}
+	bodyLines := inputDialogBodyLines(params, contentWidth)
+	cursorLine := lineIndexContainingCursor(bodyLines)
+	maxInputLines := maxInputDialogLines(height, params.errText, contentWidth)
+	bodyLines = compactInputDialogLines(bodyLines, maxInputLines, cursorLine)
 
-	content := []string{activeModeStyle.Render(promptText), ""}
-	for i, line := range bodyLines {
-		if placeholderVisible {
-			line = placeholderStyle.Render(line)
-		}
-		if i == len(bodyLines)-1 {
-			line += activeModeStyle.Render("█")
-		}
-		content = append(content, line)
-	}
-	if errText != "" {
+	content := make([]string, 0, len(bodyLines)+3)
+	content = append(content, bodyLines...)
+	if params.errText != "" {
 		content = append(content, "")
-		for _, line := range wrapPlainText(errText, contentWidth) {
+		for _, line := range wrapPlainText(params.errText, contentWidth) {
 			content = append(content, dirtyRedStyle.Render(line))
 		}
 	}
@@ -2718,6 +2765,175 @@ func renderLaunchInstructionsDialog(promptText, placeholder, input, errText stri
 		lines[row] = centeredLine(line, width)
 	}
 	return lines
+}
+
+func inputDialogBodyLines(params inputRenderParams, contentWidth int) []string {
+	label := inputDialogLabel(params.prompt)
+	if params.value == "" {
+		line := label + params.placeholder + activeModeStyle.Render("█")
+		return wrapPlainText(line, contentWidth)
+	}
+
+	value := insertCursorGlyph(params.value, params.cursor)
+	logicalLines := strings.Split(value, "\n")
+	lines := make([]string, 0, len(logicalLines))
+	for i, line := range logicalLines {
+		if i == 0 {
+			line = label + line
+		}
+		lines = append(lines, wrapEditableInputLine(line, contentWidth)...)
+	}
+	if len(lines) == 0 {
+		return []string{label + activeModeStyle.Render("█")}
+	}
+	return lines
+}
+
+func inputDialogLabel(prompt string) string {
+	switch strings.TrimSpace(prompt) {
+	case BranchPrompt:
+		return "Create branch: "
+	case PRWorktreePrompt:
+		return "Create PR worktree from: "
+	default:
+		return strings.TrimSpace(prompt) + ": "
+	}
+}
+
+func wrapEditableInputLine(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{""}
+	}
+	if s == "" {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, lipgloss.Width(s)/maxWidth+1)
+	for s != "" {
+		if lipgloss.Width(s) <= maxWidth {
+			lines = append(lines, s)
+			break
+		}
+		head, rest := splitEditableInputAtWidth(s, maxWidth)
+		if head == "" {
+			runes := []rune(s)
+			head = string(runes[:1])
+			rest = string(runes[1:])
+		}
+		lines = append(lines, head)
+		s = rest
+	}
+	return lines
+}
+
+func splitEditableInputAtWidth(s string, maxWidth int) (string, string) {
+	if maxWidth <= 0 {
+		return "", s
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s, ""
+	}
+	runes := []rune(s)
+	lastSpaceSplit := -1
+	for i := 1; i <= len(runes); i++ {
+		if lipgloss.Width(string(runes[:i])) > maxWidth {
+			if lastSpaceSplit > 0 {
+				return string(runes[:lastSpaceSplit]), string(runes[lastSpaceSplit:])
+			}
+			return string(runes[:i-1]), string(runes[i-1:])
+		}
+		if unicode.IsSpace(runes[i-1]) {
+			lastSpaceSplit = i
+		}
+	}
+	return s, ""
+}
+
+func insertCursorGlyph(value string, cursor int) string {
+	runes := []rune(value)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	out := make([]rune, 0, len(runes)+1)
+	out = append(out, runes[:cursor]...)
+	out = append(out, '█')
+	out = append(out, runes[cursor:]...)
+	return string(out)
+}
+
+func lineIndexContainingCursor(lines []string) int {
+	for i, line := range lines {
+		if strings.Contains(line, "█") {
+			return i
+		}
+	}
+	return -1
+}
+
+func maxInputDialogLines(height int, errText string, contentWidth int) int {
+	maxLines := launchInstructionsMaxLines
+	available := height - 2
+	if errText != "" {
+		available -= 1 + len(wrapPlainText(errText, contentWidth))
+	}
+	if available < 1 {
+		return 1
+	}
+	if available < maxLines {
+		maxLines = available
+	}
+	return maxLines
+}
+
+func compactInputDialogLines(lines []string, maxLines, cursorLine int) []string {
+	if maxLines <= 0 || len(lines) <= maxLines {
+		return lines
+	}
+	if cursorLine < 0 {
+		return compactLaunchInstructionLines(lines, maxLines)
+	}
+	if maxLines == 1 {
+		if cursorLine >= 0 && cursorLine < len(lines) {
+			return []string{lines[cursorLine]}
+		}
+		return []string{shortcutOverflowMarker}
+	}
+	start := cursorLine - maxLines/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxLines
+	if end > len(lines) {
+		end = len(lines)
+		start = end - maxLines
+		if start < 0 {
+			start = 0
+		}
+	}
+	if start > 0 && cursorLine == start {
+		start--
+	}
+	if end < len(lines) && cursorLine == end-1 {
+		end++
+	}
+	for end-start > maxLines {
+		if cursorLine-start > end-1-cursorLine {
+			start++
+		} else {
+			end--
+		}
+	}
+	compact := append([]string(nil), lines[start:end]...)
+	if start > 0 {
+		compact[0] = shortcutOverflowMarker
+	}
+	if end < len(lines) {
+		compact[len(compact)-1] = shortcutOverflowMarker
+	}
+	return compact
 }
 
 func compactLaunchInstructionLines(lines []string, maxLines int) []string {

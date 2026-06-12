@@ -42,6 +42,7 @@ type Model struct {
 	expandedFlowID            string
 	selectedPlanPhaseID       string
 	selectedFlowPhaseID       string
+	flowHeadless              bool
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -93,6 +94,7 @@ type Model struct {
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
+	nextEmbeddedTerminalID    int
 	activeEmbeddedTerminalNum int
 	activeFlowTerminalNum     int
 	flowFocus                 flowFocus
@@ -304,6 +306,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessions:              newSessionPane(),
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
+		flowHeadless:          true,
 		mode:                  startupMode(opts.StartupMode),
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:    opts.PlanPromptTemplate,
@@ -405,6 +408,8 @@ func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
 func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
 func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
 func (m Model) WorktreeInput() string           { return m.modal.View().Input }
+func (m Model) InputMode() modal.InputMode      { return m.modal.View().InputMode }
+func (m Model) InputCursor() int                { return m.modal.View().InputCursor }
 func (m Model) WorktreeInputErr() string        { return m.modal.View().InputErr }
 func (m Model) BranchScroll() int               { return m.rows.Scroll() }
 func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
@@ -462,6 +467,12 @@ func (m Model) View() string {
 		OverlayScroll:              modalView.Scroll,
 		ConfirmPrompt:              modalView.Prompt,
 		ConfirmForce:               modalView.Force,
+		InputPrompt:                modalView.Prompt,
+		InputPlaceholder:           modalView.Placeholder,
+		InputValue:                 modalView.Input,
+		InputError:                 modalView.InputErr,
+		InputMode:                  uiInputMode(modalView.InputMode),
+		InputCursor:                modalView.InputCursor,
 		WorktreeInputPrompt:        modalView.Prompt,
 		WorktreeInputPlaceholder:   modalView.Placeholder,
 		WorktreeInput:              modalView.Input,
@@ -507,6 +518,7 @@ func (m Model) View() string {
 		ExpandedFlowID:             m.expandedFlowID,
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
+		FlowHeadless:               m.flowHeadless,
 		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
 		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
 		OverlayText:                modalView.Text,
@@ -656,7 +668,7 @@ func (m Model) overlayState() ui.OverlayState {
 	case modal.Confirm:
 		return ui.OverlayConfirm
 	case modal.Input:
-		return ui.OverlayWorktreeInput
+		return ui.OverlayInput
 	case modal.Select:
 		return ui.OverlayAgentSelect
 	case modal.Diff:
@@ -678,6 +690,13 @@ func (m Model) overlayState() ui.OverlayState {
 		return ui.OverlayPlanText
 	}
 	return ui.OverlayNone
+}
+
+func uiInputMode(mode modal.InputMode) ui.InputMode {
+	if mode == modal.InputMultiLine {
+		return ui.InputMultiLine
+	}
+	return ui.InputSingleLine
 }
 
 func uiSelectItems(items []modal.SelectItem) []ui.SelectItem {
@@ -854,6 +873,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
+		if msg.Request != 0 {
+			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
+				return m, nil
+			}
+			m = m.clearFlowCreateRequest(msg.Request)
+		}
 		next, launchCmd := m.launchFlowEmbeddedHeadlessWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
@@ -1059,8 +1084,8 @@ func (m Model) selectedFlowPhaseLaunchReady() bool {
 	if !ok {
 		return false
 	}
-	_, ok = readyFlowPhase(record)
-	return ok
+	phase, ok := m.selectedFlowPhase()
+	return ok && flowPhaseCanLaunch(record, phase)
 }
 
 func (m Model) clearSelectedPlanPhase() Model {

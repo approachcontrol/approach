@@ -13,8 +13,8 @@ Flow phases keep the persisted seven-status model rather than collapsing to a
 smaller `ready`/`running`/`done`/`blocked` set:
 
 - `pending` and `ready` are derived bookkeeping owned entirely by wtui. They
-  are what let the TUI offer "launch the next ready phase" without agents or
-  the UI re-deriving gate rules.
+  are what let the TUI identify whether a selected phase row is launchable
+  without agents or the UI re-deriving gate rules.
 - `needs_attention` is distinct from `blocked` on purpose: it marks
   non-blocking concerns a human should review, while `blocked` stops the
   pipeline.
