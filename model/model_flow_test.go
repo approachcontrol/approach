@@ -2382,7 +2382,7 @@ func TestModel_AKeyOnFlowLaunchesMergeWithStructuredReportingPrompt(t *testing.T
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
-		"merge the reviewed pr deliberately",
+		"merge the pr deliberately",
 		"github #116",
 		"https://github.com/brian-bell/wtui/pull/116",
 		"wtui flow merge set --flow-id flow-1 --status merged",
