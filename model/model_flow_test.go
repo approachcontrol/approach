@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
@@ -494,7 +495,7 @@ func TestModel_ExpandedFlowArrowKeysSelectPhaseRows(t *testing.T) {
 	if got := m.SelectedFlowPhaseID(); got != "plan" {
 		t.Fatalf("selected flow phase = %q, want plan", got)
 	}
-	if view := m.View(); !strings.Contains(view, "> completed") {
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "   >  completed") {
 		t.Fatalf("selected phase row should be visually marked:\n%s", view)
 	}
 
@@ -1510,6 +1511,198 @@ func TestModel_EnterOnSelectedFlowPhaseLaunchesImplementationInEmbeddedHeadlessT
 	}, "\n")
 	if started.InitialPrompt != wantPrompt {
 		t.Fatalf("embedded prompt = %q, want %q", started.InitialPrompt, wantPrompt)
+	}
+}
+
+func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-active",
+		Branch:       "flow/active",
+		Title:        "Active terminal flow",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, ">● in_progress") {
+		t.Fatalf("active selected Flow row should show selection and marker:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, "   >● ready") {
+		t.Fatalf("active selected Flow phase should show phase indent, selection, and marker:\n%s", view)
+	}
+}
+
+func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
+	for _, tc := range []struct {
+		state      string
+		wantMarker bool
+	}{
+		{state: "running", wantMarker: true},
+		{state: "starting", wantMarker: true},
+		{state: "exited", wantMarker: false},
+		{state: "failed", wantMarker: false},
+		{state: "terminated", wantMarker: false},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					return &fakeEmbeddedTerminal{state: tc.state}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: "/dev/alpha-worktrees/flow-active",
+				Branch:       "flow/active",
+				Title:        "Active terminal flow",
+				Status:       flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+				},
+			}})
+
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			if cmd == nil {
+				t.Fatal("flows-mode i should prepare an embedded launch")
+			}
+			m, _ = update(m, cmd())
+
+			view := ansi.Strip(m.View())
+			gotMarker := strings.Contains(view, ">● in_progress")
+			if gotMarker != tc.wantMarker {
+				t.Fatalf("state %q marker = %t, want %t:\n%s", tc.state, gotMarker, tc.wantMarker, view)
+			}
+		})
+	}
+}
+
+func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-dismiss",
+		Branch:       "flow/dismiss",
+		Title:        "Dismiss terminal flow",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	if view := ansi.Strip(m.View()); !strings.Contains(view, ">● in_progress") {
+		t.Fatalf("running terminal should mark selected Flow row before dismissal:\n%s", view)
+	}
+
+	fakeTerm.state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "● in_progress") {
+		t.Fatalf("dismissed terminal should remove active marker:\n%s", view)
+	}
+	if strings.Contains(view, "1 codex implementation") {
+		t.Fatalf("dismissed terminal should remove flow terminal tab:\n%s", view)
+	}
+}
+
+func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		{
+			FlowID:       "flow-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/flow-one",
+			Branch:       "flow/one",
+			Title:        "Flow one",
+			Status:       flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+			},
+		},
+		{
+			FlowID:       "flow-2",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/flow-two",
+			Branch:       "flow/two",
+			Title:        "Flow two",
+			Status:       flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Same phase ID", Status: flowstore.PhaseReady},
+			},
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, " ● in_progress      flow/one") {
+		t.Fatalf("source flow should remain marked:\n%s", view)
+	}
+	if strings.Contains(view, ">● in_progress      flow/two") || strings.Contains(view, "   >● ready") {
+		t.Fatalf("same phase ID from another Flow must not mark selected target Flow or phase:\n%s", view)
+	}
+	if !strings.Contains(view, "   in_progress      flow/two") || !strings.Contains(view, "   >  ready") {
+		t.Fatalf("target Flow and selected phase should remain unmarked:\n%s", view)
 	}
 }
 

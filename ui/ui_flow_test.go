@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/scanner"
 )
@@ -89,6 +92,159 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("split Flow terminal view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
+	flows := []flowstore.FlowRecord{
+		{
+			FlowID: "flow-1",
+			Title:  "Active flow",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/active",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+			},
+		},
+		{
+			FlowID: "flow-2",
+			Title:  "Inactive flow",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/inactive",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+			},
+		},
+	}
+	view := strings.Join(renderFlowPane(flows, 1, 0, 200, 5, "", "", []FlowTerminalActivity{
+		{FlowID: "flow-1", PhaseID: "implementation"},
+	}), "\n")
+
+	activeRow := ansi.Strip(lineContaining(view, "flow/active"))
+	inactiveRow := ansi.Strip(lineContaining(view, "flow/inactive"))
+	if !strings.HasPrefix(activeRow, " ● in_progress") {
+		t.Fatalf("active flow row prefix = %q, want active marker before Status:\n%s", activeRow, view)
+	}
+	if !strings.HasPrefix(inactiveRow, ">  in_progress") {
+		t.Fatalf("selected inactive flow row prefix = %q, want selection without marker:\n%s", inactiveRow, view)
+	}
+	if strings.Contains(inactiveRow, "●") {
+		t.Fatalf("inactive flow row should not be marked:\n%s", view)
+	}
+	if visibleColumn(activeRow, "in_progress") != visibleColumn(inactiveRow, "in_progress") {
+		t.Fatalf("status column shifted, active=%q inactive=%q", activeRow, inactiveRow)
+	}
+
+	view = strings.Join(renderFlowPane(flows, 0, 0, 200, 5, "", "", []FlowTerminalActivity{
+		{FlowID: "flow-1", PhaseID: "implementation"},
+	}), "\n")
+	selectedActiveRow := ansi.Strip(lineContaining(view, "flow/active"))
+	if !strings.HasPrefix(selectedActiveRow, ">● in_progress") {
+		t.Fatalf("selected active flow row prefix = %q, want selection and marker:\n%s", selectedActiveRow, view)
+	}
+}
+
+func visibleColumn(line, needle string) int {
+	index := strings.Index(line, needle)
+	if index < 0 {
+		return -1
+	}
+	return lipgloss.Width(line[:index])
+}
+
+func lineWithPrefix(view, prefix string) string {
+	for _, line := range strings.Split(view, "\n") {
+		stripped := ansi.Strip(line)
+		if strings.HasPrefix(stripped, prefix) {
+			return stripped
+		}
+	}
+	return ""
+}
+
+func TestRender_FlowsModeMarksActiveTerminalExpandedPhaseRows(t *testing.T) {
+	flows := []flowstore.FlowRecord{
+		{
+			FlowID: "flow-1",
+			Title:  "Active flow",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/active",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, Order: 1},
+				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
+			},
+		},
+		{
+			FlowID: "flow-2",
+			Title:  "Other flow",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/other",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Same phase name", Status: flowstore.PhaseRunning, Order: 1},
+			},
+		},
+	}
+	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 8, "flow-1", "implementation", []FlowTerminalActivity{
+		{FlowID: "flow-1", PhaseID: "implementation"},
+		{FlowID: "flow-2", PhaseID: "review-loop"},
+	}), "\n")
+
+	flowRow := ansi.Strip(lineContaining(view, "flow/active"))
+	activePhaseRow := ansi.Strip(lineContaining(view, "Implementation"))
+	inactivePhaseRow := ansi.Strip(lineContaining(view, "review-loop:ready"))
+	if !strings.HasPrefix(activePhaseRow, "   >● running") {
+		t.Fatalf("selected active phase row prefix = %q, want phase indent, selection, marker:\n%s", activePhaseRow, view)
+	}
+	if !strings.HasPrefix(inactivePhaseRow, "      ready") {
+		t.Fatalf("inactive phase row prefix = %q, want phase indent without marker:\n%s", inactivePhaseRow, view)
+	}
+	if strings.Contains(inactivePhaseRow, "●") {
+		t.Fatalf("phase row with non-matching activity should not be marked:\n%s", view)
+	}
+	if visibleColumn(activePhaseRow, "running") != visibleColumn(inactivePhaseRow, "ready") {
+		t.Fatalf("phase status column shifted, active=%q inactive=%q", activePhaseRow, inactivePhaseRow)
+	}
+	if visibleColumn(activePhaseRow, "running") <= visibleColumn(flowRow, "in_progress") {
+		t.Fatalf("phase row should remain indented from flow row, phase=%q flow=%q", activePhaseRow, flowRow)
+	}
+}
+
+func TestRender_FlowsModeSplitPaneMarksActiveTerminalRows(t *testing.T) {
+	flows := []flowstore.FlowRecord{{
+		FlowID: "flow-1",
+		Title:  "Active split flow",
+		Status: flowstore.StatusInProgress,
+		Branch: "flow/split-active",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+		},
+	}}
+	lines := renderFlowSplitPane(flows, 0, 0, 100, 9, "flow-1", "implementation", []FlowTerminalActivity{
+		{FlowID: "flow-1", PhaseID: "implementation"},
+	}, []EmbeddedTerminalTab{{
+		Number:   1,
+		Provider: "codex",
+		Identity: "misleading-label",
+		State:    "running",
+		Active:   true,
+	}}, []string{"terminal line"}, false)
+	view := strings.Join(lines, "\n")
+
+	flowRow := ansi.Strip(lineContaining(view, "flow/split-active"))
+	phaseRow := lineWithPrefix(view, "   >●")
+	if !strings.HasPrefix(flowRow, " ● in_progress") {
+		t.Fatalf("split active flow row prefix = %q, want active marker:\n%s", flowRow, view)
+	}
+	if !strings.HasPrefix(phaseRow, "   >● running") {
+		t.Fatalf("split selected active phase row prefix = %q, want phase marker:\n%s", phaseRow, view)
+	}
+	if !strings.Contains(view, "misleading-label") || !strings.Contains(view, "terminal line") {
+		t.Fatalf("split terminal content missing:\n%s", view)
+	}
+	for _, line := range strings.Split(ansi.Strip(view), "\n") {
+		if got := lipgloss.Width(line); got > 100 {
+			t.Fatalf("split pane line width = %d, want <= 100: %q", got, line)
 		}
 	}
 }
