@@ -272,6 +272,32 @@ func TestCreateRepoRemoteOnlyRetrySkipsLocalInit(t *testing.T) {
 	}
 }
 
+func TestCreateRepoRemoteOnlyRetryRequiresGitHubCreation(t *testing.T) {
+	root := t.TempDir()
+	existing := filepath.Join(root, "project")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeCreateRepoRunner{}
+
+	result, err := createRepoWithRunner(RepoCreateOptions{
+		Root:              root,
+		Name:              "project",
+		CreateGitHub:      false,
+		RemoteOnlyRetry:   true,
+		ExistingLocalPath: existing,
+	}, runner)
+	if err == nil {
+		t.Fatal("expected remote-only retry without GitHub creation to fail")
+	}
+	if result.GitHubCreated {
+		t.Fatalf("retry without GitHub creation should not report success: %+v", result)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("retry validation should not run commands, got %#v", runner.commands)
+	}
+}
+
 func TestCreateRepoRemoteOnlyRetryValidatesExistingLocalPath(t *testing.T) {
 	root := t.TempDir()
 	valid := filepath.Join(root, "project")

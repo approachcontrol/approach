@@ -121,7 +121,7 @@ func createRepoRemoteOnlyRetry(opts RepoCreateOptions, runner repoCreateRunner, 
 		return result, fmt.Errorf("retry path must match repo destination: %s", destination)
 	}
 	if !opts.CreateGitHub {
-		return result, nil
+		return result, fmt.Errorf("remote-only retry requires GitHub creation")
 	}
 	if err := runGitHubRepoCreate(runner, name, existing, opts.Visibility); err != nil {
 		result.PartialSuccess = true
