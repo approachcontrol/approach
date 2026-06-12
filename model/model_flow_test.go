@@ -1536,18 +1536,19 @@ func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
 		},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("flows-mode i should prepare an embedded launch")
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
 
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, ">● in_progress") {
 		t.Fatalf("active selected Flow row should show selection and marker:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 	view = ansi.Strip(m.View())
@@ -1589,11 +1590,13 @@ func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
 				},
 			}})
 
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			m = selectFlowPhaseByID(t, m, "implementation")
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 			if cmd == nil {
-				t.Fatal("flows-mode i should prepare an embedded launch")
+				t.Fatal("enter on selected Flow phase should prepare an embedded launch")
 			}
 			m, _ = update(m, cmd())
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
 
 			view := ansi.Strip(m.View())
 			gotMarker := strings.Contains(view, ">● in_progress")
@@ -1627,11 +1630,13 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 		},
 	}})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("flows-mode i should prepare an embedded launch")
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
 	if view := ansi.Strip(m.View()); !strings.Contains(view, ">● in_progress") {
 		t.Fatalf("running terminal should mark selected Flow row before dismissal:\n%s", view)
 	}
@@ -1685,13 +1690,14 @@ func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T
 		},
 	})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("flows-mode i should prepare an embedded launch")
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
 	}
 	m, _ = update(m, cmd())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 	view := ansi.Strip(m.View())
