@@ -1306,19 +1306,20 @@ func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, 
 		return actions.AgentLaunchContext{}, false, m
 	}
 	ctx := actions.AgentLaunchContext{
-		Command:          command,
-		LaunchID:         newLaunchID(),
-		RepoPath:         repoPath,
-		WorktreePath:     record.WorktreePath,
-		WorkingDir:       workingDir,
-		Branch:           record.Branch,
-		Commit:           record.Commit,
-		SessionStateRoot: m.sessionStateRoot,
-		ResumeSessionID:  sessionID,
-		PlanID:           record.PlanID,
-		PlanPath:         record.PlanPath,
-		FlowID:           record.FlowID,
-		FlowPhaseID:      phase.PhaseID,
+		Command:           command,
+		LaunchID:          newLaunchID(),
+		RepoPath:          repoPath,
+		WorktreePath:      record.WorktreePath,
+		WorkingDir:        workingDir,
+		Branch:            record.Branch,
+		Commit:            record.Commit,
+		SessionStateRoot:  m.sessionStateRoot,
+		ResumeSessionID:   sessionID,
+		PlanID:            record.PlanID,
+		PlanPath:          record.PlanPath,
+		FlowID:            record.FlowID,
+		FlowPhaseID:       phase.PhaseID,
+		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(phase.Status),
 	}
 	return ctx, true, m
 }
@@ -1801,6 +1802,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 		FlowID:   ctx.FlowID,
 		PhaseID:  ctx.FlowPhaseID,
 		LaunchID: ctx.LaunchID,
+		Resume:   true,
 	}); err != nil {
 		m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", err))
 		return m, nil
@@ -1850,6 +1852,11 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 
 func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errText string) (Model, string) {
 	if ctx.FlowID == "" || ctx.FlowPhaseID == "" || (ctx.ResumeSessionID != "" && !ctx.FlowLaunchTracked) {
+		return m, errText
+	}
+	if ctx.FlowPhaseTerminal {
+		// The phase had already finished when this launch (a session resume)
+		// started; a failed resume must not regress it to needs_attention.
 		return m, errText
 	}
 	notes := "Agent launch failed"

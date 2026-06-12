@@ -205,10 +205,14 @@ type StartMetadataUpdate struct {
 }
 
 // PhaseLaunchUpdate records one agent launch attempt against a Flow phase.
+// Resume marks the launch as a session resume: resuming a phase in a terminal
+// status (completed, skipped) records the launch without reopening the phase,
+// while non-resume launches always mark the phase running.
 type PhaseLaunchUpdate struct {
 	FlowID   string
 	PhaseID  string
 	LaunchID string
+	Resume   bool
 }
 
 // SessionAttachUpdate attaches a captured provider session to a Flow phase.
@@ -499,6 +503,12 @@ func clearsPhaseOutcome(status string) bool {
 	return status == PhaseRunning
 }
 
+// PhaseStatusTerminal reports whether a phase has finished (successfully or by
+// being skipped), as opposed to states that still expect agent work.
+func PhaseStatusTerminal(status string) bool {
+	return status == PhaseCompleted || status == PhaseSkipped
+}
+
 func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) FlowPhase {
 	phase.Status = PhaseNeedsAttention
 	phase.Outcome = ""
@@ -689,6 +699,18 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
+		if update.Resume && PhaseStatusTerminal(phase.Status) {
+			// Resuming a finished phase's session is read-back, not new work:
+			// record the launch so the session can re-link, but leave the
+			// phase's terminal status, outcome, and notes intact.
+			phase.LaunchIDs = appendUnique(phase.LaunchIDs, launchID)
+			phase.PhaseID = update.PhaseID
+			phase.UpdatedAt = now
+			record.Phases[phaseIndex] = phase
+			record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+			record.UpdatedAt = now
+			return record, nil
+		}
 		launchPhaseUpdate := PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}
 		if phase.Status == PhaseNeedsAttention || phase.Status == PhaseBlocked {
 			launchPhaseUpdate.Notes = fmt.Sprintf("Relaunched after %s.", phase.Status)

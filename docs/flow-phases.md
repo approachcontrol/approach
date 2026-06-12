@@ -71,6 +71,11 @@ Additional rules:
   `--notes` is omitted.
 - Invalid transitions fail with the allowed next statuses, e.g.
   `invalid phase transition pending -> completed; allowed from pending: skipped`.
+- TUI launches mark the phase `running`, with one exception: resuming an
+  attached session of a `completed` or `skipped` phase records the launch ID
+  (so the resumed session can re-link) without reopening the phase, and a
+  failed resume launch never regresses such a phase to `needs_attention`.
+  Reopening a finished phase deliberately remains `wtui flow phase restart`.
 
 ## Derived readiness
 

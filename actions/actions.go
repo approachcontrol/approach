@@ -621,6 +621,10 @@ type AgentLaunchContext struct {
 	FlowID            string
 	FlowPhaseID       string
 	FlowLaunchTracked bool
+	// FlowPhaseTerminal records that the launched phase was already in a
+	// terminal status (completed, skipped), so launch failures must not
+	// regress the phase to needs_attention.
+	FlowPhaseTerminal bool
 	Embedded          bool
 	Headless          bool
 	// InitialPrompt is passed to providers when they support a launch-time prompt.

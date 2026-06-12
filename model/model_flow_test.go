@@ -929,6 +929,9 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID != launched.LaunchID {
 		t.Fatalf("launch update = %#v, want fresh resume launch id %#v", launchUpdate, launched.LaunchID)
 	}
+	if !launchUpdate.Resume {
+		t.Fatalf("launch update = %#v, want resume launch so terminal phases keep their status", launchUpdate)
+	}
 	if !launched.FlowLaunchTracked {
 		t.Fatalf("expected Flow phase resume context to be marked tracked: %#v", launched)
 	}
@@ -1099,7 +1102,7 @@ func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testin
 	}
 }
 
-func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention(t *testing.T) {
+func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -1141,6 +1144,48 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
 	}
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want none; a failed resume must not regress a completed phase", phaseUpdates)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "terminal unavailable") {
+		t.Fatalf("status = %q, want launch failure", got)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume flagged phase failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-flagged-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-flagged-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseNeedsAttention,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
 	}
@@ -1150,14 +1195,11 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention
 		!strings.Contains(update.Notes, "terminal unavailable") {
 		t.Fatalf("phase update = %#v", update)
 	}
-	if got := m.TransientError(); !strings.Contains(got, "terminal unavailable") {
-		t.Fatalf("status = %q, want launch failure", got)
-	}
 }
 
-func TestModel_RKeyOnFlowPhaseResumeRunFailureMarksTrackedLaunchNeedsAttention(t *testing.T) {
+func TestModel_RKeyOnFlowPhaseResumeRunFailureKeepsCompletedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
-	var phaseUpdate flowstore.PhaseUpdate
+	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{}, nil
@@ -1167,7 +1209,7 @@ func TestModel_RKeyOnFlowPhaseResumeRunFailureMarksTrackedLaunchNeedsAttention(t
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdate = update
+			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -1219,11 +1261,8 @@ func TestModel_RKeyOnFlowPhaseResumeRunFailureMarksTrackedLaunchNeedsAttention(t
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
 	}
-	if phaseUpdate.FlowID != "flow-1" ||
-		phaseUpdate.PhaseID != "review-loop" ||
-		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
-		!strings.Contains(phaseUpdate.Notes, "exit status") {
-		t.Fatalf("phase update = %#v", phaseUpdate)
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want none; a failed resume must not regress a completed phase", phaseUpdates)
 	}
 }
 
