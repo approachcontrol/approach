@@ -1502,7 +1502,7 @@ func flowPhasePromptNeedsPlanBody(phaseID string) bool {
 }
 
 func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalArtifactPrompt("Use the review loop skill to review the saved plan.", planPath, record, phase)
+	return flowMinimalArtifactPrompt("Use the review loop skill to review the saved plan.\nUse the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
 }
 
 func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -1526,7 +1526,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow to review the changes.\nUse the commit skill when revisions are made.", record, phase)
+	return flowMinimalChangePrompt("Use the review-loop workflow to review the changes.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -1556,7 +1556,8 @@ func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.Fl
 func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n")
-	b.WriteString("Use the ship skill when fixes require commits or pushes.\n\n")
+	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
+	b.WriteString("Use the wtui-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
 	writeFlowChangeMetadata(&b, record)
 	if flowstore.HasPRTarget(record.PR) {
 		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
