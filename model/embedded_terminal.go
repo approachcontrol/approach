@@ -690,7 +690,7 @@ func (m Model) openEmbeddedSessionPicker() Model {
 			Value: strconv.Itoa(i),
 		})
 	}
-	m.modal = modal.OpenSelect("Resume session", items, 0, func(value string) tea.Cmd {
+	m.modal = modal.OpenSelectWithLayout("Resume session", items, 0, modal.Layout{Width: 72, Height: 12, Placement: modal.PlacementCenter}, func(value string) tea.Cmd {
 		return func() tea.Msg {
 			index, err := strconv.Atoi(value)
 			if err != nil {

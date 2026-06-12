@@ -301,8 +301,11 @@ whereas `claude --print` only prints its result once the run completes. Expanded
 group child implementation phases directly under Implementation. New launches
 record a launch ID and Flow/plan environment metadata for the agent; CLI
 phase-session resumes also record a fresh launch ID, while `codex-app` resumes
-navigate to the existing app thread without additional launch tracking. Other
-Flow mutation remains CLI/agent-driven in v1.
+navigate to the existing app thread without additional launch tracking. With
+destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
+record under the Flow artifact store; it leaves linked plans, sessions,
+transcripts, worktrees, repositories, branches, and checked-out code intact.
+Other phase and progression mutation remains CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and

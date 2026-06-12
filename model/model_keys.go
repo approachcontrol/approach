@@ -257,6 +257,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode < ui.ModeFlows {
 			m.mode++
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 	case "1":
@@ -305,7 +308,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode != ui.ModeFlows {
 			m.mode = ui.ModeFlows
 			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeFlows)
+			return m.startFlowsModeFetchWithRefreshTick()
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -428,6 +431,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		if m.mode != targetMode {
 			m.mode = targetMode
 			m = m.resetModeCursors()
+			if m.mode == ui.ModeFlows {
+				return m.startFlowsModeFetchWithRefreshTick()
+			}
 			return m.startFetchForMode()
 		}
 		return m, nil
@@ -441,6 +447,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		}
 		m.mode++
 		m = m.resetModeCursors()
+		if m.mode == ui.ModeFlows {
+			return m.startFlowsModeFetchWithRefreshTick()
+		}
 		return m.startFetchForMode()
 	}
 
@@ -696,6 +705,9 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmStashDrop()
 	}
+	if m.mode == ui.ModeFlows && len(m.filteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
+		return m.confirmFlowDelete()
+	}
 	if m.mode == ui.ModeBranches && len(m.filteredRepos()) > 0 {
 		return m.confirmBranchDelete()
 	}
@@ -706,10 +718,11 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
-	m.modal = modal.OpenSelect(
+	m.modal = modal.OpenSelectWithLayout(
 		"Choose interactive helper",
 		agentSelectItems(),
 		selectedAgentIndex(m.agentCommand),
+		modal.Layout{Width: 32, Height: 6, Placement: modal.PlacementCenter},
 		func(value string) tea.Cmd { return m.setAgent(agent.Normalize(value)) },
 	)
 	return m, nil
@@ -1737,7 +1750,13 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
-	want := artifacts.NormalizePhaseID(phaseID)
+	requested := strings.TrimSpace(phaseID)
+	for _, phase := range record.Phases {
+		if phase.PhaseID == requested {
+			return phase, true
+		}
+	}
+	want := artifacts.NormalizePhaseID(requested)
 	for _, phase := range record.Phases {
 		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return phase, true
@@ -2098,6 +2117,30 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 			return WorktreeRemovedMsg{RepoPath: repoPath, BranchName: branchName}
 		}
 	})
+	return m, nil
+}
+
+func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || m.selectedFlowPhaseID != "" {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return m, nil
+	}
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return m, nil
+	}
+	flowID := record.FlowID
+	title := strings.TrimSpace(record.Title)
+	if title == "" {
+		title = flowID
+	}
+	m.modal = modal.OpenConfirm(
+		fmt.Sprintf("Delete Flow %s (%s)? Flow data only; worktrees/code stay. (y/n)", title, flowID),
+		func() tea.Cmd { return m.deleteFlowCommand(repoPath, flowID, title) },
+	)
 	return m, nil
 }
 
