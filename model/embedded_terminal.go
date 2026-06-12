@@ -587,13 +587,12 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		return m
 	}
 	if removedScope == embeddedTerminalScopeFlow {
-		if prefixActive && prefixScope == embeddedTerminalScopeFlow && activeFlowID == id {
-			m.terminalPrefixActive = false
-		}
 		m.activeFlowTerminalNum = m.activeEmbeddedTerminalNumberAfterRenumber(embeddedTerminalScopeFlow, activeFlowID, id)
 		if m.activeFlowTerminalNum == 0 {
 			m.flowFocus = flowFocusList
 			m.terminalPrefixActive = false
+		} else if m.flowFocus == flowFocusTerminal {
+			m.terminalPrefixActive = true
 		}
 	} else {
 		if prefixActive && prefixScope == embeddedTerminalScopeSession && activeID == id {

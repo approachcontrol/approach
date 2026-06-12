@@ -1987,7 +1987,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 	}
 }
 
-func TestModel_FlowEmbeddedTerminalAutoCloseClearsPrefixForRemovedActiveTerminal(t *testing.T) {
+func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(t *testing.T) {
 	terms := []*fakeEmbeddedTerminal{
 		{lines: []string{"flow first output"}, state: "running"},
 		{lines: []string{"flow second output"}, state: "running"},
@@ -2045,12 +2045,18 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsPrefixForRemovedActiveTerminal
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if got := strings.Join(terms[0].writes, ""); got != "x" {
-		t.Fatalf("x after active Flow auto-close should write to promoted terminal, got writes %#v", terms[0].writes)
+	if len(terms[0].writes) != 0 {
+		t.Fatalf("x after active Flow auto-close should stay in command mode, got writes %#v", terms[0].writes)
 	}
-	view := m.View()
-	if !strings.Contains(view, "flow first output") || strings.Contains(view, "Terminate embedded terminal?") {
-		t.Fatalf("promoted Flow terminal should remain visible without a close confirmation:\n%s", view)
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("x after active Flow auto-close should confirm promoted terminal close, got overlay %d", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Terminate embedded terminal?") {
+		t.Fatalf("close confirmation should be visible for promoted Flow terminal:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+	if view := m.View(); !strings.Contains(view, "flow first output") || strings.Contains(view, "flow second output") {
+		t.Fatalf("promoted Flow terminal should remain visible after canceling close confirmation:\n%s", view)
 	}
 }
 
