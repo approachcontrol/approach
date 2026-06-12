@@ -46,12 +46,14 @@ const (
 type embeddedTerminalID int
 
 type embeddedTerminalSlot struct {
-	ID       embeddedTerminalID
-	Number   int
-	Scope    embeddedTerminalScope
-	Provider string
-	Identity string
-	Terminal EmbeddedTerminal
+	Number      int
+	Scope       embeddedTerminalScope
+	Provider    string
+	Identity    string
+	FlowID      string
+	FlowPhaseID string
+	Terminal    EmbeddedTerminal
+	ID          embeddedTerminalID
 }
 
 type embeddedSessionPickerSelectedMsg struct {
@@ -141,6 +143,20 @@ func (m Model) embeddedTerminalTabs() []ui.EmbeddedTerminalTab {
 
 func (m Model) flowEmbeddedTerminalTabs() []ui.EmbeddedTerminalTab {
 	return m.embeddedTerminalTabsForScope(embeddedTerminalScopeFlow)
+}
+
+func (m Model) flowTerminalActivity() []ui.FlowTerminalActivity {
+	activity := make([]ui.FlowTerminalActivity, 0, len(m.embeddedTerminals))
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow || !embeddedTerminalRunning(slot.Terminal) || slot.FlowID == "" {
+			continue
+		}
+		activity = append(activity, ui.FlowTerminalActivity{
+			FlowID:  slot.FlowID,
+			PhaseID: slot.FlowPhaseID,
+		})
+	}
+	return activity
 }
 
 func (m Model) embeddedTerminalTabsForScope(scope embeddedTerminalScope) []ui.EmbeddedTerminalTab {
@@ -234,14 +250,14 @@ func (m Model) nextEmbeddedTerminalNumber(scope embeddedTerminalScope) (int, boo
 }
 
 func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, bool, error) {
-	return m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
+	return m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), "", "", m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 }
 
 func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, bool, error) {
-	return m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), m.embeddedTerminalWidth(), m.flowEmbeddedTerminalContentHeight())
+	return m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.flowEmbeddedTerminalContentHeight())
 }
 
-func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, scope embeddedTerminalScope, provider, identity string, width, height int) (Model, bool, error) {
+func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, scope embeddedTerminalScope, provider, identity, flowID, flowPhaseID string, width, height int) (Model, bool, error) {
 	number, ok := m.nextEmbeddedTerminalNumber(scope)
 	if !ok {
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
@@ -255,12 +271,14 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 	}
 	m.nextEmbeddedTerminalID++
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
-		ID:       embeddedTerminalID(m.nextEmbeddedTerminalID),
-		Number:   number,
-		Scope:    scope,
-		Provider: provider,
-		Identity: identity,
-		Terminal: term,
+		Number:      number,
+		Scope:       scope,
+		Provider:    provider,
+		Identity:    identity,
+		FlowID:      flowID,
+		FlowPhaseID: flowPhaseID,
+		Terminal:    term,
+		ID:          embeddedTerminalID(m.nextEmbeddedTerminalID),
 	})
 	if scope == embeddedTerminalScopeFlow {
 		m.activeFlowTerminalNum = number
