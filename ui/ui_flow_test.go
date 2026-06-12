@@ -697,7 +697,7 @@ func TestStatusBar_FlowsModeNarrowTerminalFooterKeepsPrefixHint(t *testing.T) {
 		ActivePane:             1,
 		EmbeddedTerminalActive: true,
 	})
-	if !strings.Contains(bar, "ctrl+g") {
+	if !strings.Contains(bar, "ctrl+]") {
 		t.Fatalf("narrow Flow terminal footer should keep prefix hint, got %q", bar)
 	}
 }
@@ -710,12 +710,12 @@ func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+g send", "i      input", "left/right terminal", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "l          sessions") || strings.Contains(text, "ctrl+g commands") {
+	if strings.Contains(text, "l          sessions") || strings.Contains(text, "ctrl+] commands") {
 		t.Fatalf("Flow terminal shortcut pane should not show sessions or muted command hints:\n%s", text)
 	}
 }

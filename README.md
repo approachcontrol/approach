@@ -194,10 +194,11 @@ Resuming a CLI `codex` or `claude` session from the full sessions view opens a
 runtime-only embedded terminal in the sessions pane. While embedded terminals
 exist, the saved-session table is hidden and the pane shows a compact numbered
 terminal header plus the active terminal screen. Keys go directly to the active
-PTY; press `ctrl+g` for wtui commands: `ctrl+g 1`-`9` switches terminals,
-`ctrl+g l` opens a saved-session picker, `ctrl+g x` dismisses an exited
-terminal or confirms termination of a running one, `ctrl+g q` or `ctrl+g esc`
-quits with cleanup, and `ctrl+g ctrl+g` sends a literal `ctrl+g` to the agent.
+PTY (including agent shortcuts like `ctrl+g`); press `ctrl+]` for wtui
+commands: `ctrl+] 1`-`9` switches terminals, `ctrl+] l` opens a saved-session
+picker, `ctrl+] x` dismisses an exited terminal or confirms termination of a
+running one, `ctrl+] q` or `ctrl+] esc` quits with cleanup, and
+`ctrl+] ctrl+]` sends a literal `ctrl+]` to the agent.
 Quitting wtui from anywhere while embedded terminals are still running asks for
 confirmation and terminates them first. Embedded terminals are not restored
 after wtui restarts.
@@ -314,8 +315,9 @@ the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them. Flow terminal focus starts in wtui command
 mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
 closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
-`ctrl+g` sends a literal `ctrl+g`, and `i` enters terminal input mode. In input
-mode, keys pass through to the PTY and `ctrl+g` returns to command mode. When
+`ctrl+]` sends a literal `ctrl+]`, and `i` enters terminal input mode. In input
+mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
+and `ctrl+]` returns to command mode. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state
 and notes instead of launching. When PR Creation is complete but structured PR
 metadata is missing, Autoreview remains pending and the Flow row shows

@@ -2350,7 +2350,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 		t.Fatalf("Flow terminal output should not remain after auto-close:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	view = m.View()
 	if strings.Contains(view, "session done") || strings.Contains(view, "1 codex feature/session") {
@@ -2479,7 +2479,6 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	terms[1].state = "exited"
 	gotFollowup := false
 	for _, msg := range runBatchCmd(t, tickBatch) {
@@ -2555,7 +2554,6 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if m.Overlay() != ui.OverlayConfirm {
 		t.Fatalf("expected terminate confirmation, got %d", m.Overlay())
@@ -2755,7 +2753,6 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 
 	fakeTerm.state = "exited"
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
 	view := ansi.Strip(m.View())
@@ -3092,9 +3089,9 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 		t.Fatalf("status = %q, want unknown terminal command", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
-	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\a" {
-		t.Fatalf("ctrl+g in Flow command mode should send a literal ctrl+g, writes = %#v", fakeTerm.writes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
+		t.Fatalf("ctrl+] in Flow command mode should send a literal ctrl+], writes = %#v", fakeTerm.writes)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -3157,7 +3154,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 		t.Fatalf("Flow terminal input mode writes = %#v, want z and enter", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	if len(fakeTerm.writes) != 2 {
@@ -3168,7 +3165,77 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	}
 }
 
-func TestModel_FlowTerminalTabLeavesFocusEvenAfterCtrlG(t *testing.T) {
+func TestModel_FlowTerminalInputModeForwardsCtrlGToAgent(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\a" {
+		t.Fatalf("input mode should forward ctrl+g to the agent, writes = %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 2 || fakeTerm.writes[1] != "z" {
+		t.Fatalf("ctrl+g should leave the terminal in input mode, writes = %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if len(fakeTerm.writes) != 2 {
+		t.Fatalf("ctrl+] should return to command mode without forwarding, writes = %#v", fakeTerm.writes)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("expected terminate confirmation from command-mode x, got %d", m.Overlay())
+	}
+}
+
+func TestModel_FlowTerminalCommandModeSendsLiteralCommandKey(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
+		t.Fatalf("ctrl+] in Flow command mode should send a literal ctrl+], writes = %#v", fakeTerm.writes)
+	}
+}
+
+func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -3192,10 +3259,10 @@ func TestModel_FlowTerminalTabLeavesFocusEvenAfterCtrlG(t *testing.T) {
 	m, _ = update(m, cmd())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\a" {
-		t.Fatalf("ctrl+g should send literal byte before tab leaves focus, writes = %#v", fakeTerm.writes)
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
+		t.Fatalf("ctrl+] should send literal byte before tab leaves focus, writes = %#v", fakeTerm.writes)
 	}
 	if got := m.TransientError(); strings.Contains(got, "Unknown terminal prefix command") {
 		t.Fatalf("tab should not be treated as an unknown terminal command, status = %q", got)
@@ -3340,10 +3407,8 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	terms[1].state = "exited"
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
 	view := m.View()
@@ -3358,7 +3423,6 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 		}
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if view = m.View(); !strings.Contains(view, "flow third output") || strings.Contains(view, "flow first output") {
 		t.Fatalf("switching to renumbered Flow terminal 2 should show former third terminal:\n%s", view)
@@ -3399,7 +3463,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		t.Fatalf("session terminal should also use scope-local tab 1:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if strings.Contains(m.View(), "session output") {
 		t.Fatalf("dismissed session terminal should be removed:\n%s", m.View())
@@ -3443,7 +3507,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if cmd != nil {
 		t.Fatalf("running session close should open confirmation, got command %T", cmd)
@@ -3636,7 +3700,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 
 	openSessionIndex := func(index int, label string) {
 		t.Helper()
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 		for range index {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})

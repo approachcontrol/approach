@@ -299,9 +299,10 @@ embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and
 terminal. Terminal focus starts in wtui command mode: `left`/`right` cycles Flow
 terminals, `1`-`9` switches by number, `x` closes, `q`/`esc` quits, unknown
-ordinary keys do not pass through to the PTY, and `ctrl+g` sends a literal
-`ctrl+g`; `i` enters terminal input mode. In input mode, keys pass through to the
-PTY and `ctrl+g` returns to command mode. Embedded headless output is rendered as
+ordinary keys do not pass through to the PTY, and `ctrl+]` sends a literal
+`ctrl+]`; `i` enters terminal input mode. In input mode, keys pass through to the
+PTY (including agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command
+mode. Embedded headless output is rendered as
 readable terminal text rather than raw provider event JSON; `codex exec` streams
 progress while it runs, whereas `claude --print` only prints its result once the
 run completes. Expanded rows
