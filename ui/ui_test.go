@@ -2301,6 +2301,27 @@ func TestRender_InputDialogPreservesMultiLineBreaksAndWrapsError(t *testing.T) {
 	}
 }
 
+func TestRender_InputDialogPreservesEditableSpacing(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       90,
+		Height:      18,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: LaunchInstructionsPrompt,
+		InputValue:  "first  line\n  - second  item",
+		InputCursor: len([]rune("first  line\n  - second")),
+		InputMode:   InputMultiLine,
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "first  line") {
+		t.Fatalf("input dialog collapsed repeated spaces on first line:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "  - second█  item") {
+		t.Fatalf("input dialog should preserve leading and repeated spaces around cursor:\n%s", stripped)
+	}
+}
+
 func TestRender_InputDialogOverflowKeepsCursorVisible(t *testing.T) {
 	value := strings.Join([]string{
 		"line one",
@@ -2332,6 +2353,53 @@ func TestRender_InputDialogOverflowKeepsCursorVisible(t *testing.T) {
 	}
 }
 
+func TestRender_InputDialogTinyHeightKeepsCursorVisible(t *testing.T) {
+	value := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+	}, "\n")
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       64,
+		Height:      4,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Instructions",
+		InputValue:  value,
+		InputCursor: len([]rune("line one\nline")),
+		InputMode:   InputMultiLine,
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "line█ two") {
+		t.Fatalf("tiny input dialog should keep the cursor line visible:\n%s", stripped)
+	}
+}
+
+func TestRender_InputDialogTinyHeightWithErrorKeepsCursorVisible(t *testing.T) {
+	value := strings.Join([]string{
+		"line one",
+		"line two",
+		"line three",
+	}, "\n")
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       64,
+		Height:      4,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Instructions",
+		InputValue:  value,
+		InputCursor: len([]rune("line one\nline two\nline")),
+		InputMode:   InputMultiLine,
+		InputError:  "validation failed",
+	})
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "line█ three") {
+		t.Fatalf("tiny input dialog with error should keep the cursor line visible:\n%s", stripped)
+	}
+}
+
 func TestRender_WorktreeMoveInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
@@ -2360,7 +2428,7 @@ func TestRender_BranchInputDialogShowsPromptAndPlaceholder(t *testing.T) {
 		InputPrompt:      BranchPrompt,
 		InputPlaceholder: BranchInputPlaceholder,
 	})
-	if !strings.Contains(view, "New branch:") {
+	if !strings.Contains(view, "Create branch:") {
 		t.Error("branch input dialog should show prompt")
 	}
 	if !strings.Contains(view, "branch name") {
@@ -2378,7 +2446,7 @@ func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testi
 		InputPrompt:      PRWorktreePrompt,
 		InputPlaceholder: PRWorktreeInputPlaceholder,
 	})
-	if !strings.Contains(view, "PR worktree:") {
+	if !strings.Contains(view, "Create PR worktree from:") {
 		t.Error("PR input dialog should show prompt")
 	}
 	if !strings.Contains(view, "PR number or URL") {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -2592,7 +2593,7 @@ func renderInputDialog(params inputRenderParams, width, height int) []string {
 }
 
 func inputDialogBodyLines(params inputRenderParams, contentWidth int) []string {
-	label := strings.TrimSpace(params.prompt) + ": "
+	label := inputDialogLabel(params.prompt)
 	if params.value == "" {
 		line := label + params.placeholder + activeModeStyle.Render("█")
 		return wrapPlainText(line, contentWidth)
@@ -2605,12 +2606,72 @@ func inputDialogBodyLines(params inputRenderParams, contentWidth int) []string {
 		if i == 0 {
 			line = label + line
 		}
-		lines = append(lines, wrapPlainText(line, contentWidth)...)
+		lines = append(lines, wrapEditableInputLine(line, contentWidth)...)
 	}
 	if len(lines) == 0 {
 		return []string{label + activeModeStyle.Render("█")}
 	}
 	return lines
+}
+
+func inputDialogLabel(prompt string) string {
+	switch strings.TrimSpace(prompt) {
+	case BranchPrompt:
+		return "Create branch: "
+	case PRWorktreePrompt:
+		return "Create PR worktree from: "
+	default:
+		return strings.TrimSpace(prompt) + ": "
+	}
+}
+
+func wrapEditableInputLine(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{""}
+	}
+	if s == "" {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, lipgloss.Width(s)/maxWidth+1)
+	for s != "" {
+		if lipgloss.Width(s) <= maxWidth {
+			lines = append(lines, s)
+			break
+		}
+		head, rest := splitEditableInputAtWidth(s, maxWidth)
+		if head == "" {
+			runes := []rune(s)
+			head = string(runes[:1])
+			rest = string(runes[1:])
+		}
+		lines = append(lines, head)
+		s = rest
+	}
+	return lines
+}
+
+func splitEditableInputAtWidth(s string, maxWidth int) (string, string) {
+	if maxWidth <= 0 {
+		return "", s
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s, ""
+	}
+	runes := []rune(s)
+	lastSpaceSplit := -1
+	for i := 1; i <= len(runes); i++ {
+		if lipgloss.Width(string(runes[:i])) > maxWidth {
+			if lastSpaceSplit > 0 {
+				return string(runes[:lastSpaceSplit]), string(runes[lastSpaceSplit:])
+			}
+			return string(runes[:i-1]), string(runes[i-1:])
+		}
+		if unicode.IsSpace(runes[i-1]) {
+			lastSpaceSplit = i
+		}
+	}
+	return s, ""
 }
 
 func insertCursorGlyph(value string, cursor int) string {
@@ -2643,11 +2704,11 @@ func maxInputDialogLines(height int, errText string, contentWidth int) int {
 	if errText != "" {
 		available -= 1 + len(wrapPlainText(errText, contentWidth))
 	}
-	if available > 0 && available < maxLines {
-		maxLines = available
-	}
-	if maxLines < 1 {
+	if available < 1 {
 		return 1
+	}
+	if available < maxLines {
+		maxLines = available
 	}
 	return maxLines
 }
@@ -2660,6 +2721,9 @@ func compactInputDialogLines(lines []string, maxLines, cursorLine int) []string 
 		return compactLaunchInstructionLines(lines, maxLines)
 	}
 	if maxLines == 1 {
+		if cursorLine >= 0 && cursorLine < len(lines) {
+			return []string{lines[cursorLine]}
+		}
 		return []string{shortcutOverflowMarker}
 	}
 	start := cursorLine - maxLines/2

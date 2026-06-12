@@ -2507,7 +2507,7 @@ func TestModel_NKeyInBranchesModeOpensBranchInput(t *testing.T) {
 	if m.WorktreeInput() != "" {
 		t.Errorf("expected empty branch input, got %q", m.WorktreeInput())
 	}
-	if !strings.Contains(m.View(), ui.BranchPrompt+":") {
+	if !strings.Contains(m.View(), "Create branch:") {
 		t.Errorf("expected branch prompt in view, got %q", m.View())
 	}
 	if got := m.InputMode(); got != modal.InputSingleLine {
@@ -2640,7 +2640,7 @@ func TestModel_BranchCreateFailedReopensBranchInput(t *testing.T) {
 	if m.WorktreeInputErr() != "boom" {
 		t.Errorf("expected error restored, got %q", m.WorktreeInputErr())
 	}
-	if !strings.Contains(m.View(), ui.BranchPrompt+":") {
+	if !strings.Contains(m.View(), "Create branch:") {
 		t.Errorf("expected branch prompt in view, got %q", m.View())
 	}
 }
