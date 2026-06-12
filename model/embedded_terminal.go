@@ -450,6 +450,26 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 	}
 }
 
+func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
+	ids := make([]embeddedTerminalID, 0)
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+			continue
+		}
+		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
+			ids = append(ids, slot.ID)
+		}
+	}
+	for _, id := range ids {
+		m = m.dismissEmbeddedTerminal(id)
+	}
+	return m
+}
+
+func flowEmbeddedTerminalAutoCloses(state string) bool {
+	return state == "exited"
+}
+
 func (m Model) handleTerminateEmbeddedTerminal(msg terminateEmbeddedTerminalMsg) (Model, tea.Cmd) {
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID != msg.ID || slot.Terminal == nil {

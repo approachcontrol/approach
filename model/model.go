@@ -753,6 +753,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.embeddedTerminalTickGen {
 			return m, nil
 		}
+		m = m.dismissExitedFlowEmbeddedTerminals()
 		if m.hasRunningEmbeddedTerminal() {
 			return m, m.embeddedTerminalTickCmd()
 		}
