@@ -563,6 +563,7 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 	prefixScope, prefixActive := m.embeddedTerminalPrefixScope()
 	activeID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeSession)
 	activeFlowID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeFlow)
+	flowTerminalFocused := m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal
 	next := m.embeddedTerminals[:0]
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID != id {
@@ -590,8 +591,10 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		m.activeFlowTerminalNum = m.activeEmbeddedTerminalNumberAfterRenumber(embeddedTerminalScopeFlow, activeFlowID, id)
 		if m.activeFlowTerminalNum == 0 {
 			m.flowFocus = flowFocusList
-			m.terminalPrefixActive = false
-		} else if m.flowFocus == flowFocusTerminal {
+			if flowTerminalFocused {
+				m.terminalPrefixActive = false
+			}
+		} else if flowTerminalFocused {
 			m.terminalPrefixActive = true
 		}
 	} else {
