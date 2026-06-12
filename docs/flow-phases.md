@@ -78,16 +78,21 @@ Additional rules:
   `codex-app` resume deep links are untracked app navigation because they cannot
   carry wtui launch metadata. Reopening a finished phase deliberately remains
   `wtui flow phase restart`.
+- The TUI can also recover a selected `await-session` phase after confirmation
+  by removing the newest orphan launch attempt and re-deriving readiness. This
+  is a UI-owned recovery mutation, not an agent-settable transition, and it is
+  unavailable while a running or starting embedded Flow terminal is attached to
+  the same Flow phase.
 
 ## Derived readiness
 
-The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetPR`, and
-`AddPhaseLaunchID`) re-derive readiness with `refreshPhaseReadiness`,
-regardless of graph shape. Loads and the remaining mutations normalize only
-records containing a `plan-review` phase — the standard graph; hand-authored
-records without one keep their stored statuses until a phase-affecting
-mutation touches them. Agents never need to know which phase becomes ready
-next; they only report their own phase.
+The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetPR`,
+`AddPhaseLaunchID`, and `ResetAwaitingSessionPhase`) re-derive readiness with
+`refreshPhaseReadiness`, regardless of graph shape. Loads and the remaining
+mutations normalize only records containing a `plan-review` phase — the
+standard graph; hand-authored records without one keep their stored statuses
+until a phase-affecting mutation touches them. Agents never need to know which
+phase becomes ready next; they only report their own phase.
 
 Walking phases in order, a `pending` phase becomes `ready` once every
 predecessor satisfies its downstream gate:
@@ -141,12 +146,12 @@ even if the linked-plan sync later fails.
   strings were added, removed, or renamed. Existing Flow JSON needs no
   migration.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
-  `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`) re-derive readiness for any
-  graph, and records containing a `plan-review` phase (the standard graph)
-  are additionally normalized on load, so records written before a gate rule
-  existed converge to correct `pending`/`ready` values. Records without a
-  `plan-review` phase keep their stored statuses until a phase-affecting
-  mutation touches them.
+  `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
+  `ResetAwaitingSessionPhase`) re-derive readiness for any graph, and records
+  containing a `plan-review` phase (the standard graph) are additionally
+  normalized on load, so records written before a gate rule existed converge to
+  correct `pending`/`ready` values. Records without a `plan-review` phase keep
+  their stored statuses until a phase-affecting mutation touches them.
 - Completed plan-review phases persisted before outcomes existed are
   normalized to `approved` on read.
 
@@ -159,3 +164,9 @@ states (`recover-worktree`, `await-session`, `session-mismatch`,
 with the phase ID like any phase state (for example `autoreview:missing-pr`),
 and are display-only; they never change persisted phase status. See
 `docs/config.md` for the pane behavior.
+
+When `await-session` is caused by an orphaned latest launch and predecessor
+gates still hold, the selected phase row can be reset with `x` after
+confirmation. The reset removes that orphan launch, persists the phase as
+`pending`, then lets derived readiness promote it to `ready`; if readiness
+cannot be derived, the mutation is rejected and the record is left unchanged.

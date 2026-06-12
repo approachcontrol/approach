@@ -838,6 +838,225 @@ func TestStoreAddPhaseLaunchIDMarksPhaseRunning(t *testing.T) {
 	}
 }
 
+func TestStoreResetAwaitingSessionPhaseReturnsRunningOrphanToReady(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Reset orphaned implementation launch",
+		Instructions: "recover a phase stuck waiting on session capture",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "implementation",
+		LaunchID: "launch-old",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(old) error = %v", err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{
+			Provider:  "codex",
+			SessionID: "session-old",
+			LaunchID:  "launch-old",
+		},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(old) error = %v", err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "implementation",
+		LaunchID: "launch-orphan",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(orphan) error = %v", err)
+	}
+	if phase := phaseByID(t, record, "implementation"); phase.Status != flowstore.PhaseRunning || !flowstore.PhaseAwaitingSession(phase) {
+		t.Fatalf("implementation before reset = %#v, want running await-session", phase)
+	}
+
+	reset, err := store.ResetAwaitingSessionPhase(flowstore.PhaseResetUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+	})
+	if err != nil {
+		t.Fatalf("ResetAwaitingSessionPhase() error = %v", err)
+	}
+
+	phase := phaseByID(t, reset, "implementation")
+	if phase.Status != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready", phase.Status)
+	}
+	if flowstore.PhaseAwaitingSession(phase) {
+		t.Fatalf("implementation should no longer be awaiting session: %#v", phase)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-old" {
+		t.Fatalf("launch ids = %#v, want only older attached launch", phase.LaunchIDs)
+	}
+	if len(phase.Sessions) != 1 || phase.Sessions[0].LaunchID != "launch-old" || phase.Sessions[0].SessionID != "session-old" {
+		t.Fatalf("sessions = %#v, want older session preserved", phase.Sessions)
+	}
+	if reset.Status != flowstore.StatusInProgress {
+		t.Fatalf("flow status = %q, want in_progress", reset.Status)
+	}
+}
+
+func TestStoreResetAwaitingSessionPhaseRejectsIneligiblePhases(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		setup   func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord
+		phaseID string
+		want    string
+	}{
+		{
+			name: "ready phase",
+			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
+				t.Helper()
+				record := mustCreateFlow(t, store, "Ready reset rejection")
+				mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+				return record
+			},
+			phaseID: "implementation",
+			want:    "requires running await-session",
+		},
+		{
+			name: "latest launch has attached session",
+			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
+				t.Helper()
+				record := mustCreateFlow(t, store, "Attached session reset rejection")
+				mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+				var err error
+				record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-1"})
+				if err != nil {
+					t.Fatalf("AddPhaseLaunchID() error = %v", err)
+				}
+				record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+					FlowID:  record.FlowID,
+					PhaseID: "implementation",
+					Session: flowstore.Session{Provider: "codex", SessionID: "session-1", LaunchID: "launch-1"},
+				})
+				if err != nil {
+					t.Fatalf("AttachSession() error = %v", err)
+				}
+				return record
+			},
+			phaseID: "implementation",
+			want:    "requires latest launch without an attached session",
+		},
+		{
+			name: "missing phase",
+			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
+				t.Helper()
+				return mustCreateFlow(t, store, "Missing phase reset rejection")
+			},
+			phaseID: "missing-phase",
+			want:    `phase "missing-phase" not found`,
+		},
+		{
+			name: "predecessors unsatisfied",
+			setup: func(t *testing.T, store *flowstore.Store) flowstore.FlowRecord {
+				t.Helper()
+				record, err := store.Create(flowstore.FlowRecord{
+					FlowID:       "unsatisfied-reset",
+					Title:        "Unsatisfied reset rejection",
+					Instructions: "do not reset behind an open predecessor",
+					RepoPath:     filepath.Join(t.TempDir(), "repo"),
+					Phases: []flowstore.FlowPhase{
+						{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseRunning, Order: 1},
+						{PhaseID: "beta", Title: "Beta", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
+					},
+				})
+				if err != nil {
+					t.Fatalf("Create(custom) error = %v", err)
+				}
+				return record
+			},
+			phaseID: "beta",
+			want:    "requires satisfied predecessors",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record := tc.setup(t, store)
+
+			_, err = store.ResetAwaitingSessionPhase(flowstore.PhaseResetUpdate{FlowID: record.FlowID, PhaseID: tc.phaseID})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ResetAwaitingSessionPhase() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreResetAwaitingSessionPhaseCollapsesDuplicateRows(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicate-reset",
+		Title:        "Duplicate reset",
+		Instructions: "reset the active duplicate row",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+			{
+				PhaseID: "Step-1", Title: "Step 1", Status: flowstore.PhaseCompleted, Order: 2,
+				LaunchIDs: []string{"launch-old"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old"}},
+			},
+			{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
+			{PhaseID: "omega", Title: "Omega", Status: flowstore.PhasePending, Order: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.ResetAwaitingSessionPhase(flowstore.PhaseResetUpdate{FlowID: record.FlowID, PhaseID: "step-1"})
+	if err != nil {
+		t.Fatalf("ResetAwaitingSessionPhase() error = %v", err)
+	}
+
+	count := 0
+	var survivor flowstore.FlowPhase
+	for _, phase := range record.Phases {
+		if strings.EqualFold(phase.PhaseID, "step-1") {
+			count++
+			survivor = phase
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate rows not collapsed: %#v", record.Phases)
+	}
+	if survivor.PhaseID != "step-1" || survivor.Status != flowstore.PhaseReady {
+		t.Fatalf("survivor = %#v, want normalized ready step-1", survivor)
+	}
+	if len(survivor.LaunchIDs) != 1 || survivor.LaunchIDs[0] != "launch-old" {
+		t.Fatalf("survivor launch ids = %#v, want older launch only", survivor.LaunchIDs)
+	}
+	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "session-old" {
+		t.Fatalf("survivor sessions = %#v, want older session preserved", survivor.Sessions)
+	}
+	if got := phaseByID(t, record, "omega").Status; got != flowstore.PhasePending {
+		t.Fatalf("omega status = %q, want pending behind ready reset phase", got)
+	}
+}
+
 func TestStoreSetPhaseRejectsInvalidTransitions(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
@@ -3903,6 +4122,19 @@ func maybePlanPhaseByID(record planstore.PlanRecord, phaseID string) (planstore.
 		}
 	}
 	return planstore.PlanPhase{}, false
+}
+
+func mustCreateFlow(t *testing.T, store *flowstore.Store, title string) flowstore.FlowRecord {
+	t.Helper()
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        title,
+		Instructions: "test flow",
+		RepoPath:     filepath.Join(t.TempDir(), "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create(%q) error = %v", title, err)
+	}
+	return record
 }
 
 func mustCompleteFlowPhases(t *testing.T, store *flowstore.Store, record *flowstore.FlowRecord, phaseIDs ...string) {

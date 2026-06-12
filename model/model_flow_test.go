@@ -43,6 +43,18 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 	}
 }
 
+func flowWithAwaitingImplementation() flowstore.FlowRecord {
+	flow := flowWithPhaseDetails()
+	for i := range flow.Phases {
+		if flow.Phases[i].PhaseID == "implementation" {
+			flow.Phases[i].Status = flowstore.PhaseRunning
+			flow.Phases[i].LaunchIDs = []string{"launch-orphan"}
+			flow.Phases[i].Sessions = nil
+		}
+	}
+	return flow
+}
+
 func expandSelectedFlowWithEnter(t *testing.T, m model.Model) model.Model {
 	t.Helper()
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -138,6 +150,228 @@ func prepareSelectedFlowPhaseEmbeddedLaunch(t *testing.T, m model.Model, phaseID
 	m = selectFlowPhaseByID(t, m, phaseID)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	return m, cmd
+}
+
+func TestModel_SelectedAwaitingFlowPhaseAdvertisesResetShortcut(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithAwaitingImplementation()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := m.View()
+	if !strings.Contains(view, "x      reset ready") {
+		t.Fatalf("await-session Flow phase should expose reset shortcut:\n%s", m.View())
+	}
+	if strings.Contains(view, "r      resume") {
+		t.Fatalf("await-session Flow phase should not expose resume shortcut:\n%s", m.View())
+	}
+}
+
+func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
+	awaiting := flowWithAwaitingImplementation()
+	reset := flowWithPhaseDetails()
+	var resetCalls []flowstore.PhaseResetUpdate
+	listCalls := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalls = append(resetCalls, update)
+			return reset, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listCalls++
+			return []flowstore.FlowRecord{reset}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{awaiting})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("opening reset confirmation returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm || !strings.Contains(m.ConfirmPrompt(), "Reset Flow phase implementation") {
+		t.Fatalf("reset confirmation prompt = %q overlay=%d", m.ConfirmPrompt(), m.Overlay())
+	}
+	if len(resetCalls) != 0 {
+		t.Fatalf("reset called before confirmation: %#v", resetCalls)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("accepting reset confirmation should return reset command")
+	}
+	m, resetCmd := update(m, cmd())
+	if resetCmd == nil {
+		t.Fatal("confirmed reset should return persistence command")
+	}
+	m, fetchCmd := update(m, resetCmd())
+	if len(resetCalls) != 1 || resetCalls[0].FlowID != "flow-1" || resetCalls[0].PhaseID != "implementation" {
+		t.Fatalf("reset calls = %#v", resetCalls)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Reset Flow phase implementation to ready") {
+		t.Fatalf("status after reset = %q, want success", got)
+	}
+	if fetchCmd == nil {
+		t.Fatal("successful reset should refresh Flow rows")
+	}
+	m, _ = update(m, flowResultFromCommand(t, fetchCmd))
+	if listCalls == 0 {
+		t.Fatal("ListFlows should run during reset refresh")
+	}
+	if got := m.SelectedFlowPhaseID(); got != "implementation" {
+		t.Fatalf("selected phase after reset refresh = %q, want implementation", got)
+	}
+	if phase := m.Flows()[0].Phases[2]; phase.Status != flowstore.PhaseReady {
+		t.Fatalf("implementation after reset refresh = %#v, want ready", phase)
+	}
+}
+
+func TestModel_XKeyOnResettableFlowPhaseCancelDoesNotPersist(t *testing.T) {
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithAwaitingImplementation()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if cmd != nil {
+		t.Fatalf("canceling reset confirmation returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("overlay after cancel = %d, want none", m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called after cancellation")
+	}
+}
+
+func TestModel_XKeyOnResettableFlowPhaseReportsResetFailure(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("state root locked")
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			t.Fatal("ListFlows should not run after reset failure")
+			return nil, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithAwaitingImplementation()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("accepting reset confirmation should return reset command")
+	}
+	m, resetCmd := update(m, cmd())
+	if resetCmd == nil {
+		t.Fatal("confirmed reset should return persistence command")
+	}
+	m, fetchCmd := update(m, resetCmd())
+	if fetchCmd != nil {
+		t.Fatalf("reset failure returned refresh command %T, want nil", fetchCmd)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "state root locked") {
+		t.Fatalf("status after reset failure = %q, want persistence error", got)
+	}
+}
+
+func TestModel_XKeyIgnoredWhenSelectedFlowPhaseIsNotAwaitingSession(t *testing.T) {
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	if strings.Contains(m.View(), "reset ready") {
+		t.Fatalf("ready Flow phase should hide reset shortcut:\n%s", m.View())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("x on non-awaiting phase returned cmd=%T overlay=%d", cmd, m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called for non-awaiting phase")
+	}
+}
+
+func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on ready phase should prepare embedded terminal launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithAwaitingImplementation()}, ListRequest: m.ListRequest(ui.ModeFlows)})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	if strings.Contains(m.View(), "reset ready") {
+		t.Fatalf("matching running Flow terminal should hide reset shortcut:\n%s", m.View())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("x with matching running Flow terminal returned cmd=%T overlay=%d", cmd, m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called while matching Flow terminal is running")
+	}
+}
+
+func TestModel_XKeyKeepsFlowTerminalFocusCloseBehavior(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("enter on ready phase should prepare embedded terminal launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("terminal x close prompt returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm || m.ConfirmPrompt() != "Terminate embedded terminal?" {
+		t.Fatalf("terminal x prompt = %q overlay=%d", m.ConfirmPrompt(), m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("terminal-focused x should not call flow phase reset")
+	}
 }
 
 func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
