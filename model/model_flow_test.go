@@ -2712,6 +2712,60 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	}
 }
 
+func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
+	externalLaunches := 0
+	startEmbeddedRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex-app",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if req.RepoPath != "/dev/alpha" {
+				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
+			}
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:      req.AgentCommand,
+				LaunchID:     "launch-1",
+				RepoPath:     req.RepoPath,
+				WorktreePath: "/dev/alpha-worktrees/flow-stale",
+				Branch:       "flow/stale",
+				FlowID:       "flow-1",
+				FlowPhaseID:  req.PlanPhaseID,
+			}}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			externalLaunches++
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			startEmbeddedRan = true
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
+	if createCmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	staleMsg := createCmd()
+	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
+		t.Fatalf("creation command returned %#v, want tagged PlanLaunchRequestedMsg", staleMsg)
+	}
+	_, cmd := update(m, staleMsg)
+	if cmd != nil {
+		t.Fatalf("stale codex-app launch returned command %T, want nil", cmd)
+	}
+	if externalLaunches != 0 {
+		t.Fatalf("stale codex-app launch count = %d, want 0", externalLaunches)
+	}
+	if startEmbeddedRan {
+		t.Fatal("stale codex-app launch should not start an embedded terminal")
+	}
+}
+
 func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 	var calls []string
 	m := model.NewWithOptions(testRepos(), model.Options{
