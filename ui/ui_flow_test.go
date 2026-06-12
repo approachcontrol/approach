@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/scanner"
@@ -161,6 +162,64 @@ func lineWithPrefix(view, prefix string) string {
 		}
 	}
 	return ""
+}
+
+func rawLineContaining(view, needle string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(ansi.Strip(line), needle) {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestRender_FlowsModeSelectedActiveRowsPreserveSelectionAfterMarker(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	flows := []flowstore.FlowRecord{{
+		FlowID: "flow-1",
+		Title:  "Active flow",
+		Status: flowstore.StatusInProgress,
+		Branch: "flow/active",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+		},
+	}}
+	activity := []FlowTerminalActivity{
+		{FlowID: "flow-1", PhaseID: "implementation"},
+	}
+
+	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "", "", activity), "\n")
+
+	flowRow := rawLineContaining(view, "flow/active")
+	if flowRow == "" {
+		t.Fatalf("active flow row missing:\n%s", view)
+	}
+	if !strings.Contains(flowRow, selectedSegment(flowTerminalStyle, "●")) {
+		t.Fatalf("selected active flow marker should keep semantic marker style:\n%q", flowRow)
+	}
+	if want := selectedStyle.Render(fitSessionColumn(flowstore.StatusInProgress, flowStatusWidth)); !strings.Contains(flowRow, want) {
+		t.Fatalf("selected active flow row should restore selection style after marker:\n%q\nmissing %q", flowRow, want)
+	}
+
+	view = strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "flow-1", "implementation", activity), "\n")
+	phaseRow := rawLineContaining(view, "Implementation")
+	if phaseRow == "" {
+		t.Fatalf("active phase row missing:\n%s", view)
+	}
+	if !strings.Contains(phaseRow, selectedSegment(flowTerminalStyle, "●")) {
+		t.Fatalf("selected active phase marker should keep semantic marker style:\n%q", phaseRow)
+	}
+	if want := selectedStyle.Render(fitSessionColumn(flowstore.PhaseRunning, flowStatusWidth)); !strings.Contains(phaseRow, want) {
+		t.Fatalf("selected active phase row should restore selection style after marker:\n%q\nmissing %q", phaseRow, want)
+	}
 }
 
 func TestRender_FlowsModeMarksActiveTerminalExpandedPhaseRows(t *testing.T) {

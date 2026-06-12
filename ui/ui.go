@@ -1998,7 +1998,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			stashMsgStyle.Render(record.Title),
 		)
 		if rowSelected {
-			selectedLine := truncateToWidth(formatFlowColumns(flowRowPrefix(true, active.hasFlow(record.FlowID)),
+			line = renderSelectedFlowColumns(selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
 				record.Status,
 				branch,
 				phase,
@@ -2006,8 +2006,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				pr,
 				updated,
 				record.Title,
-			), width)
-			line = stashSelStyle.Width(width).Render(selectedLine)
+				width)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {
@@ -2043,7 +2042,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 			stashMsgStyle.Render(title),
 		)
 		if phase.PhaseID == selectedPhaseID {
-			selectedLine := truncateToWidth(formatFlowColumns(flowPhaseRowPrefix(true, rowActive),
+			line = renderSelectedFlowColumns(selectedFlowPhaseRowPrefix(rowActive),
 				phase.Status,
 				"",
 				phase.PhaseID+":"+state,
@@ -2051,8 +2050,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 				"",
 				"",
 				title,
-			), width)
-			line = stashSelStyle.Width(width).Render(selectedLine)
+				width)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
@@ -2103,6 +2101,10 @@ func flowPhaseRowPrefix(selected, active bool) string {
 	return "   " + flowRowPrefix(selected, active)
 }
 
+func selectedFlowPhaseRowPrefix(active bool) string {
+	return selectedStyle.Render("   ") + selectedFlowRowPrefix(active)
+}
+
 func flowRowPrefix(selected, active bool) string {
 	selection := " "
 	if selected {
@@ -2113,6 +2115,13 @@ func flowRowPrefix(selected, active bool) string {
 		marker = flowTerminalStyle.Render("●")
 	}
 	return selection + marker + " "
+}
+
+func selectedFlowRowPrefix(active bool) string {
+	if active {
+		return selectedStyle.Render(">") + selectedSegment(flowTerminalStyle, "●") + selectedStyle.Render(" ")
+	}
+	return selectedStyle.Render(">  ")
 }
 
 func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string) string {
@@ -2126,6 +2135,24 @@ func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title s
 		fitSessionColumn(updated, flowUpdatedWidth),
 		title,
 	)
+}
+
+func renderSelectedFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string, width int) string {
+	line := prefix
+	line += selectedStyle.Render(fitSessionColumn(status, flowStatusWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(plan, flowPlanWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(pr, flowPRWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(title)
+	return renderSelectedRow(line, width)
 }
 
 func flowPhaseProgress(record flowstore.FlowRecord) string {
