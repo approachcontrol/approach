@@ -13,6 +13,7 @@ const (
 
 const (
 	ReasoningEffortDefault = "default"
+	ReasoningEffortMinimal = "minimal"
 	ReasoningEffortLow     = "low"
 	ReasoningEffortMedium  = "medium"
 	ReasoningEffortHigh    = "high"
@@ -50,7 +51,7 @@ func NormalizeReasoningEffort(effort string) string {
 func ReasoningEffortChoices(command string) []string {
 	switch Normalize(command) {
 	case CommandCodex:
-		return []string{ReasoningEffortDefault, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh}
+		return []string{ReasoningEffortDefault, ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh}
 	case CommandClaude:
 		return []string{ReasoningEffortDefault, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax}
 	case CommandCodexApp:

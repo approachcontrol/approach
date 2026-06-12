@@ -320,6 +320,21 @@ func TestLoadFrom_AcceptsCodexAppAgent(t *testing.T) {
 	}
 }
 
+func TestLoadFrom_AcceptsCodexMinimalReasoningEffort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[agent]\ncodex_reasoning_effort = \" minimal \"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.CodexReasoningEffort != "minimal" {
+		t.Fatalf("expected normalized codex reasoning effort minimal, got %q", cfg.Agent.CodexReasoningEffort)
+	}
+}
+
 func TestLoadFrom_RejectsInvalidReasoningEfforts(t *testing.T) {
 	tests := []struct {
 		name string

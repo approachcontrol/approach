@@ -3421,7 +3421,7 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		t.Fatalf("expected effort select overlay, got %d", m.Overlay())
 	}
 	view := m.View()
-	for _, want := range []string{"Choose codex reasoning effort", "default", "low", "medium", "high", "xhigh"} {
+	for _, want := range []string{"Choose codex reasoning effort", "default", "minimal", "low", "medium", "high", "xhigh"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("codex effort picker missing %q:\n%s", want, view)
 		}
@@ -3430,7 +3430,7 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		t.Fatalf("codex effort picker should not include max:\n%s", view)
 	}
 
-	for range 3 {
+	for range 4 {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -3508,7 +3508,9 @@ func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	for range 2 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected save effort command")

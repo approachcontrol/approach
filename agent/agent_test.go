@@ -43,7 +43,7 @@ func TestReasoningEffortChoicesAreProviderSpecific(t *testing.T) {
 		command string
 		want    []string
 	}{
-		{agent.CommandCodex, []string{"default", "low", "medium", "high", "xhigh"}},
+		{agent.CommandCodex, []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
 		{agent.CommandClaude, []string{"default", "low", "medium", "high", "xhigh", "max"}},
 		{agent.CommandCodexApp, []string{"default"}},
 	}
@@ -61,6 +61,9 @@ func TestReasoningEffortChoicesAreProviderSpecific(t *testing.T) {
 func TestValidateReasoningEffortRejectsUnsupportedProviderValues(t *testing.T) {
 	if err := agent.ValidateReasoningEffort(agent.CommandCodex, "max"); err == nil {
 		t.Fatal("expected codex max effort to be rejected")
+	}
+	if err := agent.ValidateReasoningEffort(agent.CommandCodex, "minimal"); err != nil {
+		t.Fatalf("expected codex minimal effort to be accepted, got %v", err)
 	}
 	if err := agent.ValidateReasoningEffort(agent.CommandClaude, "xhigh"); err != nil {
 		t.Fatalf("expected claude xhigh effort to be accepted, got %v", err)

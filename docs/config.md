@@ -174,7 +174,7 @@ value immediately, creating the config file if needed.
 | Key | Type | Description |
 |-----|------|-------------|
 | `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
-| `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
+| `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `minimal`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional one-line template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
