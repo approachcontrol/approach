@@ -161,6 +161,9 @@ const (
 	// EmbeddedTerminalHeaderRows is the non-PTY tab/header row inside the
 	// embedded terminal frame.
 	EmbeddedTerminalHeaderRows = 1
+	// EmbeddedTerminalSidePadding is the horizontal padding between each
+	// embedded terminal border and its content.
+	EmbeddedTerminalSidePadding = 1
 )
 
 // StashPrefixWidth is the visible width consumed by the stash line prefix:
@@ -291,11 +294,24 @@ func RightContentWidth(width, height int, activeStatusQuery bool) int {
 	return rightContentWidth
 }
 
-// EmbeddedTerminalRenderContentWidth returns the inner width available inside
-// the embedded terminal frame.
+// EmbeddedTerminalRenderContentWidth returns the drawable content width after
+// the embedded terminal frame and effective side padding are reserved.
 func EmbeddedTerminalRenderContentWidth(outerWidth int) int {
-	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
+	available := outerWidth - EmbeddedTerminalFrameColumns
+	if available <= 0 {
+		return 0
+	}
+	width := available - 2*embeddedTerminalEffectiveSidePadding(outerWidth)
+	if width > 0 {
 		return width
+	}
+	return 0
+}
+
+func embeddedTerminalEffectiveSidePadding(outerWidth int) int {
+	available := outerWidth - EmbeddedTerminalFrameColumns
+	if available >= 2*EmbeddedTerminalSidePadding+1 {
+		return EmbeddedTerminalSidePadding
 	}
 	return 0
 }
@@ -314,7 +330,7 @@ func EmbeddedTerminalRenderBodyHeight(outerHeight int) int {
 // allocation. PTY dimensions are clamped positive because the terminal backend
 // normalizes to positive sizes, even when a tiny frame leaves no drawable body.
 func EmbeddedTerminalPTYWidth(outerWidth int) int {
-	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
+	if width := EmbeddedTerminalRenderContentWidth(outerWidth); width > 0 {
 		return width
 	}
 	return 1
@@ -691,11 +707,12 @@ type statusBarParams struct {
 }
 
 type shortcutHint struct {
-	Key     string
-	Label   string
-	Warning bool
-	Inline  bool
-	Muted   bool
+	Key           string
+	Label         string
+	SuccessSuffix string
+	Warning       bool
+	Inline        bool
+	Muted         bool
 }
 
 type shortcutSection struct {
@@ -854,8 +871,35 @@ func renderShortcutPaneHint(hint shortcutHint, width int) string {
 		labelStyle = statusStyle
 	}
 	key := padShortcutKey(keyStyle.Render(hint.Key), shortcutKeyColumnWidth)
-	label := labelStyle.Render(hint.Label)
+	label := renderShortcutHintLabel(hint, labelStyle)
 	return ansi.Truncate(" "+key+" "+label, width, "")
+}
+
+func renderShortcutHintLabel(hint shortcutHint, labelStyle lipgloss.Style) string {
+	return renderShortcutHintLabelWithRestore(hint, labelStyle, "")
+}
+
+func renderShortcutHintLabelWithRestore(hint shortcutHint, labelStyle lipgloss.Style, restoreSequence string) string {
+	if hint.SuccessSuffix == "" || hint.Warning || hint.Muted {
+		return labelStyle.Render(hint.Label)
+	}
+	prefix, ok := strings.CutSuffix(hint.Label, hint.SuccessSuffix)
+	if !ok {
+		return labelStyle.Render(hint.Label)
+	}
+	return labelStyle.Render(prefix) + shortcutSuccessStyle.Render(hint.SuccessSuffix) + restoreSequence
+}
+
+// styleStartSequence returns the zero-width ANSI prefix for restoring a style
+// after a nested styled segment resets terminal attributes.
+func styleStartSequence(style lipgloss.Style) string {
+	const marker = "\x00"
+	rendered := style.Render(marker)
+	before, _, ok := strings.Cut(rendered, marker)
+	if !ok {
+		return ""
+	}
+	return before
 }
 
 func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
@@ -1058,10 +1102,12 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		if sp.ActivePane == 1 && sp.RepoSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 			headlessLabel := "headless off"
+			headlessSuccessSuffix := ""
 			if sp.FlowHeadless {
 				headlessLabel = "headless on"
+				headlessSuccessSuffix = "on"
 			}
-			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel})
+			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
@@ -1510,14 +1556,13 @@ func renderFooterHint(hint shortcutHint) string {
 		return mergedStyle.Render("merged")
 	}
 
-	text := hint.Key + shortcutSeparator(hint) + " " + hint.Label
 	if hint.Warning {
-		return dirtyRedStyle.Render(text)
+		return dirtyRedStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
 	if hint.Muted {
-		return statusStyle.Render(text)
+		return statusStyle.Render(hint.Key + shortcutSeparator(hint) + " " + hint.Label)
 	}
-	return text
+	return hint.Key + shortcutSeparator(hint) + " " + renderShortcutHintLabelWithRestore(hint, lipgloss.NewStyle(), styleStartSequence(statusStyle))
 }
 
 func styledDotForLabel(label string) string {
@@ -1835,10 +1880,10 @@ func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, 
 	if outerHeight <= 0 {
 		return nil
 	}
-	innerWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
-	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), innerWidth)
+	contentWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), contentWidth)
 	if prefixActive {
-		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), innerWidth)
+		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), contentWidth)
 	}
 	bodyHeight := EmbeddedTerminalRenderBodyHeight(outerHeight)
 	if len(liveLines) > bodyHeight {
@@ -1853,7 +1898,7 @@ func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, 
 		contentLines = append(contentLines, header)
 	}
 	for _, line := range liveLines {
-		contentLines = append(contentLines, truncateToWidth(line, innerWidth))
+		contentLines = append(contentLines, truncateToWidth(line, contentWidth))
 	}
 	if len(contentLines) < contentHeight {
 		contentLines = append(contentLines, make([]string, contentHeight-len(contentLines))...)
@@ -1865,10 +1910,14 @@ func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth
 	if outerHeight <= 0 {
 		return nil
 	}
-	innerWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	contentWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	frameInnerWidth := outerWidth - EmbeddedTerminalFrameColumns
+	if frameInnerWidth < 0 {
+		frameInnerWidth = 0
+	}
 	style := embeddedTerminalBorderStyle(focused)
-	top := style.Render("┌" + strings.Repeat("─", innerWidth) + "┐")
-	bottom := style.Render("└" + strings.Repeat("─", innerWidth) + "┘")
+	top := style.Render("┌" + strings.Repeat("─", frameInnerWidth) + "┐")
+	bottom := style.Render("└" + strings.Repeat("─", frameInnerWidth) + "┘")
 	if outerWidth <= 1 {
 		top = style.Render("┌")
 		bottom = style.Render("└")
@@ -1881,7 +1930,7 @@ func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth
 				if i < len(contentLines) {
 					content = contentLines[i]
 				}
-				lines = append(lines, renderEmbeddedTerminalFrameContentLine(content, style, innerWidth, outerWidth))
+				lines = append(lines, renderEmbeddedTerminalFrameContentLine(content, style, contentWidth, outerWidth))
 			}
 		}
 		lines = append(lines, bottom)
@@ -1889,18 +1938,19 @@ func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth
 	return fitEmbeddedTerminalFrameLines(lines, outerWidth, outerHeight)
 }
 
-func renderEmbeddedTerminalFrameContentLine(content string, borderStyle lipgloss.Style, innerWidth, outerWidth int) string {
+func renderEmbeddedTerminalFrameContentLine(content string, borderStyle lipgloss.Style, contentWidth, outerWidth int) string {
 	if outerWidth <= 0 {
 		return ""
 	}
 	if outerWidth == 1 {
 		return borderStyle.Render("│")
 	}
-	content = truncateToWidth(content, innerWidth)
-	if padding := innerWidth - lipgloss.Width(content); padding > 0 {
+	content = truncateToWidth(content, contentWidth)
+	if padding := contentWidth - lipgloss.Width(content); padding > 0 {
 		content += strings.Repeat(" ", padding)
 	}
-	return borderStyle.Render("│") + content + borderStyle.Render("│")
+	sidePadding := strings.Repeat(" ", embeddedTerminalEffectiveSidePadding(outerWidth))
+	return borderStyle.Render("│") + sidePadding + content + sidePadding + borderStyle.Render("│")
 }
 
 func embeddedTerminalBorderStyle(focused bool) lipgloss.Style {

@@ -184,7 +184,7 @@ func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 	if !strings.Contains(lines[listHeight], "┌") {
 		t.Fatalf("terminal top border should start at index %d:\n%s", listHeight, strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[listHeight+1], "│1 codex implementation running") {
+	if !strings.Contains(lines[listHeight+1], "│ 1 codex implementation running") {
 		t.Fatalf("terminal header should be first framed content row:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[listHeight+terminalHeight-1], "└") {
@@ -574,6 +574,119 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 		if strings.Contains(pane, notWant) {
 			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
 		}
+	}
+}
+
+func TestRender_FlowsModeStylesHeadlessOnIndicator(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Headless flow",
+			Status: flowstore.StatusInProgress,
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+		FlowHeadless: true,
+	})
+
+	headlessLine := rawLineContaining(view, "headless on")
+	if headlessLine == "" {
+		t.Fatalf("headless shortcut missing:\n%s", view)
+	}
+	if !strings.Contains(ansi.Strip(headlessLine), "h      headless on") {
+		t.Fatalf("headless shortcut should keep readable text, got %q", headlessLine)
+	}
+	wantOn := shortcutSuccessStyle.Render("on")
+	successStart, _, ok := strings.Cut(shortcutSuccessStyle.Render("x"), "x")
+	if !ok {
+		t.Fatal("could not derive success style start sequence")
+	}
+	statusStart, _, ok := strings.Cut(statusStyle.Render("x"), "x")
+	if !ok {
+		t.Fatal("could not derive status style start sequence")
+	}
+	wantPaneLabel := shortcutTextStyle.Render("headless ") + wantOn
+	if !strings.Contains(headlessLine, wantPaneLabel) {
+		t.Fatalf("headless shortcut should style only the on indicator:\n%q\nmissing %q", headlessLine, wantPaneLabel)
+	}
+	if strings.Contains(headlessLine, wantPaneLabel+statusStart) {
+		t.Fatalf("headless shortcut pane should not append footer status restoration after the on indicator:\n%q", headlessLine)
+	}
+	if !strings.Contains(headlessLine, wantOn) {
+		t.Fatalf("headless on indicator should render bright green:\n%q\nmissing %q", headlessLine, wantOn)
+	}
+
+	offView := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Headless flow",
+			Status: flowstore.StatusInProgress,
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+		FlowHeadless: false,
+	})
+	offLine := rawLineContaining(offView, "headless off")
+	if offLine == "" {
+		t.Fatalf("headless off shortcut missing:\n%s", offView)
+	}
+	if strings.Contains(offLine, shortcutSuccessStyle.Render("off")) {
+		t.Fatalf("headless off indicator should not render with success styling:\n%q", offLine)
+	}
+	if strings.Contains(offLine, successStart+"off") {
+		t.Fatalf("headless off indicator should not start with success styling:\n%q", offLine)
+	}
+	offBar := renderStatusBarWithState(statusBarParams{
+		Width:        80,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: false,
+	})
+	if !strings.Contains(ansi.Strip(offBar), "h: headless off") {
+		t.Fatalf("narrow footer should keep readable headless off shortcut, got %q", offBar)
+	}
+	if strings.Contains(offBar, shortcutSuccessStyle.Render("off")) {
+		t.Fatalf("narrow footer headless off indicator should not render with success styling:\n%q", offBar)
+	}
+	if strings.Contains(offBar, successStart+"off") {
+		t.Fatalf("narrow footer headless off indicator should not start with success styling:\n%q", offBar)
+	}
+
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        80,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
+	})
+	if !strings.Contains(ansi.Strip(bar), "h: headless on") {
+		t.Fatalf("narrow footer should keep readable headless shortcut, got %q", bar)
+	}
+	wantFooterHint := "h: headless " + wantOn + statusStart + " enter: phases"
+	if !strings.Contains(bar, wantFooterHint) {
+		t.Fatalf("narrow footer should restore status styling after the green on indicator:\n%q\nmissing %q", bar, wantFooterHint)
 	}
 }
 
