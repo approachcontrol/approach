@@ -668,7 +668,7 @@ func TestModel_LeftArrowFromLeftPaneAtFlowsIsPaneOnlyMove(t *testing.T) {
 		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
 	}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	before := listRequests(m)
 
@@ -1607,7 +1607,7 @@ func TestModel_ArrowNavigationWrapsFromModeEdgesToLeftPane(t *testing.T) {
 		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
 	}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	before = listRequests(m)
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})

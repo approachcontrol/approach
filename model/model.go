@@ -42,6 +42,7 @@ type Model struct {
 	expandedFlowID            string
 	selectedPlanPhaseID       string
 	selectedFlowPhaseID       string
+	flowHeadless              bool
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -304,6 +305,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessions:              newSessionPane(),
 		plans:                 newPlanPane(),
 		flows:                 newFlowPane(),
+		flowHeadless:          true,
 		mode:                  startupMode(opts.StartupMode),
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:    opts.PlanPromptTemplate,
@@ -507,6 +509,7 @@ func (m Model) View() string {
 		ExpandedFlowID:             m.expandedFlowID,
 		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
+		FlowHeadless:               m.flowHeadless,
 		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
 		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
 		OverlayText:                modalView.Text,
@@ -1065,8 +1068,8 @@ func (m Model) selectedFlowPhaseLaunchReady() bool {
 	if !ok {
 		return false
 	}
-	_, ok = readyFlowPhase(record)
-	return ok
+	phase, ok := m.selectedFlowPhase()
+	return ok && flowPhaseCanLaunch(record, phase)
 }
 
 func (m Model) clearSelectedPlanPhase() Model {

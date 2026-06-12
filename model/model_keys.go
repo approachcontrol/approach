@@ -235,6 +235,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "right":
 		return m.handleHorizontalNavigation(1)
 	case "h":
+		if m.mode == ui.ModeFlows {
+			return m.handleToggleFlowHeadless()
+		}
 		if m.mode > ui.ModeWorktrees {
 			m.mode--
 			m = m.resetModeCursors()
@@ -316,18 +319,12 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
-		if m.mode == ui.ModeFlows {
-			return m.handleLaunchFlowPhaseEmbeddedHeadless()
-		}
 	case "x":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleToggleWorktreeSessions()
 		}
 		if m.mode == ui.ModePlans {
 			return m.handleTogglePlanPhases()
-		}
-		if m.mode == ui.ModeFlows {
-			return m.handleToggleFlowPhases()
 		}
 	case "tab":
 		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
@@ -383,6 +380,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "a":
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
+		}
+		if m.mode == ui.ModeFlows {
+			return m, nil
 		}
 		return m.handleOpenAgent()
 	case "d":
@@ -562,6 +562,24 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mode == ui.ModeFlows {
+		return m.handleFlowEnter()
+	}
+	return m, nil
+}
+
+func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
+	if m.selectedFlowPhaseID == "" {
+		return m.handleToggleFlowPhases()
+	}
+	return m.handleLaunchSelectedFlowPhase()
+}
+
+func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	m.flowHeadless = !m.flowHeadless
 	return m, nil
 }
 
@@ -1023,7 +1041,7 @@ func (m Model) pathForOpenAction() (string, bool) {
 
 func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeFlows {
-		return m.handleLaunchFlowPhase()
+		return m, nil
 	}
 	path, ok := m.agentTargetPath()
 	if !ok {
@@ -1036,25 +1054,16 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 	return m.launchAgentAtPath(path)
 }
 
-func (m Model) handleLaunchFlowPhase() (tea.Model, tea.Cmd) {
-	target, ok, next := m.readyFlowPhaseLaunchTarget()
+func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
+	target, ok, next := m.selectedFlowPhaseLaunchTarget()
 	if !ok {
 		return next, nil
 	}
 	launchID := newLaunchID()
+	if next.flowHeadless && agent.Normalize(next.agentCommand) != agent.CommandCodexApp {
+		return next, next.prepareFlowPhaseEmbeddedHeadlessLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	}
 	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
-}
-
-func (m Model) handleLaunchFlowPhaseEmbeddedHeadless() (tea.Model, tea.Cmd) {
-	if agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
-		return m.handleLaunchFlowPhase()
-	}
-	target, ok, next := m.readyFlowPhaseLaunchTarget()
-	if !ok {
-		return next, nil
-	}
-	launchID := newLaunchID()
-	return next, next.prepareFlowPhaseEmbeddedHeadlessLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 }
 
 type flowPhaseLaunchTarget struct {
@@ -1065,16 +1074,23 @@ type flowPhaseLaunchTarget struct {
 	planPath     string
 }
 
-func (m Model) readyFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
+func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
 	record, ok := m.selectedFlow()
 	if !ok {
 		return flowPhaseLaunchTarget{}, false, m
 	}
-	phase, ok := readyFlowPhase(record)
+	phase, ok := m.selectedFlowPhase()
 	if !ok {
-		m = m.setStatus(statusOther, flowNotReadyMessage(record))
 		return flowPhaseLaunchTarget{}, false, m
 	}
+	if !flowPhaseCanLaunch(record, phase) {
+		m = m.setStatus(statusOther, flowPhaseNotLaunchableMessage(record, phase))
+		return flowPhaseLaunchTarget{}, false, m
+	}
+	return m.flowPhaseLaunchTarget(record, phase)
+}
+
+func (m Model) flowPhaseLaunchTarget(record flowstore.FlowRecord, phase flowstore.FlowPhase) (flowPhaseLaunchTarget, bool, Model) {
 	if m.agentCommand == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
 		return flowPhaseLaunchTarget{}, false, m
@@ -1421,15 +1437,6 @@ func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, ph
 	return fmt.Sprintf("Implement only the selected phase of the saved wtui plan %q (ID: %s) at %s. Selected phase: %s (%q), status %s. Read the plan file, then begin implementation of only that phase.", title, plan.PlanID, planPath, phase.PhaseID, phaseTitle, phaseStatus)
 }
 
-func readyFlowPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if flowPhaseCanLaunch(record, phase) {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
-}
-
 func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
 	if phase.Status == flowstore.PhaseReady {
 		return true
@@ -1440,25 +1447,36 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
 }
 
-func flowNotReadyMessage(record flowstore.FlowRecord) string {
-	if flowAutoreviewMissingPRTarget(record) {
+func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
+	if phase.PhaseID == "autoreview" && flowAutoreviewMissingPRTarget(record) {
 		return "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
 	}
-	impl, hasImplementation := flowPhaseByID(record, "implementation")
-	review, hasReview := flowPhaseByID(record, "plan-review")
-	if hasImplementation && impl.Status == flowstore.PhasePending && hasReview {
-		detail := review.Status
-		if review.Outcome != "" {
-			detail = detail + " / " + review.Outcome
+	if phase.PhaseID == "implementation" && phase.Status == flowstore.PhasePending {
+		if review, ok := flowPhaseByID(record, "plan-review"); ok {
+			return "Implementation is not ready; Plan Review is " + flowPhaseStatusDetail(review)
 		}
-		if review.Notes != "" {
-			detail = detail + ": " + review.Notes
-		} else if review.Summary != "" {
-			detail = detail + ": " + review.Summary
-		}
-		return "Implementation is not ready; Plan Review is " + detail
 	}
-	return "No ready Flow phase to launch"
+	detail := flowPhaseStatusDetail(phase)
+	if phase.PhaseID == "" {
+		return "Selected Flow phase is not launchable; status is " + detail
+	}
+	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
+}
+
+func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
+	detail := strings.TrimSpace(phase.Status)
+	if detail == "" {
+		detail = "unknown"
+	}
+	if phase.Outcome != "" {
+		detail += " / " + phase.Outcome
+	}
+	if phase.Notes != "" {
+		detail += ": " + phase.Notes
+	} else if phase.Summary != "" {
+		detail += ": " + phase.Summary
+	}
+	return detail
 }
 
 func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
