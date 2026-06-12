@@ -35,10 +35,10 @@ exist:
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
 Session roots must resolve to absolute paths so captured transcripts stay out of
-repositories. The scan root is cleaned and resolved to an absolute path before
-repository discovery; relative explicit roots, including `WORKTREE_ROOT`, are
-resolved from wtui's current working directory. The same resolved scan root is
-used as the parent directory for left-pane repo creation.
+repositories. The scan root is cleaned before repository discovery; explicit
+relative roots, including `WORKTREE_ROOT`, preserve relative repo paths for
+compatibility. The same root is resolved from wtui's current working directory
+when used as the parent directory for left-pane repo creation.
 
 ## Example
 

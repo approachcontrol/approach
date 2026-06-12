@@ -691,6 +691,7 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 				return repo.Path == pendingPath
 			})
 			m.pendingRepoSelection = ""
+			m = m.reflowRepos()
 			m = m.resetRightPaneCursors()
 			return m.startFetchForMode()
 		}

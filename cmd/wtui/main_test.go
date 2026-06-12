@@ -300,8 +300,11 @@ func TestRun_ResolvesRelativeScanRootForScanAndRepoCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if startupScan.Root != wantRoot || refreshScan.Root != wantRoot || repoCreateRoot != wantRoot {
-		t.Fatalf("roots startup=%q refresh=%q create=%q, want %q", startupScan.Root, refreshScan.Root, repoCreateRoot, wantRoot)
+	if startupScan.Root != "repos" || refreshScan.Root != "repos" {
+		t.Fatalf("scan roots startup=%q refresh=%q, want configured relative root", startupScan.Root, refreshScan.Root)
+	}
+	if repoCreateRoot != wantRoot {
+		t.Fatalf("repo create root = %q, want %q", repoCreateRoot, wantRoot)
 	}
 }
 

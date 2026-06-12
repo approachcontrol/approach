@@ -74,7 +74,7 @@ func TestResolveRootSurfacesHomeDirectoryFailure(t *testing.T) {
 	}
 }
 
-func TestScanUsesResolvedRoot(t *testing.T) {
+func TestScanPreservesExplicitRelativeRoot(t *testing.T) {
 	cwd := t.TempDir()
 	oldwd, err := os.Getwd()
 	if err != nil {
@@ -96,11 +96,7 @@ func TestScanUsesResolvedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan returned error: %v", err)
 	}
-	resolvedRoot, err := filepath.Abs("repos")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantPath := filepath.Join(resolvedRoot, "app")
+	wantPath := filepath.Join("repos", "app")
 	if len(repos) != 1 {
 		t.Fatalf("expected 1 repo, got %+v", repos)
 	}

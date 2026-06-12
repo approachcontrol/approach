@@ -24,8 +24,8 @@ type ScanOptions struct {
 	MaxDepth int
 }
 
-// ResolveRoot returns the absolute root used for scanning. An empty root uses
-// the default ~/dev location.
+// ResolveRoot returns an absolute root for callers that need a concrete
+// filesystem parent. An empty root uses the default ~/dev location.
 func ResolveRoot(root string) (string, error) {
 	return resolveRoot(root, os.UserHomeDir)
 }
@@ -53,7 +53,7 @@ func resolveRoot(root string, userHomeDir func() (string, error)) (string, error
 // Scan discovers git repositories under the configured root.
 // Returns repos sorted alphabetically by DisplayName.
 func Scan(opts ScanOptions) ([]Repo, error) {
-	root, err := ResolveRoot(opts.Root)
+	root, err := scanRoot(opts.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +118,14 @@ func Scan(opts ScanOptions) ([]Repo, error) {
 	})
 
 	return repos, nil
+}
+
+func scanRoot(root string) (string, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ResolveRoot("")
+	}
+	return filepath.Clean(root), nil
 }
 
 func repoInfo(path string) (isRepo bool, isBare bool) {

@@ -357,11 +357,7 @@ func TestScan_ExcludesLinkedWorktreeCheckoutWithRelativeRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	resolvedRoot, err := filepath.Abs(rootName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertOnlyRepo(t, repos, scanner.Repo{Path: filepath.Join(resolvedRoot, "wtui"), DisplayName: "wtui", IsBare: false})
+	assertOnlyRepo(t, repos, scanner.Repo{Path: filepath.Join(rootName, "wtui"), DisplayName: "wtui", IsBare: false})
 }
 
 func TestScan_ExcludesNestedLinkedWorktreeCheckout(t *testing.T) {

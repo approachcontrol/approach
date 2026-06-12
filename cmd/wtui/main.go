@@ -87,7 +87,7 @@ func run(args []string, deps runDeps) error {
 	if envRoot := deps.getenv("WORKTREE_ROOT"); envRoot != "" {
 		root = envRoot
 	}
-	root, err = scanner.ResolveRoot(root)
+	repoCreateRoot, err := scanner.ResolveRoot(root)
 	if err != nil {
 		return fmt.Errorf("error resolving scan root: %w", err)
 	}
@@ -106,7 +106,7 @@ func run(args []string, deps runDeps) error {
 	}
 	if err := deps.startProgramWithOptions(repos, startProgramOptions{
 		Config:         cfg,
-		RepoCreateRoot: root,
+		RepoCreateRoot: repoCreateRoot,
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return deps.scan(scanOptions)
 		},

@@ -514,8 +514,9 @@ script = ".wtui/bootstrap"
 ```
 
 `WORKTREE_ROOT` overrides `[scan].root` when both are set. The scan root is
-cleaned and resolved to an absolute path before scanning and is also used as the
-parent directory for left-pane repo creation. `[agent].plan_prompt`
+cleaned before scanning; explicit relative roots preserve relative repo paths
+for compatibility. The same root is resolved to an absolute path when used as
+the parent directory for left-pane repo creation. `[agent].plan_prompt`
 customizes the editable instructions shown before launching an agent from the
 plans pane, while `[flow_prompts]` customizes Flow phase launch templates.
 `[editor].command` customizes the editor used by the plans pane edit action.
@@ -525,7 +526,7 @@ foundation fields for provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos and create new repos under; relative paths resolve to absolute paths from the current working directory, depth defaults to 2 and can be reduced with `[scan].max_depth` |
+| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos and create new repos under; explicit relative paths are preserved for scanned repo identity and resolved from the current working directory for repo creation, depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 | `WTUI_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by wtui |
 | `WTUI_PLAN_STATE_ROOT` | `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `wtui plan`; set automatically for agents launched by wtui. In the TUI it relocates the whole artifact root, moving sessions, plans, and flows |

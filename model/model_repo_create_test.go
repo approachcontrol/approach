@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -155,6 +156,42 @@ func TestModel_RepoCreatedRefreshesAndSelectsNewRepo(t *testing.T) {
 	}
 	if got := m.TransientError(); got != "Created repo project" {
 		t.Fatalf("TransientError() = %q, want success status", got)
+	}
+}
+
+func TestModel_RepoCreatedRefreshKeepsSelectedNewRepoVisible(t *testing.T) {
+	var refreshed []scanner.Repo
+	for i := range 25 {
+		name := fmt.Sprintf("repo-%02d", i)
+		refreshed = append(refreshed, scanner.Repo{Path: "/dev/" + name, DisplayName: name})
+	}
+
+	m := model.NewWithOptions(testRepos(), model.Options{
+		RepoCreateRoot: "/dev",
+		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
+			return actions.RepoCreateResult{DestinationPath: "/dev/repo-24", LocalCreated: true}, nil
+		},
+		ScanRepos: func() ([]scanner.Repo, error) {
+			return refreshed, nil
+		},
+	})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 8})
+	m, _ = update(m, repoCreateKey("n"))
+	m, _ = update(m, repoCreateKey("repo-24"))
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, refreshCmd := update(m, cmd())
+	if refreshCmd == nil {
+		t.Fatal("repo creation should refresh repos")
+	}
+
+	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	m, _ = update(m, refreshMsg)
+
+	if got := m.Selected(); got != 24 {
+		t.Fatalf("Selected() = %d, want new repo index 24", got)
+	}
+	if got := m.RepoScroll(); got == 0 {
+		t.Fatalf("RepoScroll() = %d, want selected repo scrolled into view", got)
 	}
 }
 
