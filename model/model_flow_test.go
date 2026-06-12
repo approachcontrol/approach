@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,9 @@ func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
+			if !update.AutoLaunch {
+				t.Fatalf("auto launch update = %#v, want AutoLaunch true", update)
+			}
 			launched := current
 			for i := range launched.Phases {
 				if launched.Phases[i].PhaseID == update.PhaseID {
@@ -908,6 +912,142 @@ func TestModel_FlowAutoModeLaunchesAutoreviewAfterPRCreationCompletesWithPRMetad
 	}
 	if launchMsg.LaunchContext.FlowPhaseID != "autoreview" {
 		t.Fatalf("launched phase = %q, want autoreview", launchMsg.LaunchContext.FlowPhaseID)
+	}
+}
+
+func TestModel_FlowAutoModeLaunchesEveryEligibleFlowFromOneRefresh(t *testing.T) {
+	previousOne := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	currentOne := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	previousTwo := previousOne
+	previousTwo.FlowID = "flow-2"
+	previousTwo.Branch = "flow/auto-two"
+	previousTwo.WorktreePath = "/dev/alpha-worktrees/flow-auto-two"
+	currentTwo := currentOne
+	currentTwo.FlowID = "flow-2"
+	currentTwo.Branch = "flow/auto-two"
+	currentTwo.WorktreePath = "/dev/alpha-worktrees/flow-auto-two"
+
+	currentByFlowID := map[string]flowstore.FlowRecord{
+		currentOne.FlowID: currentOne,
+		currentTwo.FlowID: currentTwo,
+	}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			if !update.AutoLaunch {
+				t.Fatalf("auto launch update = %#v, want AutoLaunch true", update)
+			}
+			launched := currentByFlowID[update.FlowID]
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previousOne, previousTwo})
+
+	_, cmd := update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{currentOne, currentTwo},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd == nil {
+		t.Fatal("two eligible auto-mode flows should return a batched launch command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("auto launch command returned %T len=%d, want BatchMsg with two commands", msg, len(batch))
+	}
+	var launchedFlowIDs []string
+	for _, subcmd := range batch {
+		raw := subcmd()
+		launch, ok := raw.(model.FlowEmbeddedLaunchRequestedMsg)
+		if !ok {
+			t.Fatalf("batched auto launch returned %T, want FlowEmbeddedLaunchRequestedMsg", raw)
+		}
+		launchedFlowIDs = append(launchedFlowIDs, launch.LaunchContext.FlowID)
+		if launch.LaunchContext.FlowPhaseID != "implementation" {
+			t.Fatalf("launched phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+		}
+	}
+	if len(updates) != 2 {
+		t.Fatalf("launch updates = %#v, want two updates", updates)
+	}
+	for _, flowID := range []string{"flow-1", "flow-2"} {
+		if !slices.Contains(launchedFlowIDs, flowID) {
+			t.Fatalf("launched flow ids = %#v, missing %s", launchedFlowIDs, flowID)
+		}
+	}
+}
+
+func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	current.Title = "Stale auto command"
+	current.Instructions = "do not launch after auto mode off"
+	current.RepoPath = "/dev/alpha"
+	current.AutoMode = true
+	current, err = store.Create(current)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	previous := current
+	previous.Phases = append([]flowstore.FlowPhase(nil), current.Phases...)
+	for i := range previous.Phases {
+		switch previous.Phases[i].PhaseID {
+		case "plan-review":
+			previous.Phases[i].Status = flowstore.PhaseRunning
+		case "implementation":
+			previous.Phases[i].Status = flowstore.PhasePending
+		}
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:         "codex",
+		AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	_, cmd := update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd == nil {
+		t.Fatal("auto mode completion should prepare a launch command before auto mode is disabled")
+	}
+	if _, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: current.FlowID, Enabled: false}); err != nil {
+		t.Fatalf("SetAutoMode(false) error = %v", err)
+	}
+
+	if msg := cmd(); msg != nil {
+		t.Fatalf("stale auto launch command returned %T, want nil", msg)
+	}
+	read, err := store.Read(current.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(read, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready after stale auto command", got)
 	}
 }
 

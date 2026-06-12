@@ -2231,14 +2231,30 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			}
 		}
 		rowSelected := i == selected && selectedPhaseID == ""
+		statusCell := statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
+		branchCell := branchStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+		phaseCell := diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
+		planCell := statusStyle.Render(fitSessionColumn(plan, flowPlanWidth))
+		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
+		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
+		titleCell := stashMsgStyle.Render(record.Title)
+		if record.AutoMode && !rowSelected {
+			statusCell = flowAutoModeStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
+			branchCell = flowAutoModeStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+			phaseCell = flowAutoModeStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
+			planCell = flowAutoModeStyle.Render(fitSessionColumn(plan, flowPlanWidth))
+			prCell = flowAutoModeStyle.Render(fitSessionColumn(pr, flowPRWidth))
+			updatedCell = flowAutoModeStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
+			titleCell = flowAutoModeStyle.Render(record.Title)
+		}
 		line := formatFlowColumns(flowRowPrefix(false, active.hasFlow(record.FlowID)),
-			statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth)),
-			branchStyle.Render(fitSessionColumn(branch, flowBranchWidth)),
-			diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth)),
-			statusStyle.Render(fitSessionColumn(plan, flowPlanWidth)),
-			statusStyle.Render(fitSessionColumn(pr, flowPRWidth)),
-			stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth)),
-			stashMsgStyle.Render(record.Title),
+			statusCell,
+			branchCell,
+			phaseCell,
+			planCell,
+			prCell,
+			updatedCell,
+			titleCell,
 		)
 		if rowSelected {
 			line = renderSelectedFlowColumns(selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
@@ -2250,8 +2266,6 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				updated,
 				record.Title,
 				width)
-		} else if record.AutoMode {
-			line = flowAutoModeStyle.Render(line)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {

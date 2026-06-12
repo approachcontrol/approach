@@ -1146,6 +1146,7 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			previousByFlowID[record.FlowID] = record
 		}
 	}
+	var cmds []tea.Cmd
 	for _, record := range currentFlows {
 		if !record.AutoMode || record.FlowID == "" {
 			continue
@@ -1166,17 +1167,19 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			continue
 		}
 		target, ok, next := m.flowPhaseLaunchTarget(record, phase)
+		m = next
 		if !ok {
-			return next, nil
+			continue
 		}
 		launchID := newLaunchID()
 		switch agent.Normalize(next.agentCommand) {
 		case agent.CommandCodex, agent.CommandClaude:
-			return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+			cmds = append(cmds, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless))
+			continue
 		}
-		return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+		cmds = append(cmds, next.prepareAutoFlowPhaseLaunchCmd(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID))
 	}
-	return m, nil
+	return m, batchNonNil(cmds...)
 }
 
 func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
@@ -1375,19 +1378,33 @@ func (m Model) flowPhaseLaunchTarget(record flowstore.FlowRecord, phase flowstor
 func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
 	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
 		return PlanLaunchRequestedMsg{LaunchContext: ctx}
-	})
+	}, false)
+}
+
+func (m Model) prepareAutoFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
+		return PlanLaunchRequestedMsg{LaunchContext: ctx}
+	}, true)
 }
 
 func (m Model) prepareFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
+	return m.prepareFlowPhaseEmbeddedLaunchWithAuto(record, phase, repoPath, worktreePath, planPath, launchID, headless, false)
+}
+
+func (m Model) prepareAutoFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
+	return m.prepareFlowPhaseEmbeddedLaunchWithAuto(record, phase, repoPath, worktreePath, planPath, launchID, headless, true)
+}
+
+func (m Model) prepareFlowPhaseEmbeddedLaunchWithAuto(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless, autoLaunch bool) tea.Cmd {
 	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
 		ctx.FlowLaunchTracked = true
 		ctx.Embedded = true
 		ctx.Headless = headless
 		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-	})
+	}, autoLaunch)
 }
 
-func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg) tea.Cmd {
+func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg, autoLaunch bool) tea.Cmd {
 	return func() tea.Msg {
 		planBody := ""
 		if record.PlanID != "" && flowPhasePromptNeedsPlanBody(phase.PhaseID) {
@@ -1398,11 +1415,15 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 			planBody = body
 		}
 		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-			FlowID:   record.FlowID,
-			PhaseID:  phase.PhaseID,
-			LaunchID: launchID,
+			FlowID:     record.FlowID,
+			PhaseID:    phase.PhaseID,
+			LaunchID:   launchID,
+			AutoLaunch: autoLaunch,
 		})
 		if err != nil {
+			if autoLaunch && flowstore.IsAutoLaunchOutdated(err) {
+				return nil
+			}
 			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
 		}
 		launchPhase := phase

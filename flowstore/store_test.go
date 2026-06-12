@@ -959,6 +959,70 @@ func TestStoreAddPhaseLaunchIDMarksPhaseRunning(t *testing.T) {
 	}
 }
 
+func TestStoreAddPhaseLaunchIDAutoLaunchRequiresEnabledReadyPhase(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Auto launch guard",
+		Instructions: "only launch when still eligible",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "implementation",
+		LaunchID:   "auto-disabled",
+		AutoLaunch: true,
+	})
+	if !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("AddPhaseLaunchID(auto disabled) error = %v, want auto launch outdated", err)
+	}
+
+	record, err = store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: true})
+	if err != nil {
+		t.Fatalf("SetAutoMode(true) error = %v", err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "implementation",
+		LaunchID:   "auto-1",
+		AutoLaunch: true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(auto ready) error = %v", err)
+	}
+	phase := phaseByID(t, record, "implementation")
+	if phase.Status != flowstore.PhaseRunning || len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "auto-1" {
+		t.Fatalf("implementation after auto launch = %#v, want running with auto-1", phase)
+	}
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "implementation",
+		LaunchID:   "auto-stale",
+		AutoLaunch: true,
+	})
+	if !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("AddPhaseLaunchID(auto running) error = %v, want auto launch outdated", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase = phaseByID(t, read, "implementation")
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "auto-1" {
+		t.Fatalf("stale auto launch mutated launch ids = %#v", phase.LaunchIDs)
+	}
+}
+
 func TestStoreResetAwaitingSessionPhaseReturnsRunningOrphanToReady(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

@@ -286,11 +286,14 @@ func TestRender_FlowsModeHighlightsAutoModeRowsWithoutShiftingColumns(t *testing
 	view := strings.Join(renderFlowPane(flows, -1, 0, 220, 6, "", "", nil), "\n")
 	autoRow := rawLineContaining(view, "flow/auto")
 	manualRow := rawLineContaining(view, "flow/manual")
-	if !strings.HasPrefix(autoRow, "\x1b[") {
-		t.Fatalf("auto-mode row should have a row-level highlight:\n%q", autoRow)
+	if want := flowAutoModeStyle.Render(fitSessionColumn(flowstore.StatusInProgress, flowStatusWidth)); !strings.Contains(autoRow, want) {
+		t.Fatalf("auto-mode row should style status with auto highlight:\n%q\nmissing %q", autoRow, want)
 	}
-	if strings.HasPrefix(manualRow, "\x1b[") {
-		t.Fatalf("manual non-selected row should not have row-level highlight:\n%q", manualRow)
+	if want := flowAutoModeStyle.Render("Auto flow"); !strings.Contains(autoRow, want) {
+		t.Fatalf("auto-mode row should style title with auto highlight:\n%q\nmissing %q", autoRow, want)
+	}
+	if unwanted := flowAutoModeStyle.Render("Manual flow"); strings.Contains(manualRow, unwanted) {
+		t.Fatalf("manual non-selected row should not use auto highlight:\n%q", manualRow)
 	}
 	if visibleColumn(ansi.Strip(autoRow), "in_progress") != visibleColumn(ansi.Strip(manualRow), "in_progress") {
 		t.Fatalf("auto-mode highlight shifted status column, auto=%q manual=%q", ansi.Strip(autoRow), ansi.Strip(manualRow))
