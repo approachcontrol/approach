@@ -1015,15 +1015,17 @@ func TestStatusBar_InputOverlayShowsMultiLineHints(t *testing.T) {
 	}
 }
 
-func TestStatusBar_AgentSelectOverlayShowsSelectHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, OverlayAgentSelect, 1, false, false, false)
+func TestStatusBar_SelectOverlayShowsSelectHints(t *testing.T) {
+	bar := RenderStatusBar(120, 1, OverlaySelect, 1, false, false, false)
 	for _, hint := range []string{"up/down select", "enter: confirm", "esc: cancel"} {
 		if !strings.Contains(bar, hint) {
-			t.Errorf("expected hint %q in agent select overlay bar %q", hint, bar)
+			t.Errorf("expected hint %q in select overlay bar %q", hint, bar)
 		}
 	}
-	if strings.Contains(bar, "backspace: delete") {
-		t.Fatalf("agent select status should not show text-input hint: %q", bar)
+	for _, forbidden := range []string{"bksp", "backspace", "left/right"} {
+		if strings.Contains(bar, forbidden) {
+			t.Fatalf("select status should not show text-input hint %q: %q", forbidden, bar)
+		}
 	}
 }
 
@@ -2751,13 +2753,13 @@ func TestRender_PullRequestWorktreeInputDialogShowsPromptAndPlaceholder(t *testi
 	}
 }
 
-func TestRender_AgentSelectDialogShowsPromptItemsAndSelection(t *testing.T) {
+func TestRender_SelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
 		Width:          80,
 		Height:         24,
 		Mode:           1,
-		Overlay:        OverlayAgentSelect,
+		Overlay:        OverlaySelect,
 		SelectPrompt:   "Choose interactive helper",
 		SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}, {Label: "codex-app", Value: "codex-app"}, {Label: "claude", Value: "claude"}},
 		SelectSelected: 2,
@@ -2765,12 +2767,300 @@ func TestRender_AgentSelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 	stripped := ansi.Strip(view)
 	for _, want := range []string{"Choose interactive helper", "codex", "codex-app", "claude"} {
 		if !strings.Contains(stripped, want) {
-			t.Fatalf("agent select dialog should show %q:\n%s", want, stripped)
+			t.Fatalf("select dialog should show %q:\n%s", want, stripped)
 		}
 	}
 	if !strings.Contains(stripped, "> claude") {
-		t.Fatalf("agent select dialog should mark selected choice:\n%s", stripped)
+		t.Fatalf("select dialog should mark selected choice:\n%s", stripped)
 	}
+}
+
+func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Selected:         0,
+		Width:            80,
+		Height:           16,
+		Mode:             ModeWorktrees,
+		ActivePane:       1,
+		Worktrees:        []gitquery.Worktree{{Path: "/dev/alpha-worktrees/feature", BranchName: "feature/picker"}},
+		WorktreeSelected: 0,
+		Overlay:          OverlaySelect,
+		SelectPrompt:     "Choose helper",
+		SelectItems:      []SelectItem{{Label: "codex", Value: "codex"}, {Label: "claude", Value: "claude"}},
+		SelectWidth:      32,
+		SelectHeight:     6,
+		SelectPlacement:  SelectPlacementTopCenter,
+	})
+
+	bounds := requireSelectPanelBounds(t, view, "Choose helper")
+	if bounds.width != 32 || bounds.height != 6 {
+		t.Fatalf("select panel dimensions = %dx%d, want 32x6:\n%s", bounds.width, bounds.height, ansi.Strip(view))
+	}
+	if bounds.x != 24 || bounds.y != 0 {
+		t.Fatalf("select panel position = (%d,%d), want (24,0):\n%s", bounds.x, bounds.y, ansi.Strip(view))
+	}
+	stripped := ansi.Strip(view)
+	for _, want := range []string{"alpha", "alpha-worktrees/feature"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("compact select overlay should keep base UI text %q visible:\n%s", want, stripped)
+		}
+	}
+	if !strings.Contains(stripped, "up/down select") || strings.Contains(stripped, "bksp") {
+		t.Fatalf("select overlay status bar should use select hints only:\n%s", stripped)
+	}
+}
+
+func TestRender_SelectOverlayAutoSizesFromPromptAndItems(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          40,
+		Height:         10,
+		Mode:           ModeWorktrees,
+		Overlay:        OverlaySelect,
+		SelectPrompt:   "Pick",
+		SelectItems:    []SelectItem{{Label: "", Value: "fallback-value"}, {Label: "tiny", Value: "tiny"}},
+		SelectSelected: 0,
+	})
+
+	bounds := requireSelectPanelBounds(t, view, "Pick")
+	if bounds.width != len("fallback-value")+4 {
+		t.Fatalf("auto select width = %d, want %d:\n%s", bounds.width, len("fallback-value")+4, ansi.Strip(view))
+	}
+	if bounds.height != 5 {
+		t.Fatalf("auto select height = %d, want 5:\n%s", bounds.height, ansi.Strip(view))
+	}
+	if !strings.Contains(ansi.Strip(view), "> fallback-value") {
+		t.Fatalf("empty select label should fall back to value:\n%s", ansi.Strip(view))
+	}
+}
+
+func TestRender_SelectOverlayAutoWidthFitsLongestUnselectedItem(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          40,
+		Height:         10,
+		Mode:           ModeWorktrees,
+		Overlay:        OverlaySelect,
+		SelectPrompt:   "Pick",
+		SelectItems:    []SelectItem{{Label: "tiny", Value: "tiny"}, {Label: "", Value: "fallback-value"}},
+		SelectSelected: 0,
+	})
+
+	bounds := requireSelectPanelBounds(t, view, "Pick")
+	if bounds.width != len("fallback-value")+4 {
+		t.Fatalf("auto select width = %d, want %d:\n%s", bounds.width, len("fallback-value")+4, ansi.Strip(view))
+	}
+	if !strings.Contains(ansi.Strip(view), "fallback-value") {
+		t.Fatalf("auto-sized select panel should not truncate longest unselected item:\n%s", ansi.Strip(view))
+	}
+}
+
+func TestRender_SelectOverlayPlacementsUseTerminalBody(t *testing.T) {
+	tests := []struct {
+		name      string
+		placement SelectPlacement
+		wantY     int
+	}{
+		{name: "center", placement: SelectPlacementCenter, wantY: 3},
+		{name: "top", placement: SelectPlacementTopCenter, wantY: 0},
+		{name: "bottom", placement: SelectPlacementBottomCenter, wantY: 7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:           []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+				Width:           40,
+				Height:          13,
+				Mode:            ModeWorktrees,
+				Overlay:         OverlaySelect,
+				SelectPrompt:    "Pick",
+				SelectItems:     []SelectItem{{Label: "one", Value: "1"}},
+				SelectWidth:     20,
+				SelectHeight:    5,
+				SelectPlacement: tt.placement,
+			})
+			bounds := requireSelectPanelBounds(t, view, "Pick")
+			if bounds.x != 10 || bounds.y != tt.wantY {
+				t.Fatalf("select panel position = (%d,%d), want (10,%d):\n%s", bounds.x, bounds.y, tt.wantY, ansi.Strip(view))
+			}
+		})
+	}
+}
+
+func TestRender_SelectOverlayPreservesStyledBaseRowsAroundPanel(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	view := Render(RenderParams{
+		Repos:           []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Selected:        0,
+		Width:           72,
+		Height:          12,
+		Mode:            ModeBranches,
+		ActivePane:      1,
+		Branches:        []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/dev/alpha"}},
+		BranchSelected:  0,
+		Overlay:         OverlaySelect,
+		SelectPrompt:    "Pick",
+		SelectItems:     []SelectItem{{Label: "codex", Value: "codex"}},
+		SelectWidth:     24,
+		SelectHeight:    4,
+		SelectPlacement: SelectPlacementBottomCenter,
+	})
+
+	if !strings.Contains(view, "\x1b[") {
+		t.Fatalf("expected styled base rows to remain styled:\n%s", view)
+	}
+	strippedLines := strings.Split(ansi.Strip(view), "\n")
+	for i, line := range strippedLines {
+		if got := lipgloss.Width(line); got > 72 {
+			t.Fatalf("visible line %d width = %d, want <= 72: %q", i, got, line)
+		}
+	}
+	if !strings.Contains(strings.Join(strippedLines[:4], "\n"), "main") {
+		t.Fatalf("styled base branch row above panel should remain visible:\n%s", strings.Join(strippedLines, "\n"))
+	}
+}
+
+func TestRender_SelectOverlayShortHeightKeepsSelectedItemVisible(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          64,
+		Height:         10,
+		Mode:           ModeWorktrees,
+		Overlay:        OverlaySelect,
+		SelectPrompt:   "Pick",
+		SelectItems:    []SelectItem{{Label: "first", Value: "1"}, {Label: "second", Value: "2"}, {Label: "third", Value: "3"}, {Label: "fourth", Value: "4"}, {Label: "fifth", Value: "5"}},
+		SelectSelected: 4,
+		SelectWidth:    20,
+		SelectHeight:   5,
+	})
+
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, "> fifth") {
+		t.Fatalf("short select panel should keep selected item visible:\n%s", stripped)
+	}
+	if strings.Contains(stripped, "first") {
+		t.Fatalf("short select panel should viewport past first item when selected is last:\n%s", stripped)
+	}
+}
+
+func TestRender_SelectOverlayTinyTerminalsClampWithoutOverflow(t *testing.T) {
+	for _, size := range []struct {
+		width  int
+		height int
+	}{
+		{width: 1, height: 1},
+		{width: 2, height: 2},
+		{width: 3, height: 3},
+		{width: 8, height: 2},
+		{width: 8, height: 4},
+	} {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+				Width:          size.width,
+				Height:         size.height,
+				Mode:           ModeWorktrees,
+				Overlay:        OverlaySelect,
+				SelectPrompt:   "Pick a helper",
+				SelectItems:    []SelectItem{{Label: "codex", Value: "codex"}},
+				SelectSelected: 0,
+				SelectWidth:    32,
+				SelectHeight:   6,
+			})
+			lines := strings.Split(ansi.Strip(view), "\n")
+			if len(lines) != size.height {
+				t.Fatalf("line count = %d, want %d:\n%s", len(lines), size.height, ansi.Strip(view))
+			}
+			for i, line := range lines {
+				if got := lipgloss.Width(line); got > size.width {
+					t.Fatalf("line %d width = %d, want <= %d: %q", i, got, size.width, line)
+				}
+			}
+		})
+	}
+}
+
+type selectPanelBounds struct {
+	x      int
+	y      int
+	width  int
+	height int
+}
+
+func requireSelectPanelBounds(t *testing.T, view, prompt string) selectPanelBounds {
+	t.Helper()
+	lines := strings.Split(ansi.Strip(view), "\n")
+	var found bool
+	var best selectPanelBounds
+	for y, line := range lines {
+		runes := []rune(line)
+		for x, r := range runes {
+			if r != '┌' {
+				continue
+			}
+			for right := x + 1; right < len(runes); right++ {
+				if runes[right] != '┐' {
+					continue
+				}
+				for bottom := y + 1; bottom < len(lines); bottom++ {
+					bottomRunes := []rune(lines[bottom])
+					if x >= len(bottomRunes) || right >= len(bottomRunes) {
+						continue
+					}
+					if bottomRunes[x] != '└' || bottomRunes[right] != '┘' {
+						continue
+					}
+					candidate := selectPanelBounds{
+						x:      x,
+						y:      y,
+						width:  right - x + 1,
+						height: bottom - y + 1,
+					}
+					if !selectPanelCandidateContainsPrompt(lines, candidate, prompt) {
+						continue
+					}
+					if !found || candidate.width < best.width {
+						found = true
+						best = candidate
+					}
+				}
+			}
+		}
+	}
+	if found {
+		return best
+	}
+	t.Fatalf("select panel bounds not found:\n%s", ansi.Strip(view))
+	return selectPanelBounds{}
+}
+
+func selectPanelCandidateContainsPrompt(lines []string, bounds selectPanelBounds, prompt string) bool {
+	if prompt == "" {
+		return true
+	}
+	for row := bounds.y; row < bounds.y+bounds.height && row < len(lines); row++ {
+		runes := []rune(lines[row])
+		if bounds.x >= len(runes) {
+			continue
+		}
+		right := bounds.x + bounds.width
+		if right > len(runes) {
+			right = len(runes)
+		}
+		if strings.Contains(string(runes[bounds.x:right]), prompt) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {

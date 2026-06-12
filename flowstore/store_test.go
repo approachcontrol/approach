@@ -3070,6 +3070,131 @@ func TestStoreAddPhaseLaunchIDMatchesNormalizedPhaseIDVariants(t *testing.T) {
 	}
 }
 
+func TestStoreAddPhaseLaunchIDResumePrefersExactRowOverEarlierTerminalDuplicate(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "exact-row-launch",
+		Title:        "Exact row launch",
+		Instructions: "resume launch targets active duplicate",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseCompleted, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{
+				PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1",
+				Status: flowstore.PhaseNeedsAttention, Outcome: "needs_attention", Notes: "PTY startup failed.",
+				Kind:      "implementation_child",
+				Order:     10,
+				LaunchIDs: []string{"launch-1"},
+				CreatedAt: now, UpdatedAt: now,
+			},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "step-1",
+		LaunchID: "launch-2",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(step-1 resume) error = %v", err)
+	}
+
+	count := 0
+	var survivor flowstore.FlowPhase
+	for _, phase := range record.Phases {
+		if phase.ParentPhaseID == "implementation" {
+			count++
+			survivor = phase
+		}
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child rows not collapsed on launch: %#v", record.Phases)
+	}
+	if survivor.PhaseID != "step-1" {
+		t.Fatalf("survivor phase id = %q, want step-1", survivor.PhaseID)
+	}
+	if survivor.Status != flowstore.PhaseRunning || survivor.Outcome != "" {
+		t.Fatalf("survivor after resume launch = %#v, want running with cleared outcome", survivor)
+	}
+	if !strings.Contains(survivor.Notes, "Relaunched after needs_attention") {
+		t.Fatalf("survivor notes = %q, want relaunch note", survivor.Notes)
+	}
+	if len(survivor.LaunchIDs) != 2 || survivor.LaunchIDs[0] != "launch-1" || survivor.LaunchIDs[1] != "launch-2" {
+		t.Fatalf("launch ids = %#v, want [launch-1 launch-2]", survivor.LaunchIDs)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDResumePrefersRawExactRowBeforeNormalizedDuplicate(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "raw-exact-row-launch",
+		Title:        "Raw exact row launch",
+		Instructions: "resume launch targets requested duplicate casing",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseCompleted, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{
+				PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1",
+				Status: flowstore.PhaseNeedsAttention, Outcome: "needs_attention", Notes: "PTY startup failed.",
+				Kind:      "implementation_child",
+				Order:     10,
+				LaunchIDs: []string{"launch-1"},
+				CreatedAt: now, UpdatedAt: now,
+			},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "Step-1",
+		LaunchID: "launch-2",
+		Resume:   true,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(Step-1 resume) error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "step-1")
+	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" {
+		t.Fatalf("phase after resume launch = %#v, want running with cleared outcome", phase)
+	}
+	if !strings.Contains(phase.Notes, "Relaunched after needs_attention") {
+		t.Fatalf("phase notes = %q, want relaunch note", phase.Notes)
+	}
+	if len(phase.LaunchIDs) != 2 || phase.LaunchIDs[0] != "launch-1" || phase.LaunchIDs[1] != "launch-2" {
+		t.Fatalf("launch ids = %#v, want [launch-1 launch-2]", phase.LaunchIDs)
+	}
+}
+
 func TestStoreAttachSessionMatchesNormalizedPhaseIDVariants(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
@@ -3166,6 +3291,61 @@ func TestStoreAttachSessionPrefersExactRowOverEarlierDuplicate(t *testing.T) {
 	}
 	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "sess-9" {
 		t.Fatalf("sessions = %#v, want attached sess-9", survivor.Sessions)
+	}
+}
+
+func TestStoreAttachSessionPrefersRawExactRowBeforeNormalizedDuplicate(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "raw-exact-row-attach",
+		Title:        "Raw exact row attach",
+		Instructions: "attach session to requested duplicate casing",
+		RepoPath:     filepath.Join(root, "repo"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 3, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1", Status: flowstore.PhaseCompleted, Kind: "implementation_child", Order: 10, CreatedAt: now, UpdatedAt: now},
+			{
+				PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1",
+				Status:    flowstore.PhaseRunning,
+				Kind:      "implementation_child",
+				Order:     10,
+				LaunchIDs: []string{"launch-1"},
+				CreatedAt: now, UpdatedAt: now,
+			},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 4, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "Step-1",
+		Session: flowstore.Session{Provider: "codex", SessionID: "sess-9"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(Step-1) error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "step-1")
+	if phase.Status != flowstore.PhaseRunning {
+		t.Fatalf("phase status = %q, want running; metadata-only attach must not change phase status", phase.Status)
+	}
+	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-1" {
+		t.Fatalf("launch ids lost in collapse: %#v", phase.LaunchIDs)
+	}
+	if len(phase.Sessions) != 1 || phase.Sessions[0].SessionID != "sess-9" {
+		t.Fatalf("sessions = %#v, want attached sess-9", phase.Sessions)
 	}
 }
 

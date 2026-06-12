@@ -1343,6 +1343,54 @@ func TestModel_RKeyOnFlowPhaseResumeFailureUsesNormalizedPersistedPhaseID(t *tes
 	}
 }
 
+func TestModel_RKeyOnFlowPhaseResumeFailurePrefersExactPersistedDuplicate(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{
+				{PhaseID: "review-loop", Status: flowstore.PhaseCompleted},
+				{PhaseID: "Review-Loop", Status: flowstore.PhaseRunning},
+			}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume duplicate phase failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-duplicate-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-duplicate-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "Review-Loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if len(phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one; exact persisted running phase must override stale terminal duplicate", phaseUpdates)
+	}
+	if update := phaseUpdates[0]; update.FlowID != "flow-1" ||
+		update.PhaseID != "Review-Loop" ||
+		update.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(update.Notes, "terminal unavailable") {
+		t.Fatalf("phase update = %#v", update)
+	}
+}
+
 func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
