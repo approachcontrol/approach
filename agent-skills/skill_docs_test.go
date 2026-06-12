@@ -3,6 +3,7 @@ package agentskills
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -61,6 +62,7 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	root := repoRoot(t)
 	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
 	flowCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "flow.go"))
+	planCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "plan.go"))
 	flowStore := readFile(t, filepath.Join(root, "flowstore", "store.go"))
 
 	if !strings.Contains(skill, "wtui flow phase set") || !strings.Contains(flowCLI, "runFlowPhaseSet") {
@@ -110,6 +112,8 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 			t.Fatalf("skill documents --%s but flow CLI does not expose it", flagName)
 		}
 	}
+	assertRunnableExampleFlagsExist(t, skill, flowCLI, "flow")
+	assertRunnableExampleFlagsExist(t, skill, planCLI, "plan")
 
 	for _, constant := range []string{
 		"PhaseRunning",
@@ -142,6 +146,80 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 			t.Fatalf("skill includes a runnable example for unimplemented command %q", unimplementedCommand)
 		}
 	}
+}
+
+func TestWtuiFlowCreateSkillDocumentsAgentContract(t *testing.T) {
+	root := repoRoot(t)
+	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+
+	requireContainsAll(t, "skill metadata", skill, []string{
+		"name: wtui-flow-create",
+		"make a flow from this",
+		"add this as a wtui flow",
+		"create a wtui flow for this plan",
+	})
+	requireContainsAll(t, "independent flow creation", skill, []string{
+		"does not require `WTUI_FLOW_ID` or `WTUI_FLOW_PHASE_ID`",
+		"Codex App prompt-only metadata",
+		"ask the user",
+		"absolute",
+	})
+	requireContainsAll(t, "shared artifact root setup", skill, []string{
+		"WTUI_ARTIFACT_ROOT",
+		"WTUI_FLOW_STATE_ROOT",
+		"WTUI_PLAN_STATE_ROOT",
+		"WTUI_SESSION_STATE_ROOT",
+		"FLOW_STATE_ARGS",
+		"PLAN_STATE_ARGS",
+	})
+	requireContainsAll(t, "flow creation commands", skill, []string{
+		"wtui flow create",
+		"--json",
+		"--instructions-file",
+		"--instructions",
+		"wtui flow read --flow-id",
+	})
+	requireContainsAll(t, "plan import commands", skill, []string{
+		"wtui plan save",
+		"wtui flow plan set",
+		"wtui plan read",
+		"wtui flow phase complete",
+		"Imported plan",
+	})
+	requireContainsAll(t, "failure handling", skill, []string{
+		"persistence failures",
+		"must not be treated as success",
+		"report the command error",
+		"wtui flow phase block",
+		"wtui flow phase needs-attention",
+	})
+
+	if hasRunnableCommandExample(skill, "wtui flow session attach") {
+		t.Fatal("skill includes a runnable example for unimplemented command \"wtui flow session attach\"")
+	}
+}
+
+func TestWtuiFlowCreateSkillMatchesImplementedCLIContract(t *testing.T) {
+	root := repoRoot(t)
+	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+	flowCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "flow.go"))
+	planCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "plan.go"))
+
+	requireContainsAll(t, "flow CLI contract", flowCLI, []string{
+		"runFlowCreate",
+		"runFlowRead",
+		"runFlowPlanSet",
+		`command:        "complete"`,
+		`command:        "block"`,
+		`command:        "needs-attention"`,
+	})
+	requireContainsAll(t, "plan CLI contract", planCLI, []string{
+		"runPlanSave",
+		"runPlanRead",
+	})
+
+	assertRunnableExampleFlagsExist(t, skill, flowCLI, "flow")
+	assertRunnableExampleFlagsExist(t, skill, planCLI, "plan")
 }
 
 func TestWtuiFlowSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
@@ -219,13 +297,17 @@ func TestWtuiFlowInstallationDocs(t *testing.T) {
 
 	requireContainsAll(t, "README installation docs", readme, []string{
 		"agent-skills/wtui-flow/",
+		"agent-skills/wtui-flow-create/",
 		"wtui-flow",
+		"wtui-flow-create",
 		"wtui-plan-persist",
 		"symlink",
 	})
 	requireContainsAll(t, "config installation docs", configDocs, []string{
 		"agent-skills/wtui-flow/",
+		"agent-skills/wtui-flow-create/",
 		"wtui-flow",
+		"wtui-flow-create",
 		"wtui-plan-persist",
 		"symlink",
 	})
@@ -265,6 +347,77 @@ func hasRunnableCommandExample(markdown, command string) bool {
 			if strings.Contains(line, command) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func assertRunnableExampleFlagsExist(t *testing.T, markdown, cliSource, command string) {
+	t.Helper()
+	for _, flagName := range runnableCommandFlags(markdown, command) {
+		if !cliHasFlag(cliSource, flagName) {
+			t.Fatalf("runnable wtui %s example documents --%s but CLI does not expose it", command, flagName)
+		}
+	}
+}
+
+func runnableCommandFlags(markdown, command string) []string {
+	var flags []string
+	seen := map[string]bool{}
+	flagPattern := regexp.MustCompile(`--([A-Za-z0-9][A-Za-z0-9-]*)`)
+
+	for _, block := range fencedBashBlocks(markdown) {
+		var activeCommand string
+		continues := false
+		for _, line := range strings.Split(block, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				if !continues {
+					activeCommand = ""
+				}
+				continue
+			}
+
+			if hasRunnableWtuiCommand(trimmed, command) {
+				activeCommand = command
+			} else if !continues {
+				activeCommand = ""
+			}
+
+			if activeCommand == command {
+				for _, match := range flagPattern.FindAllStringSubmatch(trimmed, -1) {
+					flagName := match[1]
+					if !seen[flagName] {
+						flags = append(flags, flagName)
+						seen[flagName] = true
+					}
+				}
+			}
+
+			continues = strings.HasSuffix(trimmed, `\`)
+		}
+	}
+
+	return flags
+}
+
+func hasRunnableWtuiCommand(line, command string) bool {
+	pattern := "wtui " + command + " "
+	if strings.HasPrefix(line, pattern) {
+		return true
+	}
+	for _, marker := range []string{"| ", "$(", "! "} {
+		if strings.Contains(line, marker+pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func cliHasFlag(cliSource, flagName string) bool {
+	for _, flagType := range []string{"String", "Int", "Bool"} {
+		if strings.Contains(cliSource, `flags.`+flagType+`("`+flagName+`"`) {
+			return true
 		}
 	}
 	return false

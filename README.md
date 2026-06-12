@@ -430,12 +430,19 @@ The flow state root is resolved with this precedence: `--state-root` >
 relocates the shared artifact root for sessions, plans, and flows.
 
 Flow-launched agents should use the canonical `wtui-flow` skill source at
-`agent-skills/wtui-flow/`. Install or symlink it beside
-`agent-skills/wtui-plan-persist/` in the user-level skill directory for your
-agent, such as `~/.codex/skills/wtui-flow` for Codex or the equivalent Claude
-skills directory. The skill activates when `WTUI_FLOW_ID` and
-`WTUI_FLOW_PHASE_ID` are present, reads the active flow before updates, and uses
-the implemented `wtui flow` and `wtui plan` commands for persistence.
+`agent-skills/wtui-flow/`. Ad hoc planning sessions that need to create a new
+Flow from the current task or an already-written plan should use
+`wtui-flow-create` from `agent-skills/wtui-flow-create/`. Install or symlink
+both skills beside `agent-skills/wtui-plan-persist/` in the user-level skill
+directory for your agent, such as `~/.codex/skills/wtui-flow` and
+`~/.codex/skills/wtui-flow-create` for Codex or the equivalent Claude skills
+directory. `wtui-flow` activates when `WTUI_FLOW_ID` and `WTUI_FLOW_PHASE_ID`
+are present, reads the active flow before updates, and uses the implemented
+`wtui flow` and `wtui plan` commands for persistence. `wtui-flow-create` works
+outside a Flow-launched session by calling `wtui flow create`, optionally saving
+and linking an existing plan. In v1, that import persists the Flow and linked
+plan artifacts but does not attach the current ad hoc provider session to the
+Flow; future phase launches and resumes are tracked normally.
 
 ## Configuration
 
