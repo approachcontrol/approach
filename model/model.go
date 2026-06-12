@@ -59,10 +59,13 @@ type Model struct {
 	pendingInlineSessionList  uint64
 	worktreeCreateSeq         uint64
 	activeWorktreeCreate      uint64
+	repoCreateSeq             uint64
+	activeRepoCreate          uint64
 	flowCreateSeq             uint64
 	activeFlowCreate          uint64
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
+	pendingRepoSelection      string
 	listRequests              [listRequestSlots]uint64
 	activePane                int // 0=left (repos), 1=right (content)
 	destructive               bool
@@ -76,7 +79,9 @@ type Model struct {
 	agentCommand              string
 	planPromptTemplate        string
 	flowPromptTemplates       FlowPromptTemplates
+	repoCreateRoot            string
 	scanRepos                 func() ([]scanner.Repo, error)
+	createRepo                func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
 	fetchRepo                 func(string) error
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
@@ -147,7 +152,9 @@ type Options struct {
 	StartupMode           ui.Mode
 	PlanPromptTemplate    string
 	FlowPromptTemplates   FlowPromptTemplates
+	RepoCreateRoot        string
 	ScanRepos             func() ([]scanner.Repo, error)
+	CreateRepo            func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
 	FetchRepo             func(string) error
 	ListSessions          func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
 	ReadTranscript        func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
@@ -187,6 +194,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	fetchRepo := opts.FetchRepo
 	if fetchRepo == nil {
 		fetchRepo = actions.Fetch
+	}
+	createRepo := opts.CreateRepo
+	if createRepo == nil {
+		createRepo = actions.CreateRepo
 	}
 	listSessions := opts.ListSessions
 	if listSessions == nil {
@@ -343,7 +354,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		planPromptTemplate:    opts.PlanPromptTemplate,
 		flowPromptTemplates:   opts.FlowPromptTemplates,
+		repoCreateRoot:        opts.RepoCreateRoot,
 		scanRepos:             opts.ScanRepos,
+		createRepo:            createRepo,
 		fetchRepo:             fetchRepo,
 		listSessions:          listSessions,
 		readTranscript:        readTranscript,
@@ -462,6 +475,7 @@ func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
 func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
 func (m Model) AgentCommand() string            { return m.agentCommand }
+func (m Model) RepoCreateRoot() string          { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
 	fetchCmd := m.fetchForMode()
@@ -529,6 +543,7 @@ func (m Model) View() string {
 		SelectWidth:                 modalView.SelectLayout.Width,
 		SelectHeight:                modalView.SelectLayout.Height,
 		SelectPlacement:             uiSelectPlacement(modalView.SelectLayout.Placement),
+		Form:                        uiFormView(modalView.Form),
 		BranchScroll:                branchScroll,
 		RepoScroll:                  repoScroll,
 		StashScroll:                 stashScroll,
@@ -582,6 +597,7 @@ func (m Model) View() string {
 		RightEmptyMessage:           rightEmptyMessage,
 		FetchAvailable:              m.canFetch(),
 		FetchVisibleAvailable:       m.canFetchVisibleRepos(),
+		RepoCreateAvailable:         m.canCreateRepo(),
 		PullAvailable:               m.canPull(),
 		WorktreeMoveAvailable:       m.canMoveWorktree(),
 		WorktreeSessionsOpen:        m.inlineWorktreeSessionPath != "",
@@ -722,6 +738,8 @@ func (m Model) overlayState() ui.OverlayState {
 		return ui.OverlayInput
 	case modal.Select:
 		return ui.OverlaySelect
+	case modal.Form:
+		return ui.OverlayForm
 	case modal.Diff:
 		switch view.DiffKind {
 		case modal.DiffStash:
@@ -770,6 +788,41 @@ func uiSelectItems(items []modal.SelectItem) []ui.SelectItem {
 		out[i] = ui.SelectItem{Label: item.Label, Value: item.Value}
 	}
 	return out
+}
+
+func uiFormView(view modal.FormView) ui.FormView {
+	fields := make([]ui.FormField, len(view.Fields))
+	for i, field := range view.Fields {
+		fields[i] = ui.FormField{
+			ID:            field.ID,
+			Kind:          uiFormFieldKind(field.Kind),
+			Label:         field.Label,
+			Placeholder:   field.Placeholder,
+			Value:         field.Value,
+			Cursor:        field.Cursor,
+			Checked:       field.Checked,
+			Options:       uiSelectItems(field.Options),
+			SelectedIndex: field.SelectedIndex,
+		}
+	}
+	return ui.FormView{
+		Purpose:    view.Purpose,
+		Title:      view.Title,
+		Fields:     fields,
+		FocusIndex: view.FocusIndex,
+		Error:      view.Error,
+	}
+}
+
+func uiFormFieldKind(kind modal.FormFieldKind) ui.FormFieldKind {
+	switch kind {
+	case modal.FormCheckbox:
+		return ui.FormCheckbox
+	case modal.FormChoice:
+		return ui.FormChoice
+	default:
+		return ui.FormText
+	}
 }
 
 func (m Model) startViewRequest(kind FetchKind, mode ui.Mode) Model {
@@ -867,6 +920,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleRepoRefreshResult(msg)
 	case RepoRefreshFailedMsg:
 		return m.handleRepoRefreshFailed(msg), nil
+	case RepoCreatedMsg:
+		return m.handleRepoCreated(msg)
+	case RepoCreateFailedMsg:
+		return m.handleRepoCreateFailed(msg)
 	case GitPulledMsg:
 		return m.handleGitPulled(msg)
 	case GitPullFailedMsg:

@@ -13,6 +13,7 @@ const (
 	Confirm
 	Input
 	Select
+	Form
 	Diff
 	Text
 )
@@ -63,6 +64,48 @@ const (
 	InputMultiLine
 )
 
+type FormFieldKind int
+
+const (
+	FormText FormFieldKind = iota
+	FormCheckbox
+	FormChoice
+)
+
+type FormField struct {
+	ID            string
+	Kind          FormFieldKind
+	Label         string
+	Placeholder   string
+	Value         string
+	Cursor        int
+	Checked       bool
+	Options       []SelectItem
+	SelectedIndex int
+}
+
+type FormValues struct {
+	Text    map[string]string
+	Checked map[string]bool
+	Choice  map[string]string
+}
+
+type FormSpec struct {
+	Purpose  string
+	Title    string
+	Fields   []FormField
+	Validate func(FormValues) error
+	Submit   func(FormValues) tea.Cmd
+}
+
+type FormView struct {
+	Purpose    string
+	Title      string
+	Fields     []FormField
+	FocusIndex int
+	Error      string
+}
+
 // Modal is the single in-process state machine for transient modal UI. Its
 // zero value is closed.
 type Modal struct {
@@ -81,6 +124,13 @@ type Modal struct {
 	selectItems  []SelectItem
 	selectIndex  int
 	selectLayout Layout
+	formPurpose  string
+	formTitle    string
+	formFields   []FormField
+	formFocus    int
+	formErr      string
+	formValidate func(FormValues) error
+	formSubmit   func(FormValues) tea.Cmd
 	diffKind     DiffKind
 	diff         string
 	text         string
@@ -100,6 +150,7 @@ type View struct {
 	SelectItems  []SelectItem
 	SelectIndex  int
 	SelectLayout Layout
+	Form         FormView
 	DiffKind     DiffKind
 	Diff         string
 	Text         string
@@ -166,6 +217,17 @@ func OpenSelectWithLayout(prompt string, items []SelectItem, selectedIndex int, 
 	}
 }
 
+func OpenForm(spec FormSpec) Modal {
+	return Modal{
+		kind:         Form,
+		formPurpose:  spec.Purpose,
+		formTitle:    spec.Title,
+		formFields:   normalizeFormFields(spec.Fields),
+		formValidate: spec.Validate,
+		formSubmit:   spec.Submit,
+	}
+}
+
 func OpenDiff(kind DiffKind, body string) Modal {
 	return Modal{kind: Diff, diffKind: kind, diff: body}
 }
@@ -212,6 +274,13 @@ func (m Modal) SetInputError(err string) Modal {
 	return m
 }
 
+func (m Modal) SetFormError(err string) Modal {
+	if m.kind == Form {
+		m.formErr = err
+	}
+	return m
+}
+
 func (m Modal) IsOpen() bool {
 	return m.kind != None
 }
@@ -229,12 +298,46 @@ func (m Modal) View() View {
 		SelectItems:  append([]SelectItem(nil), m.selectItems...),
 		SelectIndex:  m.selectIndex,
 		SelectLayout: m.selectLayout,
-		DiffKind:     m.diffKind,
-		Diff:         m.diff,
-		Text:         m.text,
-		Scroll:       m.scroll,
-		Request:      m.request,
+		Form: FormView{
+			Purpose:    m.formPurpose,
+			Title:      m.formTitle,
+			Fields:     copyFormFields(m.formFields),
+			FocusIndex: clampFormFocus(m.formFocus, len(m.formFields)),
+			Error:      m.formErr,
+		},
+		DiffKind: m.diffKind,
+		Diff:     m.diff,
+		Text:     m.text,
+		Scroll:   m.scroll,
+		Request:  m.request,
 	}
+}
+
+func normalizeFormFields(fields []FormField) []FormField {
+	out := copyFormFields(fields)
+	for i := range out {
+		field := &out[i]
+		switch field.Kind {
+		case FormText:
+			field.Cursor = clampInputCursor(field.Value, field.Cursor)
+			if field.Value != "" && field.Cursor == 0 {
+				field.Cursor = inputLength(field.Value)
+			}
+		case FormChoice:
+			if field.SelectedIndex < 0 || field.SelectedIndex >= len(field.Options) {
+				field.SelectedIndex = 0
+			}
+		}
+	}
+	return out
+}
+
+func copyFormFields(fields []FormField) []FormField {
+	out := append([]FormField(nil), fields...)
+	for i := range out {
+		out[i].Options = append([]SelectItem(nil), out[i].Options...)
+	}
+	return out
 }
 
 func normalizeLayout(layout Layout) Layout {
@@ -260,6 +363,8 @@ func (m Modal) Update(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		return m.updateInput(msg)
 	case Select:
 		return m.updateSelect(msg)
+	case Form:
+		return m.updateForm(msg)
 	case Diff:
 		return m.updateDiff(msg)
 	case Text:
@@ -522,6 +627,131 @@ func (m Modal) updateSelect(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	}
 }
 
+func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+	m.formFocus = clampFormFocus(m.formFocus, len(m.formFields))
+	switch msg.String() {
+	case "enter":
+		values := m.formValues()
+		if m.formValidate != nil {
+			if err := m.formValidate(values); err != nil {
+				m.formErr = err.Error()
+				return m, Consumed, nil
+			}
+		}
+		cmd := deferFormSubmit(m.formSubmit, values)
+		if cmd == nil {
+			return Modal{}, Accepted, nil
+		}
+		return Modal{}, Accepted, cmd
+	case "esc", "ctrl+c":
+		return Modal{}, Cancelled, nil
+	case "tab", "down":
+		m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+		return m, Consumed, nil
+	case "shift+tab", "up":
+		m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+		return m, Consumed, nil
+	}
+
+	if len(m.formFields) == 0 {
+		return m, Consumed, nil
+	}
+	field := &m.formFields[m.formFocus]
+	switch field.Kind {
+	case FormText:
+		return m.updateFormTextField(msg, field)
+	case FormCheckbox:
+		if msg.Type == tea.KeySpace {
+			field.Checked = !field.Checked
+			m.formErr = ""
+		}
+	case FormChoice:
+		switch msg.String() {
+		case "left", "h":
+			field.SelectedIndex = previousSelectIndex(field.SelectedIndex, len(field.Options))
+			m.formErr = ""
+		case "right", "l":
+			field.SelectedIndex = nextSelectIndex(field.SelectedIndex, len(field.Options))
+			m.formErr = ""
+		default:
+			if msg.Type == tea.KeySpace {
+				field.SelectedIndex = nextSelectIndex(field.SelectedIndex, len(field.Options))
+				m.formErr = ""
+			}
+		}
+	}
+	return m, Consumed, nil
+}
+
+func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Outcome, tea.Cmd) {
+	field.Cursor = clampInputCursor(field.Value, field.Cursor)
+	switch msg.String() {
+	case "backspace", "ctrl+h":
+		field.Value, field.Cursor = deleteRuneBefore(field.Value, field.Cursor)
+	case "delete":
+		field.Value, field.Cursor = deleteRuneAt(field.Value, field.Cursor)
+	case "left":
+		if field.Cursor > 0 {
+			field.Cursor--
+		}
+	case "right":
+		if field.Cursor < inputLength(field.Value) {
+			field.Cursor++
+		}
+	case "home", "ctrl+a":
+		field.Cursor = 0
+	case "end", "ctrl+e":
+		field.Cursor = inputLength(field.Value)
+	case "ctrl+u":
+		field.Value = ""
+		field.Cursor = 0
+	default:
+		if msg.Type == tea.KeySpace {
+			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, []rune{' '})
+		} else if msg.Type == tea.KeyRunes {
+			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, msg.Runes)
+		}
+	}
+	m.formErr = ""
+	return m, Consumed, nil
+}
+
+func (m Modal) formValues() FormValues {
+	values := FormValues{
+		Text:    make(map[string]string),
+		Checked: make(map[string]bool),
+		Choice:  make(map[string]string),
+	}
+	for _, field := range m.formFields {
+		switch field.Kind {
+		case FormText:
+			values.Text[field.ID] = strings.TrimSpace(field.Value)
+		case FormCheckbox:
+			values.Checked[field.ID] = field.Checked
+		case FormChoice:
+			value := ""
+			if field.SelectedIndex >= 0 && field.SelectedIndex < len(field.Options) {
+				value = field.Options[field.SelectedIndex].Value
+			}
+			values.Choice[field.ID] = value
+		}
+	}
+	return values
+}
+
+func clampFormFocus(index, length int) int {
+	if length == 0 {
+		return 0
+	}
+	if index < 0 {
+		return 0
+	}
+	if index >= length {
+		return length - 1
+	}
+	return index
+}
+
 func nextSelectIndex(index, length int) int {
 	if length == 0 {
 		return 0
@@ -559,6 +789,19 @@ func deferSubmit(submit func(string) tea.Cmd, input string) tea.Cmd {
 	}
 	return func() tea.Msg {
 		cmd := submit(input)
+		if cmd == nil {
+			return nil
+		}
+		return cmd()
+	}
+}
+
+func deferFormSubmit(submit func(FormValues) tea.Cmd, values FormValues) tea.Cmd {
+	if submit == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		cmd := submit(values)
 		if cmd == nil {
 			return nil
 		}

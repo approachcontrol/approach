@@ -41,8 +41,9 @@ type runDeps struct {
 }
 
 type startProgramOptions struct {
-	Config    config.Config
-	ScanRepos func() ([]scanner.Repo, error)
+	Config         config.Config
+	ScanRepos      func() ([]scanner.Repo, error)
+	RepoCreateRoot string
 }
 
 func run(args []string, deps runDeps) error {
@@ -86,6 +87,10 @@ func run(args []string, deps runDeps) error {
 	if envRoot := deps.getenv("WORKTREE_ROOT"); envRoot != "" {
 		root = envRoot
 	}
+	repoCreateRoot, err := scanner.ResolveRoot(root)
+	if err != nil {
+		return fmt.Errorf("error resolving scan root: %w", err)
+	}
 
 	repos, err := deps.scan(scanner.ScanOptions{
 		Root:     root,
@@ -100,7 +105,8 @@ func run(args []string, deps runDeps) error {
 		MaxDepth: cfg.Scan.MaxDepth,
 	}
 	if err := deps.startProgramWithOptions(repos, startProgramOptions{
-		Config: cfg,
+		Config:         cfg,
+		RepoCreateRoot: repoCreateRoot,
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return deps.scan(scanOptions)
 		},
@@ -302,7 +308,9 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
-	p := tea.NewProgram(model.NewWithOptions(repos, modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)), tea.WithAltScreen())
+	modelOpts := modelOptionsFromConfig(cfg, opts.ScanRepos, sessionStore, planStore, flowStore)
+	modelOpts.RepoCreateRoot = opts.RepoCreateRoot
+	p := tea.NewProgram(model.NewWithOptions(repos, modelOpts), tea.WithAltScreen())
 	_, err = p.Run()
 	return err
 }

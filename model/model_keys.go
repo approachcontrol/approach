@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +34,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextWorktreeCreateRequest()
 			cmd = tagWorktreeCreateRequest(cmd, request)
+		} else if outcome == modal.Accepted && cmd != nil && isRepoCreateForm(view) {
+			var request uint64
+			m, request = m.nextRepoCreateRequest()
+			cmd = tagRepoCreateRequest(cmd, request)
 		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateInput(view) {
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
@@ -106,6 +111,10 @@ func isFlowCreateInput(view modal.View) bool {
 	return view.Kind == modal.Input && view.Placeholder == ui.FlowBaseRefInputPlaceholder
 }
 
+func isRepoCreateForm(view modal.View) bool {
+	return view.Kind == modal.Form && view.Form.Purpose == repoCreateFormPurpose
+}
+
 func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
@@ -121,6 +130,26 @@ func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 			}
 			return msg
 		case WorktreeBootstrapFailedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		default:
+			return msg
+		}
+	}
+}
+
+func tagRepoCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		switch msg := msg.(type) {
+		case RepoCreatedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		case RepoCreateFailedMsg:
 			if msg.Request == 0 {
 				msg.Request = request
 			}
@@ -220,17 +249,21 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
+			m.pendingRepoSelection = ""
 			m = m.resetRightPaneCursors()
 			return m.startFetchForMode()
 		}
 	case "down", "j":
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(1, m.repoContentHeight(), ui.LeftPaneWidth-2)
+			m.pendingRepoSelection = ""
 			m = m.resetRightPaneCursors()
 			return m.startFetchForMode()
 		}
 	case "f":
 		return m.startFetchVisibleRepos()
+	case "n":
+		return m.handleNewRepo()
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
@@ -768,6 +801,87 @@ func (m Model) setAgent(command string) tea.Cmd {
 		}
 		return AgentSetMsg{Command: command}
 	}
+}
+
+const (
+	repoCreateFormPurpose     = "repo-create"
+	repoCreateNameField       = "name"
+	repoCreateGitHubField     = "github"
+	repoCreateVisibilityField = "visibility"
+)
+
+func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
+	if !m.canCreateRepo() {
+		m = m.setStatus(statusOther, "repo creation unavailable: scan root is not configured")
+		return m, nil
+	}
+	m.modal = m.repoCreateForm("", true, actions.RepoVisibilityPublic, "", "")
+	return m, nil
+}
+
+func (m Model) repoCreateForm(name string, createGitHub bool, visibility actions.RepoVisibility, retryPath, errText string) modal.Modal {
+	selectedVisibility := 0
+	if visibility == actions.RepoVisibilityPrivate {
+		selectedVisibility = 1
+	}
+	form := modal.OpenForm(modal.FormSpec{
+		Purpose: repoCreateFormPurpose,
+		Title:   "New repo",
+		Fields: []modal.FormField{
+			{ID: repoCreateNameField, Kind: modal.FormText, Label: "Repo name", Placeholder: "my-repo", Value: name},
+			{ID: repoCreateGitHubField, Kind: modal.FormCheckbox, Label: "Create GitHub repo", Checked: createGitHub},
+			{ID: repoCreateVisibilityField, Kind: modal.FormChoice, Label: "Visibility", Options: []modal.SelectItem{
+				{Label: "Public", Value: string(actions.RepoVisibilityPublic)},
+				{Label: "Private", Value: string(actions.RepoVisibilityPrivate)},
+			}, SelectedIndex: selectedVisibility},
+		},
+		Validate: func(values modal.FormValues) error {
+			return validateRepoCreateForm(values, retryPath)
+		},
+		Submit: func(values modal.FormValues) tea.Cmd {
+			opts := m.repoCreateOptionsFromForm(values, retryPath)
+			return m.repoCreate(opts, 0)
+		},
+	})
+	if errText != "" {
+		form = form.SetFormError(errText)
+	}
+	return form
+}
+
+func validateRepoCreateForm(values modal.FormValues, retryPath string) error {
+	name := strings.TrimSpace(values.Text[repoCreateNameField])
+	if name == "" {
+		return fmt.Errorf("repo name cannot be empty")
+	}
+	if retryPath != "" {
+		retryName := filepath.Base(filepath.Clean(retryPath))
+		if name != retryName {
+			return fmt.Errorf("repo name must remain %s when retrying GitHub setup", retryName)
+		}
+		if !values.Checked[repoCreateGitHubField] {
+			return fmt.Errorf("GitHub creation must stay enabled when retrying GitHub setup")
+		}
+	}
+	return nil
+}
+
+func (m Model) repoCreateOptionsFromForm(values modal.FormValues, retryPath string) actions.RepoCreateOptions {
+	visibility := actions.RepoVisibility(values.Choice[repoCreateVisibilityField])
+	if visibility != actions.RepoVisibilityPrivate {
+		visibility = actions.RepoVisibilityPublic
+	}
+	opts := actions.RepoCreateOptions{
+		Root:         m.repoCreateRoot,
+		Name:         values.Text[repoCreateNameField],
+		CreateGitHub: values.Checked[repoCreateGitHubField],
+		Visibility:   visibility,
+	}
+	if retryPath != "" {
+		opts.RemoteOnlyRetry = true
+		opts.ExistingLocalPath = retryPath
+	}
+	return opts
 }
 
 func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {

@@ -64,6 +64,7 @@ filter matches, or a load failure with details in the status bar.
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
+| `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
 | `tab` | Switch focus to right pane |
 | `q`/`esc` | Quit |
 
@@ -109,6 +110,18 @@ and flows.
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
 list captured when the key is pressed.
+
+Press `n` in the left repo pane to create a new repository directly under the
+resolved scan root. The form asks for a repo name, whether to create a GitHub
+repo (checked by default), and public/private visibility (public by default).
+Repo names must be one path segment: they cannot be empty, `.`, `..`, start
+with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
+worktree directories).
+wtui always creates the local Git repository first. When GitHub creation is
+enabled, wtui then runs `gh repo create <name> --public|--private --source <path> --remote origin`;
+`gh` must be installed and authenticated. If the GitHub step fails after local
+creation succeeds, wtui keeps the local repo and reopens the form so submitting
+again retries only the GitHub/origin setup against that existing local path.
 
 ### Worktrees view (mode 1)
 
@@ -501,7 +514,10 @@ repo_path = "~/projects/wtui"
 script = ".wtui/bootstrap"
 ```
 
-`WORKTREE_ROOT` overrides `[scan].root` when both are set. `[agent].plan_prompt`
+`WORKTREE_ROOT` overrides `[scan].root` when both are set. The scan root is
+cleaned before scanning; explicit relative roots preserve relative repo paths
+for compatibility. The same root is resolved to an absolute path when used as
+the parent directory for left-pane repo creation. `[agent].plan_prompt`
 customizes the editable instructions shown before launching an agent from the
 plans pane, while `[flow_prompts]` customizes Flow phase launch templates.
 `[editor].command` customizes the editor used by the plans pane edit action.
@@ -511,7 +527,7 @@ foundation fields for provider, launch, and agent settings.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos; depth defaults to 2 and can be reduced with `[scan].max_depth` |
+| `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos and create new repos under; explicit relative paths are preserved for scanned repo identity and resolved from the current working directory for repo creation, depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
 | `WTUI_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by wtui |
 | `WTUI_PLAN_STATE_ROOT` | `WTUI_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `wtui plan`; set automatically for agents launched by wtui. In the TUI it relocates the whole artifact root, moving sessions, plans, and flows |
