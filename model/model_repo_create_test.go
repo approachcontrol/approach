@@ -3,6 +3,7 @@ package model_test
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -192,6 +193,41 @@ func TestModel_RepoCreatedRefreshKeepsSelectedNewRepoVisible(t *testing.T) {
 	}
 	if got := m.RepoScroll(); got == 0 {
 		t.Fatalf("RepoScroll() = %d, want selected repo scrolled into view", got)
+	}
+}
+
+func TestModel_RepoCreatedRefreshSelectsRelativeScanRepoFromAbsoluteDestination(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	root := filepath.Join(cwd, "repos")
+	initial := []scanner.Repo{{Path: filepath.Join("repos", "alpha"), DisplayName: "alpha"}}
+	refreshed := []scanner.Repo{
+		{Path: filepath.Join("repos", "alpha"), DisplayName: "alpha"},
+		{Path: filepath.Join("repos", "project"), DisplayName: "project"},
+	}
+
+	m := model.NewWithOptions(initial, model.Options{
+		RepoCreateRoot: root,
+		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
+			return actions.RepoCreateResult{DestinationPath: filepath.Join(root, "project"), LocalCreated: true}, nil
+		},
+		ScanRepos: func() ([]scanner.Repo, error) {
+			return refreshed, nil
+		},
+	})
+	m, _ = update(m, repoCreateKey("n"))
+	m, _ = update(m, repoCreateKey("project"))
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, refreshCmd := update(m, cmd())
+	if refreshCmd == nil {
+		t.Fatal("repo creation should refresh repos")
+	}
+
+	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	m, _ = update(m, refreshMsg)
+
+	if got := m.Selected(); got != 1 {
+		t.Fatalf("Selected() = %d, want relative scanned repo index 1", got)
 	}
 }
 

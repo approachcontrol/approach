@@ -684,17 +684,18 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 		pendingPath := m.pendingRepoSelection
 		m.repos = m.repos.SetQuery("").SetItems(msg.Repos)
 		for _, repo := range m.filteredRepos() {
-			if repo.Path != pendingPath {
+			if !sameRepoPath(repo.Path, pendingPath) {
 				continue
 			}
 			m.repos = m.repos.SelectFunc(func(repo scanner.Repo) bool {
-				return repo.Path == pendingPath
+				return sameRepoPath(repo.Path, pendingPath)
 			})
 			m.pendingRepoSelection = ""
 			m = m.reflowRepos()
 			m = m.resetRightPaneCursors()
 			return m.startFetchForMode()
 		}
+		m.pendingRepoSelection = ""
 	}
 
 	oldPath, oldOK := m.currentRepoPath()
@@ -714,6 +715,20 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 		return m.startFetchForMode()
 	}
 	return m.clearStatus(statusOther), nil
+}
+
+func sameRepoPath(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && filepath.Clean(absA) == filepath.Clean(absB)
 }
 
 func (m Model) handleRepoRefreshFailed(msg RepoRefreshFailedMsg) Model {
