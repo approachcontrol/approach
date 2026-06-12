@@ -4333,6 +4333,79 @@ func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 	}
 }
 
+func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"codex-session-1": {lines: []string{"first output"}},
+		"codex-session-2": {lines: []string{"second output"}},
+		"codex-session-3": {lines: []string{"third output"}},
+	}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			return terms[ctx.ResumeSessionID], nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/one", Branch: "feature/one"},
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/two", Branch: "feature/two"},
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-3", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/three", Branch: "feature/three"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	terms["codex-session-2"].state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	view := m.View()
+	for _, want := range []string{"1 codex feature/one running", "2 codex feature/three running", "first output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renumbered session terminal view missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"3 codex", "second output", "feature/two"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("dismissed session terminal should not remain visible with %q:\n%s", unwanted, view)
+		}
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if view = m.View(); !strings.Contains(view, "third output") || strings.Contains(view, "first output") {
+		t.Fatalf("switching to renumbered terminal 2 should show former third terminal:\n%s", view)
+	}
+
+	terms["codex-session-1"].state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	view = m.View()
+	for _, want := range []string{"1 codex feature/three running", "third output"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("closing first session terminal should promote former second tab to 1:\n%s", view)
+		}
+	}
+	if strings.Contains(view, "2 codex") || strings.Contains(view, "feature/one") {
+		t.Fatalf("session tabs should remain contiguous after closing first tab:\n%s", view)
+	}
+}
+
 func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"done"}, state: "exited"}
 	m := model.NewWithOptions(testRepos(), model.Options{
