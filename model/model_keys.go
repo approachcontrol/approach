@@ -1580,7 +1580,7 @@ func writeFlowRestartPromptIfNeeded(b *strings.Builder, record flowstore.FlowRec
 
 func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
-	b.WriteString("Merge the reviewed PR deliberately.\n\n")
+	b.WriteString("Merge the PR deliberately.\n\n")
 	writeFlowChangeMetadata(&b, record)
 	if flowstore.HasPRTarget(record.PR) {
 		fmt.Fprintf(&b, "\n\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s\n", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
