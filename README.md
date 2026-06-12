@@ -310,10 +310,12 @@ the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them. Flow terminal focus starts in wtui command
 mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
 closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
-and `ctrl+g` sends a literal `ctrl+g`. When Implementation is still gated by
-Plan Review, wtui reports the Plan Review state and notes instead of
-launching. When PR Creation is complete but structured PR metadata is missing,
-Autoreview remains pending and the Flow row shows `autoreview:missing-pr`.
+`ctrl+g` sends a literal `ctrl+g`, and `i` enters terminal input mode. In input
+mode, keys pass through to the PTY and `ctrl+g` returns to command mode. When
+Implementation is still gated by Plan Review, wtui reports the Plan Review state
+and notes instead of launching. When PR Creation is complete but structured PR
+metadata is missing, Autoreview remains pending and the Flow row shows
+`autoreview:missing-pr`.
 Expanded phase rows group child implementation phases directly under
 Implementation.
 
