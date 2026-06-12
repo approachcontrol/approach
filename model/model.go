@@ -100,6 +100,7 @@ type Model struct {
 	flowFocus                 flowFocus
 	embeddedTerminalTickGen   uint64
 	flowRefreshTickGen        uint64
+	flowRefreshInFlight       uint64
 	terminalPrefixActive      bool
 	terminalConfirmID         embeddedTerminalID
 	terminalConfirmScope      embeddedTerminalScope
@@ -342,6 +343,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
+	if m.mode == ui.ModeFlows {
+		if _, ok := m.currentRepoPath(); ok {
+			m.flowRefreshInFlight = m.currentListRequest(ui.ModeFlows)
+		}
+	}
 	return m
 }
 
@@ -433,7 +439,10 @@ func (m Model) Init() tea.Cmd {
 	if m.mode != ui.ModeFlows {
 		return fetchCmd
 	}
-	return batchCommands(fetchCmd, m.flowRefreshTickCmd())
+	if fetchCmd != nil {
+		return fetchCmd
+	}
+	return m.flowRefreshTickCmd()
 }
 
 func (m Model) View() string {
@@ -771,8 +780,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.flowRefreshTickGen || m.mode != ui.ModeFlows {
 			return m, nil
 		}
-		next, fetchCmd := m.startFetchMode(ui.ModeFlows)
-		return next, batchCommands(fetchCmd, next.flowRefreshTickCmd())
+		return m.startFlowRefreshFetch()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -842,7 +850,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PlanResultMsg:
 		return m.handlePlanResult(msg), nil
 	case FlowResultMsg:
-		return m.handleFlowResult(msg), nil
+		next := m.handleFlowResult(msg)
+		return next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
 	case PlanReadResultMsg:
 		return m.handlePlanReadResult(msg)
 	case WorktreeDiffResultMsg:
@@ -936,7 +945,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ForceDeleteFailedMsg:
 		return m.handleForceDeleteFailed(msg), nil
 	case FetchErrorMsg:
-		return m.handleFetchError(msg), nil
+		next := m.handleFetchError(msg)
+		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
 		next := m.handleActionFailed(msg)
 		if next.mode == ui.ModeFlows && next.isCurrentRepo(msg.RepoPath) {

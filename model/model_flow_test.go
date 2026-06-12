@@ -1766,6 +1766,9 @@ func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 	for _, msg := range runBatchCmd(t, tickBatch) {
 		var followup tea.Cmd
 		m, followup = update(m, msg)
+		if _, ok := msg.(model.FlowResultMsg); ok {
+			continue
+		}
 		if followup != nil {
 			t.Fatalf("exited Flow terminal should not reschedule repaint, got %T", followup)
 		}
@@ -2149,6 +2152,9 @@ func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) 
 	for _, msg := range runBatchCmd(t, tickBatch) {
 		var followup tea.Cmd
 		m, followup = update(m, msg)
+		if _, ok := msg.(model.FlowResultMsg); ok {
+			continue
+		}
 		if followup != nil {
 			t.Fatalf("failed Flow terminal should stop repaint loop, got %T", followup)
 		}
