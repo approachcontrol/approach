@@ -717,10 +717,11 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSetAgent() (tea.Model, tea.Cmd) {
-	m.modal = modal.OpenSelect(
+	m.modal = modal.OpenSelectWithLayout(
 		"Choose interactive helper",
 		agentSelectItems(),
 		selectedAgentIndex(m.agentCommand),
+		modal.Layout{Width: 32, Height: 6, Placement: modal.PlacementCenter},
 		func(value string) tea.Cmd { return m.setAgent(agent.Normalize(value)) },
 	)
 	return m, nil

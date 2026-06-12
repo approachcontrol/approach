@@ -31,7 +31,8 @@ const (
 	OverlaySessionTranscript
 	OverlayPlanText
 	OverlayInput
-	OverlayAgentSelect
+	OverlaySelect
+	OverlayAgentSelect   = OverlaySelect
 	OverlayWorktreeInput = OverlayInput
 )
 
@@ -40,6 +41,14 @@ type InputMode int
 const (
 	InputSingleLine InputMode = iota
 	InputMultiLine
+)
+
+type SelectPlacement int
+
+const (
+	SelectPlacementCenter SelectPlacement = iota
+	SelectPlacementTopCenter
+	SelectPlacementBottomCenter
 )
 
 const BranchPrompt = "New branch"
@@ -199,6 +208,9 @@ type RenderParams struct {
 	SelectPrompt               string
 	SelectItems                []SelectItem
 	SelectSelected             int
+	SelectWidth                int
+	SelectHeight               int
+	SelectPlacement            SelectPlacement
 	BranchScroll               int
 	RepoScroll                 int
 	StashScroll                int
@@ -355,11 +367,17 @@ func Render(p RenderParams) string {
 		p.Height = 24
 	}
 
-	// Overlay takes over the entire screen
 	if p.Overlay != OverlayNone {
+		if p.Overlay == OverlaySelect {
+			return renderSelectOverlay(p)
+		}
 		return renderOverlay(p)
 	}
 
+	return renderApplication(p)
+}
+
+func renderApplication(p RenderParams) string {
 	var repoPath string
 	if p.Selected >= 0 && p.Selected < len(p.Repos) {
 		repoPath = p.Repos[p.Selected].Path
@@ -786,8 +804,8 @@ func renderStatusBarWithState(sp statusBarParams) string {
 			return renderStatusText(width, "  enter: submit  alt+enter: newline  esc: cancel  bksp/del: edit")
 		}
 		return renderStatusText(width, "  enter: submit  esc: cancel  bksp/del: edit  left/right: move")
-	case overlay == OverlayAgentSelect:
-		return statusStyle.Width(width).Render("  up/down select  enter: confirm  esc: cancel")
+	case overlay == OverlaySelect:
+		return renderStatusText(width, "  up/down select  enter: confirm  esc: cancel")
 	case overlay != OverlayNone:
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
@@ -2637,6 +2655,288 @@ func renderSelectedWorktreeRow(wt gitquery.Worktree, width int) string {
 	return renderSelectedRow(line, width)
 }
 
+func renderSelectOverlay(p RenderParams) string {
+	bodyHeight := p.Height - 1
+	if bodyHeight < 0 {
+		bodyHeight = 0
+	}
+	statusBar := renderSelectOverlayStatusBar(p)
+	body := selectOverlayBaseBody(p, bodyHeight)
+	if p.Width <= 0 || bodyHeight <= 0 {
+		return joinBodyAndStatus(body, statusBar)
+	}
+
+	panelWidth, panelHeight := selectPanelDimensions(p.SelectPrompt, p.SelectItems, p.SelectWidth, p.SelectHeight, p.Width, bodyHeight)
+	if panelWidth <= 0 || panelHeight <= 0 {
+		return joinBodyAndStatus(body, statusBar)
+	}
+	panel := renderSelectPanel(p.SelectPrompt, p.SelectItems, p.SelectSelected, panelWidth, panelHeight)
+	x, y := selectPanelPosition(p.Width, bodyHeight, panelWidth, panelHeight, p.SelectPlacement)
+	body = compositePanel(body, panel, x, y, p.Width)
+	return joinBodyAndStatus(body, statusBar)
+}
+
+func renderSelectOverlayStatusBar(p RenderParams) string {
+	return renderStatusBarWithState(statusBarParams{
+		Width:                  p.Width,
+		Mode:                   p.Mode,
+		Overlay:                p.Overlay,
+		ActivePane:             p.ActivePane,
+		Destructive:            p.Destructive,
+		TransientError:         p.TransientError,
+		TransientErrorFadeStep: p.TransientErrorFadeStep,
+		SearchActive:           p.SearchActive,
+		RepoSearch:             p.RepoSearch,
+		ItemSearch:             p.ItemSearch,
+		FetchAvailable:         p.FetchAvailable,
+		PullAvailable:          p.PullAvailable,
+		AgentAvailable:         p.AgentAvailable,
+		NewAgent:               p.NewAgentAvailable,
+	})
+}
+
+func selectOverlayBaseBody(p RenderParams, bodyHeight int) []string {
+	if bodyHeight <= 0 {
+		return nil
+	}
+	if p.Width <= 0 || p.Width < LeftPaneWidth+2 || p.Height < RepoContentOverhead {
+		return blankLines(p.Width, bodyHeight)
+	}
+	base := p
+	base.Overlay = OverlayNone
+	lines := strings.Split(renderApplication(base), "\n")
+	if len(lines) > 0 {
+		lines = lines[:len(lines)-1]
+	}
+	body := make([]string, bodyHeight)
+	copy(body, lines)
+	for i := range body {
+		body[i] = fitLineToWidth(body[i], p.Width)
+	}
+	return body
+}
+
+func blankLines(width, height int) []string {
+	lines := make([]string, height)
+	if width <= 0 {
+		return lines
+	}
+	blank := strings.Repeat(" ", width)
+	for i := range lines {
+		lines[i] = blank
+	}
+	return lines
+}
+
+func joinBodyAndStatus(body []string, statusBar string) string {
+	if len(body) == 0 {
+		return statusBar
+	}
+	return strings.Join(body, "\n") + "\n" + statusBar
+}
+
+func selectPanelDimensions(prompt string, items []SelectItem, configuredWidth, configuredHeight, terminalWidth, bodyHeight int) (int, int) {
+	if terminalWidth <= 0 || bodyHeight <= 0 {
+		return 0, 0
+	}
+	width := configuredWidth
+	if width <= 0 {
+		width = autoSelectPanelWidth(prompt, items)
+	}
+	width = min(width, terminalWidth)
+	if width < 1 {
+		width = 1
+	}
+	height := configuredHeight
+	if height <= 0 {
+		height = 2 + 1 + len(items)
+	}
+	height = min(height, bodyHeight)
+	if height < 1 {
+		height = 1
+	}
+	return width, height
+}
+
+func autoSelectPanelWidth(prompt string, items []SelectItem) int {
+	if prompt == "" {
+		prompt = "Choose"
+	}
+	widest := lipgloss.Width(prompt)
+	for _, item := range items {
+		label := selectItemLabel(item)
+		if width := lipgloss.Width(label); width > widest {
+			widest = width
+		}
+	}
+	return max(12, widest+4)
+}
+
+func selectPanelPosition(terminalWidth, bodyHeight, panelWidth, panelHeight int, placement SelectPlacement) (int, int) {
+	x := (terminalWidth - panelWidth) / 2
+	if x < 0 {
+		x = 0
+	}
+	var y int
+	switch placement {
+	case SelectPlacementTopCenter:
+		y = 0
+	case SelectPlacementBottomCenter:
+		y = bodyHeight - panelHeight
+	default:
+		y = (bodyHeight - panelHeight) / 2
+	}
+	if y < 0 {
+		y = 0
+	}
+	return x, y
+}
+
+func renderSelectPanel(prompt string, items []SelectItem, selected, width, height int) []string {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	if prompt == "" {
+		prompt = "Choose"
+	}
+	if selected < 0 || selected >= len(items) {
+		selected = 0
+	}
+	lines := make([]string, 0, height)
+	lines = append(lines, selectPanelBorderLine("┌", "─", "┐", width))
+	if height > 1 {
+		lines = append(lines, selectPanelContentLine(activeModeStyle.Render(prompt), width))
+	}
+	itemRows := height - 3
+	if itemRows < 0 {
+		itemRows = 0
+	}
+	start := selectItemViewportStart(len(items), selected, itemRows)
+	for i := 0; i < itemRows; i++ {
+		itemIndex := start + i
+		if itemIndex >= len(items) {
+			lines = append(lines, selectPanelContentLine("", width))
+			continue
+		}
+		label := selectItemLabel(items[itemIndex])
+		line := "  " + label
+		if itemIndex == selected {
+			line = selectedStyle.Render("> " + label)
+		}
+		lines = append(lines, selectPanelContentLine(line, width))
+	}
+	if height > 2 {
+		lines = append(lines, selectPanelBorderLine("└", "─", "┘", width))
+	}
+	for len(lines) < height {
+		lines = append(lines, selectPanelContentLine("", width))
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i := range lines {
+		lines[i] = truncateToWidth(lines[i], width)
+	}
+	return lines
+}
+
+func selectPanelBorderLine(left, fill, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line := left + strings.Repeat(fill, max(0, width-2)) + right
+	return truncateToWidth(lipgloss.NewStyle().Foreground(clearDarkTheme.activeBorder).Render(line), width)
+}
+
+func selectPanelContentLine(content string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	border := lipgloss.NewStyle().Foreground(clearDarkTheme.activeBorder)
+	if width == 1 {
+		return truncateToWidth(border.Render("│"), width)
+	}
+	innerWidth := width - 2
+	if width >= 4 {
+		if strings.HasPrefix(ansi.Strip(content), "> ") {
+			content = truncateToWidth(content, innerWidth)
+			padding := innerWidth - lipgloss.Width(content)
+			if padding < 0 {
+				padding = 0
+			}
+			return border.Render("│") + content + strings.Repeat(" ", padding) + border.Render("│")
+		}
+		contentWidth := width - 4
+		content = truncateToWidth(content, contentWidth)
+		padding := contentWidth - lipgloss.Width(content)
+		if padding < 0 {
+			padding = 0
+		}
+		inner := " " + content + strings.Repeat(" ", padding) + " "
+		return border.Render("│") + inner + border.Render("│")
+	}
+	content = truncateToWidth(content, innerWidth)
+	padding := innerWidth - lipgloss.Width(content)
+	if padding < 0 {
+		padding = 0
+	}
+	return border.Render("│") + content + strings.Repeat(" ", padding) + border.Render("│")
+}
+
+func selectItemViewportStart(total, selected, visibleRows int) int {
+	if total <= 0 || visibleRows <= 0 || total <= visibleRows {
+		return 0
+	}
+	if selected < 0 || selected >= total {
+		selected = 0
+	}
+	start := selected - visibleRows + 1
+	if start < 0 {
+		return 0
+	}
+	maxStart := total - visibleRows
+	if start > maxStart {
+		return maxStart
+	}
+	return start
+}
+
+func selectItemLabel(item SelectItem) string {
+	if item.Label != "" {
+		return item.Label
+	}
+	return item.Value
+}
+
+func compositePanel(base, panel []string, x, y, width int) []string {
+	if width <= 0 {
+		return base
+	}
+	out := append([]string(nil), base...)
+	for i, panelLine := range panel {
+		row := y + i
+		if row < 0 || row >= len(out) {
+			continue
+		}
+		panelLine = truncateToWidth(panelLine, width-x)
+		panelWidth := lipgloss.Width(panelLine)
+		line := fitLineToWidth(out[row], width)
+		left := ansi.Cut(line, 0, x)
+		right := ansi.Cut(line, x+panelWidth, width)
+		out[row] = fitLineToWidth(left+panelLine+right, width)
+	}
+	return out
+}
+
+func fitLineToWidth(line string, width int) string {
+	line = truncateToWidth(line, width)
+	padding := width - lipgloss.Width(line)
+	if padding > 0 {
+		line += strings.Repeat(" ", padding)
+	}
+	return line
+}
+
 func renderOverlay(p RenderParams) string {
 	inputParams := inputRenderParamsFrom(p)
 	statusBar := renderStatusBarWithState(statusBarParams{
@@ -2666,10 +2966,6 @@ func renderOverlay(p RenderParams) string {
 	}
 	if p.Overlay == OverlayInput {
 		lines := renderInputDialog(inputParams, p.Width, contentHeight)
-		return strings.Join(lines, "\n") + "\n" + statusBar
-	}
-	if p.Overlay == OverlayAgentSelect {
-		lines := renderSelectDialog(p.SelectPrompt, p.SelectItems, p.SelectSelected, p.Width, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayPlanText {
@@ -2734,44 +3030,6 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 			style = dirtyRedStyle.Bold(true)
 		}
 		lines[mid] = strings.Repeat(" ", pad) + style.Render(prompt)
-	}
-	return lines
-}
-
-func renderSelectDialog(prompt string, items []SelectItem, selected int, width, height int) []string {
-	lines := make([]string, height)
-	if height <= 0 {
-		return lines
-	}
-	if prompt == "" {
-		prompt = "Choose"
-	}
-	if selected < 0 || selected >= len(items) {
-		selected = 0
-	}
-
-	blockHeight := len(items) + 1
-	start := (height - blockHeight) / 2
-	if start < 0 {
-		start = 0
-	}
-	if start < len(lines) {
-		lines[start] = centeredLine(activeModeStyle.Render(prompt), width)
-	}
-	for i, item := range items {
-		row := start + 1 + i
-		if row >= len(lines) {
-			break
-		}
-		label := item.Label
-		if label == "" {
-			label = item.Value
-		}
-		line := "  " + label
-		if i == selected {
-			line = selectedStyle.Render("> " + label)
-		}
-		lines[row] = centeredLine(line, width)
 	}
 	return lines
 }
