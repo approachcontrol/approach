@@ -75,14 +75,15 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
-| `←`/`h`/`→`/`l` | Cycle through modes |
-| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan phases |
+| `←`/`→`/`l` | Cycle through modes; use arrows in flows view because `h` toggles Flow headless launch mode |
+| `h` | Cycle to the previous mode outside flows view; toggle Flow headless launch mode in flows view |
+| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, expand/collapse plan or Flow phases, or launch the selected launchable Flow phase |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or launch the selected ready Flow phase through the classic external route |
+| `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch or drop stash — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -90,13 +91,13 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
-| `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan and Flow phase rows |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan phase rows |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
-| `i` | Alias for plan implementation launch; in flows view, launch the selected ready Flow phase in an embedded headless terminal for CLI agents |
+| `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
 | `tab` | Switch focus to left pane |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -285,22 +286,24 @@ or worktree basename, phase progress plus the current phase state, linked plan
 ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
-`n` to create a new Flow, `x` to expand or collapse phase detail rows for the
-selected Flow, and `o` to page the linked plan body in `less -R`; wtui shows a
-status message when the selected Flow has no linked plan. Press `y` to copy the
-selected Flow ID, or the selected phase ID when a phase row is selected. Press
-`r` on an expanded phase row with an attached provider session to resume that
-session; CLI resumes are recorded as a fresh Flow phase launch attempt, while
-`codex-app` resumes navigate to the existing app thread without extra launch
-tracking. Press `a` on a Flow with a ready phase to launch the configured agent
-through the classic external terminal, multiplexer, or `codex-app` deep-link
-route. Press `i` on a ready phase to launch CLI `codex` or `claude` in a
-runtime-only embedded headless terminal inside the flows pane; `codex-app`
-continues to use the external deep-link route. Embedded headless output is
-readable terminal text, not raw JSON events: `codex exec` streams progress as
-it works, while `claude --print` prints its result when the run completes, so a
-Claude phase can show an empty terminal until it finishes (the terminal tab
-still shows `running`). While a Flow terminal is open,
+`n` to create a new Flow. On a Flow row, `enter` expands or collapses phase
+detail rows; `o` pages the linked plan body in `less -R`, and wtui shows a
+status message when the selected Flow has no linked plan. On an expanded phase
+row, `enter` launches the configured agent for that selected phase when it is
+ready, and it never falls back to another ready phase in the same Flow. Press
+`y` to copy the selected Flow ID, or the selected phase ID when a phase row is
+selected. Press `r` on an expanded phase row with an attached provider session
+to resume that session; CLI resumes are recorded as a fresh Flow phase launch
+attempt, while `codex-app` resumes navigate to the existing app thread without
+extra launch tracking. Flow headless mode is on by default: selected CLI
+`codex` and `claude` phase launches run in a runtime-only embedded headless
+terminal inside the flows pane. Press `h` to turn headless mode off or on; with
+headless off, CLI phase launches use the existing external terminal or
+multiplexer route. `codex-app` always uses the external deep-link route.
+Embedded headless output is readable terminal text, not raw JSON events:
+`codex exec` streams progress as it works, while `claude --print` prints its
+result when the run completes, so a Claude phase can show an empty terminal
+until it finishes (the terminal tab still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them, ordinary keys go to the PTY only when the
 terminal is focused, and `ctrl+g` opens terminal commands such as close,
@@ -490,7 +493,7 @@ foundation fields for provider, launch, and agent settings.
 
 ### Agent session hooks
 
-CLI agents launched from wtui with `a`, Flow embedded launch `i`, `N`, or
+CLI agents launched from wtui with `a`, `N`, Flow selected-phase `enter`, or
 session resume `r` are wired automatically: wtui passes Claude Code or Codex a
 session-end hook that calls the current wtui binary, and it exports `WTUI_*`
 metadata so hook records can be associated with the repo, worktree, branch, and
