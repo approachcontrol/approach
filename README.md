@@ -114,6 +114,9 @@ list captured when the key is pressed.
 Press `n` in the left repo pane to create a new repository directly under the
 resolved scan root. The form asks for a repo name, whether to create a GitHub
 repo (checked by default), and public/private visibility (public by default).
+Repo names must be one path segment: they cannot be empty, `.`, `..`, start
+with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
+worktree directories).
 wtui always creates the local Git repository first. When GitHub creation is
 enabled, wtui then runs `gh repo create <name> --public|--private --source <path> --remote origin`;
 `gh` must be installed and authenticated. If the GitHub step fails after local

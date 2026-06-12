@@ -106,6 +106,9 @@ under the resolved scan root. If the form's GitHub checkbox is enabled, wtui
 also runs `gh repo create <name> --public|--private --source <path> --remote origin`;
 `gh` must be installed and authenticated. A GitHub failure after local creation
 keeps the local repository and allows retrying only the GitHub/origin setup.
+Repo names must be one path segment: they cannot be empty, `.`, `..`, start
+with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
+worktree directories).
 
 ### `[editor]`
 

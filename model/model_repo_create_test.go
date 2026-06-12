@@ -227,6 +227,84 @@ func TestModel_RepoCreatePartialFailureRetriesGitHubOnly(t *testing.T) {
 	}
 }
 
+func TestModel_RepoCreatePartialFailureRefreshesLocalRepo(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		RepoCreateRoot: "/dev",
+		CreateRepo: func(actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
+			return actions.RepoCreateResult{
+				DestinationPath:   "/dev/project",
+				LocalCreated:      true,
+				PartialSuccess:    true,
+				RetryAllowed:      true,
+				ExistingLocalPath: "/dev/project",
+			}, errors.New("gh auth required")
+		},
+		ScanRepos: func() ([]scanner.Repo, error) {
+			return []scanner.Repo{
+				{Path: "/dev/alpha", DisplayName: "alpha"},
+				{Path: "/dev/project", DisplayName: "project"},
+			}, nil
+		},
+	})
+
+	m, _ = update(m, repoCreateKey("n"))
+	m, _ = update(m, repoCreateKey("project"))
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, refreshCmd := update(m, cmd())
+	if refreshCmd == nil {
+		t.Fatal("partial local success should refresh repos behind the retry form")
+	}
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("Overlay() = %d, want retry form", m.Overlay())
+	}
+
+	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	m, _ = update(m, refreshMsg)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
+
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("Overlay() = %d, want closed form after cancel", m.Overlay())
+	}
+	if got := m.Selected(); got != 1 {
+		t.Fatalf("Selected() = %d, want refreshed local repo index 1", got)
+	}
+}
+
+func TestModel_RepoCreateRetryRequiresGitHubEnabled(t *testing.T) {
+	var calls []actions.RepoCreateOptions
+	m := model.NewWithOptions(testRepos(), model.Options{
+		RepoCreateRoot: "/dev",
+		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
+			calls = append(calls, opts)
+			return actions.RepoCreateResult{
+				DestinationPath:   "/dev/project",
+				LocalCreated:      true,
+				PartialSuccess:    true,
+				RetryAllowed:      true,
+				ExistingLocalPath: "/dev/project",
+			}, errors.New("gh auth required")
+		},
+	})
+
+	m, _ = update(m, repoCreateKey("n"))
+	m, _ = update(m, repoCreateKey("project"))
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("retry form should not submit when GitHub creation is unchecked")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("CreateRepo calls = %d, want original call only", len(calls))
+	}
+	if !strings.Contains(m.View(), "GitHub creation must stay enabled when retrying GitHub setup") {
+		t.Fatalf("retry validation should explain required GitHub retry:\n%s", m.View())
+	}
+}
+
 func TestModel_RepoCreateRetryKeepsStateWhenNameChanges(t *testing.T) {
 	var calls []actions.RepoCreateOptions
 	m := model.NewWithOptions(testRepos(), model.Options{

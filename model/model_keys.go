@@ -856,6 +856,9 @@ func validateRepoCreateForm(values modal.FormValues, retryPath string) error {
 		if name != retryName {
 			return fmt.Errorf("repo name must remain %s when retrying GitHub setup", retryName)
 		}
+		if !values.Checked[repoCreateGitHubField] {
+			return fmt.Errorf("GitHub creation must stay enabled when retrying GitHub setup")
+		}
 	}
 	return nil
 }

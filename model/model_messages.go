@@ -727,9 +727,9 @@ func (m Model) handleRepoCreated(msg RepoCreatedMsg) (tea.Model, tea.Cmd) {
 	return m.startGlobalRefresh()
 }
 
-func (m Model) handleRepoCreateFailed(msg RepoCreateFailedMsg) Model {
+func (m Model) handleRepoCreateFailed(msg RepoCreateFailedMsg) (tea.Model, tea.Cmd) {
 	if !m.isCurrentRepoCreateRequest(msg.Request) {
-		return m
+		return m, nil
 	}
 	m = m.clearRepoCreateRequest(msg.Request)
 	errText := msg.Err
@@ -742,10 +742,16 @@ func (m Model) handleRepoCreateFailed(msg RepoCreateFailedMsg) Model {
 		if retryPath == "" {
 			retryPath = msg.Result.DestinationPath
 		}
+		if retryPath != "" {
+			m.pendingRepoSelection = retryPath
+		}
 		errText = "Local repo created; GitHub/origin setup failed: " + errText
 	}
 	m.modal = m.repoCreateForm(msg.Input, msg.CreateGitHub, msg.Visibility, retryPath, errText)
-	return m
+	if retryPath != "" {
+		return m.startGlobalRefresh()
+	}
+	return m, nil
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {

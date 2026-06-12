@@ -907,7 +907,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RepoCreatedMsg:
 		return m.handleRepoCreated(msg)
 	case RepoCreateFailedMsg:
-		return m.handleRepoCreateFailed(msg), nil
+		return m.handleRepoCreateFailed(msg)
 	case GitPulledMsg:
 		return m.handleGitPulled(msg)
 	case GitPullFailedMsg:
