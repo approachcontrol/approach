@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/sessions"
@@ -1310,19 +1311,20 @@ func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, 
 		return actions.AgentLaunchContext{}, false, m
 	}
 	ctx := actions.AgentLaunchContext{
-		Command:          command,
-		LaunchID:         newLaunchID(),
-		RepoPath:         repoPath,
-		WorktreePath:     record.WorktreePath,
-		WorkingDir:       workingDir,
-		Branch:           record.Branch,
-		Commit:           record.Commit,
-		SessionStateRoot: m.sessionStateRoot,
-		ResumeSessionID:  sessionID,
-		PlanID:           record.PlanID,
-		PlanPath:         record.PlanPath,
-		FlowID:           record.FlowID,
-		FlowPhaseID:      phase.PhaseID,
+		Command:           command,
+		LaunchID:          newLaunchID(),
+		RepoPath:          repoPath,
+		WorktreePath:      record.WorktreePath,
+		WorkingDir:        workingDir,
+		Branch:            record.Branch,
+		Commit:            record.Commit,
+		SessionStateRoot:  m.sessionStateRoot,
+		ResumeSessionID:   sessionID,
+		PlanID:            record.PlanID,
+		PlanPath:          record.PlanPath,
+		FlowID:            record.FlowID,
+		FlowPhaseID:       phase.PhaseID,
+		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(phase.Status),
 	}
 	return ctx, true, m
 }
@@ -1746,8 +1748,9 @@ func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	want := artifacts.NormalizePhaseID(phaseID)
 	for _, phase := range record.Phases {
-		if phase.PhaseID == phaseID {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
 			return phase, true
 		}
 	}
@@ -1801,13 +1804,22 @@ func (m Model) launchFlowEmbeddedHeadlessWithContext(ctx actions.AgentLaunchCont
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	ctx.FlowLaunchTracked = true
-	if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+	updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   ctx.FlowID,
 		PhaseID:  ctx.FlowPhaseID,
 		LaunchID: ctx.LaunchID,
-	}); err != nil {
+		Resume:   true,
+	})
+	if err != nil {
 		m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", err))
 		return m, nil
+	}
+	// The store decided from the persisted record whether this resume preserved
+	// a terminal phase or reopened a running one; the snapshot the launch
+	// context was built from may be stale, so failure handling must follow the
+	// persisted status.
+	if phase, ok := flowPhaseByID(updated, ctx.FlowPhaseID); ok {
+		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
@@ -1854,6 +1866,11 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 
 func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errText string) (Model, string) {
 	if ctx.FlowID == "" || ctx.FlowPhaseID == "" || (ctx.ResumeSessionID != "" && !ctx.FlowLaunchTracked) {
+		return m, errText
+	}
+	if ctx.FlowPhaseTerminal {
+		// The phase had already finished when this launch (a session resume)
+		// started; a failed resume must not regress it to needs_attention.
 		return m, errText
 	}
 	notes := "Agent launch failed"

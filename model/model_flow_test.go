@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
@@ -494,7 +495,7 @@ func TestModel_ExpandedFlowArrowKeysSelectPhaseRows(t *testing.T) {
 	if got := m.SelectedFlowPhaseID(); got != "plan" {
 		t.Fatalf("selected flow phase = %q, want plan", got)
 	}
-	if view := m.View(); !strings.Contains(view, "> completed") {
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "   >  completed") {
 		t.Fatalf("selected phase row should be visually marked:\n%s", view)
 	}
 
@@ -928,6 +929,9 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID != launched.LaunchID {
 		t.Fatalf("launch update = %#v, want fresh resume launch id %#v", launchUpdate, launched.LaunchID)
 	}
+	if !launchUpdate.Resume {
+		t.Fatalf("launch update = %#v, want resume launch so terminal phases keep their status", launchUpdate)
+	}
 	if !launched.FlowLaunchTracked {
 		t.Fatalf("expected Flow phase resume context to be marked tracked: %#v", launched)
 	}
@@ -1098,13 +1102,16 @@ func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testin
 	}
 }
 
-func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention(t *testing.T) {
+func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseCompleted,
+			}}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
@@ -1140,6 +1147,51 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
 	}
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want none; a failed resume must not regress a completed phase", phaseUpdates)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "terminal unavailable") {
+		t.Fatalf("status = %q, want launch failure", got)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseRunning,
+			}}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume flagged phase failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-flagged-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-flagged-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseNeedsAttention,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
 	}
@@ -1149,24 +1201,166 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureMarksTrackedLaunchNeedsAttention
 		!strings.Contains(update.Notes, "terminal unavailable") {
 		t.Fatalf("phase update = %#v", update)
 	}
-	if got := m.TransientError(); !strings.Contains(got, "terminal unavailable") {
-		t.Fatalf("status = %q, want launch failure", got)
+}
+
+func TestModel_RKeyOnFlowPhaseResumeFailureFlagsPhaseReopenedByStore(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			// The persisted phase changed to non-terminal since the list was
+			// fetched, so the store reopened it as running.
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseRunning,
+			}}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume reopened phase failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-reopened-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-reopened-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if len(phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one; the store reopened the phase, so a failed launch must flag it", phaseUpdates)
+	}
+	if update := phaseUpdates[0]; update.FlowID != "flow-1" ||
+		update.PhaseID != "review-loop" ||
+		update.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(update.Notes, "terminal unavailable") {
+		t.Fatalf("phase update = %#v", update)
 	}
 }
 
-func TestModel_RKeyOnFlowPhaseResumeRunFailureMarksTrackedLaunchNeedsAttention(t *testing.T) {
+func TestModel_RKeyOnFlowPhaseResumeFailureUsesNormalizedPersistedPhaseID(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: "review-loop",
+				Status:  flowstore.PhaseRunning,
+			}}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume normalized phase failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-normalized-failure",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-normalized-failure",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "Review-Loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if len(phaseUpdates) != 1 {
+		t.Fatalf("phase updates = %#v, want one; normalized persisted running phase must override terminal snapshot", phaseUpdates)
+	}
+	if update := phaseUpdates[0]; update.FlowID != "flow-1" ||
+		update.PhaseID != "Review-Loop" ||
+		update.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(update.Notes, "terminal unavailable") {
+		t.Fatalf("phase update = %#v", update)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			// An agent completed the phase since the list was fetched, so the
+			// store preserved its terminal status.
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseCompleted,
+			}}}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("terminal unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Resume completed-in-store failure",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/resume-completed-in-store",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-completed-in-store",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "review-loop",
+			Title:   "Review loop",
+			Status:  flowstore.PhaseNeedsAttention,
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-review", Status: "ended"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want none; the store preserved the completed phase, so a failed launch must not regress it", phaseUpdates)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseResumeRunFailureKeepsCompletedPhase(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
-	var phaseUpdate flowstore.PhaseUpdate
+	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{}, nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
-			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+			return flowstore.FlowRecord{FlowID: update.FlowID, Phases: []flowstore.FlowPhase{{
+				PhaseID: update.PhaseID,
+				Status:  flowstore.PhaseCompleted,
+			}}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-			phaseUpdate = update
+			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -1218,11 +1412,8 @@ func TestModel_RKeyOnFlowPhaseResumeRunFailureMarksTrackedLaunchNeedsAttention(t
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
 	}
-	if phaseUpdate.FlowID != "flow-1" ||
-		phaseUpdate.PhaseID != "review-loop" ||
-		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
-		!strings.Contains(phaseUpdate.Notes, "exit status") {
-		t.Fatalf("phase update = %#v", phaseUpdate)
+	if len(phaseUpdates) != 0 {
+		t.Fatalf("phase updates = %#v, want none; a failed resume must not regress a completed phase", phaseUpdates)
 	}
 }
 
@@ -1953,6 +2144,204 @@ func TestModel_FlowEmbeddedTerminalTickKeepsFailedTerminalVisible(t *testing.T) 
 	view := m.View()
 	if !strings.Contains(view, "failure output") || !strings.Contains(view, "1 codex implementation failed") {
 		t.Fatalf("failed Flow terminal should remain visible for error review:\n%s", view)
+	}
+}
+
+func TestModel_FlowEmbeddedLaunchMarksActiveFlowAndPhaseRows(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-active",
+		Branch:       "flow/active",
+		Title:        "Active terminal flow",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, ">● in_progress") {
+		t.Fatalf("active selected Flow row should show selection and marker:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, "   >● ready") {
+		t.Fatalf("active selected Flow phase should show phase indent, selection, and marker:\n%s", view)
+	}
+}
+
+func TestModel_FlowTerminalActivityFiltersActiveStates(t *testing.T) {
+	for _, tc := range []struct {
+		state      string
+		wantMarker bool
+	}{
+		{state: "running", wantMarker: true},
+		{state: "starting", wantMarker: true},
+		{state: "exited", wantMarker: false},
+		{state: "failed", wantMarker: false},
+		{state: "terminated", wantMarker: false},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					return &fakeEmbeddedTerminal{state: tc.state}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: "/dev/alpha-worktrees/flow-active",
+				Branch:       "flow/active",
+				Title:        "Active terminal flow",
+				Status:       flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+				},
+			}})
+
+			m = selectFlowPhaseByID(t, m, "implementation")
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			if cmd == nil {
+				t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+			}
+			m, _ = update(m, cmd())
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+
+			view := ansi.Strip(m.View())
+			gotMarker := strings.Contains(view, ">● in_progress")
+			if gotMarker != tc.wantMarker {
+				t.Fatalf("state %q marker = %t, want %t:\n%s", tc.state, gotMarker, tc.wantMarker, view)
+			}
+		})
+	}
+}
+
+func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-dismiss",
+		Branch:       "flow/dismiss",
+		Title:        "Dismiss terminal flow",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, ">● in_progress") {
+		t.Fatalf("running terminal should mark selected Flow row before dismissal:\n%s", view)
+	}
+
+	fakeTerm.state = "exited"
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "● in_progress") {
+		t.Fatalf("dismissed terminal should remove active marker:\n%s", view)
+	}
+	if strings.Contains(view, "1 codex implementation") {
+		t.Fatalf("dismissed terminal should remove flow terminal tab:\n%s", view)
+	}
+}
+
+func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		{
+			FlowID:       "flow-1",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/flow-one",
+			Branch:       "flow/one",
+			Title:        "Flow one",
+			Status:       flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+			},
+		},
+		{
+			FlowID:       "flow-2",
+			RepoPath:     "/dev/alpha",
+			WorktreePath: "/dev/alpha-worktrees/flow-two",
+			Branch:       "flow/two",
+			Title:        "Flow two",
+			Status:       flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Same phase ID", Status: flowstore.PhaseReady},
+			},
+		},
+	})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, " ● in_progress      flow/one") {
+		t.Fatalf("source flow should remain marked:\n%s", view)
+	}
+	if strings.Contains(view, ">● in_progress      flow/two") || strings.Contains(view, "   >● ready") {
+		t.Fatalf("same phase ID from another Flow must not mark selected target Flow or phase:\n%s", view)
+	}
+	if !strings.Contains(view, "   in_progress      flow/two") || !strings.Contains(view, "   >  ready") {
+		t.Fatalf("target Flow and selected phase should remain unmarked:\n%s", view)
 	}
 }
 

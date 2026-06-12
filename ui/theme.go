@@ -47,6 +47,7 @@ type themeStyles struct {
 	diffAdd           lipgloss.Style
 	diffDel           lipgloss.Style
 	diffHeader        lipgloss.Style
+	flowTerminal      lipgloss.Style
 	activeBorder      lipgloss.Color
 	inactiveBorder    lipgloss.Color
 	destructiveBorder lipgloss.Color
@@ -104,6 +105,7 @@ func newThemeStyles(p themePalette) themeStyles {
 		diffAdd:           lipgloss.NewStyle().Foreground(p.success),
 		diffDel:           lipgloss.NewStyle().Foreground(p.danger),
 		diffHeader:        lipgloss.NewStyle().Foreground(p.info),
+		flowTerminal:      lipgloss.NewStyle().Foreground(p.success),
 		activeBorder:      p.focus,
 		inactiveBorder:    p.borderMuted,
 		destructiveBorder: p.danger,
@@ -138,4 +140,5 @@ var (
 	diffAddStyle       = clearDarkTheme.diffAdd
 	diffDelStyle       = clearDarkTheme.diffDel
 	diffHdrStyle       = clearDarkTheme.diffHeader
+	flowTerminalStyle  = clearDarkTheme.flowTerminal
 )

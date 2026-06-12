@@ -71,6 +71,11 @@ type EmbeddedTerminalTab struct {
 	Active   bool
 }
 
+type FlowTerminalActivity struct {
+	FlowID  string
+	PhaseID string
+}
+
 // Mode represents the active right-pane view. The model owns the application
 // state, but the renderer needs the same typed value (and the model imports ui,
 // not the other way around), so the type lives here to avoid an import cycle.
@@ -224,6 +229,7 @@ type RenderParams struct {
 	FlowEmbeddedTerminals      []EmbeddedTerminalTab
 	FlowEmbeddedTerminalLines  []string
 	FlowEmbeddedTerminalPrefix bool
+	FlowTerminalActivity       []FlowTerminalActivity
 	FlowTerminalFocused        bool
 	ExpandedPlanID             string
 	ExpandedFlowID             string
@@ -510,9 +516,9 @@ func Render(p RenderParams) string {
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	case p.Mode == ModeFlows && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused)
+		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused)
 	case p.Mode == ModeFlows && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -2081,14 +2087,14 @@ const (
 	flowUpdatedWidth = 10
 )
 
-func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused bool) []string {
+func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused bool) []string {
 	if height <= 0 {
 		return nil
 	}
 	listHeight, terminalHeight := FlowSplitPanelHeights(height)
 	lines := make([]string, 0, height)
 	if len(records) > 0 {
-		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID)...)
+		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity)...)
 	} else {
 		lines = append(lines, renderPlaceholderPane(width, listHeight, "No flows")...)
 	}
@@ -2096,7 +2102,7 @@ func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width
 	return scrollAndPad(lines, 0, height)
 }
 
-func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string) []string {
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -2106,6 +2112,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		return []string{header}
 	}
 
+	active := newFlowTerminalActivitySet(activity)
 	var rows []string
 	for i, record := range records {
 		phase := flowPhaseProgress(record)
@@ -2120,7 +2127,8 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				branch = "missing-worktree"
 			}
 		}
-		line := formatFlowColumns("   ",
+		rowSelected := i == selected && selectedPhaseID == ""
+		line := formatFlowColumns(flowRowPrefix(false, active.hasFlow(record.FlowID)),
 			statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth)),
 			branchStyle.Render(fitSessionColumn(branch, flowBranchWidth)),
 			diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth)),
@@ -2129,8 +2137,8 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth)),
 			stashMsgStyle.Render(record.Title),
 		)
-		if i == selected && selectedPhaseID == "" {
-			selectedLine := truncateToWidth(formatFlowColumns(" > ",
+		if rowSelected {
+			line = renderSelectedFlowColumns(selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
 				record.Status,
 				branch,
 				phase,
@@ -2138,18 +2146,17 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				pr,
 				updated,
 				record.Title,
-			), width)
-			line = stashSelStyle.Width(width).Render(selectedLine)
+				width)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {
-			rows = append(rows, renderFlowPhaseRows(record, width, selectedPhaseID)...)
+			rows = append(rows, renderFlowPhaseRows(record, width, selectedPhaseID, active)...)
 		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID string) []string {
+func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID string, active flowTerminalActivitySet) []string {
 	if len(record.Phases) == 0 {
 		return []string{truncateToWidth("      No phases", width)}
 	}
@@ -2164,7 +2171,8 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 		if sessionSummary != "" {
 			title += "  " + sessionSummary
 		}
-		line := formatFlowColumns("      ",
+		rowActive := active.hasPhase(record.FlowID, phase.PhaseID)
+		line := formatFlowColumns(flowPhaseRowPrefix(false, rowActive),
 			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
 			"",
 			diffHdrStyle.Render(fitSessionColumn(phase.PhaseID+":"+state, flowPhaseWidth)),
@@ -2174,7 +2182,7 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 			stashMsgStyle.Render(title),
 		)
 		if phase.PhaseID == selectedPhaseID {
-			selectedLine := truncateToWidth(formatFlowColumns(" > ",
+			line = renderSelectedFlowColumns(selectedFlowPhaseRowPrefix(rowActive),
 				phase.Status,
 				"",
 				phase.PhaseID+":"+state,
@@ -2182,12 +2190,78 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 				"",
 				"",
 				title,
-			), width)
-			line = stashSelStyle.Width(width).Render(selectedLine)
+				width)
 		}
 		rows = append(rows, truncateToWidth(line, width))
 	}
 	return rows
+}
+
+type flowTerminalActivitySet struct {
+	flows  map[string]struct{}
+	phases map[string]map[string]struct{}
+}
+
+func newFlowTerminalActivitySet(activity []FlowTerminalActivity) flowTerminalActivitySet {
+	set := flowTerminalActivitySet{
+		flows:  make(map[string]struct{}, len(activity)),
+		phases: make(map[string]map[string]struct{}, len(activity)),
+	}
+	for _, item := range activity {
+		if item.FlowID == "" {
+			continue
+		}
+		set.flows[item.FlowID] = struct{}{}
+		if item.PhaseID == "" {
+			continue
+		}
+		if set.phases[item.FlowID] == nil {
+			set.phases[item.FlowID] = make(map[string]struct{}, 1)
+		}
+		set.phases[item.FlowID][item.PhaseID] = struct{}{}
+	}
+	return set
+}
+
+func (s flowTerminalActivitySet) hasFlow(flowID string) bool {
+	_, ok := s.flows[flowID]
+	return ok
+}
+
+func (s flowTerminalActivitySet) hasPhase(flowID, phaseID string) bool {
+	phases, ok := s.phases[flowID]
+	if !ok {
+		return false
+	}
+	_, ok = phases[phaseID]
+	return ok
+}
+
+func flowPhaseRowPrefix(selected, active bool) string {
+	return "   " + flowRowPrefix(selected, active)
+}
+
+func selectedFlowPhaseRowPrefix(active bool) string {
+	return selectedStyle.Render("   ") + selectedFlowRowPrefix(active)
+}
+
+func flowRowPrefix(selected, active bool) string {
+	selection := " "
+	if selected {
+		selection = ">"
+	}
+	marker := " "
+	if active {
+		marker = flowTerminalStyle.Render("●")
+	}
+	return selection + marker + " "
+}
+
+func selectedFlowRowPrefix(active bool) string {
+	if active {
+		return selectedStyle.Render(">") + selectedSegment(flowTerminalStyle, "●") + selectedStyle.Render(" ")
+	}
+	return selectedStyle.Render(">  ")
 }
 
 func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string) string {
@@ -2201,6 +2275,24 @@ func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title s
 		fitSessionColumn(updated, flowUpdatedWidth),
 		title,
 	)
+}
+
+func renderSelectedFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string, width int) string {
+	line := prefix
+	line += selectedStyle.Render(fitSessionColumn(status, flowStatusWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(branch, flowBranchWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(plan, flowPlanWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(pr, flowPRWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
+	line += selectedStyle.Render("  ")
+	line += selectedStyle.Render(title)
+	return renderSelectedRow(line, width)
 }
 
 func flowPhaseProgress(record flowstore.FlowRecord) string {

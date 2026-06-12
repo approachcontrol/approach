@@ -515,6 +515,7 @@ func (m Model) View() string {
 		FlowEmbeddedTerminals:      m.flowEmbeddedTerminalTabs(),
 		FlowEmbeddedTerminalLines:  m.flowEmbeddedTerminalLines(),
 		FlowEmbeddedTerminalPrefix: m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
+		FlowTerminalActivity:       m.flowTerminalActivity(),
 		FlowTerminalFocused:        m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
 		ExpandedPlanID:             m.expandedPlanID,
 		ExpandedFlowID:             m.expandedFlowID,
