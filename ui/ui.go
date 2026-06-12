@@ -151,6 +151,18 @@ const FlowContentOverhead = BranchContentOverhead + TableHeaderRows
 
 const flowSplitMinPanelHeight = 4
 
+const (
+	// EmbeddedTerminalFrameColumns is the number of columns consumed by the
+	// embedded terminal pane's left and right border.
+	EmbeddedTerminalFrameColumns = 2
+	// EmbeddedTerminalFrameRows is the number of rows consumed by the embedded
+	// terminal pane's top and bottom border.
+	EmbeddedTerminalFrameRows = 2
+	// EmbeddedTerminalHeaderRows is the non-PTY tab/header row inside the
+	// embedded terminal frame.
+	EmbeddedTerminalHeaderRows = 1
+)
+
 // StashPrefixWidth is the visible width consumed by the stash line prefix:
 // indent/cursor (3) + date (10) + separator (2).
 const StashPrefixWidth = 15
@@ -266,6 +278,58 @@ func FlowSplitPanelHeights(height int) (listHeight, terminalHeight int) {
 	return listHeight, terminalHeight
 }
 
+// RightContentWidth returns the render width inside the right pane after the
+// left pane, right-pane border, and optional shortcut pane are accounted for.
+func RightContentWidth(width, height int, activeStatusQuery bool) int {
+	rightContentWidth := width - LeftPaneWidth - 2
+	if shouldRenderShortcutPaneForViewport(width, height, activeStatusQuery) {
+		rightContentWidth -= ShortcutPaneWidth
+	}
+	if rightContentWidth < 0 {
+		return 0
+	}
+	return rightContentWidth
+}
+
+// EmbeddedTerminalRenderContentWidth returns the inner width available inside
+// the embedded terminal frame.
+func EmbeddedTerminalRenderContentWidth(outerWidth int) int {
+	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
+		return width
+	}
+	return 0
+}
+
+// EmbeddedTerminalRenderBodyHeight returns the number of live-output rows that
+// can render inside an embedded terminal pane allocation.
+func EmbeddedTerminalRenderBodyHeight(outerHeight int) int {
+	height := outerHeight - EmbeddedTerminalFrameRows - EmbeddedTerminalHeaderRows
+	if height > 0 {
+		return height
+	}
+	return 0
+}
+
+// EmbeddedTerminalPTYWidth returns the PTY width for an embedded terminal pane
+// allocation. PTY dimensions are clamped positive because the terminal backend
+// normalizes to positive sizes, even when a tiny frame leaves no drawable body.
+func EmbeddedTerminalPTYWidth(outerWidth int) int {
+	if width := outerWidth - EmbeddedTerminalFrameColumns; width > 0 {
+		return width
+	}
+	return 1
+}
+
+// EmbeddedTerminalPTYHeight returns the PTY height for an embedded terminal
+// pane allocation, excluding the border and non-PTY header row. Tiny panes with
+// no drawable body still receive the backend's positive minimum height.
+func EmbeddedTerminalPTYHeight(outerHeight int) int {
+	if height := EmbeddedTerminalRenderBodyHeight(outerHeight); height > 0 {
+		return height
+	}
+	return 1
+}
+
 // Render produces the full terminal view string.
 func Render(p RenderParams) string {
 	if p.Width == 0 {
@@ -372,7 +436,8 @@ func Render(p RenderParams) string {
 		NewAgent:                   p.NewAgentAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
-	showShortcutPane := !hasActiveStatusQuery(status) && shouldRenderShortcutPane(p.Width, innerHeight, status)
+	activeStatusQuery := hasActiveStatusQuery(status)
+	showShortcutPane := shouldRenderShortcutPaneForViewport(p.Width, p.Height, activeStatusQuery)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
 
 	// Border colors based on active pane.
@@ -401,13 +466,7 @@ func Render(p RenderParams) string {
 		Height(innerHeight).
 		Render(leftContent)
 
-	rightContentWidth := p.Width - LeftPaneWidth - 2 // left + right border
-	if showShortcutPane {
-		rightContentWidth = p.Width - LeftPaneWidth - ShortcutPaneWidth - 2
-	}
-	if rightContentWidth < 0 {
-		rightContentWidth = 0
-	}
+	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery)
 
 	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
 	rightContentHeight := p.Height - BranchContentOverhead
@@ -451,13 +510,13 @@ func Render(p RenderParams) string {
 	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
 		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0:
-		rightLines = renderEmbeddedTerminalPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, rightContentWidth, rightContentHeight)
+		rightLines = renderEmbeddedTerminalPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, p.ActivePane == 1, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	case p.Mode == ModeFlows && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix)
+		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused)
 	case p.Mode == ModeFlows && len(p.Flows) > 0:
 		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
 	default:
@@ -645,6 +704,14 @@ type shortcutSection struct {
 }
 
 func shouldRenderShortcutPane(width, height int, sp statusBarParams) bool {
+	return !hasActiveStatusQuery(sp) && shouldRenderShortcutPaneForInnerHeight(width, height)
+}
+
+func shouldRenderShortcutPaneForViewport(width, height int, activeStatusQuery bool) bool {
+	return !activeStatusQuery && shouldRenderShortcutPaneForInnerHeight(width, height-RepoContentOverhead)
+}
+
+func shouldRenderShortcutPaneForInnerHeight(width, height int) bool {
 	if width < LeftPaneWidth+ShortcutPaneWidth+MinContentPaneWidth {
 		return false
 	}
@@ -1764,26 +1831,96 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive bool, width, height int) []string {
-	if height <= 0 {
+func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused bool, outerWidth, outerHeight int) []string {
+	if outerHeight <= 0 {
 		return nil
 	}
-	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), width)
+	innerWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), innerWidth)
 	if prefixActive {
-		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), width)
+		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), innerWidth)
 	}
-	if height == 1 {
-		return []string{header}
-	}
-	bodyHeight := height - 1
-	lines := make([]string, 0, bodyHeight)
+	bodyHeight := EmbeddedTerminalRenderBodyHeight(outerHeight)
 	if len(liveLines) > bodyHeight {
 		liveLines = liveLines[len(liveLines)-bodyHeight:]
 	}
-	for _, line := range liveLines {
-		lines = append(lines, truncateToWidth(line, width))
+	contentHeight := outerHeight - EmbeddedTerminalFrameRows
+	if contentHeight < 0 {
+		contentHeight = 0
 	}
-	return append([]string{header}, scrollAndPad(lines, 0, bodyHeight)...)
+	contentLines := make([]string, 0, contentHeight)
+	if contentHeight >= EmbeddedTerminalHeaderRows {
+		contentLines = append(contentLines, header)
+	}
+	for _, line := range liveLines {
+		contentLines = append(contentLines, truncateToWidth(line, innerWidth))
+	}
+	if len(contentLines) < contentHeight {
+		contentLines = append(contentLines, make([]string, contentHeight-len(contentLines))...)
+	}
+	return renderEmbeddedTerminalFrame(contentLines, focused, outerWidth, outerHeight)
+}
+
+func renderEmbeddedTerminalFrame(contentLines []string, focused bool, outerWidth, outerHeight int) []string {
+	if outerHeight <= 0 {
+		return nil
+	}
+	innerWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
+	style := embeddedTerminalBorderStyle(focused)
+	top := style.Render("┌" + strings.Repeat("─", innerWidth) + "┐")
+	bottom := style.Render("└" + strings.Repeat("─", innerWidth) + "┘")
+	if outerWidth <= 1 {
+		top = style.Render("┌")
+		bottom = style.Render("└")
+	}
+	lines := []string{top}
+	if outerHeight >= 2 {
+		if outerHeight > 2 {
+			for i := 0; i < outerHeight-2; i++ {
+				content := ""
+				if i < len(contentLines) {
+					content = contentLines[i]
+				}
+				lines = append(lines, renderEmbeddedTerminalFrameContentLine(content, style, innerWidth, outerWidth))
+			}
+		}
+		lines = append(lines, bottom)
+	}
+	return fitEmbeddedTerminalFrameLines(lines, outerWidth, outerHeight)
+}
+
+func renderEmbeddedTerminalFrameContentLine(content string, borderStyle lipgloss.Style, innerWidth, outerWidth int) string {
+	if outerWidth <= 0 {
+		return ""
+	}
+	if outerWidth == 1 {
+		return borderStyle.Render("│")
+	}
+	content = truncateToWidth(content, innerWidth)
+	if padding := innerWidth - lipgloss.Width(content); padding > 0 {
+		content += strings.Repeat(" ", padding)
+	}
+	return borderStyle.Render("│") + content + borderStyle.Render("│")
+}
+
+func embeddedTerminalBorderStyle(focused bool) lipgloss.Style {
+	color := clearDarkTheme.inactiveBorder
+	if focused {
+		color = clearDarkTheme.activeBorder
+	}
+	return lipgloss.NewStyle().Foreground(color)
+}
+
+func fitEmbeddedTerminalFrameLines(lines []string, outerWidth, outerHeight int) []string {
+	if outerHeight <= 0 {
+		return nil
+	}
+	fitted := make([]string, outerHeight)
+	copy(fitted, lines)
+	for i, line := range fitted {
+		fitted[i] = truncateToWidth(line, outerWidth)
+	}
+	return fitted
 }
 
 func renderEmbeddedTerminalHeader(tabs []EmbeddedTerminalTab) string {
@@ -1950,7 +2087,10 @@ const (
 	flowUpdatedWidth = 10
 )
 
-func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive bool) []string {
+func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused bool) []string {
+	if height <= 0 {
+		return nil
+	}
 	listHeight, terminalHeight := FlowSplitPanelHeights(height)
 	lines := make([]string, 0, height)
 	if len(records) > 0 {
@@ -1958,7 +2098,7 @@ func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width
 	} else {
 		lines = append(lines, renderPlaceholderPane(width, listHeight, "No flows")...)
 	}
-	lines = append(lines, renderEmbeddedTerminalPane(terminals, terminalLines, prefixActive, width, terminalHeight)...)
+	lines = append(lines, renderEmbeddedTerminalPane(terminals, terminalLines, prefixActive, terminalFocused, width, terminalHeight)...)
 	return scrollAndPad(lines, 0, height)
 }
 
@@ -2972,6 +3112,9 @@ func centeredLine(s string, width int) string {
 
 // truncateToWidth trims a styled string to fit within maxWidth visible columns.
 func truncateToWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
 	if lipgloss.Width(s) <= maxWidth {
 		return s
 	}

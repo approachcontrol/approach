@@ -198,23 +198,24 @@ func (m Model) embeddedTerminalLinesForScope(scope embeddedTerminalScope) []stri
 	return slot.Terminal.VisibleLines(m.embeddedTerminalWidth(), height)
 }
 
+func (m Model) embeddedTerminalOuterWidth() int {
+	return ui.RightContentWidth(m.width, m.height, m.searchActive)
+}
+
 func (m Model) embeddedTerminalWidth() int {
-	width := m.contentWidth()
-	if m.width >= ui.LeftPaneWidth+ui.ShortcutPaneWidth+ui.MinContentPaneWidth && m.height >= 3 {
-		width -= ui.ShortcutPaneWidth
+	return ui.EmbeddedTerminalPTYWidth(m.embeddedTerminalOuterWidth())
+}
+
+func (m Model) embeddedTerminalOuterHeight() int {
+	height := m.height - ui.BranchContentOverhead
+	if height > 0 {
+		return height
 	}
-	if width < 0 {
-		return 0
-	}
-	return width
+	return 0
 }
 
 func (m Model) embeddedTerminalContentHeight() int {
-	height := m.height - ui.BranchContentOverhead - 1
-	if height <= 0 {
-		return 1
-	}
-	return height
+	return ui.EmbeddedTerminalPTYHeight(m.embeddedTerminalOuterHeight())
 }
 
 func (m Model) embeddedTerminalContentHeightForScope(scope embeddedTerminalScope) int {
@@ -225,12 +226,8 @@ func (m Model) embeddedTerminalContentHeightForScope(scope embeddedTerminalScope
 }
 
 func (m Model) flowEmbeddedTerminalContentHeight() int {
-	_, terminalHeight := ui.FlowSplitPanelHeights(m.rightContentHeight())
-	height := terminalHeight - 1
-	if height <= 0 {
-		return 1
-	}
-	return height
+	_, terminalHeight := ui.FlowSplitPanelHeights(m.embeddedTerminalOuterHeight())
+	return ui.EmbeddedTerminalPTYHeight(terminalHeight)
 }
 
 func (m Model) nextEmbeddedTerminalNumber(scope embeddedTerminalScope) (int, bool) {
