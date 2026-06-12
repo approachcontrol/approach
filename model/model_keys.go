@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -831,7 +832,9 @@ func (m Model) repoCreateForm(name string, createGitHub bool, visibility actions
 				{Label: "Private", Value: string(actions.RepoVisibilityPrivate)},
 			}, SelectedIndex: selectedVisibility},
 		},
-		Validate: validateRepoCreateForm,
+		Validate: func(values modal.FormValues) error {
+			return validateRepoCreateForm(values, retryPath)
+		},
 		Submit: func(values modal.FormValues) tea.Cmd {
 			opts := m.repoCreateOptionsFromForm(values, retryPath)
 			return m.repoCreate(opts, 0)
@@ -843,9 +846,16 @@ func (m Model) repoCreateForm(name string, createGitHub bool, visibility actions
 	return form
 }
 
-func validateRepoCreateForm(values modal.FormValues) error {
-	if strings.TrimSpace(values.Text[repoCreateNameField]) == "" {
+func validateRepoCreateForm(values modal.FormValues, retryPath string) error {
+	name := strings.TrimSpace(values.Text[repoCreateNameField])
+	if name == "" {
 		return fmt.Errorf("repo name cannot be empty")
+	}
+	if retryPath != "" {
+		retryName := filepath.Base(filepath.Clean(retryPath))
+		if name != retryName {
+			return fmt.Errorf("repo name must remain %s when retrying GitHub setup", retryName)
+		}
 	}
 	return nil
 }

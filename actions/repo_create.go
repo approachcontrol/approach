@@ -91,6 +91,9 @@ func createRepoWithRunner(opts RepoCreateOptions, runner repoCreateRunner) (Repo
 		return result, err
 	}
 	if err := runner.Run("git", "init", destination); err != nil {
+		if removeErr := os.RemoveAll(destination); removeErr != nil {
+			return result, fmt.Errorf("git init: %w; cleanup failed: %v", err, removeErr)
+		}
 		return result, fmt.Errorf("git init: %w", err)
 	}
 	result.LocalCreated = true

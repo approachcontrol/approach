@@ -227,6 +227,58 @@ func TestModel_RepoCreatePartialFailureRetriesGitHubOnly(t *testing.T) {
 	}
 }
 
+func TestModel_RepoCreateRetryKeepsStateWhenNameChanges(t *testing.T) {
+	var calls []actions.RepoCreateOptions
+	m := model.NewWithOptions(testRepos(), model.Options{
+		RepoCreateRoot: "/dev",
+		CreateRepo: func(opts actions.RepoCreateOptions) (actions.RepoCreateResult, error) {
+			calls = append(calls, opts)
+			return actions.RepoCreateResult{
+				DestinationPath:   "/dev/project",
+				LocalCreated:      true,
+				PartialSuccess:    true,
+				RetryAllowed:      true,
+				ExistingLocalPath: "/dev/project",
+			}, errors.New("gh auth required")
+		},
+	})
+
+	m, _ = update(m, repoCreateKey("n"))
+	m, _ = update(m, repoCreateKey("project"))
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("Overlay() = %d, want retry form", m.Overlay())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, repoCreateKey("other"))
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("changed retry name should fail validation before running create command")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("CreateRepo calls = %d, want original call only", len(calls))
+	}
+	if !strings.Contains(m.View(), "repo name must remain project when retrying GitHub setup") {
+		t.Fatalf("retry validation should preserve form state:\n%s", m.View())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, repoCreateKey("project"))
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected retry command after restoring original name")
+	}
+	_ = cmd()
+	if len(calls) != 2 {
+		t.Fatalf("CreateRepo calls = %d, want retry call", len(calls))
+	}
+	if !calls[1].RemoteOnlyRetry || calls[1].ExistingLocalPath != "/dev/project" {
+		t.Fatalf("retry options = %#v, want preserved retry path", calls[1])
+	}
+}
+
 func TestModel_StaleRepoCreateResultsAreIgnored(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{RepoCreateRoot: "/dev"})
 

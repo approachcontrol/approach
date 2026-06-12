@@ -142,6 +142,27 @@ func TestCreateRepoLocalOnlyInitializesGitRepository(t *testing.T) {
 	}
 }
 
+func TestCreateRepoGitInitFailureCleansDestination(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeCreateRepoRunner{failName: "git", failErr: errors.New("git unavailable")}
+
+	result, err := createRepoWithRunner(RepoCreateOptions{
+		Root:         root,
+		Name:         "project",
+		CreateGitHub: false,
+	}, runner)
+	if err == nil {
+		t.Fatal("expected git init failure")
+	}
+	dest := filepath.Join(root, "project")
+	if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
+		t.Fatalf("expected failed git init to remove %q, stat err = %v", dest, statErr)
+	}
+	if result.LocalCreated || result.PartialSuccess || result.RetryAllowed {
+		t.Fatalf("git init failure should not look retryable, got %+v", result)
+	}
+}
+
 func TestCreateRepoCreatesGitHubRepoAfterLocalInit(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeCreateRepoRunner{}
