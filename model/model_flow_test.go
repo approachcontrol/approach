@@ -1197,6 +1197,7 @@ func TestModel_IKeyOnFlowLaunchesImplementationInEmbeddedHeadlessTerminal(t *tes
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
 	var startWidth, startHeight int
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	launchAgentRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
@@ -1217,7 +1218,7 @@ func TestModel_IKeyOnFlowLaunchesImplementationInEmbeddedHeadlessTerminal(t *tes
 			started = ctx
 			startWidth = width
 			startHeight = height
-			return &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}, nil
+			return fakeTerm, nil
 		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
@@ -1274,8 +1275,24 @@ func TestModel_IKeyOnFlowLaunchesImplementationInEmbeddedHeadlessTerminal(t *tes
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
-	if startWidth <= 0 || startHeight <= 0 {
-		t.Fatalf("embedded terminal size = %dx%d, want positive", startWidth, startHeight)
+	_, terminalOuterHeight := ui.FlowSplitPanelHeights(18 - ui.BranchContentOverhead)
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false))
+	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
+	if startWidth != wantStartWidth || startHeight != wantStartHeight {
+		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
+	}
+	_ = m.View()
+	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
+	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
+		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
+	}
+	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
+	_, terminalResizeOuterHeight := ui.FlowSplitPanelHeights(20 - ui.BranchContentOverhead)
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 20, false))
+	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
+	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
+	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
+		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
 	}
 	wantPrompt := strings.Join([]string{
 		"Implement the approved plan.",
@@ -1288,6 +1305,48 @@ func TestModel_IKeyOnFlowLaunchesImplementationInEmbeddedHeadlessTerminal(t *tes
 	}, "\n")
 	if started.InitialPrompt != wantPrompt {
 		t.Fatalf("embedded prompt = %q, want %q", started.InitialPrompt, wantPrompt)
+	}
+}
+
+func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
+	var started [2]int
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = [2]int{width, height}
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+		Title:        "Implement saved plan",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+	const width = ui.LeftPaneWidth + 1
+	const height = ui.BranchContentOverhead
+	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("flows-mode i should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
+	want := [2]int{
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false)),
+		ui.EmbeddedTerminalPTYHeight(terminalOuterHeight),
+	}
+	if started != want {
+		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], want[0], want[1])
 	}
 }
 

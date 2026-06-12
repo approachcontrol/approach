@@ -84,11 +84,80 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	for _, want := range []string{
 		"Add embedded Flow terminal",
 		"1 codex implementation running",
-		"terminal line 1",
+		"terminal line 3",
 		"terminal line 8",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("split Flow terminal view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "terminal line 1") || strings.Contains(view, "terminal line 2") {
+		t.Fatalf("split Flow terminal should window old lines after border/header rows:\n%s", view)
+	}
+}
+
+func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
+	records := []flowstore.FlowRecord{{
+		FlowID: "flow-1",
+		Title:  "Flow with split terminal",
+		Status: flowstore.StatusInProgress,
+		Branch: "flow/split-terminal",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+		},
+	}}
+	terminalLines := []string{
+		"terminal line 1",
+		"terminal line 2",
+		"terminal line 3",
+		"terminal line 4",
+		"terminal line 5",
+		"terminal line 6",
+	}
+
+	const width = 70
+	const height = 10
+	listHeight, terminalHeight := FlowSplitPanelHeights(height)
+	lines := stripLines(renderFlowSplitPane(records, 0, 0, width, height, "", "", []EmbeddedTerminalTab{{
+		Number:   1,
+		Provider: "codex",
+		Identity: "implementation",
+		State:    "running",
+		Active:   true,
+	}}, terminalLines, false, true))
+
+	if listHeight != 4 || terminalHeight != 6 {
+		t.Fatalf("split heights = %d/%d, want 4/6", listHeight, terminalHeight)
+	}
+	if len(lines) != height {
+		t.Fatalf("line count = %d, want %d:\n%s", len(lines), height, strings.Join(lines, "\n"))
+	}
+	requireLinesWithinWidth(t, lines, width)
+	for i := 0; i < listHeight; i++ {
+		if strings.ContainsAny(lines[i], "┌┐└┘│") {
+			t.Fatalf("flow list allocation should not contain terminal frame at line %d: %q", i, lines[i])
+		}
+	}
+	if !strings.Contains(lines[0], "Status") || !strings.Contains(lines[1], "flow/split-terminal") {
+		t.Fatalf("flow list should remain visible above terminal:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[listHeight], "┌") {
+		t.Fatalf("terminal top border should start at index %d:\n%s", listHeight, strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[listHeight+1], "│1 codex implementation running") {
+		t.Fatalf("terminal header should be first framed content row:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[listHeight+terminalHeight-1], "└") {
+		t.Fatalf("terminal bottom border should land at index %d:\n%s", listHeight+terminalHeight-1, strings.Join(lines, "\n"))
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "terminal line 1") ||
+		strings.Contains(strings.Join(lines, "\n"), "terminal line 2") ||
+		strings.Contains(strings.Join(lines, "\n"), "terminal line 3") {
+		t.Fatalf("terminal body should show only latest lines after frame/header subtraction:\n%s", strings.Join(lines, "\n"))
+	}
+	for _, want := range []string{"terminal line 4", "terminal line 5", "terminal line 6"} {
+		if !strings.Contains(strings.Join(lines, "\n"), want) {
+			t.Fatalf("terminal body missing latest line %q:\n%s", want, strings.Join(lines, "\n"))
 		}
 	}
 }

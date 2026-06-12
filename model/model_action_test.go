@@ -4189,20 +4189,86 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
-	wantStartWidth := 180 - ui.LeftPaneWidth - ui.ShortcutPaneWidth - 2
-	if started[0] != wantStartWidth {
-		t.Fatalf("embedded terminal start width = %d, want %d", started[0], wantStartWidth)
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, false))
+	wantStartHeight := ui.EmbeddedTerminalPTYHeight(14 - ui.BranchContentOverhead)
+	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
+	if started != wantStartSize {
+		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], wantStartWidth, wantStartHeight)
 	}
 	_ = m.View()
-	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1][0] != wantStartWidth {
-		t.Fatalf("embedded terminal visible width calls = %#v, want latest width %d", fakeTerm.visibleCalls, wantStartWidth)
+	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
+		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 12})
-	wantResizeWidth := 160 - ui.LeftPaneWidth - ui.ShortcutPaneWidth - 2
-	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1][0] != wantResizeWidth {
-		t.Fatalf("embedded terminal resize calls = %#v, want latest width %d", fakeTerm.resizes, wantResizeWidth)
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 12, false))
+	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(12 - ui.BranchContentOverhead)
+	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
+	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
+		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
 	}
+}
+
+func TestModel_EmbeddedTerminalWidthMatchesRendererWhenShortcutSuppressed(t *testing.T) {
+	t.Run("active search", func(t *testing.T) {
+		m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, 180, 14)
+
+		m = model.SetSearchActiveForTest(m, true)
+		_ = m.View()
+		want := [2]int{
+			ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, true)),
+			ui.EmbeddedTerminalPTYHeight(14 - ui.BranchContentOverhead),
+		}
+		if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != want {
+			t.Fatalf("visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, want[0], want[1])
+		}
+
+		m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+		if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != want {
+			t.Fatalf("resize calls = %#v, want latest %dx%d", fakeTerm.resizes, want[0], want[1])
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{name: "height five suppresses shortcut", width: ui.LeftPaneWidth + ui.ShortcutPaneWidth + ui.MinContentPaneWidth, height: 5},
+		{name: "height six shows shortcut", width: ui.LeftPaneWidth + ui.ShortcutPaneWidth + ui.MinContentPaneWidth, height: 6},
+		{name: "tiny allocation clamps PTY size", width: ui.LeftPaneWidth + 1, height: ui.BranchContentOverhead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, started := openEmbeddedSessionForSizingTest(t, tc.width, tc.height)
+			want := [2]int{
+				ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(tc.width, tc.height, false)),
+				ui.EmbeddedTerminalPTYHeight(tc.height - ui.BranchContentOverhead),
+			}
+			if started != want {
+				t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], want[0], want[1])
+			}
+		})
+	}
+}
+
+func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Model, *fakeEmbeddedTerminal, [2]int) {
+	t.Helper()
+	fakeTerm := &fakeEmbeddedTerminal{}
+	var started [2]int
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = [2]int{width, height}
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	return m, fakeTerm, started
 }
 
 func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
