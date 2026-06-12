@@ -883,7 +883,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
-		next, launchCmd := m.launchFlowEmbeddedHeadlessWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)
