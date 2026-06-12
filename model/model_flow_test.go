@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -2491,6 +2492,9 @@ func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 	if got := m.WorktreeInput(); got != "" {
 		t.Fatalf("initial title input = %q, want empty", got)
 	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Fatalf("title input mode = %v, want single-line", got)
+	}
 }
 
 func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
@@ -2503,7 +2507,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			calls = append(calls, "start-flow")
 			startRequest = req
-			if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build the thing" || req.BaseRef != "main" {
+			if req.RepoPath != "/dev/alpha" || req.Title != "Add Flow Mode" || req.Instructions != "Build\nthe thing" || req.BaseRef != "main" {
 				t.Fatalf("StartFlowPlan request = %#v", req)
 			}
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
@@ -2518,7 +2522,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				PlanPhaseStatus:  req.PlanPhaseStatus,
 				FlowID:           "flow-1",
 				FlowPhaseID:      req.PlanPhaseID,
-				InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild the thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+				InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
 			}}, nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -2540,8 +2544,13 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 	if got := m.ConfirmPrompt(); got != ui.FlowInstructionsPrompt {
 		t.Fatalf("prompt = %q, want %q", got, ui.FlowInstructionsPrompt)
 	}
+	if got := m.InputMode(); got != modal.InputMultiLine {
+		t.Fatalf("instructions input mode = %v, want multi-line", got)
+	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Build the thing")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Build")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("the thing")})
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected instructions submit command")
@@ -2549,6 +2558,9 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 	m, _ = update(m, cmd())
 	if got := m.ConfirmPrompt(); got != ui.FlowBaseRefPrompt {
 		t.Fatalf("prompt = %q, want %q", got, ui.FlowBaseRefPrompt)
+	}
+	if got := m.InputMode(); got != modal.InputSingleLine {
+		t.Fatalf("base ref input mode = %v, want single-line", got)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
@@ -2588,7 +2600,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 		t.Fatalf("launch context = %#v", launched)
 	}
 	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "build the thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+	for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
 		}

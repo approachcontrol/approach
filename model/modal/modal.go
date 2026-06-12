@@ -42,6 +42,13 @@ type SelectItem struct {
 	Value string
 }
 
+type InputMode int
+
+const (
+	InputSingleLine InputMode = iota
+	InputMultiLine
+)
+
 // Modal is the single in-process state machine for transient modal UI. Its
 // zero value is closed.
 type Modal struct {
@@ -51,6 +58,9 @@ type Modal struct {
 	force       bool
 	action      func() tea.Cmd
 	input       string
+	inputMode   InputMode
+	inputCursor int
+	inputColumn int
 	inputErr    string
 	validate    func(string) error
 	submit      func(string) tea.Cmd
@@ -69,6 +79,8 @@ type View struct {
 	Placeholder string
 	Force       bool
 	Input       string
+	InputMode   InputMode
+	InputCursor int
 	InputErr    string
 	SelectItems []SelectItem
 	SelectIndex int
@@ -88,11 +100,32 @@ func OpenForce(prompt string, action func() tea.Cmd) Modal {
 }
 
 func OpenInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
+	return OpenSingleLineInput(prompt, placeholder, initial, validate, submit)
+}
+
+func OpenSingleLineInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
 	return Modal{
 		kind:        Input,
 		prompt:      prompt,
 		placeholder: placeholder,
 		input:       initial,
+		inputMode:   InputSingleLine,
+		inputCursor: inputLength(initial),
+		inputColumn: -1,
+		validate:    validate,
+		submit:      submit,
+	}
+}
+
+func OpenMultiLineInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
+	return Modal{
+		kind:        Input,
+		prompt:      prompt,
+		placeholder: placeholder,
+		input:       initial,
+		inputMode:   InputMultiLine,
+		inputCursor: inputLength(initial),
+		inputColumn: -1,
 		validate:    validate,
 		submit:      submit,
 	}
@@ -169,6 +202,8 @@ func (m Modal) View() View {
 		Placeholder: m.placeholder,
 		Force:       m.force,
 		Input:       m.input,
+		InputMode:   m.inputMode,
+		InputCursor: clampInputCursor(m.input, m.inputCursor),
 		InputErr:    m.inputErr,
 		SelectItems: append([]SelectItem(nil), m.selectItems...),
 		SelectIndex: m.selectIndex,
@@ -213,7 +248,15 @@ func (m Modal) updateConfirm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 }
 
 func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
+	m.inputCursor = clampInputCursor(m.input, m.inputCursor)
 	switch msg.String() {
+	case "alt+enter":
+		if m.inputMode == InputMultiLine {
+			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{'\n'})
+			m.inputColumn = -1
+			m.inputErr = ""
+		}
+		return m, Consumed, nil
 	case "enter":
 		input := strings.TrimSpace(m.input)
 		if m.validate != nil {
@@ -230,29 +273,192 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	case "esc", "ctrl+c":
 		return Modal{}, Cancelled, nil
 	case "backspace", "ctrl+h":
-		runes := []rune(m.input)
-		if len(runes) > 0 {
-			m.input = string(runes[:len(runes)-1])
-			m.inputErr = ""
+		m.input, m.inputCursor = deleteRuneBefore(m.input, m.inputCursor)
+		m.inputColumn = -1
+		m.inputErr = ""
+		return m, Consumed, nil
+	case "delete":
+		m.input, m.inputCursor = deleteRuneAt(m.input, m.inputCursor)
+		m.inputColumn = -1
+		m.inputErr = ""
+		return m, Consumed, nil
+	case "left":
+		if m.inputCursor > 0 {
+			m.inputCursor--
 		}
+		m.inputColumn = -1
+		return m, Consumed, nil
+	case "right":
+		if m.inputCursor < inputLength(m.input) {
+			m.inputCursor++
+		}
+		m.inputColumn = -1
+		return m, Consumed, nil
+	case "up":
+		if m.inputMode == InputMultiLine {
+			m.inputCursor, m.inputColumn = moveCursorVertically(m.input, m.inputCursor, -1, m.inputColumn)
+		}
+		return m, Consumed, nil
+	case "down":
+		if m.inputMode == InputMultiLine {
+			m.inputCursor, m.inputColumn = moveCursorVertically(m.input, m.inputCursor, 1, m.inputColumn)
+		}
+		return m, Consumed, nil
+	case "home", "ctrl+a":
+		m.inputCursor = 0
+		m.inputColumn = -1
+		return m, Consumed, nil
+	case "end", "ctrl+e":
+		m.inputCursor = inputLength(m.input)
+		m.inputColumn = -1
 		return m, Consumed, nil
 	case "ctrl+u":
 		m.input = ""
+		m.inputCursor = 0
+		m.inputColumn = -1
 		m.inputErr = ""
 		return m, Consumed, nil
 	default:
 		if msg.Type == tea.KeySpace {
-			m.input += " "
+			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, []rune{' '})
+			m.inputColumn = -1
 			m.inputErr = ""
 			return m, Consumed, nil
 		}
 		if msg.Type == tea.KeyRunes {
-			m.input += string(msg.Runes)
+			m.input, m.inputCursor = insertRunes(m.input, m.inputCursor, msg.Runes)
+			m.inputColumn = -1
 			m.inputErr = ""
 			return m, Consumed, nil
 		}
 		return m, Consumed, nil
 	}
+}
+
+func inputLength(input string) int {
+	return len([]rune(input))
+}
+
+func clampInputCursor(input string, cursor int) int {
+	if cursor < 0 {
+		return 0
+	}
+	length := inputLength(input)
+	if cursor > length {
+		return length
+	}
+	return cursor
+}
+
+func insertRunes(input string, cursor int, inserted []rune) (string, int) {
+	if len(inserted) == 0 {
+		return input, clampInputCursor(input, cursor)
+	}
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	out := make([]rune, 0, len(runes)+len(inserted))
+	out = append(out, runes[:cursor]...)
+	out = append(out, inserted...)
+	out = append(out, runes[cursor:]...)
+	return string(out), cursor + len(inserted)
+}
+
+func deleteRuneBefore(input string, cursor int) (string, int) {
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	if cursor == 0 {
+		return input, cursor
+	}
+	out := make([]rune, 0, len(runes)-1)
+	out = append(out, runes[:cursor-1]...)
+	out = append(out, runes[cursor:]...)
+	return string(out), cursor - 1
+}
+
+func deleteRuneAt(input string, cursor int) (string, int) {
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	if cursor >= len(runes) {
+		return input, cursor
+	}
+	out := make([]rune, 0, len(runes)-1)
+	out = append(out, runes[:cursor]...)
+	out = append(out, runes[cursor+1:]...)
+	return string(out), cursor
+}
+
+func moveCursorVertically(input string, cursor, delta, preferredColumn int) (int, int) {
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	starts := lineStarts(runes)
+	line, column := lineColumn(runes, starts, cursor)
+	if preferredColumn >= 0 {
+		column = preferredColumn
+	}
+	targetLine := line + delta
+	if targetLine < 0 {
+		targetLine = 0
+	}
+	if targetLine >= len(starts) {
+		targetLine = len(starts) - 1
+	}
+	return cursorForLineColumn(runes, starts, targetLine, column), column
+}
+
+func lineStarts(runes []rune) []int {
+	starts := []int{0}
+	for i, r := range runes {
+		if r == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	return starts
+}
+
+func lineColumn(runes []rune, starts []int, cursor int) (int, int) {
+	for i, start := range starts {
+		nextStart := len(runes) + 1
+		if i+1 < len(starts) {
+			nextStart = starts[i+1]
+		}
+		if cursor < nextStart || i == len(starts)-1 {
+			column := cursor - start
+			length := lineLength(runes, starts, i)
+			if column > length {
+				column = length
+			}
+			if column < 0 {
+				column = 0
+			}
+			return i, column
+		}
+	}
+	return 0, 0
+}
+
+func cursorForLineColumn(runes []rune, starts []int, line, column int) int {
+	if line < 0 {
+		line = 0
+	}
+	if line >= len(starts) {
+		line = len(starts) - 1
+	}
+	if column < 0 {
+		column = 0
+	}
+	length := lineLength(runes, starts, line)
+	if column > length {
+		column = length
+	}
+	return starts[line] + column
+}
+
+func lineLength(runes []rune, starts []int, line int) int {
+	start := starts[line]
+	if line+1 < len(starts) {
+		return starts[line+1] - start - 1
+	}
+	return len(runes) - start
 }
 
 func (m Modal) updateSelect(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {

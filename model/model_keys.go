@@ -730,7 +730,7 @@ func (m Model) handleNewWorktree(launchAgent bool) (tea.Model, tea.Cmd) {
 	if launchAgent {
 		prompt = "Create worktree and launch agent from"
 	}
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenSingleLineInput(
 		prompt,
 		ui.WorktreeInputPlaceholder,
 		"",
@@ -744,7 +744,7 @@ func (m Model) handleNewBranch() (tea.Model, tea.Cmd) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return m, nil
 	}
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenSingleLineInput(
 		ui.BranchPrompt,
 		ui.BranchInputPlaceholder,
 		"",
@@ -759,7 +759,7 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenSingleLineInput(
 		ui.PRWorktreePrompt,
 		ui.PRWorktreeInputPlaceholder,
 		"",
@@ -777,7 +777,7 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching a flow")
 		return m, nil
 	}
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenSingleLineInput(
 		ui.FlowTitlePrompt,
 		ui.FlowTitleInputPlaceholder,
 		"",
@@ -790,7 +790,7 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenMultiLineInput(
 		ui.FlowInstructionsPrompt,
 		ui.FlowInstructionsInputPlaceholder,
 		"",
@@ -803,7 +803,7 @@ func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
 }
 
 func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenSingleLineInput(
 		ui.FlowBaseRefPrompt,
 		ui.FlowBaseRefInputPlaceholder,
 		"",
@@ -873,7 +873,7 @@ func (m Model) handleMoveWorktree() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	oldPath := wt.Path
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenSingleLineInput(
 		ui.WorktreeMovePrompt,
 		ui.WorktreeMoveInputPlaceholder,
 		"",
@@ -1300,7 +1300,7 @@ func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	m = next
-	m.modal = modal.OpenInput(
+	m.modal = modal.OpenMultiLineInput(
 		ui.LaunchInstructionsPrompt,
 		"launch instructions",
 		ctx.InitialPrompt,
