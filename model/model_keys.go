@@ -346,6 +346,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleTogglePlanPhases()
 		}
+		if m.mode == ui.ModeFlows {
+			return m.handleResetSelectedFlowPhase()
+		}
 	case "tab":
 		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 			m.flowFocus = flowFocusTerminal
@@ -1152,6 +1155,23 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 }
 
+func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
+	record, phase, repoPath, ok := m.selectedFlowPhaseResetTarget()
+	if !ok {
+		return m, nil
+	}
+	m.modal = modal.OpenConfirm(fmt.Sprintf("Reset Flow phase %s to ready?", phase.PhaseID), func() tea.Cmd {
+		return func() tea.Msg {
+			return flowPhaseResetConfirmedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				PhaseID:  phase.PhaseID,
+			}
+		}
+	})
+	return m, nil
+}
+
 type flowPhaseLaunchTarget struct {
 	record       flowstore.FlowRecord
 	phase        flowstore.FlowPhase
@@ -1174,6 +1194,86 @@ func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Mod
 		return flowPhaseLaunchTarget{}, false, m
 	}
 	return m.flowPhaseLaunchTarget(record, phase)
+}
+
+func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.FlowPhase, string, bool) {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, "", false
+	}
+	phase, ok := m.selectedFlowPhase()
+	if !ok {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, "", false
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" || !m.flowPhaseResettable(record, phase) {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, "", false
+	}
+	return record, phase, repoPath, true
+}
+
+func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
+	return phase.Status == flowstore.PhaseRunning &&
+		flowstore.PhaseAwaitingSession(phase) &&
+		!flowstore.PhaseSessionLaunchMismatch(phase) &&
+		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID) &&
+		!m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, phase.PhaseID)
+}
+
+func (m Model) hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID string) bool {
+	wantPhaseID := artifacts.NormalizePhaseID(phaseID)
+	if wantPhaseID == "" {
+		return false
+	}
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope == embeddedTerminalScopeFlow &&
+			slot.FlowID == flowID &&
+			artifacts.NormalizePhaseID(slot.FlowPhaseID) == wantPhaseID &&
+			embeddedTerminalRunning(slot.Terminal) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) handleFlowPhaseResetConfirmed(msg flowPhaseResetConfirmedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	if m.hasRunningFlowEmbeddedTerminalForPhase(msg.FlowID, msg.PhaseID) {
+		return m.setStatus(statusOther, "Flow phase has an active embedded terminal"), nil
+	}
+	record, phase, ok := m.flowPhaseByID(msg.FlowID, msg.PhaseID)
+	if !ok || !m.flowPhaseResettable(record, phase) {
+		return m.setStatus(statusOther, "Flow phase is not awaiting session recovery"), nil
+	}
+	return m, m.resetFlowPhaseCmd(msg.RepoPath, msg.FlowID, msg.PhaseID)
+}
+
+func (m Model) resetFlowPhaseCmd(repoPath, flowID, phaseID string) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.resetFlowPhase(flowstore.PhaseResetUpdate{
+			FlowID:  flowID,
+			PhaseID: phaseID,
+		})
+		if err != nil {
+			return flowPhaseResetFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   flowID,
+				PhaseID:  phaseID,
+				Err:      fmt.Sprintf("failed to reset Flow phase: %v", err),
+			}
+		}
+		return flowPhaseResetMsg{
+			RepoPath: repoPath,
+			FlowID:   flowID,
+			PhaseID:  phaseID,
+			Flow:     flow,
+		}
+	}
 }
 
 func (m Model) flowPhaseLaunchTarget(record flowstore.FlowRecord, phase flowstore.FlowPhase) (flowPhaseLaunchTarget, bool, Model) {
@@ -1240,12 +1340,17 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 			}
 			planBody = body
 		}
-		if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   record.FlowID,
 			PhaseID:  phase.PhaseID,
 			LaunchID: launchID,
-		}); err != nil {
+		})
+		if err != nil {
 			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
+		}
+		launchPhase := phase
+		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
+			launchPhase = persistedPhase
 		}
 		return wrap(actions.AgentLaunchContext{
 			Command:          m.agentCommand,
@@ -1259,8 +1364,8 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 			PlanID:           record.PlanID,
 			PlanPath:         planPath,
 			FlowID:           record.FlowID,
-			FlowPhaseID:      phase.PhaseID,
-			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody, m.flowPromptTemplates),
+			FlowPhaseID:      launchPhase.PhaseID,
+			InitialPrompt:    flowPhasePrompt(record, launchPhase, planPath, planBody, m.flowPromptTemplates),
 		})
 	}
 }
@@ -1605,7 +1710,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 }
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
-	switch phaseID {
+	switch artifacts.NormalizePhaseID(phaseID) {
 	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
 		return false
 	default:
@@ -1614,7 +1719,7 @@ func flowPhasePromptNeedsPlanBody(phaseID string) bool {
 }
 
 func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalArtifactPrompt("Use the review loop skill to review the saved plan.\nUse the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
+	return flowMinimalArtifactPrompt("Use the review-loop skill to review the saved plan, max 6 loops.\nUse the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
 }
 
 func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {

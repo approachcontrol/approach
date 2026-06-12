@@ -92,7 +92,7 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
-| `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan phase rows |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected `await-session` Flow phase after confirmation |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
@@ -197,10 +197,11 @@ Resuming a CLI `codex` or `claude` session from the full sessions view opens a
 runtime-only embedded terminal in the sessions pane. While embedded terminals
 exist, the saved-session table is hidden and the pane shows a compact numbered
 terminal header plus the active terminal screen. Keys go directly to the active
-PTY; press `ctrl+g` for wtui commands: `ctrl+g 1`-`9` switches terminals,
-`ctrl+g l` opens a saved-session picker, `ctrl+g x` dismisses an exited
-terminal or confirms termination of a running one, `ctrl+g q` or `ctrl+g esc`
-quits with cleanup, and `ctrl+g ctrl+g` sends a literal `ctrl+g` to the agent.
+PTY (including agent shortcuts like `ctrl+g`); press `ctrl+]` for wtui
+commands: `ctrl+] 1`-`9` switches terminals, `ctrl+] l` opens a saved-session
+picker, `ctrl+] x` dismisses an exited terminal or confirms termination of a
+running one, `ctrl+] q` or `ctrl+] esc` quits with cleanup, and
+`ctrl+] ctrl+]` sends a literal `ctrl+]` to the agent.
 Quitting wtui from anywhere while embedded terminals are still running asks for
 confirmation and terminates them first. Embedded terminals are not restored
 after wtui restarts.
@@ -321,8 +322,9 @@ the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them. Flow terminal focus starts in wtui command
 mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
 closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
-`ctrl+g` sends a literal `ctrl+g`, and `i` enters terminal input mode. In input
-mode, keys pass through to the PTY and `ctrl+g` returns to command mode. When
+`ctrl+]` sends a literal `ctrl+]`, and `i` enters terminal input mode. In input
+mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
+and `ctrl+]` returns to command mode. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state
 and notes instead of launching. When PR Creation is complete but structured PR
 metadata is missing, Autoreview remains pending and the Flow row shows
@@ -338,6 +340,13 @@ launch ID does not match the phase's launch attempts shows `session-mismatch`,
 and an attached session that lacks a provider session ID shows
 `missing-session-id`. A pending Autoreview phase whose PR Creation predecessor
 completed without structured PR metadata shows `missing-pr`.
+
+When an expanded phase row shows `await-session`, and no running or starting
+embedded Flow terminal is attached to that same Flow phase, the selected phase
+row exposes `x reset ready`. Confirming the prompt removes the newest orphan
+launch attempt and lets wtui derive the phase back to `ready`. This is TUI
+recovery for an abandoned launch attempt, not a new agent transition; `ready`
+still cannot be set through `wtui flow phase set`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and
@@ -417,10 +426,11 @@ completed or explicitly skipped with notes. Flow phase launch prompts stay
 minimal: Plan Review and Implementation point to the saved plan artifact, while
 Review Loop and PR Creation include only the worktree, branch, and start commit
 metadata needed to inspect the changes. Built-in prompts tell Plan to produce
-only a plan, Implementation to use the `commit` skill, Review Loop to use the
-review-loop workflow and `commit` when revisions are made, PR Creation to use
-the `ship` skill, and Autoreview to use `ship` when fixes require commits or
-pushes without embedding phase-restart recipes. Use
+only a plan, Plan Review to use the review-loop skill with max 6 loops,
+Implementation to use the `commit` skill, Review Loop to use the review-loop
+workflow and `commit` when revisions are made, PR Creation to use the `ship`
+skill, and Autoreview to use `ship` when fixes require commits or pushes
+without embedding phase-restart recipes. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if notes are omitted, wtui records a standard rerun note.
 

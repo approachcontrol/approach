@@ -313,9 +313,10 @@ embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and
 terminal. Terminal focus starts in wtui command mode: `left`/`right` cycles Flow
 terminals, `1`-`9` switches by number, `x` closes, `q`/`esc` quits, unknown
-ordinary keys do not pass through to the PTY, and `ctrl+g` sends a literal
-`ctrl+g`; `i` enters terminal input mode. In input mode, keys pass through to the
-PTY and `ctrl+g` returns to command mode. Embedded headless output is rendered as
+ordinary keys do not pass through to the PTY, and `ctrl+]` sends a literal
+`ctrl+]`; `i` enters terminal input mode. In input mode, keys pass through to the
+PTY (including agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command
+mode. Embedded headless output is rendered as
 readable terminal text rather than raw provider event JSON; `codex exec` streams
 progress while it runs, whereas `claude --print` only prints its result once the
 run completes. Expanded rows
@@ -388,6 +389,11 @@ when an attached session lacks a provider session ID, and `missing-pr` on a
 pending Autoreview phase when PR Creation completed without structured PR
 metadata.
 
+On a selected `await-session` phase row, `x` offers a confirmed reset back to
+derived `ready` only when no running or starting embedded Flow terminal is
+attached to that same Flow phase. The reset removes the orphan launch attempt;
+agents still cannot set `ready` directly.
+
 The Plan Review phase gates Implementation. Plan Review completion must use
 `--outcome approved` or `--outcome approved_with_concerns`; the latter requires
 `--notes`. Use `--status needs_attention --outcome changes_requested --notes
@@ -421,9 +427,10 @@ skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
 Implementation point to the saved plan artifact, while Review Loop and PR
 Creation include only the worktree, branch, and start commit metadata needed to
 inspect the changes. Built-in prompts tell Plan to produce only a plan,
-Implementation to use the `commit` skill, Review Loop to use the review-loop
-workflow and `commit` when revisions are made, PR Creation to use the `ship`
-skill, and Autoreview to use `ship` when fixes require commits or pushes.
+Plan Review to use the review-loop skill with max 6 loops, Implementation to
+use the `commit` skill, Review Loop to use the review-loop workflow and
+`commit` when revisions are made, PR Creation to use the `ship` skill, and
+Autoreview to use `ship` when fixes require commits or pushes.
 Autoreview launch prompts include the PR target metadata but leave completion,
 needs-attention, blocked, and restart mechanics to the high-level Flow phase
 commands.

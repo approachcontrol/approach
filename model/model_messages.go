@@ -345,6 +345,26 @@ type FlowDeleteFailedMsg struct {
 	NotFound bool
 }
 
+type flowPhaseResetConfirmedMsg struct {
+	RepoPath string
+	FlowID   string
+	PhaseID  string
+}
+
+type flowPhaseResetMsg struct {
+	RepoPath string
+	FlowID   string
+	PhaseID  string
+	Flow     flowstore.FlowRecord
+}
+
+type flowPhaseResetFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	PhaseID  string
+	Err      string
+}
+
 type DeleteFailedMsg struct {
 	RepoPath    string
 	Target      string       // display name (branch name or worktree path)
@@ -1105,6 +1125,30 @@ func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {
 	return m.startFetchMode(ui.ModeFlows)
 }
 
+func (m Model) handleFlowPhaseReset(msg flowPhaseResetMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	phaseID := strings.TrimSpace(msg.PhaseID)
+	if phaseID == "" {
+		phaseID = "phase"
+	}
+	m = m.setStatus(statusOther, fmt.Sprintf("Reset Flow phase %s to ready", phaseID))
+	return m.startFetchMode(ui.ModeFlows)
+}
+
+func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to reset Flow phase"
+	}
+	m = m.setStatus(statusOther, errText)
+	return m, nil
+}
+
 func (m Model) handleFlowDeleteFailed(msg FlowDeleteFailedMsg) (tea.Model, tea.Cmd) {
 	if !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
@@ -1154,22 +1198,17 @@ func (m Model) restoreExpandedFlowSelection(flowID, phaseID string) Model {
 	if !ok || record.FlowID != flowID {
 		return m.setExpandedFlowID("")
 	}
-	if phaseID != "" && !flowRecordHasPhase(record, phaseID) {
-		return m.setExpandedFlowID("")
+	if phaseID != "" {
+		phase, ok := flowRecordPhaseByID(record, phaseID)
+		if !ok {
+			return m.setExpandedFlowID("")
+		}
+		phaseID = phase.PhaseID
 	}
 	m.expandedFlowID = flowID
 	m.selectedFlowPhaseID = phaseID
 	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
 	return m.reflowFlows()
-}
-
-func flowRecordHasPhase(record flowstore.FlowRecord, phaseID string) bool {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if phase.PhaseID == phaseID {
-			return true
-		}
-	}
-	return false
 }
 
 func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) (Model, tea.Cmd) {
