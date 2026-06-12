@@ -960,10 +960,10 @@ func padShortcutKey(key string, width int) string {
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
 	if (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive {
-		hints := []shortcutHint{{Key: "ctrl+g", Label: "commands"}}
+		hints := []shortcutHint{{Key: "ctrl+]", Label: "commands"}}
 		if sp.EmbeddedTerminalPrefix {
 			hints = []shortcutHint{
-				{Key: "ctrl+g", Label: "send"},
+				{Key: "ctrl+]", Label: "send"},
 				{Key: "x", Label: "close"},
 				{Key: "q/esc", Label: "quit"},
 				{Key: "1-9", Label: "switch"},
@@ -1913,7 +1913,7 @@ func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, 
 	contentWidth := EmbeddedTerminalRenderContentWidth(outerWidth)
 	header := truncateToWidth(renderEmbeddedTerminalHeader(tabs), contentWidth)
 	if prefixActive {
-		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+g"), contentWidth)
+		header = truncateToWidth(header+"  "+statusStyle.Render("ctrl+]"), contentWidth)
 	}
 	bodyHeight := EmbeddedTerminalRenderBodyHeight(outerHeight)
 	if len(liveLines) > bodyHeight {
