@@ -375,6 +375,11 @@ when an attached session lacks a provider session ID, and `missing-pr` on a
 pending Autoreview phase when PR Creation completed without structured PR
 metadata.
 
+On a selected `await-session` phase row, `x` offers a confirmed reset back to
+derived `ready` only when no running or starting embedded Flow terminal is
+attached to that same Flow phase. The reset removes the orphan launch attempt;
+agents still cannot set `ready` directly.
+
 The Plan Review phase gates Implementation. Plan Review completion must use
 `--outcome approved` or `--outcome approved_with_concerns`; the latter requires
 `--notes`. Use `--status needs_attention --outcome changes_requested --notes

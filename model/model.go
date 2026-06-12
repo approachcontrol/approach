@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/planstore"
@@ -84,6 +85,7 @@ type Model struct {
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
 	readPlan                  func(string) (string, error)
 	planMarkdownPath          func(string) (string, error)
@@ -154,6 +156,7 @@ type Options struct {
 	StartFlowPlan         func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase          func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID  func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	ResetFlowPhase        func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow            func(flowID string) error
 	ReadPlan              func(string) (string, error)
 	PlanMarkdownPath      func(planID string) (string, error)
@@ -221,6 +224,17 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.AddPhaseLaunchID(update)
+		}
+	}
+	resetFlowPhase := opts.ResetFlowPhase
+	if resetFlowPhase == nil {
+		root := opts.SessionStateRoot
+		resetFlowPhase = func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.ResetAwaitingSessionPhase(update)
 		}
 	}
 	deleteFlow := opts.DeleteFlow
@@ -338,6 +352,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		startFlowPlan:         startFlowPlan,
 		setFlowPhase:          setFlowPhase,
 		addFlowPhaseLaunchID:  addFlowPhaseLaunchID,
+		resetFlowPhase:        resetFlowPhase,
 		deleteFlow:            deleteFlow,
 		readPlan:              readPlan,
 		planMarkdownPath:      planMarkdownPath,
@@ -484,93 +499,94 @@ func (m Model) View() string {
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
-		Repos:                      repos,
-		Selected:                   selected,
-		Width:                      m.width,
-		Height:                     m.height,
-		Mode:                       m.mode,
-		Branches:                   rows,
-		Stashes:                    stashes,
-		BranchSelected:             branchSelected,
-		StashSelected:              stashSelected,
-		Overlay:                    m.overlayState(),
-		OverlayDiff:                modalView.Diff,
-		OverlayScroll:              modalView.Scroll,
-		ConfirmPrompt:              modalView.Prompt,
-		ConfirmForce:               modalView.Force,
-		InputPrompt:                modalView.Prompt,
-		InputPlaceholder:           modalView.Placeholder,
-		InputValue:                 modalView.Input,
-		InputError:                 modalView.InputErr,
-		InputMode:                  uiInputMode(modalView.InputMode),
-		InputCursor:                modalView.InputCursor,
-		WorktreeInputPrompt:        modalView.Prompt,
-		WorktreeInputPlaceholder:   modalView.Placeholder,
-		WorktreeInput:              modalView.Input,
-		WorktreeInputErr:           modalView.InputErr,
-		SelectPrompt:               modalView.Prompt,
-		SelectItems:                uiSelectItems(modalView.SelectItems),
-		SelectSelected:             modalView.SelectIndex,
-		SelectWidth:                modalView.SelectLayout.Width,
-		SelectHeight:               modalView.SelectLayout.Height,
-		SelectPlacement:            uiSelectPlacement(modalView.SelectLayout.Placement),
-		BranchScroll:               branchScroll,
-		RepoScroll:                 repoScroll,
-		StashScroll:                stashScroll,
-		ActivePane:                 m.activePane,
-		Destructive:                m.destructive,
-		Worktrees:                  worktrees,
-		WorktreeSelected:           worktreeSelected,
-		WorktreeScroll:             worktreeScroll,
-		WorktreeSessions:           worktreeSessions,
-		WorktreeSessionSelected:    worktreeSessionSelected,
-		WorktreeSessionScroll:      worktreeSessionScroll,
-		InlineWorktreeSessions:     m.inlineWorktreeSessionPath != "",
-		Commits:                    commits,
-		CommitSelected:             commitSelected,
-		CommitScroll:               commitScroll,
-		Reflogs:                    reflogs,
-		ReflogSelected:             reflogSelected,
-		ReflogScroll:               reflogScroll,
-		Sessions:                   sessions,
-		SessionSelected:            sessionSelected,
-		SessionScroll:              sessionScroll,
-		EmbeddedTerminals:          m.embeddedTerminalTabs(),
-		EmbeddedTerminalLines:      m.embeddedTerminalLines(),
-		EmbeddedTerminalPrefix:     m.terminalPrefixActive,
-		Plans:                      plans,
-		PlanSelected:               planSelected,
-		PlanScroll:                 planScroll,
-		Flows:                      flows,
-		FlowSelected:               flowSelected,
-		FlowScroll:                 flowScroll,
-		FlowEmbeddedTerminals:      m.flowEmbeddedTerminalTabs(),
-		FlowEmbeddedTerminalLines:  m.flowEmbeddedTerminalLines(),
-		FlowEmbeddedTerminalPrefix: m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
-		FlowTerminalActivity:       m.flowTerminalActivity(),
-		FlowTerminalFocused:        m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
-		ExpandedPlanID:             m.expandedPlanID,
-		ExpandedFlowID:             m.expandedFlowID,
-		SelectedPlanPhaseID:        m.selectedPlanPhaseID,
-		SelectedFlowPhaseID:        m.selectedFlowPhaseID,
-		FlowHeadless:               m.flowHeadless,
-		FlowPhaseLaunchReady:       m.selectedFlowPhaseLaunchReady(),
-		FlowPhaseResumableSelected: m.selectedFlowPhaseResumable(),
-		OverlayText:                modalView.Text,
-		TransientError:             m.visibleStatusText(),
-		TransientErrorFadeStep:     m.visibleStatusFadeStep(),
-		SearchActive:               m.searchActive,
-		RepoSearch:                 m.repos.Query(),
-		ItemSearch:                 m.activeItemPaneQuery(),
-		RepoEmptyMessage:           repoEmptyMessage,
-		RightEmptyMessage:          rightEmptyMessage,
-		FetchAvailable:             m.canFetch(),
-		FetchVisibleAvailable:      m.canFetchVisibleRepos(),
-		PullAvailable:              m.canPull(),
-		WorktreeMoveAvailable:      m.canMoveWorktree(),
-		WorktreeSessionsOpen:       m.inlineWorktreeSessionPath != "",
-		AgentAvailable:             m.canLaunchAgent(),
-		NewAgentAvailable:          m.canCreateAndLaunchAgent(),
+		Repos:                       repos,
+		Selected:                    selected,
+		Width:                       m.width,
+		Height:                      m.height,
+		Mode:                        m.mode,
+		Branches:                    rows,
+		Stashes:                     stashes,
+		BranchSelected:              branchSelected,
+		StashSelected:               stashSelected,
+		Overlay:                     m.overlayState(),
+		OverlayDiff:                 modalView.Diff,
+		OverlayScroll:               modalView.Scroll,
+		ConfirmPrompt:               modalView.Prompt,
+		ConfirmForce:                modalView.Force,
+		InputPrompt:                 modalView.Prompt,
+		InputPlaceholder:            modalView.Placeholder,
+		InputValue:                  modalView.Input,
+		InputError:                  modalView.InputErr,
+		InputMode:                   uiInputMode(modalView.InputMode),
+		InputCursor:                 modalView.InputCursor,
+		WorktreeInputPrompt:         modalView.Prompt,
+		WorktreeInputPlaceholder:    modalView.Placeholder,
+		WorktreeInput:               modalView.Input,
+		WorktreeInputErr:            modalView.InputErr,
+		SelectPrompt:                modalView.Prompt,
+		SelectItems:                 uiSelectItems(modalView.SelectItems),
+		SelectSelected:              modalView.SelectIndex,
+		SelectWidth:                 modalView.SelectLayout.Width,
+		SelectHeight:                modalView.SelectLayout.Height,
+		SelectPlacement:             uiSelectPlacement(modalView.SelectLayout.Placement),
+		BranchScroll:                branchScroll,
+		RepoScroll:                  repoScroll,
+		StashScroll:                 stashScroll,
+		ActivePane:                  m.activePane,
+		Destructive:                 m.destructive,
+		Worktrees:                   worktrees,
+		WorktreeSelected:            worktreeSelected,
+		WorktreeScroll:              worktreeScroll,
+		WorktreeSessions:            worktreeSessions,
+		WorktreeSessionSelected:     worktreeSessionSelected,
+		WorktreeSessionScroll:       worktreeSessionScroll,
+		InlineWorktreeSessions:      m.inlineWorktreeSessionPath != "",
+		Commits:                     commits,
+		CommitSelected:              commitSelected,
+		CommitScroll:                commitScroll,
+		Reflogs:                     reflogs,
+		ReflogSelected:              reflogSelected,
+		ReflogScroll:                reflogScroll,
+		Sessions:                    sessions,
+		SessionSelected:             sessionSelected,
+		SessionScroll:               sessionScroll,
+		EmbeddedTerminals:           m.embeddedTerminalTabs(),
+		EmbeddedTerminalLines:       m.embeddedTerminalLines(),
+		EmbeddedTerminalPrefix:      m.terminalPrefixActive,
+		Plans:                       plans,
+		PlanSelected:                planSelected,
+		PlanScroll:                  planScroll,
+		Flows:                       flows,
+		FlowSelected:                flowSelected,
+		FlowScroll:                  flowScroll,
+		FlowEmbeddedTerminals:       m.flowEmbeddedTerminalTabs(),
+		FlowEmbeddedTerminalLines:   m.flowEmbeddedTerminalLines(),
+		FlowEmbeddedTerminalPrefix:  m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
+		FlowTerminalActivity:        m.flowTerminalActivity(),
+		FlowTerminalFocused:         m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
+		ExpandedPlanID:              m.expandedPlanID,
+		ExpandedFlowID:              m.expandedFlowID,
+		SelectedPlanPhaseID:         m.selectedPlanPhaseID,
+		SelectedFlowPhaseID:         m.selectedFlowPhaseID,
+		FlowHeadless:                m.flowHeadless,
+		FlowPhaseLaunchReady:        m.selectedFlowPhaseLaunchReady(),
+		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
+		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
+		OverlayText:                 modalView.Text,
+		TransientError:              m.visibleStatusText(),
+		TransientErrorFadeStep:      m.visibleStatusFadeStep(),
+		SearchActive:                m.searchActive,
+		RepoSearch:                  m.repos.Query(),
+		ItemSearch:                  m.activeItemPaneQuery(),
+		RepoEmptyMessage:            repoEmptyMessage,
+		RightEmptyMessage:           rightEmptyMessage,
+		FetchAvailable:              m.canFetch(),
+		FetchVisibleAvailable:       m.canFetchVisibleRepos(),
+		PullAvailable:               m.canPull(),
+		WorktreeMoveAvailable:       m.canMoveWorktree(),
+		WorktreeSessionsOpen:        m.inlineWorktreeSessionPath != "",
+		AgentAvailable:              m.canLaunchAgent(),
+		NewAgentAvailable:           m.canCreateAndLaunchAgent(),
 	})
 }
 
@@ -880,6 +896,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FlowResultMsg:
 		next := m.handleFlowResult(msg)
 		return next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
+	case flowPhaseResetConfirmedMsg:
+		return m.handleFlowPhaseResetConfirmed(msg)
+	case flowPhaseResetMsg:
+		return m.handleFlowPhaseReset(msg)
+	case flowPhaseResetFailedMsg:
+		return m.handleFlowPhaseResetFailed(msg)
 	case FlowDeletedMsg:
 		return m.handleFlowDeleted(msg)
 	case FlowDeleteFailedMsg:
@@ -1101,12 +1123,7 @@ func (m Model) selectedFlowPhase() (flowstore.FlowPhase, bool) {
 	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
 		return flowstore.FlowPhase{}, false
 	}
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if phase.PhaseID == m.selectedFlowPhaseID {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
+	return flowRecordPhaseByID(record, m.selectedFlowPhaseID)
 }
 
 func (m Model) selectedFlowPhaseIndex() (int, bool) {
@@ -1114,12 +1131,8 @@ func (m Model) selectedFlowPhaseIndex() (int, bool) {
 	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
 		return 0, false
 	}
-	for i, phase := range flowstore.OrderedPhases(record.Phases) {
-		if phase.PhaseID == m.selectedFlowPhaseID {
-			return i, true
-		}
-	}
-	return 0, false
+	index, _, ok := flowRecordPhaseIndexByID(record, m.selectedFlowPhaseID)
+	return index, ok
 }
 
 func (m Model) selectedFlowPhaseResumable() bool {
@@ -1144,6 +1157,53 @@ func (m Model) selectedFlowPhaseLaunchReady() bool {
 	}
 	phase, ok := m.selectedFlowPhase()
 	return ok && flowPhaseCanLaunch(record, phase)
+}
+
+func (m Model) selectedFlowPhaseResettable() bool {
+	record, ok := m.selectedFlow()
+	if !ok {
+		return false
+	}
+	phase, ok := m.selectedFlowPhase()
+	return ok && m.flowPhaseResettable(record, phase)
+}
+
+func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
+	for _, record := range m.flows.Items() {
+		if record.FlowID != flowID {
+			continue
+		}
+		if phase, ok := flowRecordPhaseByID(record, phaseID); ok {
+			return record, phase, true
+		}
+		return record, flowstore.FlowPhase{}, false
+	}
+	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+}
+
+func flowRecordPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	_, phase, ok := flowRecordPhaseIndexByID(record, phaseID)
+	return phase, ok
+}
+
+func flowRecordPhaseIndexByID(record flowstore.FlowRecord, phaseID string) (int, flowstore.FlowPhase, bool) {
+	requested := strings.TrimSpace(phaseID)
+	phases := flowstore.OrderedPhases(record.Phases)
+	for i, phase := range phases {
+		if phase.PhaseID == requested {
+			return i, phase, true
+		}
+	}
+	want := artifacts.NormalizePhaseID(requested)
+	if want == "" {
+		return 0, flowstore.FlowPhase{}, false
+	}
+	for i, phase := range phases {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
+			return i, phase, true
+		}
+	}
+	return 0, flowstore.FlowPhase{}, false
 }
 
 func (m Model) clearSelectedPlanPhase() Model {

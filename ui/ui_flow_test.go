@@ -350,7 +350,7 @@ func TestRender_FlowsModeMarksActiveTerminalExpandedPhaseRows(t *testing.T) {
 		},
 	}
 	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 8, "flow-1", "implementation", []FlowTerminalActivity{
-		{FlowID: "flow-1", PhaseID: "implementation"},
+		{FlowID: "flow-1", PhaseID: "Implementation"},
 		{FlowID: "flow-2", PhaseID: "review-loop"},
 	}), "\n")
 
@@ -535,6 +535,42 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 	}
 	if strings.Contains(pane, "y      copy id") {
 		t.Fatalf("selected Flow phase should not expose whole-flow copy shortcut:\n%s", view)
+	}
+}
+
+func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Resettable flow",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-orphan"},
+			}},
+		}},
+		ActivePane:                  1,
+		FlowSelected:                0,
+		ExpandedFlowID:              "flow-1",
+		SelectedFlowPhaseID:         "implementation",
+		FlowPhaseResetReadySelected: true,
+		FlowPhaseResumableSelected:  false,
+		FlowPhaseLaunchReady:        false,
+	})
+
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "x      reset ready") {
+		t.Fatalf("resettable selected Flow phase should expose reset shortcut:\n%s", view)
+	}
+	if strings.Contains(pane, "x      phases") {
+		t.Fatalf("selected Flow phase should not expose top-level phases shortcut:\n%s", view)
 	}
 }
 

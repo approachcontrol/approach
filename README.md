@@ -91,7 +91,7 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
-| `x` | Show/hide sessions for the selected worktree (worktrees view), or expand/collapse plan phase rows |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected `await-session` Flow phase after confirmation |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
@@ -333,6 +333,13 @@ launch ID does not match the phase's launch attempts shows `session-mismatch`,
 and an attached session that lacks a provider session ID shows
 `missing-session-id`. A pending Autoreview phase whose PR Creation predecessor
 completed without structured PR metadata shows `missing-pr`.
+
+When an expanded phase row shows `await-session`, and no running or starting
+embedded Flow terminal is attached to that same Flow phase, the selected phase
+row exposes `x reset ready`. Confirming the prompt removes the newest orphan
+launch attempt and lets wtui derive the phase back to `ready`. This is TUI
+recovery for an abandoned launch attempt, not a new agent transition; `ready`
+still cannot be set through `wtui flow phase set`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and

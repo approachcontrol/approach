@@ -223,6 +223,12 @@ type PhaseLaunchUpdate struct {
 	Resume   bool
 }
 
+// PhaseResetUpdate identifies one UI-owned phase recovery mutation.
+type PhaseResetUpdate struct {
+	FlowID  string
+	PhaseID string
+}
+
 // SessionAttachUpdate attaches a captured provider session to a Flow phase.
 type SessionAttachUpdate struct {
 	FlowID  string
@@ -755,6 +761,91 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+// ResetAwaitingSessionPhase removes an orphaned latest launch attempt from a
+// running phase and lets wtui derive it back to ready. This is intentionally
+// not part of the agent-facing phase transition table.
+func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
+		return FlowRecord{}, fmt.Errorf("phase id is required")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		if phase.Status != PhaseRunning {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires running await-session; %s is %s", phase.PhaseID, phase.Status)
+		}
+		if !PhaseAwaitingSession(phase) {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires latest launch without an attached session")
+		}
+		if PhaseSessionLaunchMismatch(phase) {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
+		}
+		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires satisfied predecessors for %s", phase.PhaseID)
+		}
+		launchIDs, removedLaunchID, ok := removeLatestPhaseLaunchID(phase.LaunchIDs)
+		if !ok {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires an orphan launch id")
+		}
+		phase.LaunchIDs = launchIDs
+		phase.Status = PhasePending
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		if resetIndex := phaseIndexByID(record.Phases, update.PhaseID); resetIndex >= 0 {
+			resetPhase := record.Phases[resetIndex]
+			resetPhase.LaunchIDs = removePhaseLaunchID(resetPhase.LaunchIDs, removedLaunchID)
+			if PhaseSessionLaunchMismatch(resetPhase) {
+				return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
+			}
+			record.Phases[resetIndex] = resetPhase
+		}
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		resetIndex := phaseIndexByID(record.Phases, update.PhaseID)
+		if resetIndex < 0 || record.Phases[resetIndex].Status != PhaseReady {
+			return FlowRecord{}, fmt.Errorf("flow phase reset could not derive %s back to ready", update.PhaseID)
+		}
+		record.Status = DeriveStatus(record)
+		return record, nil
+	})
+}
+
+func removeLatestPhaseLaunchID(values []string) ([]string, string, bool) {
+	for i := len(values) - 1; i >= 0; i-- {
+		if values[i] == "" {
+			continue
+		}
+		out := append([]string(nil), values[:i]...)
+		out = append(out, values[i+1:]...)
+		return out, values[i], true
+	}
+	return values, "", false
+}
+
+func removePhaseLaunchID(values []string, target string) []string {
+	if target == "" {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == target {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 // AttachSession records a provider session against a phase. Re-attaching the
