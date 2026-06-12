@@ -1874,6 +1874,7 @@ func TestModel_AKeyOnFlowLaunchesReviewLoopWithFirstLevelPrompt(t *testing.T) {
 	wantPrompt := strings.Join([]string{
 		"Use the review-loop workflow to review the changes.",
 		"Use the commit skill when revisions are made.",
+		"Use the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-review-loop",
 		"Branch: flow/review-loop",
@@ -2128,6 +2129,7 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithPRContext(t *testing.T) {
 	for _, want := range []string{
 		"second-level review",
 		"use the ship skill when fixes require commits or pushes",
+		"use the wtui-flow skill to record the autoreview result before finishing",
 		"worktree: /dev/alpha-worktrees/flow-pr",
 		"branch: flow/pr",
 		"start commit: ghi789",
@@ -2210,6 +2212,7 @@ func TestModel_AKeyOnFlowLaunchesAutoreviewWithRecoveryPrompt(t *testing.T) {
 	for _, want := range []string{
 		"second-level review",
 		"use the ship skill when fixes require commits or pushes",
+		"use the wtui-flow skill to record the autoreview result before finishing",
 		"worktree: /dev/alpha-worktrees/flow-pr",
 		"branch: flow/pr",
 		"start commit: ghi789",
