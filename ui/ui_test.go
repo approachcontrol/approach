@@ -268,6 +268,130 @@ func TestRender_SessionsModeShowsEmbeddedTerminalInsteadOfSessionRows(t *testing
 			t.Fatalf("embedded sessions view should hide saved session table %q:\n%s", hidden, view)
 		}
 	}
+	lines := strippedLines(view)
+	if len(lines) != 10 {
+		t.Fatalf("rendered line count = %d, want 10:\n%s", len(lines), view)
+	}
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width > 180 {
+			t.Fatalf("rendered line %d width = %d, want <= 180:\n%s", i, width, view)
+		}
+	}
+	header := lineIndexContaining(lines, "1 codex feature/api running")
+	body := lineIndexContaining(lines, "agent output")
+	if header < 1 || body <= header {
+		t.Fatalf("embedded terminal header/body should render in order, got indexes header=%d body=%d:\n%s", header, body, view)
+	}
+	top := header - 1
+	bottom := -1
+	for i := body + 1; i < len(lines); i++ {
+		if strings.Contains(lines[i], "└") {
+			bottom = i
+			break
+		}
+	}
+	if !strings.Contains(lines[top], "┌") || bottom <= body {
+		t.Fatalf("embedded terminal frame should wrap header and body in order, got indexes top=%d header=%d body=%d bottom=%d:\n%s", top, header, body, bottom, view)
+	}
+	if !strings.Contains(lines[header], "│1 codex feature/api running") || !strings.Contains(lines[body], "│agent output") {
+		t.Fatalf("embedded terminal header/body should be inside inner border:\n%s\n%s", lines[header], lines[body])
+	}
+}
+
+func TestRenderEmbeddedTerminalPaneWindowsLinesInsideBorder(t *testing.T) {
+	lines := renderEmbeddedTerminalPane([]EmbeddedTerminalTab{{
+		Number:   1,
+		Provider: "codex",
+		Identity: "implementation",
+		State:    "running",
+		Active:   true,
+	}}, []string{
+		"terminal line 1",
+		"terminal line 2",
+		"terminal line 3",
+		"terminal line 4",
+		"terminal line 5",
+	}, false, true, 28, 5)
+	stripped := stripLines(lines)
+
+	if len(stripped) != 5 {
+		t.Fatalf("line count = %d, want 5:\n%s", len(stripped), strings.Join(stripped, "\n"))
+	}
+	requireLinesWithinWidth(t, stripped, 28)
+	for index, want := range map[int]string{
+		0: "┌",
+		1: "│1 codex implementation",
+		2: "│terminal line 4",
+		3: "│terminal line 5",
+		4: "└",
+	} {
+		if !strings.Contains(stripped[index], want) {
+			t.Fatalf("line %d = %q, want to contain %q:\n%s", index, stripped[index], want, strings.Join(stripped, "\n"))
+		}
+	}
+	for _, hidden := range []string{"terminal line 1", "terminal line 2", "terminal line 3"} {
+		if strings.Contains(strings.Join(stripped, "\n"), hidden) {
+			t.Fatalf("old live line %q should be windowed out:\n%s", hidden, strings.Join(stripped, "\n"))
+		}
+	}
+}
+
+func TestRenderEmbeddedTerminalPaneSmallAllocations(t *testing.T) {
+	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", State: "running", Active: true}}
+	for _, tc := range []struct {
+		height int
+		want   []string
+	}{
+		{height: 0, want: nil},
+		{height: 1, want: []string{"┌──────────┐"}},
+		{height: 2, want: []string{"┌──────────┐", "└──────────┘"}},
+		{height: 3, want: []string{"┌──────────┐", "│1 codex ru│", "└──────────┘"}},
+	} {
+		t.Run(fmt.Sprintf("height_%d", tc.height), func(t *testing.T) {
+			got := stripLines(renderEmbeddedTerminalPane(tabs, []string{"body"}, false, false, 12, tc.height))
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("lines = %#v, want %#v", got, tc.want)
+			}
+			requireLinesWithinWidth(t, got, 12)
+		})
+	}
+
+	for _, width := range []int{2, 3} {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			got := stripLines(renderEmbeddedTerminalPane(tabs, []string{"body"}, false, false, width, 4))
+			if len(got) != 4 {
+				t.Fatalf("line count = %d, want 4: %#v", len(got), got)
+			}
+			requireLinesWithinWidth(t, got, width)
+		})
+	}
+}
+
+func TestRenderEmbeddedTerminalPaneBorderUsesFocusColor(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Active: true}}
+	focused := renderEmbeddedTerminalPane(tabs, nil, false, true, 12, 3)
+	unfocused := renderEmbeddedTerminalPane(tabs, nil, false, false, 12, 3)
+
+	activeTop := embeddedTerminalBorderStyle(true).Render("┌──────────┐")
+	mutedTop := embeddedTerminalBorderStyle(false).Render("┌──────────┐")
+	if focused[0] != activeTop {
+		t.Fatalf("focused top border = %q, want %q", focused[0], activeTop)
+	}
+	if unfocused[0] != mutedTop {
+		t.Fatalf("unfocused top border = %q, want %q", unfocused[0], mutedTop)
+	}
+	if focused[0] == unfocused[0] {
+		t.Fatalf("focused and unfocused border styles should differ: %q", focused[0])
+	}
 }
 
 func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
@@ -442,6 +566,23 @@ func strippedLines(view string) []string {
 		lines[i] = ansi.Strip(line)
 	}
 	return lines
+}
+
+func stripLines(lines []string) []string {
+	stripped := make([]string, len(lines))
+	for i, line := range lines {
+		stripped[i] = ansi.Strip(line)
+	}
+	return stripped
+}
+
+func requireLinesWithinWidth(t *testing.T, lines []string, width int) {
+	t.Helper()
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", i, got, width, line)
+		}
+	}
 }
 
 func lineIndexContaining(lines []string, needle string) int {
