@@ -153,6 +153,21 @@ type RepoRefreshFailedMsg struct {
 	Err     string
 }
 
+type RepoCreatedMsg struct {
+	Name    string
+	Result  actions.RepoCreateResult
+	Request uint64
+}
+
+type RepoCreateFailedMsg struct {
+	Input        string
+	CreateGitHub bool
+	Visibility   actions.RepoVisibility
+	Result       actions.RepoCreateResult
+	Err          string
+	Request      uint64
+}
+
 type GitPulledMsg struct {
 	RepoPath string
 }
@@ -645,6 +660,22 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 	}
 	m.activeRepoRefresh = 0
 
+	if m.pendingRepoSelection != "" {
+		pendingPath := m.pendingRepoSelection
+		m.repos = m.repos.SetQuery("").SetItems(msg.Repos)
+		for _, repo := range m.filteredRepos() {
+			if repo.Path != pendingPath {
+				continue
+			}
+			m.repos = m.repos.SelectFunc(func(repo scanner.Repo) bool {
+				return repo.Path == pendingPath
+			})
+			m.pendingRepoSelection = ""
+			m = m.resetRightPaneCursors()
+			return m.startFetchForMode()
+		}
+	}
+
 	oldPath, oldOK := m.currentRepoPath()
 	var selectedChanged, hasSelection bool
 	m, selectedChanged, hasSelection = m.replaceReposPreservingVisibleSelection(msg.Repos, oldPath)
@@ -674,6 +705,47 @@ func (m Model) handleRepoRefreshFailed(msg RepoRefreshFailedMsg) Model {
 		errText = "unknown error"
 	}
 	return m.setStatus(statusOther, "failed to refresh repos: "+errText)
+}
+
+func (m Model) handleRepoCreated(msg RepoCreatedMsg) (tea.Model, tea.Cmd) {
+	if !m.isCurrentRepoCreateRequest(msg.Request) {
+		return m, nil
+	}
+	m = m.clearRepoCreateRequest(msg.Request)
+	destination := msg.Result.DestinationPath
+	if destination != "" {
+		m.pendingRepoSelection = destination
+	}
+	name := strings.TrimSpace(msg.Name)
+	if name == "" && destination != "" {
+		name = filepath.Base(destination)
+	}
+	if name == "" {
+		name = "repo"
+	}
+	m = m.setStatus(statusOther, "Created repo "+name)
+	return m.startGlobalRefresh()
+}
+
+func (m Model) handleRepoCreateFailed(msg RepoCreateFailedMsg) Model {
+	if !m.isCurrentRepoCreateRequest(msg.Request) {
+		return m
+	}
+	m = m.clearRepoCreateRequest(msg.Request)
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to create repo"
+	}
+	retryPath := ""
+	if msg.Result.PartialSuccess && msg.Result.RetryAllowed {
+		retryPath = msg.Result.ExistingLocalPath
+		if retryPath == "" {
+			retryPath = msg.Result.DestinationPath
+		}
+		errText = "Local repo created; GitHub/origin setup failed: " + errText
+	}
+	m.modal = m.repoCreateForm(msg.Input, msg.CreateGitHub, msg.Visibility, retryPath, errText)
+	return m
 }
 
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {

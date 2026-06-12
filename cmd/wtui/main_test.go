@@ -202,6 +202,7 @@ func TestRun_WorktreeRootEnvOverridesConfigRoot(t *testing.T) {
 func TestRun_PassesRefreshScannerWithResolvedScanOptions(t *testing.T) {
 	var startupScan scanner.ScanOptions
 	var refreshScan scanner.ScanOptions
+	var repoCreateRoot string
 	scans := 0
 	err := run([]string{"wtui"}, runDeps{
 		loadConfig: func() (config.Config, error) {
@@ -228,6 +229,7 @@ func TestRun_PassesRefreshScannerWithResolvedScanOptions(t *testing.T) {
 			if opts.ScanRepos == nil {
 				t.Fatal("expected refresh scanner")
 			}
+			repoCreateRoot = opts.RepoCreateRoot
 			_, err := opts.ScanRepos()
 			return err
 		},
@@ -241,8 +243,65 @@ func TestRun_PassesRefreshScannerWithResolvedScanOptions(t *testing.T) {
 	if startupScan.Root != "/from/env" || refreshScan.Root != "/from/env" {
 		t.Fatalf("scan roots startup=%q refresh=%q, want WORKTREE_ROOT", startupScan.Root, refreshScan.Root)
 	}
+	if repoCreateRoot != "/from/env" {
+		t.Fatalf("repo create root = %q, want WORKTREE_ROOT", repoCreateRoot)
+	}
 	if startupScan.MaxDepth != 1 || refreshScan.MaxDepth != 1 {
 		t.Fatalf("scan max depth startup=%d refresh=%d, want 1", startupScan.MaxDepth, refreshScan.MaxDepth)
+	}
+}
+
+func TestRun_ResolvesRelativeScanRootForScanAndRepoCreation(t *testing.T) {
+	cwd := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	var startupScan scanner.ScanOptions
+	var refreshScan scanner.ScanOptions
+	var repoCreateRoot string
+	scans := 0
+	err = run([]string{"wtui"}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Scan: config.ScanConfig{Root: "repos", MaxDepth: 2}}, nil
+		},
+		getenv: func(string) string { return "" },
+		scan: func(opts scanner.ScanOptions) ([]scanner.Repo, error) {
+			scans++
+			if scans == 1 {
+				startupScan = opts
+			} else {
+				refreshScan = opts
+			}
+			return nil, nil
+		},
+		startProgramWithOptions: func(_ []scanner.Repo, opts startProgramOptions) error {
+			repoCreateRoot = opts.RepoCreateRoot
+			if opts.ScanRepos == nil {
+				t.Fatal("expected refresh scanner")
+			}
+			_, err := opts.ScanRepos()
+			return err
+		},
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	wantRoot, err := filepath.Abs("repos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startupScan.Root != wantRoot || refreshScan.Root != wantRoot || repoCreateRoot != wantRoot {
+		t.Fatalf("roots startup=%q refresh=%q create=%q, want %q", startupScan.Root, refreshScan.Root, repoCreateRoot, wantRoot)
 	}
 }
 

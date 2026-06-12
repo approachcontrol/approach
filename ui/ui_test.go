@@ -230,6 +230,98 @@ func TestRender_LeftPaneShowsFetchVisibleWhenReposExist(t *testing.T) {
 	}
 }
 
+func TestRender_LeftPaneShowsNewRepoWhenAvailable(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:                 []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:              0,
+		Width:                 120,
+		Height:                10,
+		Mode:                  ModeWorktrees,
+		ActivePane:            0,
+		FetchVisibleAvailable: true,
+		RepoCreateAvailable:   true,
+	})
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "n      new repo") {
+		t.Fatalf("left-pane render should expose repo creation hint, got:\n%s", pane)
+	}
+}
+
+func TestRender_LeftPaneHidesNewRepoWhenUnavailable(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:               []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:            0,
+		Width:               120,
+		Height:              10,
+		Mode:                ModeWorktrees,
+		ActivePane:          0,
+		RepoCreateAvailable: false,
+	})
+	if strings.Contains(shortcutPaneText(view), "new repo") {
+		t.Fatalf("left-pane render should hide repo creation hint when unavailable, got:\n%s", view)
+	}
+}
+
+func TestRenderRepoCreateFormOverlayShowsFieldsDefaultsFocusAndError(t *testing.T) {
+	view := Render(RenderParams{
+		Width:   72,
+		Height:  12,
+		Overlay: OverlayForm,
+		Form: FormView{
+			Title:      "New repo",
+			FocusIndex: 0,
+			Error:      "repo name cannot be empty",
+			Fields: []FormField{
+				{ID: "name", Kind: FormText, Label: "Repo name", Placeholder: "my-repo", Value: "app", Cursor: 3},
+				{ID: "github", Kind: FormCheckbox, Label: "Create GitHub repo", Checked: true},
+				{ID: "visibility", Kind: FormChoice, Label: "Visibility", Options: []SelectItem{
+					{Label: "Public", Value: "public"},
+					{Label: "Private", Value: "private"},
+				}, SelectedIndex: 0},
+			},
+		},
+	})
+	text := ansi.Strip(view)
+	for _, want := range []string{
+		"New repo",
+		"> Repo name",
+		"app",
+		"[x] Create GitHub repo",
+		"(o) Public",
+		"( ) Private",
+		"repo name cannot be empty",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("form overlay missing %q:\n%s", want, text)
+		}
+	}
+	requireLinesWithinWidth(t, strippedLines(view), 72)
+}
+
+func TestRenderRepoCreateFormStatusBarUsesFormControls(t *testing.T) {
+	view := Render(RenderParams{
+		Width:   90,
+		Height:  8,
+		Overlay: OverlayForm,
+		Form: FormView{
+			Title: "New repo",
+			Fields: []FormField{
+				{ID: "name", Kind: FormText, Label: "Repo name"},
+			},
+		},
+	})
+	lines := strippedLines(view)
+	status := lines[len(lines)-1]
+	for _, want := range []string{"tab/up/down", "space", "enter: submit", "esc: cancel"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("form status missing %q: %q", want, status)
+		}
+	}
+	if strings.Contains(status, "scroll") || strings.Contains(status, "bksp/del") {
+		t.Fatalf("form status should not inherit generic overlay controls: %q", status)
+	}
+}
+
 func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
