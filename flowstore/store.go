@@ -790,7 +790,7 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires satisfied predecessors for %s", phase.PhaseID)
 		}
-		launchIDs, ok := removeLatestPhaseLaunchID(phase.LaunchIDs)
+		launchIDs, removedLaunchID, ok := removeLatestPhaseLaunchID(phase.LaunchIDs)
 		if !ok {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires an orphan launch id")
 		}
@@ -800,6 +800,11 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
 		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		if resetIndex := phaseIndexByID(record.Phases, update.PhaseID); resetIndex >= 0 {
+			resetPhase := record.Phases[resetIndex]
+			resetPhase.LaunchIDs = removePhaseLaunchID(resetPhase.LaunchIDs, removedLaunchID)
+			record.Phases[resetIndex] = resetPhase
+		}
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		resetIndex := phaseIndexByID(record.Phases, update.PhaseID)
@@ -811,16 +816,30 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 	})
 }
 
-func removeLatestPhaseLaunchID(values []string) ([]string, bool) {
+func removeLatestPhaseLaunchID(values []string) ([]string, string, bool) {
 	for i := len(values) - 1; i >= 0; i-- {
 		if values[i] == "" {
 			continue
 		}
 		out := append([]string(nil), values[:i]...)
 		out = append(out, values[i+1:]...)
-		return out, true
+		return out, values[i], true
 	}
-	return values, false
+	return values, "", false
+}
+
+func removePhaseLaunchID(values []string, target string) []string {
+	if target == "" {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == target {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 // AttachSession records a provider session against a phase. Re-attaching the

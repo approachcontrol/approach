@@ -1164,10 +1164,14 @@ func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.
 }
 
 func (m Model) hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID string) bool {
+	wantPhaseID := artifacts.NormalizePhaseID(phaseID)
+	if wantPhaseID == "" {
+		return false
+	}
 	for _, slot := range m.embeddedTerminals {
 		if slot.Scope == embeddedTerminalScopeFlow &&
 			slot.FlowID == flowID &&
-			slot.FlowPhaseID == phaseID &&
+			artifacts.NormalizePhaseID(slot.FlowPhaseID) == wantPhaseID &&
 			embeddedTerminalRunning(slot.Terminal) {
 			return true
 		}
@@ -1276,12 +1280,17 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 			}
 			planBody = body
 		}
-		if _, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   record.FlowID,
 			PhaseID:  phase.PhaseID,
 			LaunchID: launchID,
-		}); err != nil {
+		})
+		if err != nil {
 			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
+		}
+		launchPhase := phase
+		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
+			launchPhase = persistedPhase
 		}
 		return wrap(actions.AgentLaunchContext{
 			Command:          m.agentCommand,
@@ -1294,8 +1303,8 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 			PlanID:           record.PlanID,
 			PlanPath:         planPath,
 			FlowID:           record.FlowID,
-			FlowPhaseID:      phase.PhaseID,
-			InitialPrompt:    flowPhasePrompt(record, phase, planPath, planBody, m.flowPromptTemplates),
+			FlowPhaseID:      launchPhase.PhaseID,
+			InitialPrompt:    flowPhasePrompt(record, launchPhase, planPath, planBody, m.flowPromptTemplates),
 		})
 	}
 }
@@ -1639,7 +1648,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 }
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
-	switch phaseID {
+	switch artifacts.NormalizePhaseID(phaseID) {
 	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
 		return false
 	default:

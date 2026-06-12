@@ -350,7 +350,7 @@ func TestRender_FlowsModeMarksActiveTerminalExpandedPhaseRows(t *testing.T) {
 		},
 	}
 	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 8, "flow-1", "implementation", []FlowTerminalActivity{
-		{FlowID: "flow-1", PhaseID: "implementation"},
+		{FlowID: "flow-1", PhaseID: "Implementation"},
 		{FlowID: "flow-2", PhaseID: "review-loop"},
 	}), "\n")
 

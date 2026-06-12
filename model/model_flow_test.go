@@ -224,6 +224,54 @@ func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
 	}
 }
 
+func TestModel_ResetFlowPhaseRefreshKeepsSelectionAfterPhaseIDNormalization(t *testing.T) {
+	awaiting := flowWithAwaitingImplementation()
+	awaiting.FlowID = "flow-legacy"
+	awaiting.Phases[2].PhaseID = "Implementation"
+	reset := awaiting
+	reset.Phases = append([]flowstore.FlowPhase(nil), awaiting.Phases...)
+	reset.Phases[2].PhaseID = "implementation"
+	reset.Phases[2].Status = flowstore.PhaseReady
+	reset.Phases[2].LaunchIDs = nil
+	var resetCalls []flowstore.PhaseResetUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalls = append(resetCalls, update)
+			return reset, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{reset}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{awaiting})
+	m = selectFlowPhaseByID(t, m, "Implementation")
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("accepting reset confirmation should return reset command")
+	}
+	m, resetCmd := update(m, cmd())
+	if resetCmd == nil {
+		t.Fatal("confirmed reset should return persistence command")
+	}
+	m, fetchCmd := update(m, resetCmd())
+	if len(resetCalls) != 1 || resetCalls[0].PhaseID != "Implementation" {
+		t.Fatalf("reset calls = %#v", resetCalls)
+	}
+	if fetchCmd == nil {
+		t.Fatal("successful reset should refresh Flow rows")
+	}
+	m, _ = update(m, flowResultFromCommand(t, fetchCmd))
+
+	if got := m.ExpandedFlowID(); got != "flow-legacy" {
+		t.Fatalf("expanded flow after reset refresh = %q, want flow-legacy", got)
+	}
+	if got := m.SelectedFlowPhaseID(); got != "implementation" {
+		t.Fatalf("selected phase after reset refresh = %q, want normalized implementation", got)
+	}
+}
+
 func TestModel_XKeyOnResettableFlowPhaseCancelDoesNotPersist(t *testing.T) {
 	resetCalled := false
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -335,6 +383,61 @@ func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T
 	}
 	if resetCalled {
 		t.Fatal("reset should not be called while matching Flow terminal is running")
+	}
+}
+
+func TestModel_ResetShortcutHiddenAfterLegacyPhaseIDLaunchNormalizes(t *testing.T) {
+	legacy := flowWithPhaseDetails()
+	legacy.Phases[2].PhaseID = "Implementation"
+	awaiting := flowWithAwaitingImplementation()
+	var started actions.AgentLaunchContext
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			if update.PhaseID != "Implementation" {
+				t.Fatalf("launch update phase id = %q, want legacy Implementation", update.PhaseID)
+			}
+			return awaiting, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{legacy})
+	m = selectFlowPhaseByID(t, m, "Implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on selected Flow phase should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	if started.FlowPhaseID != "implementation" {
+		t.Fatalf("embedded launch phase id = %q, want canonical implementation", started.FlowPhaseID)
+	}
+	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{awaiting}, ListRequest: m.ListRequest(ui.ModeFlows)})
+	if got := m.SelectedFlowPhaseID(); got != "implementation" {
+		t.Fatalf("selected phase after normalized refresh = %q, want implementation", got)
+	}
+
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "reset ready") {
+		t.Fatalf("running normalized Flow terminal should hide reset shortcut:\n%s", view)
+	}
+	if !strings.Contains(view, "   >● running") {
+		t.Fatalf("normalized Flow terminal should mark selected phase active:\n%s", view)
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("x with normalized running Flow terminal returned cmd=%T overlay=%d", cmd, m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called while normalized Flow terminal is running")
 	}
 }
 

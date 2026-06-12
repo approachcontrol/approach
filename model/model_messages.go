@@ -1170,22 +1170,17 @@ func (m Model) restoreExpandedFlowSelection(flowID, phaseID string) Model {
 	if !ok || record.FlowID != flowID {
 		return m.setExpandedFlowID("")
 	}
-	if phaseID != "" && !flowRecordHasPhase(record, phaseID) {
-		return m.setExpandedFlowID("")
+	if phaseID != "" {
+		phase, ok := flowRecordPhaseByID(record, phaseID)
+		if !ok {
+			return m.setExpandedFlowID("")
+		}
+		phaseID = phase.PhaseID
 	}
 	m.expandedFlowID = flowID
 	m.selectedFlowPhaseID = phaseID
 	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
 	return m.reflowFlows()
-}
-
-func flowRecordHasPhase(record flowstore.FlowRecord, phaseID string) bool {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if phase.PhaseID == phaseID {
-			return true
-		}
-	}
-	return false
 }
 
 func (m Model) handleSessionTranscriptResult(msg SessionTranscriptResultMsg) (Model, tea.Cmd) {

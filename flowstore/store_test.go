@@ -1016,7 +1016,7 @@ func TestStoreResetAwaitingSessionPhaseCollapsesDuplicateRows(t *testing.T) {
 			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
 			{
 				PhaseID: "Step-1", Title: "Step 1", Status: flowstore.PhaseCompleted, Order: 2,
-				LaunchIDs: []string{"launch-old"},
+				LaunchIDs: []string{"launch-old", "launch-orphan"},
 				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old"}},
 			},
 			{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
@@ -1048,6 +1048,9 @@ func TestStoreResetAwaitingSessionPhaseCollapsesDuplicateRows(t *testing.T) {
 	}
 	if len(survivor.LaunchIDs) != 1 || survivor.LaunchIDs[0] != "launch-old" {
 		t.Fatalf("survivor launch ids = %#v, want older launch only", survivor.LaunchIDs)
+	}
+	if flowstore.PhaseAwaitingSession(survivor) {
+		t.Fatalf("survivor should not keep duplicate orphan launch after reset: %#v", survivor)
 	}
 	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "session-old" {
 		t.Fatalf("survivor sessions = %#v, want older session preserved", survivor.Sessions)

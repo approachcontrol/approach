@@ -13,6 +13,7 @@ import (
 	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/model/pane"
 	"github.com/brian-bell/wtui/planstore"
@@ -1122,12 +1123,7 @@ func (m Model) selectedFlowPhase() (flowstore.FlowPhase, bool) {
 	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
 		return flowstore.FlowPhase{}, false
 	}
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if phase.PhaseID == m.selectedFlowPhaseID {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
+	return flowRecordPhaseByID(record, m.selectedFlowPhaseID)
 }
 
 func (m Model) selectedFlowPhaseIndex() (int, bool) {
@@ -1135,12 +1131,8 @@ func (m Model) selectedFlowPhaseIndex() (int, bool) {
 	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
 		return 0, false
 	}
-	for i, phase := range flowstore.OrderedPhases(record.Phases) {
-		if phase.PhaseID == m.selectedFlowPhaseID {
-			return i, true
-		}
-	}
-	return 0, false
+	index, _, ok := flowRecordPhaseIndexByID(record, m.selectedFlowPhaseID)
+	return index, ok
 }
 
 func (m Model) selectedFlowPhaseResumable() bool {
@@ -1181,14 +1173,37 @@ func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flow
 		if record.FlowID != flowID {
 			continue
 		}
-		for _, phase := range flowstore.OrderedPhases(record.Phases) {
-			if phase.PhaseID == phaseID {
-				return record, phase, true
-			}
+		if phase, ok := flowRecordPhaseByID(record, phaseID); ok {
+			return record, phase, true
 		}
 		return record, flowstore.FlowPhase{}, false
 	}
 	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+}
+
+func flowRecordPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	_, phase, ok := flowRecordPhaseIndexByID(record, phaseID)
+	return phase, ok
+}
+
+func flowRecordPhaseIndexByID(record flowstore.FlowRecord, phaseID string) (int, flowstore.FlowPhase, bool) {
+	requested := strings.TrimSpace(phaseID)
+	phases := flowstore.OrderedPhases(record.Phases)
+	for i, phase := range phases {
+		if phase.PhaseID == requested {
+			return i, phase, true
+		}
+	}
+	want := artifacts.NormalizePhaseID(requested)
+	if want == "" {
+		return 0, flowstore.FlowPhase{}, false
+	}
+	for i, phase := range phases {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
+			return i, phase, true
+		}
+	}
+	return 0, flowstore.FlowPhase{}, false
 }
 
 func (m Model) clearSelectedPlanPhase() Model {

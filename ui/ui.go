@@ -12,6 +12,7 @@ import (
 
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
@@ -2298,13 +2299,14 @@ func newFlowTerminalActivitySet(activity []FlowTerminalActivity) flowTerminalAct
 			continue
 		}
 		set.flows[item.FlowID] = struct{}{}
-		if item.PhaseID == "" {
+		phaseID := artifacts.NormalizePhaseID(item.PhaseID)
+		if phaseID == "" {
 			continue
 		}
 		if set.phases[item.FlowID] == nil {
 			set.phases[item.FlowID] = make(map[string]struct{}, 1)
 		}
-		set.phases[item.FlowID][item.PhaseID] = struct{}{}
+		set.phases[item.FlowID][phaseID] = struct{}{}
 	}
 	return set
 }
@@ -2319,7 +2321,7 @@ func (s flowTerminalActivitySet) hasPhase(flowID, phaseID string) bool {
 	if !ok {
 		return false
 	}
-	_, ok = phases[phaseID]
+	_, ok = phases[artifacts.NormalizePhaseID(phaseID)]
 	return ok
 }
 
