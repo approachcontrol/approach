@@ -528,6 +528,33 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
+	flowRow := renderStatusBarWithState(statusBarParams{
+		Width:                120,
+		Mode:                 ModeFlows,
+		ActivePane:           1,
+		RepoSelected:         true,
+		FlowSelected:         true,
+		FlowAutoModeSelected: false,
+	})
+	if !strings.Contains(flowRow, "m: auto: off") {
+		t.Fatalf("compact selected Flow row should keep auto-mode off toggle, got %q", flowRow)
+	}
+
+	phaseRow := renderStatusBarWithState(statusBarParams{
+		Width:                120,
+		Mode:                 ModeFlows,
+		ActivePane:           1,
+		RepoSelected:         true,
+		FlowSelected:         true,
+		FlowPhaseSelected:    true,
+		FlowAutoModeSelected: true,
+	})
+	if !strings.Contains(phaseRow, "m: auto: on") {
+		t.Fatalf("compact selected Flow phase should keep auto-mode on toggle, got %q", phaseRow)
+	}
+}
+
 func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *testing.T) {
 	base := statusBarParams{
 		Width:        120,
