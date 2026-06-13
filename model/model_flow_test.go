@@ -146,7 +146,7 @@ func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.
 	return cmd, &updates
 }
 
-func TestModel_FlowAutoLaunchUsesDefaultCLIAgentAndEffort(t *testing.T) {
+func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
@@ -199,6 +199,90 @@ func TestModel_FlowAutoLaunchUsesDefaultCLIAgentAndEffort(t *testing.T) {
 		!launch.LaunchContext.Headless ||
 		!launch.LaunchContext.FlowLaunchTracked {
 		t.Fatalf("auto launch context = %#v", launch.LaunchContext)
+	}
+}
+
+func TestModel_FlowAutoLaunchWithCodexAppUsesExternalRouteWithoutEffort(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var launched actions.AgentLaunchContext
+	startEmbeddedRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:         "codex-app",
+		CodexReasoningEffort: "high",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			launched := current
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			startEmbeddedRan = true
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+
+	m, cmd := update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd == nil {
+		t.Fatal("Flow refresh should return auto-launch command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("auto-launch command returned %T, want PlanLaunchRequestedMsg", msg)
+	}
+	if !launchUpdate.AutoLaunch || launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "implementation" || launchUpdate.LaunchID == "" {
+		t.Fatalf("auto launch update = %#v", launchUpdate)
+	}
+	if launchMsg.LaunchContext.Command != "codex-app" ||
+		launchMsg.LaunchContext.ReasoningEffort != "" ||
+		launchMsg.LaunchContext.FlowID != "flow-1" ||
+		launchMsg.LaunchContext.FlowPhaseID != "implementation" ||
+		launchMsg.LaunchContext.Embedded ||
+		launchMsg.LaunchContext.Headless ||
+		launchMsg.LaunchContext.FlowLaunchTracked {
+		t.Fatalf("codex-app auto launch context = %#v", launchMsg.LaunchContext)
+	}
+
+	_, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected external codex-app agent result command")
+	}
+	_ = cmd()
+	if startEmbeddedRan {
+		t.Fatal("codex-app auto launch should not start an embedded terminal")
+	}
+	if launched.Command != "codex-app" ||
+		launched.ReasoningEffort != "" ||
+		launched.FlowID != "flow-1" ||
+		launched.FlowPhaseID != "implementation" ||
+		launched.Embedded ||
+		launched.Headless ||
+		launched.FlowLaunchTracked {
+		t.Fatalf("codex-app external launch context = %#v", launched)
 	}
 }
 
@@ -5819,7 +5903,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowLaunchNormalizesDefaultAgentCommandForPlanAndTerminal(t *testing.T) {
+func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t *testing.T) {
 	var startRequest model.FlowStartRequest
 	var started actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
