@@ -38,7 +38,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
-		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateInput(view) {
+		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateOptionsForm(view) {
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
 			cmd = tagFlowCreateRequest(cmd, request)
@@ -107,12 +107,12 @@ func isWorktreeCreateInput(view modal.View) bool {
 	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
 }
 
-func isFlowCreateInput(view modal.View) bool {
-	return view.Kind == modal.Input && view.Placeholder == ui.FlowBaseRefInputPlaceholder
-}
-
 func isRepoCreateForm(view modal.View) bool {
 	return view.Kind == modal.Form && view.Form.Purpose == repoCreateFormPurpose
+}
+
+func isFlowCreateOptionsForm(view modal.View) bool {
+	return view.Kind == modal.Form && view.Form.Purpose == flowCreateOptionsFormPurpose
 }
 
 func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
@@ -907,10 +907,12 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 }
 
 const (
-	repoCreateFormPurpose     = "repo-create"
-	repoCreateNameField       = "name"
-	repoCreateGitHubField     = "github"
-	repoCreateVisibilityField = "visibility"
+	repoCreateFormPurpose        = "repo-create"
+	repoCreateNameField          = "name"
+	repoCreateGitHubField        = "github"
+	repoCreateVisibilityField    = "visibility"
+	flowCreateOptionsFormPurpose = "flow-create-options"
+	flowCreateHeadlessField      = "headless"
 )
 
 func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
@@ -1039,7 +1041,8 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
-	if _, ok := m.currentRepoPath(); !ok {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
 		return m, nil
 	}
 	if m.agentCommand == "" {
@@ -1052,35 +1055,62 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 		"",
 		validateFlowTitleInput,
 		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowTitleSubmittedMsg{Title: input} }
+			return func() tea.Msg { return FlowTitleSubmittedMsg{RepoPath: repoPath, Title: input} }
 		},
 	)
 	return m, nil
 }
 
 func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
 	m.modal = modal.OpenMultiLineInput(
 		ui.FlowInstructionsPrompt,
 		ui.FlowInstructionsInputPlaceholder,
 		"",
 		validateFlowInstructionsInput,
 		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowInstructionsSubmittedMsg{Title: msg.Title, Instructions: input} }
+			return func() tea.Msg {
+				return FlowInstructionsSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: input}
+			}
 		},
 	)
 	return m
 }
 
 func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
 	m.modal = modal.OpenSingleLineInput(
 		ui.FlowBaseRefPrompt,
 		ui.FlowBaseRefInputPlaceholder,
 		"",
 		validateFlowBaseRefInput,
 		func(input string) tea.Cmd {
-			return m.createFlowAndLaunchPlan(msg.Title, msg.Instructions, input)
+			return func() tea.Msg {
+				return FlowBaseRefSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: msg.Instructions, BaseRef: input}
+			}
 		},
 	)
+	return m
+}
+
+func (m Model) handleFlowBaseRefSubmitted(msg FlowBaseRefSubmittedMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	m.modal = modal.OpenForm(modal.FormSpec{
+		Purpose: flowCreateOptionsFormPurpose,
+		Title:   ui.FlowOptionsFormTitle,
+		Fields: []modal.FormField{
+			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
+		},
+		Submit: func(values modal.FormValues) tea.Cmd {
+			return m.createFlowAndLaunchPlanForRepo(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, values.Checked[flowCreateHeadlessField])
+		},
+	})
 	return m
 }
 
