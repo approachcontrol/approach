@@ -501,6 +501,60 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
+	flowRow := renderStatusBarWithState(statusBarParams{
+		Width:                180,
+		Mode:                 ModeFlows,
+		ActivePane:           1,
+		RepoSelected:         true,
+		FlowSelected:         true,
+		FlowAutoModeSelected: false,
+	})
+	if !strings.Contains(flowRow, "m: auto: off") {
+		t.Fatalf("selected Flow row should expose auto-mode off toggle, got %q", flowRow)
+	}
+
+	phaseRow := renderStatusBarWithState(statusBarParams{
+		Width:                180,
+		Mode:                 ModeFlows,
+		ActivePane:           1,
+		RepoSelected:         true,
+		FlowSelected:         true,
+		FlowPhaseSelected:    true,
+		FlowAutoModeSelected: true,
+	})
+	if !strings.Contains(phaseRow, "m: auto: on") {
+		t.Fatalf("selected Flow phase should expose auto-mode on toggle, got %q", phaseRow)
+	}
+}
+
+func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
+	flowRow := renderStatusBarWithState(statusBarParams{
+		Width:                120,
+		Mode:                 ModeFlows,
+		ActivePane:           1,
+		RepoSelected:         true,
+		FlowSelected:         true,
+		FlowAutoModeSelected: false,
+	})
+	if !strings.Contains(flowRow, "m: auto: off") {
+		t.Fatalf("compact selected Flow row should keep auto-mode off toggle, got %q", flowRow)
+	}
+
+	phaseRow := renderStatusBarWithState(statusBarParams{
+		Width:                120,
+		Mode:                 ModeFlows,
+		ActivePane:           1,
+		RepoSelected:         true,
+		FlowSelected:         true,
+		FlowPhaseSelected:    true,
+		FlowAutoModeSelected: true,
+	})
+	if !strings.Contains(phaseRow, "m: auto: on") {
+		t.Fatalf("compact selected Flow phase should keep auto-mode on toggle, got %q", phaseRow)
+	}
+}
+
 func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *testing.T) {
 	base := statusBarParams{
 		Width:        120,
@@ -523,7 +577,7 @@ func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *tes
 
 	base.FlowNextLaunchReady = true
 	ready := renderStatusBarWithState(base)
-	if !strings.Contains(ready, "ctrl+enter: launch next") {
+	if !strings.Contains(ready, "ctrl+j: launch next") {
 		t.Fatalf("ready selected Flow phase should expose launch action, got %q", ready)
 	}
 	for _, notWant := range []string{"a: launch phase", "a: phase status", "i: embed phase"} {
@@ -658,7 +712,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  phases", "ctrl+enter launch next", "h      headless off", "y      copy phase id"} {
+	for _, want := range []string{"enter  phases", "ctrl+j launch next", "h      headless off", "y      copy phase id"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
@@ -741,7 +795,7 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 		FlowHeadless:        true,
 		FlowNextLaunchReady: true,
 	})
-	for _, want := range []string{"h: headless on", "enter: phases", "ctrl+enter: launch next"} {
+	for _, want := range []string{"h: headless on", "enter: phases", "ctrl+j: launch next"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
 		}

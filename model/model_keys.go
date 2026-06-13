@@ -395,7 +395,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			m = m.clearSelectedFlowPhase()
 		}
-	case "ctrl+j", "ctrl+enter":
+	case "ctrl+j":
 		if m.mode == ui.ModeFlows {
 			return m.handleLaunchNextFlowPhase()
 		}
@@ -575,6 +575,7 @@ func (m Model) moveCursor(delta int) Model {
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.setExpandedFlowID("")
 		}
+		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m
 }
