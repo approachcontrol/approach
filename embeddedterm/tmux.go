@@ -74,9 +74,6 @@ func startTmuxBackedAgent(ctx context.Context, spec actions.EmbeddedTmuxAgentSpe
 		cleanup:     spec.Cleanup,
 		run:         run,
 	}
-	if owned {
-		t.cleanup = nil
-	}
 	go t.monitor()
 	return t, nil
 }
@@ -123,9 +120,10 @@ func (t *TmuxBackedTerminal) Detach() error {
 	}
 	t.detached = true
 	t.owned = false
+	t.cleanup = nil
+	t.cleaned = true
 	t.mu.Unlock()
 	err := t.term.Close()
-	t.cleanupOnce()
 	return err
 }
 
@@ -160,6 +158,8 @@ func (t *TmuxBackedTerminal) handleExit(err error) {
 	if err == nil && !t.terminating {
 		t.detached = true
 		t.owned = false
+		t.cleanup = nil
+		t.cleaned = true
 	}
 	killCommand := t.killCommand
 	run := t.run

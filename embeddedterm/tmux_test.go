@@ -71,9 +71,7 @@ func TestTmuxBackedTerminalTerminateKillsOwnedSession(t *testing.T) {
 	if !runner.called("kill-session") {
 		t.Fatalf("terminate should kill owned tmux session, calls: %#v", runner.snapshot())
 	}
-	if got := cleanupCount.Load(); got != 0 {
-		t.Fatalf("cleanup count = %d, want owned running session to rely on script self-cleanup", got)
-	}
+	waitCleanupCount(t, cleanupCount, 1)
 }
 
 func TestTmuxBackedTerminalExistingSessionIsUnowned(t *testing.T) {
@@ -209,9 +207,7 @@ func TestTmuxBackedTerminalUnexpectedAttachExitKillsOwnedSession(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if runner.called("kill-session") {
-			if got := cleanupCount.Load(); got != 0 {
-				t.Fatalf("cleanup count = %d, want owned running session to rely on script self-cleanup", got)
-			}
+			waitCleanupCount(t, cleanupCount, 1)
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
