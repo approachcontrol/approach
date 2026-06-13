@@ -3469,6 +3469,13 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			notWant:    []string{"E      codex-app default"},
 		},
 		{
+			name:       "claude",
+			options:    model.Options{AgentCommand: "claude", ClaudeReasoningEffort: "max"},
+			wantAgent:  "A      claude",
+			wantEffort: "E      effort: max",
+			notWant:    []string{"E      claude effort: max"},
+		},
+		{
 			name:      "unset",
 			wantAgent: "A      choose agent",
 			notWant:   []string{"E      choose agent", "E      effort:", "E      app default"},

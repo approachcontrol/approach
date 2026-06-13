@@ -1217,8 +1217,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					actions = append(actions, autoHint)
 				}
 			}
-			actions = append(actions, shortcutHint{Key: "A", Label: flowAgentShortcutLabel(sp.FlowAgentLabel)})
-			if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); effortLabel != "" {
+			agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
+			actions = append(actions, shortcutHint{Key: "A", Label: agentLabel})
+			if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
 				actions = append(actions, shortcutHint{Key: "E", Label: effortLabel})
 			}
 		}
@@ -1262,12 +1263,14 @@ func flowAutoModeShortcutHint(enabled bool) shortcutHint {
 	return shortcutHint{Key: "m", Label: "auto: off"}
 }
 
-func flowAgentShortcutLabel(value string) string {
+const flowChooseAgentLabel = "choose agent"
+
+func flowAgentShortcut(value string) (string, bool) {
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return "choose agent"
+	if value == "" || value == flowChooseAgentLabel {
+		return flowChooseAgentLabel, false
 	}
-	return value
+	return value, true
 }
 
 func shortcutsMuted(sp statusBarParams) bool {

@@ -504,13 +504,15 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 
 func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.T) {
 	tests := []struct {
-		name   string
-		agent  string
-		effort string
-		want   string
+		name      string
+		agent     string
+		effort    string
+		want      string
+		wantNoKey string
 	}{
 		{name: "codex app", agent: "codex-app", effort: "app default", want: "A      codex-app\nE      app default"},
-		{name: "unset", agent: "choose agent", effort: "", want: "A      choose agent"},
+		{name: "unset", agent: "choose agent", effort: "", want: "A      choose agent", wantNoKey: "E"},
+		{name: "missing agent label", effort: "effort: high", want: "A      choose agent", wantNoKey: "E"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -528,8 +530,8 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 			if !strings.Contains(pane, tt.want) {
 				t.Fatalf("flows shortcut pane should expose special labels %q:\n%s", tt.want, pane)
 			}
-			if tt.effort == "" && strings.Contains(pane, "E      ") {
-				t.Fatalf("flows shortcut pane should omit effort hint without configured agent:\n%s", pane)
+			if tt.wantNoKey != "" && strings.Contains(pane, tt.wantNoKey+"      ") {
+				t.Fatalf("flows shortcut pane should omit %s hint without configured agent:\n%s", tt.wantNoKey, pane)
 			}
 		})
 	}
