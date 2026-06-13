@@ -335,7 +335,9 @@ is on by default: selected CLI `codex` and `claude` phase launches run in a
 runtime-only embedded terminal inside the flows pane. Press `h` to choose the
 CLI command mode: headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
-terminal. Creating a new Flow has its own default-off Headless checkbox for the
+terminal. Headless-off Flow launches prefill the phase prompt without
+submitting it, so you can review or edit it before pressing enter. Creating a
+new Flow has its own default-off Headless checkbox for the
 initial Plan launch; that checkbox does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
 launches all use the configured agent and that agent's configured effort. Press
