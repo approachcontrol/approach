@@ -68,6 +68,7 @@ type FormFieldKind int
 
 const (
 	FormText FormFieldKind = iota
+	FormMultilineText
 	FormCheckbox
 	FormChoice
 )
@@ -318,7 +319,7 @@ func normalizeFormFields(fields []FormField) []FormField {
 	for i := range out {
 		field := &out[i]
 		switch field.Kind {
-		case FormText:
+		case FormText, FormMultilineText:
 			field.Cursor = clampInputCursor(field.Value, field.Cursor)
 			if field.Value != "" && field.Cursor == 0 {
 				field.Cursor = inputLength(field.Value)
@@ -645,10 +646,10 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		return Modal{}, Accepted, cmd
 	case "esc", "ctrl+c":
 		return Modal{}, Cancelled, nil
-	case "tab", "down":
+	case "tab":
 		m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
 		return m, Consumed, nil
-	case "shift+tab", "up":
+	case "shift+tab":
 		m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
 		return m, Consumed, nil
 	}
@@ -658,15 +659,29 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 	}
 	field := &m.formFields[m.formFocus]
 	switch field.Kind {
-	case FormText:
+	case FormText, FormMultilineText:
 		return m.updateFormTextField(msg, field)
 	case FormCheckbox:
+		switch msg.String() {
+		case "down":
+			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+			return m, Consumed, nil
+		case "up":
+			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+			return m, Consumed, nil
+		}
 		if msg.Type == tea.KeySpace {
 			field.Checked = !field.Checked
 			m.formErr = ""
 		}
 	case FormChoice:
 		switch msg.String() {
+		case "down":
+			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+			return m, Consumed, nil
+		case "up":
+			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+			return m, Consumed, nil
 		case "left", "h":
 			field.SelectedIndex = previousSelectIndex(field.SelectedIndex, len(field.Options))
 			m.formErr = ""
@@ -686,6 +701,10 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Outcome, tea.Cmd) {
 	field.Cursor = clampInputCursor(field.Value, field.Cursor)
 	switch msg.String() {
+	case "alt+enter":
+		if field.Kind == FormMultilineText {
+			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, []rune{'\n'})
+		}
 	case "backspace", "ctrl+h":
 		field.Value, field.Cursor = deleteRuneBefore(field.Value, field.Cursor)
 	case "delete":
@@ -697,6 +716,18 @@ func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Out
 	case "right":
 		if field.Cursor < inputLength(field.Value) {
 			field.Cursor++
+		}
+	case "up":
+		if field.Kind == FormMultilineText {
+			field.Cursor, _ = moveCursorVertically(field.Value, field.Cursor, -1, -1)
+		} else {
+			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+		}
+	case "down":
+		if field.Kind == FormMultilineText {
+			field.Cursor, _ = moveCursorVertically(field.Value, field.Cursor, 1, -1)
+		} else {
+			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
 		}
 	case "home", "ctrl+a":
 		field.Cursor = 0
@@ -724,7 +755,7 @@ func (m Modal) formValues() FormValues {
 	}
 	for _, field := range m.formFields {
 		switch field.Kind {
-		case FormText:
+		case FormText, FormMultilineText:
 			values.Text[field.ID] = strings.TrimSpace(field.Value)
 		case FormCheckbox:
 			values.Checked[field.ID] = field.Checked

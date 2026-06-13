@@ -38,7 +38,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
-		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateOptionsForm(view) {
+		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
 			cmd = tagFlowCreateRequest(cmd, request)
@@ -111,8 +111,8 @@ func isRepoCreateForm(view modal.View) bool {
 	return view.Kind == modal.Form && view.Form.Purpose == repoCreateFormPurpose
 }
 
-func isFlowCreateOptionsForm(view modal.View) bool {
-	return view.Kind == modal.Form && view.Form.Purpose == flowCreateOptionsFormPurpose
+func isFlowCreateForm(view modal.View) bool {
+	return view.Kind == modal.Form && view.Form.Purpose == flowCreateFormPurpose
 }
 
 func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
@@ -575,6 +575,7 @@ func (m Model) moveCursor(delta int) Model {
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.setExpandedFlowID("")
 		}
+		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m
 }
@@ -907,12 +908,15 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 }
 
 const (
-	repoCreateFormPurpose        = "repo-create"
-	repoCreateNameField          = "name"
-	repoCreateGitHubField        = "github"
-	repoCreateVisibilityField    = "visibility"
-	flowCreateOptionsFormPurpose = "flow-create-options"
-	flowCreateHeadlessField      = "headless"
+	repoCreateFormPurpose       = "repo-create"
+	repoCreateNameField         = "name"
+	repoCreateGitHubField       = "github"
+	repoCreateVisibilityField   = "visibility"
+	flowCreateFormPurpose       = "flow-create"
+	flowCreateTitleField        = "title"
+	flowCreateInstructionsField = "instructions"
+	flowCreateBaseRefField      = "base-ref"
+	flowCreateHeadlessField     = "headless"
 )
 
 func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
@@ -1049,69 +1053,27 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching a flow")
 		return m, nil
 	}
-	m.modal = modal.OpenSingleLineInput(
-		ui.FlowTitlePrompt,
-		ui.FlowTitleInputPlaceholder,
-		"",
-		validateFlowTitleInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowTitleSubmittedMsg{RepoPath: repoPath, Title: input} }
-		},
-	)
-	return m, nil
-}
-
-func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
-	m.modal = modal.OpenMultiLineInput(
-		ui.FlowInstructionsPrompt,
-		ui.FlowInstructionsInputPlaceholder,
-		"",
-		validateFlowInstructionsInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg {
-				return FlowInstructionsSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: input}
-			}
-		},
-	)
-	return m
-}
-
-func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
-	m.modal = modal.OpenSingleLineInput(
-		ui.FlowBaseRefPrompt,
-		ui.FlowBaseRefInputPlaceholder,
-		"",
-		validateFlowBaseRefInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg {
-				return FlowBaseRefSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: msg.Instructions, BaseRef: input}
-			}
-		},
-	)
-	return m
-}
-
-func (m Model) handleFlowBaseRefSubmitted(msg FlowBaseRefSubmittedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
 	m.modal = modal.OpenForm(modal.FormSpec{
-		Purpose: flowCreateOptionsFormPurpose,
-		Title:   ui.FlowOptionsFormTitle,
+		Purpose: flowCreateFormPurpose,
+		Title:   "New flow",
 		Fields: []modal.FormField{
+			{ID: flowCreateTitleField, Kind: modal.FormText, Label: "Title", Placeholder: ui.FlowTitleInputPlaceholder},
+			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
+			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
 			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
 		},
+		Validate: validateFlowCreateForm,
 		Submit: func(values modal.FormValues) tea.Cmd {
-			return m.createFlowAndLaunchPlanForRepo(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, values.Checked[flowCreateHeadlessField])
+			return m.createFlowAndLaunchPlanForRepo(
+				repoPath,
+				values.Text[flowCreateTitleField],
+				values.Text[flowCreateInstructionsField],
+				values.Text[flowCreateBaseRefField],
+				values.Checked[flowCreateHeadlessField],
+			)
 		},
 	})
-	return m
+	return m, nil
 }
 
 func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
@@ -1128,6 +1090,16 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 		return m.startFetchMode(ui.ModeFlows)
 	}
 	return m, nil
+}
+
+func validateFlowCreateForm(values modal.FormValues) error {
+	if err := validateFlowTitleInput(values.Text[flowCreateTitleField]); err != nil {
+		return err
+	}
+	if err := validateFlowInstructionsInput(values.Text[flowCreateInstructionsField]); err != nil {
+		return err
+	}
+	return validateFlowBaseRefInput(values.Text[flowCreateBaseRefField])
 }
 
 func validateWorktreeInput(input string) error {
@@ -1340,7 +1312,8 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 
 func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
 	launchID := newLaunchID()
-	switch agent.Normalize(m.agentCommand) {
+	command, _ := m.flowLaunchAgentSettings()
+	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
 		return m, m.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, m.flowHeadless)
 	}
@@ -1380,7 +1353,8 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			continue
 		}
 		launchID := newLaunchID()
-		switch agent.Normalize(next.agentCommand) {
+		command, _ := next.flowLaunchAgentSettings()
+		switch command {
 		case agent.CommandCodex, agent.CommandClaude:
 			cmds = append(cmds, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless))
 			continue
@@ -1631,9 +1605,10 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
 			launchPhase = persistedPhase
 		}
+		command, reasoningEffort := m.flowLaunchAgentSettings()
 		return wrap(actions.AgentLaunchContext{
-			Command:          m.agentCommand,
-			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+			Command:          command,
+			ReasoningEffort:  reasoningEffort,
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
 			WorktreePath:     worktreePath,
@@ -2006,7 +1981,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow to review the changes.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
+	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {

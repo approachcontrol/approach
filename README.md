@@ -84,7 +84,7 @@ filter matches, or a load failure with details in the status bar.
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
-| `m` | Move or rename a linked worktree (worktrees view), or toggle auto mode for the selected Flow (flows view) |
+| `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
@@ -301,18 +301,20 @@ skill dirs for use across repos. v1 has no TUI plan deletion.
 
 Browse persisted Flow records for the selected repo. Rows show status, branch
 or worktree basename, phase progress plus the current phase state, linked plan
-ID when present, PR number or label, updated date, and title. Auto-mode Flows
-use a subtle non-selected row highlight. Use `/` to filter
+ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
-`n` to create a new Flow. On a Flow row, `enter` expands or collapses phase
-detail rows; `o` pages the linked plan body in `less -R`, and wtui shows a
-status message when the selected Flow has no linked plan. With destructive mode
-enabled (`D`), `d` deletes only the selected top-level Flow record under the
-Flow artifact store; it does not remove repositories, worktrees, branches,
-checked-out code, linked plans, sessions, transcripts, or active embedded
-terminals. Expanded phase rows cannot be deleted with this action. On a Flow
-row or an expanded phase row, `enter` expands or collapses the phase list. Press
+`n` to create a new Flow with one form for title, multiline instructions, and
+optional base ref plus a Headless checkbox for the initial Plan launch; use
+`alt+enter` for instruction newlines. On a Flow row, `enter` expands or
+collapses phase detail rows; `o` pages the linked plan body in `less -R`, and
+wtui shows a status message when the selected Flow has no linked plan. With
+destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
+record under the Flow artifact store; it does not remove repositories,
+worktrees, branches, checked-out code, linked plans, sessions, transcripts, or
+active embedded terminals. Expanded phase rows cannot be deleted with this
+action. On a Flow row or an expanded phase row, `enter` expands or collapses
+the phase list. Press
 `ctrl+j` to launch the first launchable phase in the selected Flow's
 canonical phase order. This action
 uses the selected Flow, so a highlighted pending phase row can still launch an
@@ -335,8 +337,9 @@ CLI command mode: headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. Creating a new Flow has its own default-off Headless checkbox for the
 initial Plan launch; that checkbox does not change the selected-phase `h`
-setting. Press `E` to choose the selected CLI agent's reasoning effort; the
-shortcut pane shows
+setting. Manual phase launches, auto-launched phases, and new Flow Plan
+launches all use the configured agent and that agent's configured effort. Press
+`E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
 the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
 session resumes do not receive effort flags. `codex-app` always uses the
@@ -389,9 +392,6 @@ wtui flow create --title "Ship saved plans" \
 # List or read flows.
 wtui flow list --repo-path "$REPO" --json
 wtui flow read --flow-id "$FLOW_ID"
-
-# Enable or disable TUI auto mode for one flow.
-wtui flow auto set --flow-id "$FLOW_ID" --enabled true
 
 # Link a saved plan artifact back to a flow.
 wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
@@ -458,9 +458,9 @@ Review Loop and PR Creation include only the worktree, branch, and start commit
 metadata needed to inspect the changes. Built-in prompts tell Plan to produce
 only a plan, Plan Review to use the review-loop skill with max 6 loops,
 Implementation to use the `commit` skill, Review Loop to use the review-loop
-workflow and `commit` when revisions are made, PR Creation to use the `ship`
-skill, and Autoreview to use `ship` when fixes require commits or pushes
-without embedding phase-restart recipes. Use
+workflow with goal `review-and-revise` and `commit` when revisions are made,
+PR Creation to use the `ship` skill, and Autoreview to use `ship` when fixes
+require commits or pushes without embedding phase-restart recipes. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if notes are omitted, wtui records a standard rerun note.
 

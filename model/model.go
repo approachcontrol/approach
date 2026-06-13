@@ -434,14 +434,10 @@ func batchNonNil(cmds ...tea.Cmd) tea.Cmd {
 			filtered = append(filtered, cmd)
 		}
 	}
-	switch len(filtered) {
-	case 0:
+	if len(filtered) == 0 {
 		return nil
-	case 1:
-		return filtered[0]
-	default:
-		return tea.Batch(filtered...)
 	}
+	return tea.Batch(filtered...)
 }
 
 func newLaunchID() string {
@@ -501,6 +497,7 @@ func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
 func (m Model) OverlayDiff() string             { return m.modal.View().Diff }
 func (m Model) OverlayText() string             { return m.modal.View().Text }
 func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
+func (m Model) FormView() ui.FormView           { return uiFormView(m.modal.View().Form) }
 func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
 func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
 func (m Model) WorktreeInput() string           { return m.modal.View().Input }
@@ -539,13 +536,27 @@ func (m Model) launchReasoningEffortFor(command string) string {
 	}
 }
 
+func (m Model) flowLaunchAgentSettings() (string, string) {
+	command := agent.Normalize(m.agentCommand)
+	return command, m.launchReasoningEffortFor(command)
+}
+
 func (m Model) flowReasoningEffortLabel() string {
 	command := agent.Normalize(m.agentCommand)
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return fmt.Sprintf("%s effort: %s", command, reasoningEffortDisplay(m.ReasoningEffortFor(command)))
+		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
 	case agent.CommandCodexApp:
-		return "codex-app default"
+		return "app default"
+	default:
+		return ""
+	}
+}
+
+func (m Model) flowAgentShortcutLabel() string {
+	switch command := agent.Normalize(m.agentCommand); command {
+	case agent.CommandCodex, agent.CommandCodexApp, agent.CommandClaude:
+		return command
 	default:
 		return "choose agent"
 	}
@@ -684,6 +695,7 @@ func (m Model) View() string {
 		SelectedFlowPhaseID:         m.selectedFlowPhaseID,
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
 		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
@@ -917,6 +929,8 @@ func uiFormView(view modal.FormView) ui.FormView {
 
 func uiFormFieldKind(kind modal.FormFieldKind) ui.FormFieldKind {
 	switch kind {
+	case modal.FormMultilineText:
+		return ui.FormMultilineText
 	case modal.FormCheckbox:
 		return ui.FormCheckbox
 	case modal.FormChoice:
@@ -1131,12 +1145,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
-	case FlowTitleSubmittedMsg:
-		return m.handleFlowTitleSubmitted(msg), nil
-	case FlowInstructionsSubmittedMsg:
-		return m.handleFlowInstructionsSubmitted(msg), nil
-	case FlowBaseRefSubmittedMsg:
-		return m.handleFlowBaseRefSubmitted(msg), nil
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:
@@ -1598,6 +1606,7 @@ func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.clearSelectedFlowPhase()
 			m = m.setExpandedFlowID("")
+			m = m.syncActiveFlowTerminalToSelectedFlow()
 		}
 		return m, true
 	}

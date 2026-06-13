@@ -743,6 +743,70 @@ func TestFormEditsNavigatesTogglesAndSubmitsStructuredValues(t *testing.T) {
 	}
 }
 
+func TestFormMultilineTextFieldAcceptsNewlinesAndSubmitsStructuredValues(t *testing.T) {
+	var submitted modal.FormValues
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "flow-create",
+		Title:   "New flow",
+		Fields: []modal.FormField{
+			{ID: "title", Kind: modal.FormText, Label: "Title"},
+			{ID: "instructions", Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: "task instructions"},
+			{ID: "base-ref", Kind: modal.FormText, Label: "Base ref"},
+		},
+		Submit: func(values modal.FormValues) tea.Cmd {
+			submitted = values
+			return func() tea.Msg { return sentinelMsg("created") }
+		},
+	})
+
+	m, _, _ = m.Update(keyRunes("Build Flow"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _, _ = m.Update(keyRunes("first line"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _, _ = m.Update(keyRunes("second line"))
+	view := m.View().Form
+	if view.FocusIndex != 1 {
+		t.Fatalf("focus index = %d, want instructions field", view.FocusIndex)
+	}
+	if got := view.Fields[1].Value; got != "first line\nsecond line" {
+		t.Fatalf("instructions value = %q, want embedded newline", got)
+	}
+	if got := view.Fields[1].Cursor; got != len([]rune("first line\nsecond line")) {
+		t.Fatalf("instructions cursor = %d, want end", got)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.View().Form.FocusIndex; got != 0 {
+		t.Fatalf("shift+tab should navigate to title field, focus = %d", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.View().Form.Fields[1].Value; got != "first line\nsecond line" {
+		t.Fatalf("instructions changed after navigation: %q", got)
+	}
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _, _ = m.Update(keyRunes("main"))
+
+	next, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if out != modal.Accepted {
+		t.Fatalf("enter outcome = %v, want Accepted", out)
+	}
+	if next.IsOpen() {
+		t.Fatal("expected form closed after valid submit")
+	}
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	if got := cmd(); got != sentinelMsg("created") {
+		t.Fatalf("submit command returned %T %[1]v", got)
+	}
+	if submitted.Text["instructions"] != "first line\nsecond line" {
+		t.Fatalf("submitted instructions = %q, want embedded newline", submitted.Text["instructions"])
+	}
+	if submitted.Text["base-ref"] != "main" {
+		t.Fatalf("submitted base ref = %q, want main", submitted.Text["base-ref"])
+	}
+}
+
 func TestFormShiftTabNavigatesBackwards(t *testing.T) {
 	m := modal.OpenForm(modal.FormSpec{
 		Purpose: "repo-create",
