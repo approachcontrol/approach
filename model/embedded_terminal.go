@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -344,7 +346,7 @@ func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunc
 	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
 		return nil
 	}
-	payload := []byte(embeddedPromptPasteStart + ctx.InitialPrompt + embeddedPromptPasteEnd)
+	payload := []byte(embeddedPromptPasteStart + sanitizeEmbeddedPromptPaste(ctx.InitialPrompt) + embeddedPromptPasteEnd)
 	n, err := term.Write(payload)
 	if err != nil {
 		return fmt.Errorf("prefill embedded prompt: %w", err)
@@ -353,6 +355,60 @@ func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunc
 		return fmt.Errorf("prefill embedded prompt: %w: wrote %d of %d bytes", io.ErrShortWrite, n, len(payload))
 	}
 	return nil
+}
+
+func sanitizeEmbeddedPromptPaste(prompt string) string {
+	var b strings.Builder
+	b.Grow(len(prompt))
+	for i := 0; i < len(prompt); {
+		c := prompt[i]
+		if c == 0x1b {
+			i = skipTerminalEscape(prompt, i)
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(prompt[i:])
+		if r == utf8.RuneError && size == 1 {
+			i++
+			continue
+		}
+		i += size
+		switch r {
+		case '\n', '\t':
+			b.WriteRune(r)
+		default:
+			if !unicode.IsControl(r) {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
+}
+
+func skipTerminalEscape(s string, i int) int {
+	if i+1 >= len(s) {
+		return len(s)
+	}
+	switch s[i+1] {
+	case '[':
+		for j := i + 2; j < len(s); j++ {
+			if s[j] >= 0x40 && s[j] <= 0x7e {
+				return j + 1
+			}
+		}
+		return len(s)
+	case ']':
+		for j := i + 2; j < len(s); j++ {
+			if s[j] == 0x07 {
+				return j + 1
+			}
+			if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+				return j + 2
+			}
+		}
+		return len(s)
+	default:
+		return i + 2
+	}
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {

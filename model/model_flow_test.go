@@ -1566,6 +1566,52 @@ func TestModel_CtrlJOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *
 	}
 }
 
+func TestModel_CtrlJOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Implementation: "Alpha\x1b[201~\nBeta\x1b[200~\x1b[31m\a\tOmega\rDone",
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-interactive",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
+		},
+	}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd != nil {
+		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
+	}
+	m, cmd = update(m, flowCtrlJKey())
+	if cmd == nil {
+		t.Fatal("ctrl+j should prepare an embedded interactive launch")
+	}
+	m, cmd = update(m, cmd())
+	if cmd == nil {
+		t.Fatal("expected embedded Flow launch to return repaint/fetch command")
+	}
+
+	wantWrite := "\x1b[200~Alpha\nBeta\tOmegaDone\x1b[201~"
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != wantWrite {
+		t.Fatalf("prefill writes = %#v, want exact sanitized bracketed paste %q", fakeTerm.writes, wantWrite)
+	}
+}
+
 func TestModel_CtrlJOnSelectedNonLaunchableFlowPhaseLaunchesFirstReadySibling(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
