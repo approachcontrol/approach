@@ -1994,7 +1994,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow to review the changes.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
+	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
