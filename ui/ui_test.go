@@ -322,6 +322,99 @@ func TestRenderRepoCreateFormStatusBarUsesFormControls(t *testing.T) {
 	}
 }
 
+func TestRenderFlowCreateFormOverlayIsCompactAndLeavesBackgroundVisible(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    120,
+		Height:   18,
+		Mode:     ModeFlows,
+		Overlay:  OverlayForm,
+		Form: FormView{
+			Purpose:    "flow-create",
+			Title:      "New flow",
+			FocusIndex: 1,
+			Fields: []FormField{
+				{ID: "title", Kind: FormText, Label: "Title", Placeholder: FlowTitleInputPlaceholder, Value: "Add Flow Mode", Cursor: len([]rune("Add Flow Mode"))},
+				{
+					ID:          "instructions",
+					Kind:        FormMultilineText,
+					Label:       "Instructions",
+					Placeholder: FlowInstructionsInputPlaceholder,
+					Value: strings.Join([]string{
+						"Start with the saved plan.",
+						"Keep the center line near the cursor.",
+						"Implement the form.",
+						"Run tests.",
+						"Finish with a local commit.",
+					}, "\n"),
+					Cursor: len([]rune(strings.Join([]string{
+						"Start with the saved plan.",
+						"Keep the center line near the cursor.",
+						"Implement the form.",
+					}, "\n"))),
+				},
+				{ID: "base-ref", Kind: FormText, Label: "Base ref", Placeholder: FlowBaseRefInputPlaceholder, Value: "main", Cursor: len([]rune("main"))},
+			},
+		},
+	})
+	text := ansi.Strip(view)
+	for _, want := range []string{"alpha", "New flow", "Title", "Instructions", "Base ref", "main", shortcutOverflowMarker} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("flow form overlay missing %q:\n%s", want, text)
+		}
+	}
+
+	lines := strippedLines(view)
+	panelTop, panelBottom := -1, -1
+	for i, line := range lines[:len(lines)-1] {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "New flow") && panelTop == -1 {
+			panelTop = i - 1
+		}
+		if strings.Contains(trimmed, "Base ref") {
+			panelBottom = i + 1
+		}
+		for _, marker := range []string{"New flow", "Title", "Instructions", "Base ref", "main"} {
+			if strings.Contains(trimmed, marker) {
+				if got := lipgloss.Width(trimmed); got > flowCreateFormMaxWidth {
+					t.Fatalf("flow form line width = %d, want <= %d: %q", got, flowCreateFormMaxWidth, trimmed)
+				}
+			}
+		}
+	}
+	if panelTop < 0 || panelBottom < panelTop {
+		t.Fatalf("could not locate compact flow form panel:\n%s", text)
+	}
+	if panelHeight := panelBottom - panelTop + 1; panelHeight >= 12 {
+		t.Fatalf("flow form panel height = %d, want compact panel below 12 rows:\n%s", panelHeight, text)
+	}
+}
+
+func TestRenderFlowCreateFormOverlayFitsNarrowTerminal(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Selected: 0,
+		Width:    38,
+		Height:   14,
+		Mode:     ModeFlows,
+		Overlay:  OverlayForm,
+		Form: FormView{
+			Purpose:    "flow-create",
+			Title:      "New flow",
+			FocusIndex: 1,
+			Error:      "flow instructions must explain the work to perform",
+			Fields: []FormField{
+				{ID: "title", Kind: FormText, Label: "Title", Placeholder: FlowTitleInputPlaceholder, Value: "Very long flow title that wraps", Cursor: len([]rune("Very long flow title that wraps"))},
+				{ID: "instructions", Kind: FormMultilineText, Label: "Instructions", Placeholder: FlowInstructionsInputPlaceholder, Value: "Implement a compact single form with multiline instructions and narrow terminal wrapping.", Cursor: len([]rune("Implement a compact single form with multiline instructions and narrow terminal wrapping."))},
+				{ID: "base-ref", Kind: FormText, Label: "Base ref", Placeholder: FlowBaseRefInputPlaceholder, Value: "feature/some-long-base-ref", Cursor: len([]rune("feature/some-long-base-ref"))},
+			},
+		},
+	})
+
+	requireLinesWithinWidth(t, strippedLines(view), 38)
+}
+
 func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

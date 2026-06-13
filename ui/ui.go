@@ -78,6 +78,7 @@ type FormFieldKind int
 
 const (
 	FormText FormFieldKind = iota
+	FormMultilineText
 	FormCheckbox
 	FormChoice
 )
@@ -146,6 +147,8 @@ const (
 	launchInstructionsMaxWidth = 72
 	launchInstructionsMinWidth = 32
 	launchInstructionsMaxLines = 6
+	flowCreateFormMaxWidth     = 56
+	flowCreateFormMaxTextLines = 4
 )
 
 // MinContentPaneWidth keeps the primary item pane useful before the shortcut
@@ -3087,7 +3090,7 @@ func renderOverlay(p RenderParams) string {
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayForm {
-		lines := renderFormDialog(p.Form, p.Width, contentHeight)
+		lines := renderFormDialogOverApplication(p, contentHeight)
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayPlanText {
@@ -3139,6 +3142,24 @@ func renderOverlay(p RenderParams) string {
 	return strings.Join(lines, "\n") + "\n" + statusBar
 }
 
+func renderFormDialogOverApplication(p RenderParams, contentHeight int) []string {
+	baseParams := p
+	baseParams.Overlay = OverlayNone
+	base := strings.Split(renderApplication(baseParams), "\n")
+	lines := make([]string, contentHeight)
+	for i := 0; i < contentHeight && i < len(base); i++ {
+		lines[i] = base[i]
+	}
+	panelLines := renderFormDialog(p.Form, p.Width, contentHeight)
+	for i, line := range panelLines {
+		if strings.TrimSpace(ansi.Strip(line)) == "" {
+			continue
+		}
+		lines[i] = line
+	}
+	return lines
+}
+
 func renderConfirmDialog(prompt string, force bool, width, height int) []string {
 	lines := make([]string, height)
 	mid := height / 2
@@ -3161,16 +3182,7 @@ func renderFormDialog(form FormView, width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return lines
 	}
-	panelWidth := width - 4
-	if panelWidth > launchInstructionsMaxWidth {
-		panelWidth = launchInstructionsMaxWidth
-	}
-	if panelWidth < launchInstructionsMinWidth {
-		panelWidth = width
-	}
-	if panelWidth < 4 {
-		panelWidth = width
-	}
+	panelWidth := formPanelWidth(form, width)
 	contentWidth := panelWidth - 4
 	if contentWidth < 1 {
 		contentWidth = 1
@@ -3204,6 +3216,24 @@ func renderFormDialog(form FormView, width, height int) []string {
 		lines[row] = centeredLine(line, width)
 	}
 	return lines
+}
+
+func formPanelWidth(form FormView, width int) int {
+	panelWidth := width - 4
+	maxWidth := launchInstructionsMaxWidth
+	if form.Purpose == "flow-create" {
+		maxWidth = flowCreateFormMaxWidth
+	}
+	if panelWidth > maxWidth {
+		panelWidth = maxWidth
+	}
+	if panelWidth < launchInstructionsMinWidth {
+		panelWidth = width
+	}
+	if panelWidth < 4 {
+		panelWidth = width
+	}
+	return panelWidth
 }
 
 func formDialogBodyLines(form FormView, width int) []string {
@@ -3249,6 +3279,8 @@ func formFieldLines(field FormField, focused bool, width int) []string {
 			line += ": " + strings.Join(options, "  ")
 		}
 		return wrapPlainText(line, width)
+	case FormMultilineText:
+		return formMultilineTextFieldLines(field, focused, prefix, label, width)
 	default:
 		value := field.Value
 		if focused {
@@ -3262,6 +3294,32 @@ func formFieldLines(field FormField, focused bool, width int) []string {
 		}
 		return wrapEditableInputLine(prefix+label+": "+value, width)
 	}
+}
+
+func formMultilineTextFieldLines(field FormField, focused bool, prefix, label string, width int) []string {
+	labelLine := prefix + label + ":"
+	valuePrefix := strings.Repeat(" ", lipgloss.Width(prefix))
+	if field.Value == "" {
+		value := placeholderStyle.Render(field.Placeholder)
+		if focused {
+			value += activeModeStyle.Render("█")
+		}
+		lines := wrapPlainText(labelLine, width)
+		return append(lines, wrapEditableInputLine(valuePrefix+value, width)...)
+	}
+
+	value := field.Value
+	if focused {
+		value = insertCursorGlyph(value, field.Cursor)
+	}
+	logicalLines := strings.Split(value, "\n")
+	lines := make([]string, 0, len(logicalLines))
+	for _, line := range logicalLines {
+		lines = append(lines, wrapEditableInputLine(valuePrefix+line, width)...)
+	}
+	cursorLine := lineIndexContainingCursor(lines)
+	lines = compactInputDialogLines(lines, flowCreateFormMaxTextLines, cursorLine)
+	return append(wrapPlainText(labelLine, width), lines...)
 }
 
 type inputRenderParams struct {
