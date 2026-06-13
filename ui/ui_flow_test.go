@@ -873,6 +873,24 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeFooterShowsAgentOutsideFlowPane(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:               180,
+		Mode:                ModeFlows,
+		ActivePane:          0,
+		FlowAgentLabel:      "codex",
+		FlowReasoningEffort: "effort: high",
+	})
+	agentIndex := strings.Index(bar, "A: codex")
+	effortIndex := strings.Index(bar, "E: effort: high")
+	if agentIndex < 0 || effortIndex < 0 || agentIndex > effortIndex {
+		t.Fatalf("Flow footer should show grouped agent and effort outside Flow pane, got %q", bar)
+	}
+	if strings.Contains(bar, "A: set agent") {
+		t.Fatalf("Flow footer should not fall back to generic agent hint, got %q", bar)
+	}
+}
+
 func TestStatusBar_FlowsModeCompressedFooterDoesNotKeepEffortAfterDroppingAgent(t *testing.T) {
 	for width := 70; width <= 150; width++ {
 		bar := renderStatusBarWithState(statusBarParams{

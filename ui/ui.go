@@ -1217,11 +1217,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					actions = append(actions, autoHint)
 				}
 			}
-			agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
-			actions = append(actions, shortcutHint{Key: "A", Label: agentLabel})
-			if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
-				actions = append(actions, shortcutHint{Key: "E", Label: effortLabel})
-			}
+		}
+		agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
+		actions = append(actions, shortcutHint{Key: "A", Label: agentLabel})
+		if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
+			actions = append(actions, shortcutHint{Key: "E", Label: effortLabel})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
