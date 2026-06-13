@@ -434,14 +434,10 @@ func batchNonNil(cmds ...tea.Cmd) tea.Cmd {
 			filtered = append(filtered, cmd)
 		}
 	}
-	switch len(filtered) {
-	case 0:
+	if len(filtered) == 0 {
 		return nil
-	case 1:
-		return filtered[0]
-	default:
-		return tea.Batch(filtered...)
 	}
+	return tea.Batch(filtered...)
 }
 
 func newLaunchID() string {
@@ -501,6 +497,7 @@ func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
 func (m Model) OverlayDiff() string             { return m.modal.View().Diff }
 func (m Model) OverlayText() string             { return m.modal.View().Text }
 func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
+func (m Model) FormView() ui.FormView           { return uiFormView(m.modal.View().Form) }
 func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
 func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
 func (m Model) WorktreeInput() string           { return m.modal.View().Input }
@@ -932,6 +929,8 @@ func uiFormView(view modal.FormView) ui.FormView {
 
 func uiFormFieldKind(kind modal.FormFieldKind) ui.FormFieldKind {
 	switch kind {
+	case modal.FormMultilineText:
+		return ui.FormMultilineText
 	case modal.FormCheckbox:
 		return ui.FormCheckbox
 	case modal.FormChoice:
@@ -1146,12 +1145,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
-	case FlowTitleSubmittedMsg:
-		return m.handleFlowTitleSubmitted(msg), nil
-	case FlowInstructionsSubmittedMsg:
-		return m.handleFlowInstructionsSubmitted(msg), nil
-	case FlowBaseRefSubmittedMsg:
-		return m.handleFlowBaseRefSubmitted(msg), nil
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:

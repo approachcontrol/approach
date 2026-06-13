@@ -16,7 +16,6 @@ import (
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -5868,7 +5867,7 @@ func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowPromptsForTitle(t *testing.T) {
+func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
@@ -5878,17 +5877,44 @@ func TestModel_NewFlowPromptsForTitle(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected opening new-flow title prompt to return no command, got %T", cmd)
 	}
-	if m.Overlay() != ui.OverlayWorktreeInput {
-		t.Fatalf("overlay = %d, want input overlay", m.Overlay())
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("overlay = %d, want form overlay", m.Overlay())
 	}
-	if got := m.ConfirmPrompt(); got != ui.FlowTitlePrompt {
-		t.Fatalf("prompt = %q, want %q", got, ui.FlowTitlePrompt)
+	form := m.FormView()
+	if form.Purpose != "flow-create" || form.Title != "New flow" {
+		t.Fatalf("form identity = %#v", form)
 	}
-	if got := m.WorktreeInput(); got != "" {
-		t.Fatalf("initial title input = %q, want empty", got)
+	if form.FocusIndex != 0 {
+		t.Fatalf("focus index = %d, want title field", form.FocusIndex)
 	}
-	if got := m.InputMode(); got != modal.InputSingleLine {
-		t.Fatalf("title input mode = %v, want single-line", got)
+	if len(form.Fields) != 4 {
+		t.Fatalf("fields = %#v, want title, instructions, base ref, headless", form.Fields)
+	}
+	want := []struct {
+		id          string
+		kind        ui.FormFieldKind
+		label       string
+		placeholder string
+	}{
+		{id: "title", kind: ui.FormText, label: "Title", placeholder: ui.FlowTitleInputPlaceholder},
+		{id: "instructions", kind: ui.FormMultilineText, label: "Instructions", placeholder: ui.FlowInstructionsInputPlaceholder},
+		{id: "base-ref", kind: ui.FormText, label: "Base ref", placeholder: ui.FlowBaseRefInputPlaceholder},
+		{id: "headless", kind: ui.FormCheckbox, label: "Headless"},
+	}
+	for i, wantField := range want {
+		field := form.Fields[i]
+		if field.ID != wantField.id || field.Kind != wantField.kind || field.Label != wantField.label || field.Placeholder != wantField.placeholder {
+			t.Fatalf("field %d = %#v, want %#v", i, field, wantField)
+		}
+		if field.Kind == ui.FormCheckbox {
+			if field.Checked {
+				t.Fatalf("field %d initial checked = true, want false", i)
+			}
+			continue
+		}
+		if field.Value != "" || field.Cursor != 0 {
+			t.Fatalf("field %d initial state = value %q cursor %d, want empty at start", i, field.Value, field.Cursor)
+		}
 	}
 }
 
@@ -6083,91 +6109,6 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 	}
 }
 
-func TestModel_NewFlowOptionsFormOpensAfterBaseRefAndDefaultsHeadlessOff(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("base-ref submit should open options form, not start the Flow")
-			return model.FlowStartResult{}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Options Flow")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected title submit command")
-	}
-	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Write the plan")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected instructions submit command")
-	}
-	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected base-ref submit command")
-	}
-	m, _ = update(m, cmd())
-
-	if m.Overlay() != ui.OverlayForm {
-		t.Fatalf("overlay = %d, want Flow create options form", m.Overlay())
-	}
-	form := model.FormForTest(m)
-	if form.Title != ui.FlowOptionsFormTitle {
-		t.Fatalf("form title = %q, want %q", form.Title, ui.FlowOptionsFormTitle)
-	}
-	if len(form.Fields) != 1 {
-		t.Fatalf("options fields = %#v, want one Headless checkbox", form.Fields)
-	}
-	field := form.Fields[0]
-	if field.ID != "headless" || field.Kind != ui.FormCheckbox || field.Label != "Headless" || field.Checked {
-		t.Fatalf("headless option field = %#v, want unchecked Headless checkbox", field)
-	}
-}
-
-func TestModel_NewFlowIgnoresStaleBaseRefSubmitAfterRepoChange(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand: "codex",
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("stale base-ref submit should not start the Flow")
-			return model.FlowStartResult{}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Options Flow")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected title submit command")
-	}
-	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Write the plan")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected instructions submit command")
-	}
-	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected base-ref submit command")
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, cmd())
-	if m.Overlay() == ui.OverlayForm {
-		t.Fatal("stale base-ref submit opened Flow options form after repo changed")
-	}
-}
-
 func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
@@ -6329,7 +6270,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowOptionsCancelDoesNotStartOrLeaveActiveCreateRequest(t *testing.T) {
+func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyEsc},
 		{Type: tea.KeyCtrlC},
@@ -6355,7 +6296,7 @@ func TestModel_NewFlowOptionsCancelDoesNotStartOrLeaveActiveCreateRequest(t *tes
 			})
 			m = inRightPane(m)
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
-			m = openNewFlowOptionsForm(t, m, "Cancel Flow", "Write the plan", "main")
+			m = openNewFlowForm(t, m, "Cancel Flow", "Write the plan", "main")
 
 			m, cmd := update(m, key)
 			if cmd != nil {
@@ -6591,6 +6532,51 @@ func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
 
 	if !strings.Contains(msg.Err, "Bootstrap hook failed") || !strings.Contains(msg.Err, "missing env file") {
 		t.Fatalf("error = %q, want bootstrap failure", msg.Err)
+	}
+}
+
+func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if req.RepoPath != "/dev/alpha" {
+				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
+			}
+			return model.FlowStartResult{}, errors.New("Bootstrap hook failed: missing env file")
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("agent should not launch after start failure")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			t.Fatal("embedded terminal should not start after start failure")
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, createCmd := submitNewFlowPrompts(t, m, "Stale Failure", "Build the stale thing", "main")
+	if createCmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	staleMsg := createCmd()
+	failed, ok := staleMsg.(model.FlowCreateFailedMsg)
+	if !ok {
+		t.Fatalf("creation command returned %T, want FlowCreateFailedMsg", staleMsg)
+	}
+	if failed.Request == 0 {
+		t.Fatal("flow create failure should be tagged with the active create request")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	next, cmd := update(m, staleMsg)
+	if cmd != nil {
+		t.Fatalf("stale flow create failure returned command %T, want nil", cmd)
+	}
+	if got := next.TransientError(); got != "" {
+		t.Fatalf("stale flow create failure set status %q, want empty", got)
 	}
 }
 
@@ -6909,57 +6895,34 @@ func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, base
 
 func submitNewFlowPromptsWithOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless bool) (model.Model, tea.Cmd) {
 	t.Helper()
-	m = openNewFlowOptionsForm(t, m, title, instructions, baseRef)
+	m = openNewFlowForm(t, m, title, instructions, baseRef)
 	if headless {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
 	}
 	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
 }
 
-func openNewFlowOptionsForm(t *testing.T, m model.Model, title, instructions, baseRef string) model.Model {
+func openNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef string) model.Model {
 	t.Helper()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("overlay = %d, want new Flow form", m.Overlay())
+	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(title)})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected title submit command")
-	}
-	m, _ = update(m, cmd())
-	if got := m.ConfirmPrompt(); got != ui.FlowInstructionsPrompt {
-		t.Fatalf("prompt = %q, want %q", got, ui.FlowInstructionsPrompt)
-	}
-	if got := m.InputMode(); got != modal.InputMultiLine {
-		t.Fatalf("instructions input mode = %v, want multi-line", got)
-	}
-	for i, line := range strings.Split(instructions, "\n") {
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	lines := strings.Split(instructions, "\n")
+	for i, line := range lines {
 		if line != "" {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
 		}
-		if i < strings.Count(instructions, "\n") {
+		if i < len(lines)-1 {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 		}
 	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected instructions submit command")
-	}
-	m, _ = update(m, cmd())
-	if got := m.ConfirmPrompt(); got != ui.FlowBaseRefPrompt {
-		t.Fatalf("prompt = %q, want %q", got, ui.FlowBaseRefPrompt)
-	}
-	if got := m.InputMode(); got != modal.InputSingleLine {
-		t.Fatalf("base ref input mode = %v, want single-line", got)
-	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if baseRef != "" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
-	}
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected base ref submit command")
-	}
-	m, _ = update(m, cmd())
-	if m.Overlay() != ui.OverlayForm {
-		t.Fatalf("overlay = %d, want Flow options form", m.Overlay())
 	}
 	return m
 }

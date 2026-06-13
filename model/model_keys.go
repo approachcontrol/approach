@@ -38,7 +38,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
-		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateOptionsForm(view) {
+		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
 			cmd = tagFlowCreateRequest(cmd, request)
@@ -111,8 +111,8 @@ func isRepoCreateForm(view modal.View) bool {
 	return view.Kind == modal.Form && view.Form.Purpose == repoCreateFormPurpose
 }
 
-func isFlowCreateOptionsForm(view modal.View) bool {
-	return view.Kind == modal.Form && view.Form.Purpose == flowCreateOptionsFormPurpose
+func isFlowCreateForm(view modal.View) bool {
+	return view.Kind == modal.Form && view.Form.Purpose == flowCreateFormPurpose
 }
 
 func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
@@ -907,12 +907,15 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 }
 
 const (
-	repoCreateFormPurpose        = "repo-create"
-	repoCreateNameField          = "name"
-	repoCreateGitHubField        = "github"
-	repoCreateVisibilityField    = "visibility"
-	flowCreateOptionsFormPurpose = "flow-create-options"
-	flowCreateHeadlessField      = "headless"
+	repoCreateFormPurpose       = "repo-create"
+	repoCreateNameField         = "name"
+	repoCreateGitHubField       = "github"
+	repoCreateVisibilityField   = "visibility"
+	flowCreateFormPurpose       = "flow-create"
+	flowCreateTitleField        = "title"
+	flowCreateInstructionsField = "instructions"
+	flowCreateBaseRefField      = "base-ref"
+	flowCreateHeadlessField     = "headless"
 )
 
 func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
@@ -1049,69 +1052,27 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching a flow")
 		return m, nil
 	}
-	m.modal = modal.OpenSingleLineInput(
-		ui.FlowTitlePrompt,
-		ui.FlowTitleInputPlaceholder,
-		"",
-		validateFlowTitleInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowTitleSubmittedMsg{RepoPath: repoPath, Title: input} }
-		},
-	)
-	return m, nil
-}
-
-func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
-	m.modal = modal.OpenMultiLineInput(
-		ui.FlowInstructionsPrompt,
-		ui.FlowInstructionsInputPlaceholder,
-		"",
-		validateFlowInstructionsInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg {
-				return FlowInstructionsSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: input}
-			}
-		},
-	)
-	return m
-}
-
-func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
-	m.modal = modal.OpenSingleLineInput(
-		ui.FlowBaseRefPrompt,
-		ui.FlowBaseRefInputPlaceholder,
-		"",
-		validateFlowBaseRefInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg {
-				return FlowBaseRefSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: msg.Instructions, BaseRef: input}
-			}
-		},
-	)
-	return m
-}
-
-func (m Model) handleFlowBaseRefSubmitted(msg FlowBaseRefSubmittedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
 	m.modal = modal.OpenForm(modal.FormSpec{
-		Purpose: flowCreateOptionsFormPurpose,
-		Title:   ui.FlowOptionsFormTitle,
+		Purpose: flowCreateFormPurpose,
+		Title:   "New flow",
 		Fields: []modal.FormField{
+			{ID: flowCreateTitleField, Kind: modal.FormText, Label: "Title", Placeholder: ui.FlowTitleInputPlaceholder},
+			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
+			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
 			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
 		},
+		Validate: validateFlowCreateForm,
 		Submit: func(values modal.FormValues) tea.Cmd {
-			return m.createFlowAndLaunchPlanForRepo(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, values.Checked[flowCreateHeadlessField])
+			return m.createFlowAndLaunchPlanForRepo(
+				repoPath,
+				values.Text[flowCreateTitleField],
+				values.Text[flowCreateInstructionsField],
+				values.Text[flowCreateBaseRefField],
+				values.Checked[flowCreateHeadlessField],
+			)
 		},
 	})
-	return m
+	return m, nil
 }
 
 func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
@@ -1128,6 +1089,16 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 		return m.startFetchMode(ui.ModeFlows)
 	}
 	return m, nil
+}
+
+func validateFlowCreateForm(values modal.FormValues) error {
+	if err := validateFlowTitleInput(values.Text[flowCreateTitleField]); err != nil {
+		return err
+	}
+	if err := validateFlowInstructionsInput(values.Text[flowCreateInstructionsField]); err != nil {
+		return err
+	}
+	return validateFlowBaseRefInput(values.Text[flowCreateBaseRefField])
 }
 
 func validateWorktreeInput(input string) error {
