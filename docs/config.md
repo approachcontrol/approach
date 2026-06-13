@@ -318,8 +318,10 @@ inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 default-off Headless checkbox for the initial Plan launch; that checkbox does
 not change the selected-phase `h` setting. Press `E` to choose the configured
 CLI agent's reasoning effort for future launches; the shortcut pane shows the
-current value. `codex-app` remains URL/deep-link based, launches externally,
-and uses app-side/default reasoning. Press `r` to resume an attached
+current value. Manual phase launches, auto-launched phases, and new Flow Plan
+launches all use the configured agent and that agent's configured effort.
+`codex-app` remains URL/deep-link based, launches externally, and uses
+app-side/default reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and

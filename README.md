@@ -335,8 +335,9 @@ CLI command mode: headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. Creating a new Flow has its own default-off Headless checkbox for the
 initial Plan launch; that checkbox does not change the selected-phase `h`
-setting. Press `E` to choose the selected CLI agent's reasoning effort; the
-shortcut pane shows
+setting. Manual phase launches, auto-launched phases, and new Flow Plan
+launches all use the configured agent and that agent's configured effort. Press
+`E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
 the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
 session resumes do not receive effort flags. `codex-app` always uses the
