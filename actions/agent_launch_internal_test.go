@@ -822,6 +822,7 @@ func TestCodexAppLaunchRejectsUnsupportedPlatform(t *testing.T) {
 func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	t.Setenv("TMUX", "/tmp/parent-tmux.sock")
+	t.Setenv("ZELLIJ", "parent-zellij")
 	ctx := planAgentContext()
 	ctx.Embedded = true
 	ctx.Headless = true
@@ -888,6 +889,11 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 		"printf '%s\\n' \"$status\" > " + shellQuote(spec.StatusPath),
 	} {
 		requireScriptContains(t, script, want)
+	}
+	for _, blocked := range []string{"export TMUX=", "export ZELLIJ="} {
+		if strings.Contains(script, blocked) {
+			t.Fatalf("agent launch script should not inherit parent multiplexer env %q:\n%s", blocked, script)
+		}
 	}
 	spec.Cleanup()
 	if _, err := os.Stat(spec.ScriptPath); !errors.Is(err, os.ErrNotExist) {

@@ -786,7 +786,8 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 		return EmbeddedTmuxAgentSpec{}, err
 	}
 	sessionName := agentSessionName(sessionSource, ctx.LaunchID)
-	termCommand, err := newTerminalCommandWithStatus(cmd.Dir, cmd.Env, argv, sessionName)
+	agentEnv := envWithoutKeys(cmd.Env, "TMUX", "ZELLIJ")
+	termCommand, err := newTerminalCommandWithStatus(cmd.Dir, agentEnv, argv, sessionName)
 	if err != nil {
 		return EmbeddedTmuxAgentSpec{}, err
 	}
