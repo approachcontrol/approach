@@ -575,6 +575,7 @@ func (m Model) moveCursor(delta int) Model {
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.setExpandedFlowID("")
 		}
+		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m
 }
