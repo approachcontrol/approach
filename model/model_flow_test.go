@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -5732,7 +5733,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				started.LaunchID != "launch-1" ||
 				started.ReasoningEffort != wantEffort ||
 				!started.Embedded ||
-				!started.Headless ||
+				started.Headless ||
 				!started.FlowLaunchTracked {
 				t.Fatalf("embedded launch context = %#v", started)
 			}
@@ -5757,7 +5758,54 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowCLIPlanLaunchHonorsHeadlessToggle(t *testing.T) {
+func TestModel_NewFlowOptionsFormOpensAfterBaseRefAndDefaultsHeadlessOff(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("base-ref submit should open options form, not start the Flow")
+			return model.FlowStartResult{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Options Flow")})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected title submit command")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Write the plan")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected instructions submit command")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected base-ref submit command")
+	}
+	m, _ = update(m, cmd())
+
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("overlay = %d, want Flow create options form", m.Overlay())
+	}
+	form := model.FormForTest(m)
+	if form.Title != ui.FlowOptionsFormTitle {
+		t.Fatalf("form title = %q, want %q", form.Title, ui.FlowOptionsFormTitle)
+	}
+	if len(form.Fields) != 1 {
+		t.Fatalf("options fields = %#v, want one Headless checkbox", form.Fields)
+	}
+	field := form.Fields[0]
+	if field.ID != "headless" || field.Kind != ui.FormCheckbox || field.Label != "Headless" || field.Checked {
+		t.Fatalf("headless option field = %#v, want unchecked Headless checkbox", field)
+	}
+}
+
+func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
 			var started actions.AgentLaunchContext
@@ -5796,7 +5844,7 @@ func TestModel_NewFlowCLIPlanLaunchHonorsHeadlessToggle(t *testing.T) {
 				t.Fatalf("h before new Flow launch returned command %T, want nil", cmd)
 			}
 
-			m, cmd = submitNewFlowPrompts(t, m, "Interactive Plan", "Write the plan", "main")
+			m, cmd = submitNewFlowPromptsWithOptions(t, m, "Headless Plan", "Write the plan", "main", true)
 			if cmd == nil {
 				t.Fatal("expected flow creation command")
 			}
@@ -5809,104 +5857,156 @@ func TestModel_NewFlowCLIPlanLaunchHonorsHeadlessToggle(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("expected embedded launch repaint/fetch command")
 			}
+			if model.FlowHeadlessForTest(m) {
+				t.Fatal("checked create-form headless option should not mutate flows-mode headless toggle")
+			}
 
 			if started.Command != command ||
 				started.FlowID != "flow-1" ||
 				started.FlowPhaseID != "plan" ||
 				!started.Embedded ||
-				started.Headless ||
+				!started.Headless ||
 				!started.FlowLaunchTracked {
-				t.Fatalf("headless-off new Flow plan launch context = %#v", started)
+				t.Fatalf("headless new Flow plan launch context = %#v", started)
 			}
 		})
 	}
 }
 
 func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
-	var launched actions.AgentLaunchContext
-	startEmbeddedRan := false
-	m := model.NewWithOptions(testRepos(), model.Options{
-		AgentCommand:     "codex-app",
-		SessionStateRoot: "/state/wtui/sessions/v1",
-		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
-			if req.RepoPath != "/dev/alpha" ||
-				req.AgentCommand != "codex-app" ||
-				req.Title != "Add Flow Mode" ||
-				req.Instructions != "Build\nthe thing" ||
-				req.BaseRef != "main" {
-				t.Fatalf("StartFlowPlan request = %#v", req)
+	for _, headless := range []bool{false, true} {
+		t.Run(fmt.Sprintf("headless_%v", headless), func(t *testing.T) {
+			var launched actions.AgentLaunchContext
+			startEmbeddedRan := false
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand:     "codex-app",
+				SessionStateRoot: "/state/wtui/sessions/v1",
+				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					if req.RepoPath != "/dev/alpha" ||
+						req.AgentCommand != "codex-app" ||
+						req.Title != "Add Flow Mode" ||
+						req.Instructions != "Build\nthe thing" ||
+						req.BaseRef != "main" {
+						t.Fatalf("StartFlowPlan request = %#v", req)
+					}
+					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+						Command:          req.AgentCommand,
+						LaunchID:         "launch-1",
+						RepoPath:         req.RepoPath,
+						WorktreePath:     "/dev/alpha-worktrees/flow-add-flow-mode",
+						Branch:           "flow/add-flow-mode",
+						Commit:           "abc123",
+						SessionStateRoot: req.SessionStateRoot,
+						PlanPhaseID:      req.PlanPhaseID,
+						PlanPhaseTitle:   req.PlanPhaseTitle,
+						PlanPhaseStatus:  req.PlanPhaseStatus,
+						FlowID:           "flow-1",
+						FlowPhaseID:      req.PlanPhaseID,
+						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+					}}, nil
+				},
+				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+					launched = ctx
+					return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					startEmbeddedRan = true
+					return &fakeEmbeddedTerminal{}, nil
+				},
+			})
+			m = inRightPane(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+			m, cmd := submitNewFlowPromptsWithOptions(t, m, "Add Flow Mode", "Build\nthe thing", "main", headless)
+			if cmd == nil {
+				t.Fatal("expected flow creation command")
 			}
-			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
-				Command:          req.AgentCommand,
-				LaunchID:         "launch-1",
-				RepoPath:         req.RepoPath,
-				WorktreePath:     "/dev/alpha-worktrees/flow-add-flow-mode",
-				Branch:           "flow/add-flow-mode",
-				Commit:           "abc123",
-				SessionStateRoot: req.SessionStateRoot,
-				PlanPhaseID:      req.PlanPhaseID,
-				PlanPhaseTitle:   req.PlanPhaseTitle,
-				PlanPhaseStatus:  req.PlanPhaseStatus,
-				FlowID:           "flow-1",
-				FlowPhaseID:      req.PlanPhaseID,
-				InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
-			}}, nil
-		},
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			launched = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
-		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
-			startEmbeddedRan = true
-			return &fakeEmbeddedTerminal{}, nil
-		},
-	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			msg := cmd()
+			launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
+			if !ok {
+				t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
+			}
+			if launchMsg.Request == 0 {
+				t.Fatal("external launch message should be tagged with the active create request")
+			}
+			_, cmd = update(m, launchMsg)
+			if cmd == nil {
+				t.Fatal("expected external codex-app agent result command")
+			}
 
-	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
-	if cmd == nil {
-		t.Fatal("expected flow creation command")
+			if startEmbeddedRan {
+				t.Fatal("codex-app new Flow launch should not start an embedded terminal")
+			}
+			if launched.Command != "codex-app" ||
+				launched.LaunchID != "launch-1" ||
+				launched.RepoPath != "/dev/alpha" ||
+				launched.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
+				launched.Branch != "flow/add-flow-mode" ||
+				launched.Commit != "abc123" ||
+				launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
+				launched.FlowID != "flow-1" ||
+				launched.FlowPhaseID != "plan" ||
+				launched.PlanPhaseID != "plan" ||
+				launched.PlanPhaseTitle != "Plan" ||
+				launched.PlanPhaseStatus != flowstore.PhaseRunning ||
+				launched.InitialPrompt == "" ||
+				launched.Embedded ||
+				launched.Headless ||
+				launched.FlowLaunchTracked {
+				t.Fatalf("codex-app launch context = %#v", launched)
+			}
+			prompt := strings.ToLower(launched.InitialPrompt)
+			for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
+				}
+			}
+		})
 	}
-	msg := cmd()
-	launchMsg, ok := msg.(model.PlanLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
-	}
-	if launchMsg.Request == 0 {
-		t.Fatal("external launch message should be tagged with the active create request")
-	}
-	_, cmd = update(m, launchMsg)
-	if cmd == nil {
-		t.Fatal("expected external codex-app agent result command")
-	}
+}
 
-	if startEmbeddedRan {
-		t.Fatal("codex-app new Flow launch should not start an embedded terminal")
-	}
-	if launched.Command != "codex-app" ||
-		launched.LaunchID != "launch-1" ||
-		launched.RepoPath != "/dev/alpha" ||
-		launched.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
-		launched.Branch != "flow/add-flow-mode" ||
-		launched.Commit != "abc123" ||
-		launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
-		launched.FlowID != "flow-1" ||
-		launched.FlowPhaseID != "plan" ||
-		launched.PlanPhaseID != "plan" ||
-		launched.PlanPhaseTitle != "Plan" ||
-		launched.PlanPhaseStatus != flowstore.PhaseRunning ||
-		launched.InitialPrompt == "" ||
-		launched.Embedded ||
-		launched.Headless ||
-		launched.FlowLaunchTracked {
-		t.Fatalf("codex-app launch context = %#v", launched)
-	}
-	prompt := strings.ToLower(launched.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
-		}
+func TestModel_NewFlowOptionsCancelDoesNotStartOrLeaveActiveCreateRequest(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyCtrlC},
+	} {
+		t.Run(key.String(), func(t *testing.T) {
+			startCalls := 0
+			embeddedCalls := 0
+			externalCalls := 0
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+					startCalls++
+					return model.FlowStartResult{}, nil
+				},
+				LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+					externalCalls++
+					return actions.TerminalLaunchSpec{}, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					embeddedCalls++
+					return &fakeEmbeddedTerminal{}, nil
+				},
+			})
+			m = inRightPane(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m = openNewFlowOptionsForm(t, m, "Cancel Flow", "Write the plan", "main")
+
+			m, cmd := update(m, key)
+			if cmd != nil {
+				t.Fatalf("cancel returned command %T, want nil", cmd)
+			}
+			if m.Overlay() != ui.OverlayNone {
+				t.Fatalf("overlay after cancel = %d, want none", m.Overlay())
+			}
+			if startCalls != 0 || embeddedCalls != 0 || externalCalls != 0 {
+				t.Fatalf("cancel should not start work; start=%d embedded=%d external=%d", startCalls, embeddedCalls, externalCalls)
+			}
+			if got := model.ActiveFlowCreateForTest(m); got != 0 {
+				t.Fatalf("active Flow create request after cancel = %d, want 0", got)
+			}
+		})
 	}
 }
 
@@ -6044,21 +6144,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Stale Flow")})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected title submit command")
-	}
-	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Do the stale thing")})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected instructions submit command")
-	}
-	m, _ = update(m, cmd())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
-	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
 	if createCmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -6069,7 +6155,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged FlowEmbeddedLaunchRequestedMsg", staleMsg)
 	}
-	_, cmd = update(m, staleMsg)
+	_, cmd := update(m, staleMsg)
 	if cmd != nil {
 		t.Fatalf("stale launch returned command %T, want nil", cmd)
 	}
@@ -6454,6 +6540,20 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 
 func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, baseRef string) (model.Model, tea.Cmd) {
 	t.Helper()
+	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, false)
+}
+
+func submitNewFlowPromptsWithOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless bool) (model.Model, tea.Cmd) {
+	t.Helper()
+	m = openNewFlowOptionsForm(t, m, title, instructions, baseRef)
+	if headless {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+	}
+	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+func openNewFlowOptionsForm(t *testing.T, m model.Model, title, instructions, baseRef string) model.Model {
+	t.Helper()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(title)})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -6489,5 +6589,13 @@ func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, base
 	if baseRef != "" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(baseRef)})
 	}
-	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected base ref submit command")
+	}
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("overlay = %d, want Flow options form", m.Overlay())
+	}
+	return m
 }

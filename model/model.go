@@ -1135,6 +1135,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFlowTitleSubmitted(msg), nil
 	case FlowInstructionsSubmittedMsg:
 		return m.handleFlowInstructionsSubmitted(msg), nil
+	case FlowBaseRefSubmittedMsg:
+		return m.handleFlowBaseRefSubmitted(msg), nil
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:

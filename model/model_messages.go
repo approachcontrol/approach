@@ -352,6 +352,12 @@ type FlowInstructionsSubmittedMsg struct {
 	Instructions string
 }
 
+type FlowBaseRefSubmittedMsg struct {
+	Title        string
+	Instructions string
+	BaseRef      string
+}
+
 type FlowCreateFailedMsg struct {
 	RepoPath string
 	Title    string
