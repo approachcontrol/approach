@@ -70,6 +70,7 @@ type embeddedTerminalSlot struct {
 	Scope       embeddedTerminalScope
 	Provider    string
 	Identity    string
+	RepoPath    string
 	FlowID      string
 	FlowPhaseID string
 	Terminal    EmbeddedTerminal
@@ -177,6 +178,18 @@ func (m Model) flowTerminalActivity() []ui.FlowTerminalActivity {
 		})
 	}
 	return activity
+}
+
+func (m Model) activeTerminalRepoPaths() map[string]bool {
+	active := make(map[string]bool)
+	for _, slot := range m.embeddedTerminals {
+		repoPath := cleanEmbeddedTerminalRepoPath(slot.RepoPath)
+		if repoPath == "" || !embeddedTerminalRunning(slot.Terminal) {
+			continue
+		}
+		active[repoPath] = true
+	}
+	return active
 }
 
 func (m Model) syncActiveFlowTerminalToSelectedFlow() Model {
@@ -329,6 +342,7 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		Scope:       scope,
 		Provider:    provider,
 		Identity:    identity,
+		RepoPath:    cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
 		FlowID:      flowID,
 		FlowPhaseID: flowPhaseID,
 		Terminal:    term,
@@ -409,6 +423,14 @@ func skipTerminalEscape(s string, i int) int {
 	default:
 		return i + 2
 	}
+}
+
+func cleanEmbeddedTerminalRepoPath(repoPath string) string {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return ""
+	}
+	return filepath.Clean(repoPath)
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {
