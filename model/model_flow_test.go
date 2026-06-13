@@ -1495,6 +1495,7 @@ func TestModel_CtrlJOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *
 		t.Run(command, func(t *testing.T) {
 			var launchUpdate flowstore.PhaseLaunchUpdate
 			var started actions.AgentLaunchContext
+			fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 			m := model.NewWithOptions(testRepos(), model.Options{
 				AgentCommand:     command,
 				SessionStateRoot: "/state/wtui/sessions/v1",
@@ -1508,7 +1509,7 @@ func TestModel_CtrlJOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *
 				},
 				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 					started = ctx
-					return &fakeEmbeddedTerminal{state: "running"}, nil
+					return fakeTerm, nil
 				},
 				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 					return nil, nil
@@ -1553,6 +1554,13 @@ func TestModel_CtrlJOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *
 			}
 			if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 				t.Fatalf("launch IDs = context %q update %#v", started.LaunchID, launchUpdate)
+			}
+			wantWrite := "\x1b[200~" + started.InitialPrompt + "\x1b[201~"
+			if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != wantWrite {
+				t.Fatalf("prefill writes = %#v, want exact bracketed paste %q", fakeTerm.writes, wantWrite)
+			}
+			if strings.HasSuffix(fakeTerm.writes[0], "\r") || strings.HasSuffix(fakeTerm.writes[0], "\n") {
+				t.Fatalf("prefill write should not append submit byte, got %q", fakeTerm.writes[0])
 			}
 		})
 	}
@@ -2463,6 +2471,7 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		CodexReasoningEffort: "high",
@@ -2477,7 +2486,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			started = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
+			return fakeTerm, nil
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
@@ -2531,6 +2540,9 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	}
 	if !launchUpdate.Resume {
 		t.Fatalf("launch update = %#v, want resume launch so terminal phases keep their status", launchUpdate)
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("Flow phase resume should not prefill embedded terminal, got writes %#v", fakeTerm.writes)
 	}
 }
 
@@ -3407,6 +3419,9 @@ func TestModel_CtrlJLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByD
 	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("headless Flow launch should not prefill embedded terminal, got writes %#v", fakeTerm.writes)
 	}
 	_ = m.View()
 	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
@@ -4289,6 +4304,107 @@ func TestModel_CtrlJFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNeedsAttentio
 	}
 	if got := m.TransientError(); !strings.Contains(got, "pty unavailable") {
 		t.Fatalf("status = %q, want PTY error", got)
+	}
+}
+
+func TestModel_CtrlJFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *testing.T) {
+	tests := []struct {
+		name           string
+		term           *fakeEmbeddedTerminal
+		wantStatusText []string
+	}{
+		{
+			name: "write error",
+			term: &fakeEmbeddedTerminal{
+				lines:    []string{"agent output"},
+				state:    "running",
+				writeErr: errors.New("input rejected"),
+			},
+			wantStatusText: []string{"prefill embedded prompt", "input rejected"},
+		},
+		{
+			name: "short write",
+			term: &fakeEmbeddedTerminal{
+				lines:       []string{"agent output"},
+				state:       "running",
+				forceWriteN: true,
+				writeN:      3,
+			},
+			wantStatusText: []string{"prefill embedded prompt", "short write"},
+		},
+		{
+			name: "cleanup failure",
+			term: &fakeEmbeddedTerminal{
+				lines:        []string{"agent output"},
+				state:        "running",
+				writeErr:     errors.New("input rejected"),
+				terminateErr: errors.New("terminate failed"),
+			},
+			wantStatusText: []string{"prefill embedded prompt", "input rejected", "terminate failed"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var phaseUpdate flowstore.PhaseUpdate
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
+				SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+					phaseUpdate = update
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					return tt.term, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+				FlowID:       "flow-1",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: "/dev/alpha-worktrees/flow-prefill-failure",
+				Branch:       "flow/prefill-failure",
+				Status:       flowstore.StatusInProgress,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+				},
+			}})
+
+			m = selectFlowPhaseByID(t, m, "implementation")
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+			if cmd != nil {
+				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
+			}
+			m, cmd = update(m, flowCtrlJKey())
+			if cmd == nil {
+				t.Fatal("ctrl+j should prepare an embedded launch")
+			}
+			m, cmd = update(m, cmd())
+			if cmd == nil {
+				t.Fatal("failed embedded prefill should still refresh Flow state")
+			}
+
+			if tt.term.terminates != 1 || tt.term.State() != "terminated" {
+				t.Fatalf("terminal cleanup = terminates %d state %q, want one terminated cleanup", tt.term.terminates, tt.term.State())
+			}
+			if phaseUpdate.FlowID != "flow-1" ||
+				phaseUpdate.PhaseID != "implementation" ||
+				phaseUpdate.Status != flowstore.PhaseNeedsAttention {
+				t.Fatalf("phase update = %#v", phaseUpdate)
+			}
+			for _, want := range tt.wantStatusText {
+				if !strings.Contains(phaseUpdate.Notes, want) {
+					t.Fatalf("phase notes = %q, want to contain %q", phaseUpdate.Notes, want)
+				}
+				if !strings.Contains(m.TransientError(), want) {
+					t.Fatalf("status = %q, want to contain %q", m.TransientError(), want)
+				}
+			}
+			if strings.Contains(m.View(), "agent output") {
+				t.Fatalf("failed prefill should not append a terminal slot:\n%s", m.View())
+			}
+		})
 	}
 }
 

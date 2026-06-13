@@ -2,7 +2,9 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +21,11 @@ import (
 )
 
 const embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
+
+const (
+	embeddedPromptPasteStart = "\x1b[200~"
+	embeddedPromptPasteEnd   = "\x1b[201~"
+)
 
 // terminalCommandKey toggles wtui command handling inside embedded terminals.
 // It must stay off keys interactive agents bind themselves (Claude Code and
@@ -307,6 +314,13 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		m = m.setStatus(statusOther, err.Error())
 		return m, false, err
 	}
+	if err := prefillEmbeddedPromptIfNeeded(term, ctx); err != nil {
+		if terminateErr := term.Terminate(); terminateErr != nil {
+			err = errors.Join(err, fmt.Errorf("terminate embedded terminal after prefill failure: %w", terminateErr))
+		}
+		m = m.setStatus(statusOther, err.Error())
+		return m, false, err
+	}
 	m.nextEmbeddedTerminalID++
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
 		Number:      number,
@@ -324,6 +338,21 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		m.activeEmbeddedTerminalNum = number
 	}
 	return m, true, nil
+}
+
+func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunchContext) error {
+	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		return nil
+	}
+	payload := []byte(embeddedPromptPasteStart + ctx.InitialPrompt + embeddedPromptPasteEnd)
+	n, err := term.Write(payload)
+	if err != nil {
+		return fmt.Errorf("prefill embedded prompt: %w", err)
+	}
+	if n != len(payload) {
+		return fmt.Errorf("prefill embedded prompt: %w: wrote %d of %d bytes", io.ErrShortWrite, n, len(payload))
+	}
+	return nil
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {

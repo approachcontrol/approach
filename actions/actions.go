@@ -628,7 +628,8 @@ type AgentLaunchContext struct {
 	Embedded          bool
 	Headless          bool
 	ReasoningEffort   string
-	// InitialPrompt is passed to providers when they support a launch-time prompt.
+	// InitialPrompt is canonical launch metadata. It is delivered either as a
+	// provider argv or by embedded PTY prefill, depending on launch mode.
 	InitialPrompt string
 }
 
@@ -744,6 +745,18 @@ func AgentCommand(ctx AgentLaunchContext) (*exec.Cmd, error) {
 	return cmd, err
 }
 
+func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
+	command := agent.Normalize(ctx.Command)
+	return (command == agent.CommandCodex || command == agent.CommandClaude) &&
+		ctx.Embedded &&
+		!ctx.Headless &&
+		ctx.ResumeSessionID == "" &&
+		ctx.InitialPrompt != "" &&
+		ctx.FlowID != "" &&
+		ctx.FlowPhaseID != "" &&
+		ctx.FlowLaunchTracked
+}
+
 func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 	command := agent.Normalize(ctx.Command)
 	if err := agent.Validate(command); err != nil {
@@ -769,7 +782,7 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		}
 	}
 	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded, ctx.Headless, reasoningEffort)
-	if ctx.InitialPrompt != "" {
+	if ctx.InitialPrompt != "" && !ShouldPrefillEmbeddedPrompt(ctx) {
 		args = append(args, ctx.InitialPrompt)
 	}
 	cmd := exec.Command(command, args...)

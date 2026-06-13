@@ -4296,8 +4296,13 @@ type fakeEmbeddedTerminal struct {
 	lines        []string
 	visibleCalls [][2]int
 	writes       []string
+	writeErr     error
+	writeN       int
+	forceWriteN  bool
 	resizes      [][2]int
 	state        string
+	terminateErr error
+	terminates   int
 }
 
 func (t *fakeEmbeddedTerminal) VisibleLines(width, height int) []string {
@@ -4306,13 +4311,23 @@ func (t *fakeEmbeddedTerminal) VisibleLines(width, height int) []string {
 }
 func (t *fakeEmbeddedTerminal) Write(p []byte) (int, error) {
 	t.writes = append(t.writes, string(p))
+	if t.forceWriteN {
+		return t.writeN, t.writeErr
+	}
+	if t.writeErr != nil {
+		return 0, t.writeErr
+	}
 	return len(p), nil
 }
 func (t *fakeEmbeddedTerminal) Resize(width, height int) error {
 	t.resizes = append(t.resizes, [2]int{width, height})
 	return nil
 }
-func (t *fakeEmbeddedTerminal) Terminate() error { t.state = "terminated"; return nil }
+func (t *fakeEmbeddedTerminal) Terminate() error {
+	t.terminates++
+	t.state = "terminated"
+	return t.terminateErr
+}
 func (t *fakeEmbeddedTerminal) Wait(context.Context) error {
 	return nil
 }
