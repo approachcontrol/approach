@@ -2185,6 +2185,26 @@ func TestRepoList_RendersActiveTerminalMarkersWithStableSpacing(t *testing.T) {
 	}
 }
 
+func TestRepoList_ReservesActiveTerminalColumnWhenActiveRepoIsOffscreen(t *testing.T) {
+	width := LeftPaneWidth - 2
+	repos := []scanner.Repo{
+		{Path: "/active", DisplayName: "active"},
+		{Path: "/bravo", DisplayName: "bravo"},
+		{Path: "/charlie", DisplayName: "charlie"},
+		{Path: "/delta", DisplayName: "delta"},
+	}
+
+	lines := renderRepoList(repos, 2, 1, width, 2, "", map[string]bool{"/active": true})
+	stripped := stripLines(lines)
+
+	if !strings.HasPrefix(stripped[0], "     bravo") {
+		t.Fatalf("inactive row should reserve marker spacing for offscreen active repo, got %q", stripped[0])
+	}
+	if !strings.HasPrefix(stripped[1], " >   charlie") {
+		t.Fatalf("selected inactive row should reserve marker spacing for offscreen active repo, got %q", stripped[1])
+	}
+}
+
 func TestRepoList_ActiveTerminalMarkerDoesNotExpandTruncatedRows(t *testing.T) {
 	width := LeftPaneWidth - 2
 	repos := []scanner.Repo{

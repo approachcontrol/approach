@@ -1768,14 +1768,7 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 		return lines
 	}
 
-	showActivityColumn := false
-	for i := 0; i < height; i++ {
-		idx := scroll + i
-		if idx < len(repos) && repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path) {
-			showActivityColumn = true
-			break
-		}
-	}
+	showActivityColumn := repoListHasActiveTerminal(repos, activeTerminalRepoPaths)
 
 	for i := 0; i < height; i++ {
 		idx := scroll + i
@@ -1816,6 +1809,18 @@ func repoHasActiveTerminal(activeTerminalRepoPaths map[string]bool, repoPath str
 		return false
 	}
 	return activeTerminalRepoPaths[filepath.Clean(repoPath)]
+}
+
+func repoListHasActiveTerminal(repos []scanner.Repo, activeTerminalRepoPaths map[string]bool) bool {
+	if len(activeTerminalRepoPaths) == 0 {
+		return false
+	}
+	for _, repo := range repos {
+		if repoHasActiveTerminal(activeTerminalRepoPaths, repo.Path) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width, height int, repoPath string) []string {
