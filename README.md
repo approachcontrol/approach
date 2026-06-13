@@ -84,7 +84,7 @@ filter matches, or a load failure with details in the status bar.
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
-| `m` | Move or rename a linked worktree (worktrees view) |
+| `m` | Move or rename a linked worktree (worktrees view), or toggle per-Flow auto mode (flows view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
