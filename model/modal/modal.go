@@ -129,6 +129,7 @@ type Modal struct {
 	formTitle    string
 	formFields   []FormField
 	formFocus    int
+	formColumn   int
 	formErr      string
 	formValidate func(FormValues) error
 	formSubmit   func(FormValues) tea.Cmd
@@ -224,6 +225,7 @@ func OpenForm(spec FormSpec) Modal {
 		formPurpose:  spec.Purpose,
 		formTitle:    spec.Title,
 		formFields:   normalizeFormFields(spec.Fields),
+		formColumn:   -1,
 		formValidate: spec.Validate,
 		formSubmit:   spec.Submit,
 	}
@@ -548,6 +550,21 @@ func moveCursorVertically(input string, cursor, delta, preferredColumn int) (int
 	return cursorForLineColumn(runes, starts, targetLine, column), column
 }
 
+func moveCursorVerticallyIfPossible(input string, cursor, delta, preferredColumn int) (int, int, bool) {
+	runes := []rune(input)
+	cursor = clampInputCursor(input, cursor)
+	starts := lineStarts(runes)
+	line, column := lineColumn(runes, starts, cursor)
+	if preferredColumn >= 0 {
+		column = preferredColumn
+	}
+	targetLine := line + delta
+	if targetLine < 0 || targetLine >= len(starts) {
+		return cursor, column, false
+	}
+	return cursorForLineColumn(runes, starts, targetLine, column), column, true
+}
+
 func lineStarts(runes []rune) []int {
 	starts := []int{0}
 	for i, r := range runes {
@@ -648,9 +665,11 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		return Modal{}, Cancelled, nil
 	case "tab":
 		m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+		m.formColumn = -1
 		return m, Consumed, nil
 	case "shift+tab":
 		m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+		m.formColumn = -1
 		return m, Consumed, nil
 	}
 
@@ -665,9 +684,11 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		switch msg.String() {
 		case "down":
 			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+			m.formColumn = -1
 			return m, Consumed, nil
 		case "up":
 			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+			m.formColumn = -1
 			return m, Consumed, nil
 		}
 		if msg.Type == tea.KeySpace {
@@ -678,9 +699,11 @@ func (m Modal) updateForm(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		switch msg.String() {
 		case "down":
 			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+			m.formColumn = -1
 			return m, Consumed, nil
 		case "up":
 			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+			m.formColumn = -1
 			return m, Consumed, nil
 		case "left", "h":
 			field.SelectedIndex = previousSelectIndex(field.SelectedIndex, len(field.Options))
@@ -704,43 +727,67 @@ func (m Modal) updateFormTextField(msg tea.KeyMsg, field *FormField) (Modal, Out
 	case "alt+enter":
 		if field.Kind == FormMultilineText {
 			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, []rune{'\n'})
+			m.formColumn = -1
 		}
 	case "backspace", "ctrl+h":
 		field.Value, field.Cursor = deleteRuneBefore(field.Value, field.Cursor)
+		m.formColumn = -1
 	case "delete":
 		field.Value, field.Cursor = deleteRuneAt(field.Value, field.Cursor)
+		m.formColumn = -1
 	case "left":
 		if field.Cursor > 0 {
 			field.Cursor--
 		}
+		m.formColumn = -1
 	case "right":
 		if field.Cursor < inputLength(field.Value) {
 			field.Cursor++
 		}
+		m.formColumn = -1
 	case "up":
 		if field.Kind == FormMultilineText {
-			field.Cursor, _ = moveCursorVertically(field.Value, field.Cursor, -1, -1)
+			if cursor, column, ok := moveCursorVerticallyIfPossible(field.Value, field.Cursor, -1, m.formColumn); ok {
+				field.Cursor = cursor
+				m.formColumn = column
+			} else {
+				m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+				m.formColumn = -1
+			}
 		} else {
 			m.formFocus = previousSelectIndex(m.formFocus, len(m.formFields))
+			m.formColumn = -1
 		}
 	case "down":
 		if field.Kind == FormMultilineText {
-			field.Cursor, _ = moveCursorVertically(field.Value, field.Cursor, 1, -1)
+			if cursor, column, ok := moveCursorVerticallyIfPossible(field.Value, field.Cursor, 1, m.formColumn); ok {
+				field.Cursor = cursor
+				m.formColumn = column
+			} else {
+				m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+				m.formColumn = -1
+			}
 		} else {
 			m.formFocus = nextSelectIndex(m.formFocus, len(m.formFields))
+			m.formColumn = -1
 		}
 	case "home", "ctrl+a":
 		field.Cursor = 0
+		m.formColumn = -1
 	case "end", "ctrl+e":
 		field.Cursor = inputLength(field.Value)
+		m.formColumn = -1
 	case "ctrl+u":
 		field.Value = ""
 		field.Cursor = 0
+		m.formColumn = -1
 	default:
 		if msg.Type == tea.KeySpace {
 			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, []rune{' '})
+			m.formColumn = -1
 		} else if msg.Type == tea.KeyRunes {
 			field.Value, field.Cursor = insertRunes(field.Value, field.Cursor, msg.Runes)
+			m.formColumn = -1
 		}
 	}
 	m.formErr = ""

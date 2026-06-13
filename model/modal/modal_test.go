@@ -807,6 +807,61 @@ func TestFormMultilineTextFieldAcceptsNewlinesAndSubmitsStructuredValues(t *test
 	}
 }
 
+func TestFormMultilineTextFieldArrowNavigationMovesWithinLinesAndAcrossFields(t *testing.T) {
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "flow-create",
+		Title:   "New flow",
+		Fields: []modal.FormField{
+			{ID: "title", Kind: modal.FormText, Label: "Title"},
+			{ID: "instructions", Kind: modal.FormMultilineText, Label: "Instructions"},
+			{ID: "base-ref", Kind: modal.FormText, Label: "Base ref"},
+			{ID: "headless", Kind: modal.FormCheckbox, Label: "Headless"},
+		},
+	})
+
+	m, _, _ = m.Update(keyRunes("Build"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.View().Form.FocusIndex; got != 1 {
+		t.Fatalf("down from title focus = %d, want instructions", got)
+	}
+
+	m, _, _ = m.Update(keyRunes("first"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _, _ = m.Update(keyRunes("second line"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _, _ = m.Update(keyRunes("xy"))
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	view := m.View().Form
+	if view.FocusIndex != 1 {
+		t.Fatalf("up within instructions focus = %d, want instructions", view.FocusIndex)
+	}
+	if got := view.Fields[1].Cursor; got != len([]rune("first\nse")) {
+		t.Fatalf("cursor after up = %d, want same column on previous line", got)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	view = m.View().Form
+	if view.FocusIndex != 1 {
+		t.Fatalf("second up within instructions focus = %d, want instructions", view.FocusIndex)
+	}
+	if got := view.Fields[1].Cursor; got != len([]rune("fi")) {
+		t.Fatalf("cursor after second up = %d, want preferred column on first line", got)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.View().Form.FocusIndex; got != 0 {
+		t.Fatalf("up from first instructions line focus = %d, want title", got)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.View().Form.FocusIndex; got != 2 {
+		t.Fatalf("down from last instructions line focus = %d, want base ref", got)
+	}
+}
+
 func TestFormShiftTabNavigatesBackwards(t *testing.T) {
 	m := modal.OpenForm(modal.FormSpec{
 		Purpose: "repo-create",

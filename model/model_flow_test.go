@@ -5973,6 +5973,79 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	}
 }
 
+func TestModel_NewFlowFormArrowNavigationSubmitsMultilineInstructions(t *testing.T) {
+	var startRequest model.FlowStartRequest
+	startCalls := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			startCalls++
+			startRequest = req
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:     req.AgentCommand,
+				LaunchID:    "launch-1",
+				RepoPath:    req.RepoPath,
+				FlowID:      "flow-1",
+				FlowPhaseID: req.PlanPhaseID,
+			}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Arrow Flow")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FormView().FocusIndex; got != 1 {
+		t.Fatalf("down from title focus = %d, want instructions", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("first line")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("second line")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FormView().FocusIndex; got != 1 {
+		t.Fatalf("internal instruction navigation focus = %d, want instructions", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FormView().FocusIndex; got != 2 {
+		t.Fatalf("down from last instruction line focus = %d, want base ref", got)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("main")})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FormView().FocusIndex; got != 3 {
+		t.Fatalf("down from base ref focus = %d, want headless", got)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("creation command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	if startCalls != 1 {
+		t.Fatalf("StartFlowPlan calls = %d, want 1", startCalls)
+	}
+	if startRequest.RepoPath != "/dev/alpha" ||
+		startRequest.Title != "Arrow Flow" ||
+		startRequest.Instructions != "first line\nsecond line" ||
+		startRequest.BaseRef != "main" {
+		t.Fatalf("StartFlowPlan request = %#v", startRequest)
+	}
+	if !launchMsg.LaunchContext.Headless {
+		t.Fatalf("headless launch context = %#v, want checked headless option", launchMsg.LaunchContext)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("overlay after submit = %d, want none", m.Overlay())
+	}
+}
+
 func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
