@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -21,6 +23,258 @@ func (t internalFakeEmbeddedTerminal) State() string {
 		return "running"
 	}
 	return t.state
+}
+
+func internalFlowsModel(records ...flowstore.FlowRecord) Model {
+	return Model{
+		mode:       ui.ModeFlows,
+		activePane: 1,
+		repos: newRepoPane().SetItems([]scanner.Repo{
+			{Path: "/dev/alpha", DisplayName: "alpha"},
+		}),
+		flows: newFlowPane().SetItems(records),
+	}
+}
+
+func TestSyncActiveFlowTerminalToSelectedFlowSelectsNewestMatchingTerminal(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   3,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{state: "starting"},
+		},
+	}
+	m.flows = m.flows.Move(1, 20, 80)
+
+	m = m.syncActiveFlowTerminalToSelectedFlow()
+
+	if m.activeFlowTerminalNum != 3 {
+		t.Fatalf("active Flow terminal = %d, want newest matching terminal 3", m.activeFlowTerminalNum)
+	}
+}
+
+func TestSyncActiveFlowTerminalToSelectedFlowPreservesActiveTerminalWhenSelectedFlowHasNoMatch(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{state: "exited"},
+		},
+	}
+	m.flows = m.flows.Move(1, 20, 80)
+
+	m = m.syncActiveFlowTerminalToSelectedFlow()
+
+	if m.activeFlowTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1", m.activeFlowTerminalNum)
+	}
+}
+
+func TestSyncActiveFlowTerminalToSelectedFlowPreservesCurrentMatchingTerminal(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+	)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+
+	m = m.syncActiveFlowTerminalToSelectedFlow()
+
+	if m.activeFlowTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want current matching terminal 1", m.activeFlowTerminalNum)
+	}
+}
+
+func TestMoveCursorSyncsActiveFlowTerminalToSelectedFlow(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+
+	m = m.moveCursor(1)
+
+	if m.activeFlowTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	}
+	if m.flowFocus != flowFocusList {
+		t.Fatalf("flow focus = %d, want list focus", m.flowFocus)
+	}
+	if m.terminalPrefixActive {
+		t.Fatal("list navigation should not enable terminal command mode")
+	}
+}
+
+func TestMoveSelectedFlowPhaseSyncsTerminalWhenCrossingToNextFlow(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{
+			FlowID:   "flow-1",
+			RepoPath: "/dev/alpha",
+			Title:    "Flow one",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+			},
+		},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.expandedFlowID = "flow-1"
+	m.selectedFlowPhaseID = "implementation"
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:      1,
+			Scope:       embeddedTerminalScopeFlow,
+			FlowID:      "flow-1",
+			FlowPhaseID: "implementation",
+			Terminal:    internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+
+	m = m.moveCursor(1)
+
+	if got := m.selectedFlowID(); got != "flow-2" {
+		t.Fatalf("selected Flow = %q, want flow-2", got)
+	}
+	if m.activeFlowTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	}
+}
+
+func TestHandleFlowResultSyncsTerminalAfterPreservingSelectedFlow(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.flows = m.flows.Move(1, 20, 80)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+	const request = 42
+	m.listRequests[int(ui.ModeFlows)] = request
+
+	m, _ = m.handleFlowResult(FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: request,
+		Flows: []flowstore.FlowRecord{
+			{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two updated"},
+			{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		},
+	})
+
+	if got := m.selectedFlowID(); got != "flow-2" {
+		t.Fatalf("selected Flow = %q, want flow-2", got)
+	}
+	if m.activeFlowTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	}
+}
+
+func TestHandleFlowResultPreservesActiveTerminalWhenClampedSelectionHasNoMatch(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.flows = m.flows.Move(1, 20, 80)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+	const request = 43
+	m.listRequests[int(ui.ModeFlows)] = request
+
+	m, _ = m.handleFlowResult(FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: request,
+		Flows: []flowstore.FlowRecord{
+			{FlowID: "flow-3", RepoPath: "/dev/alpha", Title: "Flow three"},
+		},
+	})
+
+	if got := m.selectedFlowID(); got != "flow-3" {
+		t.Fatalf("selected Flow = %q, want clamped flow-3", got)
+	}
+	if m.activeFlowTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1", m.activeFlowTerminalNum)
+	}
 }
 
 func TestDismissLastFlowTerminalClearsFlowCommandStateOnly(t *testing.T) {

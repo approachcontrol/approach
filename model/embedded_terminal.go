@@ -170,6 +170,33 @@ func (m Model) flowTerminalActivity() []ui.FlowTerminalActivity {
 	return activity
 }
 
+func (m Model) syncActiveFlowTerminalToSelectedFlow() Model {
+	if m.mode != ui.ModeFlows {
+		return m
+	}
+	flowID := m.selectedFlowID()
+	if flowID == "" {
+		return m
+	}
+	activeNum := m.activeFlowTerminalNum
+	newestMatchingNum := 0
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowID != flowID || !embeddedTerminalRunning(slot.Terminal) {
+			continue
+		}
+		if slot.Number == activeNum {
+			return m
+		}
+		if slot.Number > newestMatchingNum {
+			newestMatchingNum = slot.Number
+		}
+	}
+	if newestMatchingNum != 0 {
+		m.activeFlowTerminalNum = newestMatchingNum
+	}
+	return m
+}
+
 func (m Model) embeddedTerminalTabsForScope(scope embeddedTerminalScope) []ui.EmbeddedTerminalTab {
 	tabs := make([]ui.EmbeddedTerminalTab, 0, len(m.embeddedTerminals))
 	activeNum := m.activeEmbeddedTerminalNumber(scope)
