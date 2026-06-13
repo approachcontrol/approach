@@ -38,7 +38,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextRepoCreateRequest()
 			cmd = tagRepoCreateRequest(cmd, request)
-		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateInput(view) {
+		} else if outcome == modal.Accepted && cmd != nil && isFlowCreateForm(view) {
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
 			cmd = tagFlowCreateRequest(cmd, request)
@@ -107,12 +107,12 @@ func isWorktreeCreateInput(view modal.View) bool {
 	return view.Placeholder == ui.WorktreeInputPlaceholder || view.Placeholder == ui.PRWorktreeInputPlaceholder
 }
 
-func isFlowCreateInput(view modal.View) bool {
-	return view.Kind == modal.Input && view.Placeholder == ui.FlowBaseRefInputPlaceholder
-}
-
 func isRepoCreateForm(view modal.View) bool {
 	return view.Kind == modal.Form && view.Form.Purpose == repoCreateFormPurpose
+}
+
+func isFlowCreateForm(view modal.View) bool {
+	return view.Kind == modal.Form && view.Form.Purpose == flowCreateFormPurpose
 }
 
 func tagWorktreeCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
@@ -395,6 +395,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			m = m.clearSelectedFlowPhase()
 		}
+	case "ctrl+j", "ctrl+enter":
+		if m.mode == ui.ModeFlows {
+			return m.handleLaunchNextFlowPhase()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -635,10 +639,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
-	if m.selectedFlowPhaseID == "" {
-		return m.handleToggleFlowPhases()
-	}
-	return m.handleLaunchSelectedFlowPhase()
+	return m.handleToggleFlowPhases()
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
@@ -907,10 +908,15 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 }
 
 const (
-	repoCreateFormPurpose     = "repo-create"
-	repoCreateNameField       = "name"
-	repoCreateGitHubField     = "github"
-	repoCreateVisibilityField = "visibility"
+	repoCreateFormPurpose       = "repo-create"
+	repoCreateNameField         = "name"
+	repoCreateGitHubField       = "github"
+	repoCreateVisibilityField   = "visibility"
+	flowCreateFormPurpose       = "flow-create"
+	flowCreateTitleField        = "title"
+	flowCreateInstructionsField = "instructions"
+	flowCreateBaseRefField      = "base-ref"
+	flowCreateHeadlessField     = "headless"
 )
 
 func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
@@ -1039,49 +1045,35 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
-	if _, ok := m.currentRepoPath(); !ok {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
 		return m, nil
 	}
 	if m.agentCommand == "" {
 		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching a flow")
 		return m, nil
 	}
-	m.modal = modal.OpenSingleLineInput(
-		ui.FlowTitlePrompt,
-		ui.FlowTitleInputPlaceholder,
-		"",
-		validateFlowTitleInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowTitleSubmittedMsg{Title: input} }
+	m.modal = modal.OpenForm(modal.FormSpec{
+		Purpose: flowCreateFormPurpose,
+		Title:   "New flow",
+		Fields: []modal.FormField{
+			{ID: flowCreateTitleField, Kind: modal.FormText, Label: "Title", Placeholder: ui.FlowTitleInputPlaceholder},
+			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
+			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
+			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
 		},
-	)
+		Validate: validateFlowCreateForm,
+		Submit: func(values modal.FormValues) tea.Cmd {
+			return m.createFlowAndLaunchPlanForRepo(
+				repoPath,
+				values.Text[flowCreateTitleField],
+				values.Text[flowCreateInstructionsField],
+				values.Text[flowCreateBaseRefField],
+				values.Checked[flowCreateHeadlessField],
+			)
+		},
+	})
 	return m, nil
-}
-
-func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
-	m.modal = modal.OpenMultiLineInput(
-		ui.FlowInstructionsPrompt,
-		ui.FlowInstructionsInputPlaceholder,
-		"",
-		validateFlowInstructionsInput,
-		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowInstructionsSubmittedMsg{Title: msg.Title, Instructions: input} }
-		},
-	)
-	return m
-}
-
-func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
-	m.modal = modal.OpenSingleLineInput(
-		ui.FlowBaseRefPrompt,
-		ui.FlowBaseRefInputPlaceholder,
-		"",
-		validateFlowBaseRefInput,
-		func(input string) tea.Cmd {
-			return m.createFlowAndLaunchPlan(msg.Title, msg.Instructions, input)
-		},
-	)
-	return m
 }
 
 func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
@@ -1098,6 +1090,16 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 		return m.startFetchMode(ui.ModeFlows)
 	}
 	return m, nil
+}
+
+func validateFlowCreateForm(values modal.FormValues) error {
+	if err := validateFlowTitleInput(values.Text[flowCreateTitleField]); err != nil {
+		return err
+	}
+	if err := validateFlowInstructionsInput(values.Text[flowCreateInstructionsField]); err != nil {
+		return err
+	}
+	return validateFlowBaseRefInput(values.Text[flowCreateBaseRefField])
 }
 
 func validateWorktreeInput(input string) error {
@@ -1300,17 +1302,22 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 	return m.launchAgentAtPath(path)
 }
 
-func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
-	target, ok, next := m.selectedFlowPhaseLaunchTarget()
+func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
+	target, ok, next := m.selectedFlowNextLaunchTarget()
 	if !ok {
 		return next, nil
 	}
+	return next.launchFlowPhaseTarget(target)
+}
+
+func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
 	launchID := newLaunchID()
-	switch agent.Normalize(next.agentCommand) {
+	command, _ := m.flowLaunchAgentSettings()
+	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+		return m, m.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, m.flowHeadless)
 	}
-	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	return m, m.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
@@ -1346,7 +1353,8 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			continue
 		}
 		launchID := newLaunchID()
-		switch agent.Normalize(next.agentCommand) {
+		command, _ := next.flowLaunchAgentSettings()
+		switch command {
 		case agent.CommandCodex, agent.CommandClaude:
 			cmds = append(cmds, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless))
 			continue
@@ -1414,17 +1422,10 @@ type flowPhaseLaunchTarget struct {
 	planPath     string
 }
 
-func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
-	record, ok := m.selectedFlow()
+func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
+	record, phase, ok := m.selectedFlowNextLaunchablePhase()
 	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	phase, ok := m.selectedFlowPhase()
-	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	if !flowPhaseCanLaunch(record, phase) {
-		m = m.setStatus(statusOther, flowPhaseNotLaunchableMessage(record, phase))
+		m = m.setStatus(statusOther, "No launchable Flow phase")
 		return flowPhaseLaunchTarget{}, false, m
 	}
 	return m.flowPhaseLaunchTarget(record, phase)
@@ -1604,9 +1605,10 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
 			launchPhase = persistedPhase
 		}
+		command, reasoningEffort := m.flowLaunchAgentSettings()
 		return wrap(actions.AgentLaunchContext{
-			Command:          m.agentCommand,
-			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+			Command:          command,
+			ReasoningEffort:  reasoningEffort,
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
 			WorktreePath:     worktreePath,
@@ -1893,22 +1895,6 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
 }
 
-func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	if phase.PhaseID == "autoreview" && flowAutoreviewMissingPRTarget(record) {
-		return "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
-	}
-	if phase.PhaseID == "implementation" && phase.Status == flowstore.PhasePending {
-		if review, ok := flowPhaseByID(record, "plan-review"); ok {
-			return "Implementation is not ready; Plan Review is " + flowPhaseStatusDetail(review)
-		}
-	}
-	detail := flowPhaseStatusDetail(phase)
-	if phase.PhaseID == "" {
-		return "Selected Flow phase is not launchable; status is " + detail
-	}
-	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
-}
-
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
 	detail := strings.TrimSpace(phase.Status)
 	if detail == "" {
@@ -1995,7 +1981,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow to review the changes.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
+	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -2564,7 +2550,10 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || m.selectedFlowPhaseID != "" {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
