@@ -343,8 +343,9 @@ runtime-only embedded terminal inside the flows pane. Press `h` to choose the
 CLI command mode: headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. Headless-off Flow launches prefill the phase prompt without
-submitting it, so you can review or edit it before pressing enter. Creating a
-new Flow has its own default-off Headless checkbox for the
+submitting it, then focus the Flow terminal in input mode so you can review or
+edit it before pressing enter. Headless launches keep focus on the Flow list.
+Creating a new Flow has its own default-off Headless checkbox for the
 initial Plan launch; that checkbox does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
 launches all use the configured agent and that agent's configured effort. Press
@@ -358,11 +359,11 @@ as it works, while `claude --print` prints its result when the run completes,
 so a Claude phase can show an empty terminal until it finishes (the terminal tab
 still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
-`tab` switches focus between them. Flow terminal focus starts in wtui command
-mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
-closes, `d` detaches to tmux when available, `q`/`esc` quits, unknown ordinary
-keys do not pass through to the PTY, `ctrl+]` sends a literal `ctrl+]`, and `i`
-enters terminal input mode. In input
+`tab` switches focus between them. Manually tabbing into Flow terminal focus
+starts in wtui command mode: `left`/`right` cycle Flow terminals, `1`-`9`
+switches by number, `x` closes, `d` detaches to tmux when available, `q`/`esc`
+quits, unknown ordinary keys do not pass through to the PTY, `ctrl+]` sends a
+literal `ctrl+]`, and `i` enters terminal input mode. In input
 mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
 and `ctrl+]` returns to command mode. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state

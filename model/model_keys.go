@@ -2219,6 +2219,11 @@ func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Mo
 		next = next.setStatus(statusOther, errText)
 		return next, nil
 	}
+	if !ctx.Headless && next.mode == ui.ModeFlows {
+		next.activePane = 1
+		next.flowFocus = flowFocusTerminal
+		next.terminalPrefixActive = false
+	}
 	if needsTick {
 		return next.startEmbeddedTerminalTick()
 	}

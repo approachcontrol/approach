@@ -1430,6 +1430,7 @@ func TestModel_EnterOnSelectedFlowPhaseCollapsesWithoutLaunching(t *testing.T) {
 func TestModel_CtrlJOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	var started actions.AgentLaunchContext
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	launchAgentRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:          "claude",
@@ -1445,7 +1446,7 @@ func TestModel_CtrlJOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHead
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			started = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
+			return fakeTerm, nil
 		},
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return nil, nil
@@ -1487,6 +1488,10 @@ func TestModel_CtrlJOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHead
 	}
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("launch IDs = context %q update %#v", started.LaunchID, launchUpdate)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("headless Flow launch should keep list focus and not forward input: %#v", fakeTerm.writes)
 	}
 }
 
@@ -1561,6 +1566,18 @@ func TestModel_CtrlJOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *
 			}
 			if strings.HasSuffix(fakeTerm.writes[0], "\r") || strings.HasSuffix(fakeTerm.writes[0], "\n") {
 				t.Fatalf("prefill write should not append submit byte, got %q", fakeTerm.writes[0])
+			}
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+			if len(fakeTerm.writes) != 2 || fakeTerm.writes[1] != "z" {
+				t.Fatalf("interactive Flow launch should focus terminal input and forward z: %#v", fakeTerm.writes)
+			}
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+			if len(fakeTerm.writes) != 2 {
+				t.Fatalf("terminal close prefix should not forward x: %#v", fakeTerm.writes)
+			}
+			if view := m.View(); !strings.Contains(view, "Terminate embedded terminal?") {
+				t.Fatalf("ctrl+] x should open terminal close confirmation:\n%s", view)
 			}
 		})
 	}
@@ -4761,6 +4778,7 @@ func TestModel_FlowTerminalFocusCyclesLeftRightWithoutWritingPTY(t *testing.T) {
 			WorktreePath: "/dev/alpha",
 			FlowID:       "flow-1",
 			FlowPhaseID:  phaseID,
+			Headless:     true,
 		}})
 	}
 	if starts != 3 {
@@ -4809,6 +4827,7 @@ func TestModel_FlowTerminalLeftRightNoOpWithOneTerminal(t *testing.T) {
 		WorktreePath: "/dev/alpha",
 		FlowID:       "flow-1",
 		FlowPhaseID:  "implementation",
+		Headless:     true,
 	}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -6394,6 +6413,65 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 	}
 }
 
+func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	var started actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:          req.AgentCommand,
+				LaunchID:         "launch-1",
+				RepoPath:         req.RepoPath,
+				WorktreePath:     "/dev/alpha-worktrees/flow-interactive-plan",
+				Branch:           "flow/interactive-plan",
+				SessionStateRoot: req.SessionStateRoot,
+				FlowID:           "flow-1",
+				FlowPhaseID:      req.PlanPhaseID,
+				InitialPrompt:    "Create and persist the plan.",
+			}}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatalf("new Flow CLI launch should start an embedded terminal, not external launcher: %#v", ctx)
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return fakeTerm, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := submitNewFlowPrompts(t, m, "Interactive Plan", "Write the plan", "main")
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("creation command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	m, cmd = update(m, launchMsg)
+	if cmd == nil {
+		t.Fatal("expected embedded launch repaint/fetch command")
+	}
+	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
+		t.Fatalf("interactive new Flow plan launch context = %#v", started)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	wantPrefill := "\x1b[200~Create and persist the plan.\x1b[201~"
+	if len(fakeTerm.writes) != 2 || fakeTerm.writes[0] != wantPrefill || fakeTerm.writes[1] != "z" {
+		t.Fatalf("interactive new Flow plan launch should focus terminal input: %#v", fakeTerm.writes)
+	}
+}
+
 func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	for _, headless := range []bool{false, true} {
 		t.Run(fmt.Sprintf("headless_%v", headless), func(t *testing.T) {
@@ -7001,6 +7079,7 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 			WorktreePath: "/dev/alpha-worktrees/flow-existing",
 			FlowID:       "flow-existing",
 			FlowPhaseID:  "implementation",
+			Headless:     true,
 		}})
 	}
 	if starts != 9 {
