@@ -862,6 +862,40 @@ func TestFormMultilineTextFieldArrowNavigationMovesWithinLinesAndAcrossFields(t 
 	}
 }
 
+func TestFormMultilineTextFieldResetsPreferredColumnAfterHorizontalMove(t *testing.T) {
+	m := modal.OpenForm(modal.FormSpec{
+		Purpose: "flow-create",
+		Title:   "New flow",
+		Fields: []modal.FormField{
+			{ID: "title", Kind: modal.FormText, Label: "Title"},
+			{ID: "instructions", Kind: modal.FormMultilineText, Label: "Instructions"},
+			{ID: "base-ref", Kind: modal.FormText, Label: "Base ref"},
+		},
+	})
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _, _ = m.Update(keyRunes("abcd"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _, _ = m.Update(keyRunes("x"))
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, _, _ = m.Update(keyRunes("abcdef"))
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.View().Form.Fields[1].Cursor; got != len([]rune("abcd\nx")) {
+		t.Fatalf("cursor after up to short line = %d, want end of short line", got)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if got := m.View().Form.Fields[1].Cursor; got != len([]rune("abcd\n")) {
+		t.Fatalf("cursor after left = %d, want start of short line", got)
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.View().Form.Fields[1].Cursor; got != len([]rune("abcd\nx\n")) {
+		t.Fatalf("cursor after down = %d, want reset column at start of next line", got)
+	}
+}
+
 func TestFormShiftTabNavigatesBackwards(t *testing.T) {
 	m := modal.OpenForm(modal.FormSpec{
 		Purpose: "repo-create",
