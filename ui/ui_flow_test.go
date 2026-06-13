@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -444,6 +445,86 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   28,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Grouped shortcuts",
+			Status:       flowstore.StatusInProgress,
+			Branch:       "flow/grouped-shortcuts",
+			WorktreePath: "/dev/wtui-worktrees/flow-grouped-shortcuts",
+			PlanID:       "plan-1",
+			AutoMode:     true,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:                 1,
+		Destructive:                true,
+		FlowSelected:               0,
+		FlowHeadless:               true,
+		FlowAutoModeSelected:       true,
+		FlowNextLaunchReady:        true,
+		FlowAgentLabel:             "codex",
+		FlowReasoningEffort:        "effort: high",
+		FlowPhaseResumableSelected: true,
+	})
+
+	pane := shortcutPaneText(view)
+	if got, want := shortcutSectionTitles(pane), []string{"Actions", "Mode", "Agent", "Global"}; !slices.Equal(got, want) {
+		t.Fatalf("Flow shortcut sections = %v, want %v:\n%s", got, want, pane)
+	}
+	for _, want := range []string{
+		"n      new flow",
+		"enter  phases",
+		"ctrl+j launch next",
+		"o      open",
+		"y      copy path",
+		"d      delete",
+		"h      headless on",
+		"m      auto: on",
+		"A      codex",
+		"E      effort: high",
+		"tab    pane",
+		"q/esc  quit",
+		"f5     refresh",
+	} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("Flow shortcut pane missing %q:\n%s", want, pane)
+		}
+	}
+	if strings.Contains(pane, "Navigate") {
+		t.Fatalf("Flow shortcut pane should not include Navigate section:\n%s", pane)
+	}
+}
+
+func shortcutSectionTitles(pane string) []string {
+	known := map[string]bool{
+		"Actions":  true,
+		"Mode":     true,
+		"Agent":    true,
+		"Global":   true,
+		"Navigate": true,
+		"Terminal": true,
+		"Legend":   true,
+	}
+	var titles []string
+	for _, line := range strings.Split(pane, "\n") {
+		line = strings.TrimSpace(line)
+		if known[line] {
+			titles = append(titles, line)
+		}
+	}
+	return titles
+}
+
 func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -481,15 +562,16 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 
 func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
-		Width:          120,
-		Mode:           ModeFlows,
-		ActivePane:     1,
-		RepoSelected:   true,
-		FlowSelected:   true,
-		FlowPlanLinked: true,
-		FlowHeadless:   true,
+		Width:                    120,
+		Mode:                     ModeFlows,
+		ActivePane:               1,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowWorktreePathSelected: true,
+		FlowPlanLinked:           true,
+		FlowHeadless:             true,
 	})
-	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "y: copy id"} {
+	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "y: copy path"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
 		}
@@ -552,6 +634,30 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 	})
 	if !strings.Contains(phaseRow, "m: auto: on") {
 		t.Fatalf("compact selected Flow phase should keep auto-mode on toggle, got %q", phaseRow)
+	}
+}
+
+func TestStatusBar_FlowsModeHidesCopyPathWithoutWorktreePath(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		phase bool
+	}{
+		{name: "flow row"},
+		{name: "phase row", phase: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bar := renderStatusBarWithState(statusBarParams{
+				Width:             140,
+				Mode:              ModeFlows,
+				ActivePane:        1,
+				RepoSelected:      true,
+				FlowSelected:      true,
+				FlowPhaseSelected: tt.phase,
+			})
+			if strings.Contains(bar, "y: copy") {
+				t.Fatalf("Flow footer without worktree path should hide copy shortcut, got %q", bar)
+			}
+		})
 	}
 }
 
@@ -619,7 +725,7 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 	}
 }
 
-func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) {
+func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
@@ -627,9 +733,10 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Phase copy flow",
-			Status: flowstore.StatusInProgress,
+			FlowID:       "flow-1",
+			Title:        "Phase copy flow",
+			Status:       flowstore.StatusInProgress,
+			WorktreePath: "/dev/wtui-worktrees/phase-copy-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -643,11 +750,11 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "y      copy phase id") {
-		t.Fatalf("selected Flow phase should expose phase-id copy shortcut:\n%s", view)
+	if !strings.Contains(pane, "y      copy path") {
+		t.Fatalf("selected Flow phase should expose worktree-path copy shortcut:\n%s", view)
 	}
-	if strings.Contains(pane, "y      copy id") {
-		t.Fatalf("selected Flow phase should not expose whole-flow copy shortcut:\n%s", view)
+	if strings.Contains(pane, "y      copy id") || strings.Contains(pane, "y      copy phase id") {
+		t.Fatalf("selected Flow phase should not expose id copy shortcuts:\n%s", view)
 	}
 }
 
@@ -694,9 +801,10 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Launch phase flow",
-			Status: flowstore.StatusInProgress,
+			FlowID:       "flow-1",
+			Title:        "Launch phase flow",
+			Status:       flowstore.StatusInProgress,
+			WorktreePath: "/dev/wtui-worktrees/launch-phase-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -712,7 +820,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  phases", "ctrl+j launch next", "h      headless off", "y      copy phase id"} {
+	for _, want := range []string{"enter  phases", "ctrl+j launch next", "h      headless off", "y      copy path"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
@@ -951,9 +1059,10 @@ func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) 
 		Height:   12,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Stale phase copy flow",
-			Status: flowstore.StatusInProgress,
+			FlowID:       "flow-1",
+			Title:        "Stale phase copy flow",
+			Status:       flowstore.StatusInProgress,
+			WorktreePath: "/dev/wtui-worktrees/stale-phase-copy-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -967,11 +1076,44 @@ func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) 
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "y      copy id") {
-		t.Fatalf("stale Flow phase selection should fall back to whole-flow copy shortcut:\n%s", view)
+	if !strings.Contains(pane, "y      copy path") {
+		t.Fatalf("stale Flow phase selection should fall back to worktree-path copy shortcut:\n%s", view)
 	}
-	if strings.Contains(pane, "y      copy phase id") {
-		t.Fatalf("stale Flow phase selection should not expose phase-id copy shortcut:\n%s", view)
+	if strings.Contains(pane, "y      copy id") || strings.Contains(pane, "y      copy phase id") {
+		t.Fatalf("stale Flow phase selection should not expose id copy shortcuts:\n%s", view)
+	}
+}
+
+func TestRender_FlowsModeHidesCopyPathShortcutWithoutWorktreePath(t *testing.T) {
+	base := RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    180,
+		Height:   16,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "No worktree path",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+	}
+
+	if pane := shortcutPaneText(Render(base)); strings.Contains(pane, "y      copy") {
+		t.Fatalf("selected Flow without worktree path should hide copy shortcut:\n%s", pane)
+	}
+
+	phase := base
+	phase.ExpandedFlowID = "flow-1"
+	phase.SelectedFlowPhaseID = "implementation"
+	if pane := shortcutPaneText(Render(phase)); strings.Contains(pane, "y      copy") {
+		t.Fatalf("selected Flow phase without parent worktree path should hide copy shortcut:\n%s", pane)
 	}
 }
 

@@ -451,9 +451,11 @@ func renderApplication(p RenderParams) string {
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
+	flowWorktreePathSelected := false
 	flowAutoModeSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
+		flowWorktreePathSelected = strings.TrimSpace(p.Flows[p.FlowSelected].WorktreePath) != ""
 		flowAutoModeSelected = p.FlowAutoModeSelected
 	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
@@ -464,6 +466,7 @@ func renderApplication(p RenderParams) string {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
+		flowWorktreePathSelected = false
 		flowAutoModeSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
@@ -501,6 +504,7 @@ func renderApplication(p RenderParams) string {
 		FlowSelected:                flowSelected,
 		FlowPhaseSelected:           flowPhaseSelected,
 		FlowDeletableSelected:       flowDeletableSelected,
+		FlowWorktreePathSelected:    flowWorktreePathSelected,
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
@@ -766,6 +770,7 @@ type statusBarParams struct {
 	FlowSelected                bool
 	FlowPhaseSelected           bool
 	FlowDeletableSelected       bool
+	FlowWorktreePathSelected    bool
 	FlowPlanLinked              bool
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
@@ -907,7 +912,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	title := titleStyle.Render("Shortcuts") + "  " + modeStyle.Render(modeShortcutTitle(sp.Mode))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
-	tight := height <= 7
+	tight := height <= 7 || (sp.Mode == ModeFlows && height <= 14)
 	if !compact && !tight {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
@@ -1063,6 +1068,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 
 	var actions []shortcutHint
+	var flowModeControls []shortcutHint
+	var flowAgentControls []shortcutHint
 	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
 		actions = append(actions, shortcutHint{Key: "f", Label: "fetch visible"})
 	}
@@ -1204,7 +1211,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				headlessLabel = "headless on"
 				headlessSuccessSuffix = "on"
 			}
-			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
+			flowModeControls = append(flowModeControls, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
 				if sp.FlowPhaseSelected {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
@@ -1214,11 +1221,12 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.FlowPhaseResetReadySelected {
 						actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
 					}
-					actions = append(actions, shortcutHint{Key: "y", Label: "copy phase id"})
+					if sp.FlowWorktreePathSelected {
+						actions = append(actions, shortcutHint{Key: "y", Label: "copy path"})
+					}
 					if sp.FlowPhaseResumableSelected {
 						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 					}
-					actions = append(actions, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 					if sp.FlowNextLaunchReady {
@@ -1227,18 +1235,20 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.FlowPlanLinked {
 						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 					}
-					actions = append(actions, shortcutHint{Key: "y", Label: "copy id"})
+					if sp.FlowWorktreePathSelected {
+						actions = append(actions, shortcutHint{Key: "y", Label: "copy path"})
+					}
 					if sp.Destructive && sp.FlowDeletableSelected {
 						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 					}
-					actions = append(actions, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
 				}
+				flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
 			}
 		}
 		agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
-		actions = append(actions, shortcutHint{Key: "A", Label: agentLabel})
+		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "A", Label: agentLabel})
 		if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
-			actions = append(actions, shortcutHint{Key: "E", Label: effortLabel})
+			flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1251,6 +1261,20 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes || sp.Mode == ModeFlows) {
 		actions = append([]shortcutHint{{Key: "D", Label: "destructive mode"}}, actions...)
+	}
+	if sp.Mode == ModeFlows {
+		var sections []shortcutSection
+		if len(actions) > 0 {
+			sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
+		}
+		if len(flowModeControls) > 0 {
+			sections = append(sections, shortcutSection{Title: "Mode", Hints: flowModeControls})
+		}
+		if len(flowAgentControls) > 0 {
+			sections = append(sections, shortcutSection{Title: "Agent", Hints: flowAgentControls})
+		}
+		sections = append(sections, shortcutSection{Title: "Global", Hints: append(navigation, global...)})
+		return sections
 	}
 	var sections []shortcutSection
 	if len(actions) > 0 {
@@ -1315,6 +1339,9 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
+	if sp.Mode == ModeFlows && !sp.FlowSelected && height <= 9 {
+		sections = withoutShortcutKeys(sections, "D", "n", "f5")
+	}
 	if height < 20 {
 		return withoutShortcutKey(sections, "f5")
 	}

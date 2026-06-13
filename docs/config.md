@@ -310,7 +310,9 @@ flows pane (mode `8`), which is the startup default. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row, `enter`
 expands or collapses read-only phase detail rows; `o` opens the linked plan
 body from the selected Flow. On an expanded phase row, `enter` launches the
-configured agent for that selected ready phase. Headless mode is on by default:
+configured agent for that selected ready phase. Press `y` to copy the selected
+Flow worktree path from either a Flow row or one of its expanded phase rows.
+Headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `codex exec` or `claude --print`, while headless off runs interactive `codex` or
