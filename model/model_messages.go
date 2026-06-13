@@ -344,15 +344,18 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 }
 
 type FlowTitleSubmittedMsg struct {
-	Title string
+	RepoPath string
+	Title    string
 }
 
 type FlowInstructionsSubmittedMsg struct {
+	RepoPath     string
 	Title        string
 	Instructions string
 }
 
 type FlowBaseRefSubmittedMsg struct {
+	RepoPath     string
 	Title        string
 	Instructions string
 	BaseRef      string

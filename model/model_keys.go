@@ -1040,7 +1040,8 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
-	if _, ok := m.currentRepoPath(); !ok {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
 		return m, nil
 	}
 	if m.agentCommand == "" {
@@ -1053,26 +1054,34 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 		"",
 		validateFlowTitleInput,
 		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowTitleSubmittedMsg{Title: input} }
+			return func() tea.Msg { return FlowTitleSubmittedMsg{RepoPath: repoPath, Title: input} }
 		},
 	)
 	return m, nil
 }
 
 func (m Model) handleFlowTitleSubmitted(msg FlowTitleSubmittedMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
 	m.modal = modal.OpenMultiLineInput(
 		ui.FlowInstructionsPrompt,
 		ui.FlowInstructionsInputPlaceholder,
 		"",
 		validateFlowInstructionsInput,
 		func(input string) tea.Cmd {
-			return func() tea.Msg { return FlowInstructionsSubmittedMsg{Title: msg.Title, Instructions: input} }
+			return func() tea.Msg {
+				return FlowInstructionsSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: input}
+			}
 		},
 	)
 	return m
 }
 
 func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
 	m.modal = modal.OpenSingleLineInput(
 		ui.FlowBaseRefPrompt,
 		ui.FlowBaseRefInputPlaceholder,
@@ -1080,7 +1089,7 @@ func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg)
 		validateFlowBaseRefInput,
 		func(input string) tea.Cmd {
 			return func() tea.Msg {
-				return FlowBaseRefSubmittedMsg{Title: msg.Title, Instructions: msg.Instructions, BaseRef: input}
+				return FlowBaseRefSubmittedMsg{RepoPath: msg.RepoPath, Title: msg.Title, Instructions: msg.Instructions, BaseRef: input}
 			}
 		},
 	)
@@ -1088,6 +1097,9 @@ func (m Model) handleFlowInstructionsSubmitted(msg FlowInstructionsSubmittedMsg)
 }
 
 func (m Model) handleFlowBaseRefSubmitted(msg FlowBaseRefSubmittedMsg) Model {
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
 	m.modal = modal.OpenForm(modal.FormSpec{
 		Purpose: flowCreateOptionsFormPurpose,
 		Title:   ui.FlowOptionsFormTitle,
@@ -1095,7 +1107,7 @@ func (m Model) handleFlowBaseRefSubmitted(msg FlowBaseRefSubmittedMsg) Model {
 			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
 		},
 		Submit: func(values modal.FormValues) tea.Cmd {
-			return m.createFlowAndLaunchPlan(msg.Title, msg.Instructions, msg.BaseRef, values.Checked[flowCreateHeadlessField])
+			return m.createFlowAndLaunchPlanForRepo(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, values.Checked[flowCreateHeadlessField])
 		},
 	})
 	return m
