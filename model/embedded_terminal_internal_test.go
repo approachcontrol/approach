@@ -31,6 +31,69 @@ func (t internalFakeEmbeddedTerminal) State() string {
 	return t.state
 }
 
+type prefillReadyFakeEmbeddedTerminal struct {
+	lines       [][]string
+	visibleHits int
+	writes      []string
+}
+
+func (t *prefillReadyFakeEmbeddedTerminal) VisibleLines(int, int) []string {
+	t.visibleHits++
+	if len(t.lines) == 0 {
+		return nil
+	}
+	index := t.visibleHits - 1
+	if index >= len(t.lines) {
+		index = len(t.lines) - 1
+	}
+	return t.lines[index]
+}
+
+func (t *prefillReadyFakeEmbeddedTerminal) Write(p []byte) (int, error) {
+	t.writes = append(t.writes, string(p))
+	return len(p), nil
+}
+
+func (t *prefillReadyFakeEmbeddedTerminal) Resize(int, int) error      { return nil }
+func (t *prefillReadyFakeEmbeddedTerminal) Terminate() error           { return nil }
+func (t *prefillReadyFakeEmbeddedTerminal) Wait(context.Context) error { return nil }
+func (t *prefillReadyFakeEmbeddedTerminal) State() string              { return "running" }
+
+func TestPrefillEmbeddedPromptWaitsForVisibleTerminalOutput(t *testing.T) {
+	originalInterval := embeddedPromptPrefillPollInterval
+	embeddedPromptPrefillPollInterval = 0
+	t.Cleanup(func() {
+		embeddedPromptPrefillPollInterval = originalInterval
+	})
+
+	term := &prefillReadyFakeEmbeddedTerminal{
+		lines: [][]string{
+			{"", "   "},
+			{"Codex ready", ""},
+		},
+	}
+
+	err := prefillEmbeddedPromptIfNeeded(term, actions.AgentLaunchContext{
+		Command:           "codex",
+		Embedded:          true,
+		FlowID:            "flow-1",
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		InitialPrompt:     "Build it",
+	})
+	if err != nil {
+		t.Fatalf("prefill returned error: %v", err)
+	}
+
+	if term.visibleHits != 2 {
+		t.Fatalf("visible calls = %d, want wait until second ready frame", term.visibleHits)
+	}
+	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
+	if len(term.writes) != 1 || term.writes[0] != wantWrite {
+		t.Fatalf("writes = %#v, want %q", term.writes, wantWrite)
+	}
+}
+
 func internalFlowsModel(records ...flowstore.FlowRecord) Model {
 	return Model{
 		mode:       ui.ModeFlows,

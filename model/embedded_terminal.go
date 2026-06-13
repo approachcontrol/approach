@@ -29,6 +29,11 @@ const (
 	embeddedPromptPasteEnd   = "\x1b[201~"
 )
 
+var (
+	embeddedPromptPrefillTimeout      = 2 * time.Second
+	embeddedPromptPrefillPollInterval = 25 * time.Millisecond
+)
+
 // terminalCommandKey toggles wtui command handling inside embedded terminals.
 // It must stay off keys interactive agents bind themselves (Claude Code and
 // Codex both use ctrl+g, ctrl+b, ctrl+r, ctrl+t, ...); ctrl+] is the
@@ -360,6 +365,7 @@ func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunc
 	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
 		return nil
 	}
+	waitForEmbeddedPromptPrefillReady(term)
 	payload := []byte(embeddedPromptPasteStart + sanitizeEmbeddedPromptPaste(ctx.InitialPrompt) + embeddedPromptPasteEnd)
 	n, err := term.Write(payload)
 	if err != nil {
@@ -369,6 +375,34 @@ func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunc
 		return fmt.Errorf("prefill embedded prompt: %w: wrote %d of %d bytes", io.ErrShortWrite, n, len(payload))
 	}
 	return nil
+}
+
+func waitForEmbeddedPromptPrefillReady(term EmbeddedTerminal) {
+	if term == nil || embeddedPromptPrefillTimeout <= 0 {
+		return
+	}
+	deadline := time.Now().Add(embeddedPromptPrefillTimeout)
+	for {
+		lines := term.VisibleLines(80, 24)
+		if len(lines) == 0 || embeddedTerminalHasVisibleOutput(lines) {
+			return
+		}
+		if !embeddedTerminalRunning(term) || !time.Now().Before(deadline) {
+			return
+		}
+		if embeddedPromptPrefillPollInterval > 0 {
+			time.Sleep(embeddedPromptPrefillPollInterval)
+		}
+	}
+}
+
+func embeddedTerminalHasVisibleOutput(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeEmbeddedPromptPaste(prompt string) string {
