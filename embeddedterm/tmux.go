@@ -74,6 +74,9 @@ func startTmuxBackedAgent(ctx context.Context, spec actions.EmbeddedTmuxAgentSpe
 		cleanup:     spec.Cleanup,
 		run:         run,
 	}
+	if owned {
+		t.cleanup = nil
+	}
 	go t.monitor()
 	return t, nil
 }
@@ -101,7 +104,11 @@ func (t *TmuxBackedTerminal) Resize(width, height int) error {
 }
 
 func (t *TmuxBackedTerminal) Wait(ctx context.Context) error {
-	return t.term.Wait(ctx)
+	err := t.term.Wait(ctx)
+	if err == nil {
+		t.handleExit(nil)
+	}
+	return err
 }
 
 func (t *TmuxBackedTerminal) State() State { return t.term.State() }
@@ -115,6 +122,7 @@ func (t *TmuxBackedTerminal) Detach() error {
 		return nil
 	}
 	t.detached = true
+	t.owned = false
 	t.mu.Unlock()
 	err := t.term.Close()
 	t.cleanupOnce()
@@ -124,7 +132,7 @@ func (t *TmuxBackedTerminal) Detach() error {
 func (t *TmuxBackedTerminal) Terminate() error {
 	t.mu.Lock()
 	t.terminating = true
-	owned := t.owned
+	owned := t.owned && !t.detached
 	killCommand := t.killCommand
 	run := t.run
 	t.mu.Unlock()
@@ -141,16 +149,24 @@ func (t *TmuxBackedTerminal) Terminate() error {
 }
 
 func (t *TmuxBackedTerminal) monitor() {
-	_ = t.term.Wait(context.Background())
+	err := t.term.Wait(context.Background())
+	t.handleExit(err)
+	t.cleanupOnce()
+}
+
+func (t *TmuxBackedTerminal) handleExit(err error) {
 	t.mu.Lock()
-	shouldKill := t.owned && !t.detached && !t.terminating
+	shouldKill := err != nil && t.owned && !t.detached && !t.terminating
+	if err == nil && !t.terminating {
+		t.detached = true
+		t.owned = false
+	}
 	killCommand := t.killCommand
 	run := t.run
 	t.mu.Unlock()
 	if shouldKill && killCommand != nil {
 		_ = run(killCommand)
 	}
-	t.cleanupOnce()
 }
 
 func (t *TmuxBackedTerminal) cleanupOnce() {

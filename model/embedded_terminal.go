@@ -44,6 +44,8 @@ type detachableEmbeddedTerminal interface {
 	DetachTarget() string
 }
 
+var errEmbeddedTerminalDetachUnavailable = errors.New("detach unavailable: tmux was not available when this terminal started")
+
 type EmbeddedTerminalStarter func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error)
 
 type embeddedTerminalScope string
@@ -140,7 +142,7 @@ func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
 func (t realEmbeddedTerminal) Detach() error {
 	detachable, ok := t.term.(interface{ Detach() error })
 	if !ok {
-		return fmt.Errorf("detach unavailable: tmux was not available when this terminal started")
+		return errEmbeddedTerminalDetachUnavailable
 	}
 	return detachable.Detach()
 }
@@ -612,6 +614,9 @@ func (m Model) handleEmbeddedTerminalDetachPrefix(scope embeddedTerminalScope) M
 	}
 	target := strings.TrimSpace(detachable.DetachTarget())
 	if err := detachable.Detach(); err != nil {
+		if errors.Is(err, errEmbeddedTerminalDetachUnavailable) {
+			return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started")
+		}
 		return m.setStatus(statusOther, err.Error())
 	}
 	m = m.dismissEmbeddedTerminal(slot.ID)

@@ -2,11 +2,16 @@ package model
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/scanner"
@@ -58,6 +63,111 @@ func internalFlowsModel(records ...flowstore.FlowRecord) Model {
 		}),
 		flows: newFlowPane().SetItems(records),
 	}
+}
+
+func TestDefaultEmbeddedTerminalStarterUsesTmuxWhenAvailable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	writeInternalFakeExecutable(t, dir, "codex", "#!/bin/sh\n/bin/sleep 30\n")
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("WTUI_TMUX_LOG", logPath)
+	writeInternalFakeExecutable(t, dir, "tmux", `#!/bin/sh
+echo "$@" >> "$WTUI_TMUX_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  new-session)
+    rm -f "$6"/wtui-agent-*.sh
+    exit 0
+    ;;
+  attach-session) /bin/sleep 30 ;;
+  kill-session) exit 0 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir)
+
+	term, err := defaultEmbeddedTerminalStarter(actions.AgentLaunchContext{
+		Command:       "codex",
+		LaunchID:      "launch-1",
+		WorktreePath:  dir,
+		InitialPrompt: "run",
+	}, 20, 3)
+	if err != nil {
+		t.Fatalf("defaultEmbeddedTerminalStarter returned error: %v", err)
+	}
+	defer term.Terminate()
+
+	detachable, ok := term.(detachableEmbeddedTerminal)
+	if !ok {
+		t.Fatalf("default starter returned %T, want detachable tmux-backed terminal", term)
+	}
+	if target := detachable.DetachTarget(); !strings.Contains(target, "agent-launch-1") {
+		t.Fatalf("detach target = %q, want per-launch agent tmux session", target)
+	}
+	waitInternalFileContains(t, logPath, "attach-session")
+	if err := detachable.Detach(); err != nil {
+		t.Fatalf("Detach returned error: %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read tmux log: %v", err)
+	}
+	log := string(logBytes)
+	for _, want := range []string{"has-session", "new-session", "attach-session"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("tmux log missing %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "kill-session") {
+		t.Fatalf("detach should not kill the tmux session:\n%s", log)
+	}
+}
+
+func TestDefaultEmbeddedTerminalStarterFallsBackWhenTmuxUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	writeInternalFakeExecutable(t, dir, "codex", "#!/bin/sh\n/bin/sleep 30\n")
+	t.Setenv("PATH", dir)
+
+	term, err := defaultEmbeddedTerminalStarter(actions.AgentLaunchContext{
+		Command:       "codex",
+		LaunchID:      "launch-1",
+		WorktreePath:  dir,
+		InitialPrompt: "run",
+	}, 20, 3)
+	if err != nil {
+		t.Fatalf("defaultEmbeddedTerminalStarter returned error: %v", err)
+	}
+	defer term.Terminate()
+
+	detachable, ok := term.(detachableEmbeddedTerminal)
+	if !ok {
+		t.Fatalf("default starter returned %T, want model-facing detach method", term)
+	}
+	if err := detachable.Detach(); !errors.Is(err, errEmbeddedTerminalDetachUnavailable) {
+		t.Fatalf("Detach error = %v, want unavailable sentinel", err)
+	}
+}
+
+func writeInternalFakeExecutable(t *testing.T, dir, name, body string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatalf("write fake %s executable: %v", name, err)
+	}
+}
+
+func waitInternalFileContains(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		body, _ := os.ReadFile(path)
+		if strings.Contains(string(body), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	body, _ := os.ReadFile(path)
+	t.Fatalf("%s did not contain %q:\n%s", path, want, body)
 }
 
 func TestSyncActiveFlowTerminalToSelectedFlowSelectsNewestMatchingTerminal(t *testing.T) {

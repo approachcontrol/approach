@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,10 +29,30 @@ func TestTmuxBackedTerminalDetachLeavesOwnedSessionRunning(t *testing.T) {
 	}
 
 	if runner.called("kill-session") {
-		t.Fatalf("detach should not kill owned tmux session, calls: %#v", runner.calls)
+		t.Fatalf("detach should not kill owned tmux session, calls: %#v", runner.snapshot())
 	}
-	if got := *cleanupCount; got != 1 {
-		t.Fatalf("cleanup count = %d, want 1", got)
+	if got := cleanupCount.Load(); got != 0 {
+		t.Fatalf("cleanup count = %d, want owned running session to rely on script self-cleanup", got)
+	}
+}
+
+func TestTmuxBackedTerminalTerminateAfterDetachDoesNotKillOwnedSession(t *testing.T) {
+	spec, _ := tmuxTestSpec()
+	runner := &tmuxTestRunner{failHasSession: true}
+	term, err := startTmuxBackedAgent(context.Background(), spec, 20, 3, runner.run, startSleepTerminal)
+	if err != nil {
+		t.Fatalf("startTmuxBackedAgent returned error: %v", err)
+	}
+
+	if err := term.Detach(); err != nil {
+		t.Fatalf("Detach returned error: %v", err)
+	}
+	if err := term.Terminate(); err != nil {
+		t.Fatalf("Terminate after detach returned error: %v", err)
+	}
+
+	if runner.called("kill-session") {
+		t.Fatalf("terminate after detach should not kill owned tmux session, calls: %#v", runner.snapshot())
 	}
 }
 
@@ -47,10 +69,10 @@ func TestTmuxBackedTerminalTerminateKillsOwnedSession(t *testing.T) {
 	}
 
 	if !runner.called("kill-session") {
-		t.Fatalf("terminate should kill owned tmux session, calls: %#v", runner.calls)
+		t.Fatalf("terminate should kill owned tmux session, calls: %#v", runner.snapshot())
 	}
-	if got := *cleanupCount; got != 1 {
-		t.Fatalf("cleanup count = %d, want 1", got)
+	if got := cleanupCount.Load(); got != 0 {
+		t.Fatalf("cleanup count = %d, want owned running session to rely on script self-cleanup", got)
 	}
 }
 
@@ -67,11 +89,9 @@ func TestTmuxBackedTerminalExistingSessionIsUnowned(t *testing.T) {
 	}
 
 	if runner.called("new-session") || runner.called("kill-session") {
-		t.Fatalf("existing unowned session should not be created or killed, calls: %#v", runner.calls)
+		t.Fatalf("existing unowned session should not be created or killed, calls: %#v", runner.snapshot())
 	}
-	if got := *cleanupCount; got != 1 {
-		t.Fatalf("cleanup count = %d, want unused script cleaned once", got)
-	}
+	waitCleanupCount(t, cleanupCount, 1)
 }
 
 func TestTmuxBackedTerminalStartFailureCleansOwnedSession(t *testing.T) {
@@ -85,11 +105,9 @@ func TestTmuxBackedTerminalStartFailureCleansOwnedSession(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, startErr)
 	}
 	if !runner.called("kill-session") {
-		t.Fatalf("start failure should kill newly-created tmux session, calls: %#v", runner.calls)
+		t.Fatalf("start failure should kill newly-created tmux session, calls: %#v", runner.snapshot())
 	}
-	if got := *cleanupCount; got != 1 {
-		t.Fatalf("cleanup count = %d, want 1", got)
-	}
+	waitCleanupCount(t, cleanupCount, 1)
 }
 
 func TestTmuxBackedTerminalCreateFailureCleansScript(t *testing.T) {
@@ -100,13 +118,11 @@ func TestTmuxBackedTerminalCreateFailureCleansScript(t *testing.T) {
 	if !errors.Is(err, createErr) {
 		t.Fatalf("error = %v, want %v", err, createErr)
 	}
-	if got := *cleanupCount; got != 1 {
-		t.Fatalf("cleanup count = %d, want 1", got)
-	}
+	waitCleanupCount(t, cleanupCount, 1)
 }
 
-func tmuxTestSpec() (actions.EmbeddedTmuxAgentSpec, *int) {
-	cleanupCount := 0
+func tmuxTestSpec() (actions.EmbeddedTmuxAgentSpec, *atomic.Int32) {
+	cleanupCount := &atomic.Int32{}
 	return actions.EmbeddedTmuxAgentSpec{
 		SessionName:        "wtui-test-agent",
 		HasSessionCommand:  exec.Command("tmux", "has-session", "-t", "wtui-test-agent"),
@@ -114,9 +130,9 @@ func tmuxTestSpec() (actions.EmbeddedTmuxAgentSpec, *int) {
 		AttachCommand:      exec.Command("tmux", "attach-session", "-t", "wtui-test-agent"),
 		KillSessionCommand: exec.Command("tmux", "kill-session", "-t", "wtui-test-agent"),
 		Cleanup: func() {
-			cleanupCount++
+			cleanupCount.Add(1)
 		},
-	}, &cleanupCount
+	}, cleanupCount
 }
 
 func startSleepTerminal(ctx context.Context, _ *exec.Cmd, width, height int) (*Terminal, error) {
@@ -124,13 +140,16 @@ func startSleepTerminal(ctx context.Context, _ *exec.Cmd, width, height int) (*T
 }
 
 type tmuxTestRunner struct {
+	mu             sync.Mutex
 	failHasSession bool
 	failNewSession error
 	calls          [][]string
 }
 
 func (r *tmuxTestRunner) run(cmd *exec.Cmd) error {
+	r.mu.Lock()
 	r.calls = append(r.calls, append([]string(nil), cmd.Args...))
+	r.mu.Unlock()
 	switch {
 	case reflect.DeepEqual(cmd.Args[:2], []string{"tmux", "has-session"}) && r.failHasSession:
 		return errors.New("missing")
@@ -142,12 +161,22 @@ func (r *tmuxTestRunner) run(cmd *exec.Cmd) error {
 }
 
 func (r *tmuxTestRunner) called(subcommand string) bool {
-	for _, call := range r.calls {
+	for _, call := range r.snapshot() {
 		if len(call) > 1 && call[1] == subcommand {
 			return true
 		}
 	}
 	return false
+}
+
+func (r *tmuxTestRunner) snapshot() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][]string, len(r.calls))
+	for i := range r.calls {
+		out[i] = append([]string(nil), r.calls[i]...)
+	}
+	return out
 }
 
 func TestTmuxBackedTerminalDetachTarget(t *testing.T) {
@@ -180,14 +209,52 @@ func TestTmuxBackedTerminalUnexpectedAttachExitKillsOwnedSession(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if runner.called("kill-session") {
-			if got := *cleanupCount; got != 1 {
-				t.Fatalf("cleanup count = %d, want 1", got)
+			if got := cleanupCount.Load(); got != 0 {
+				t.Fatalf("cleanup count = %d, want owned running session to rely on script self-cleanup", got)
 			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("unexpected attach exit did not kill owned tmux session, calls: %#v", runner.calls)
+	t.Fatalf("unexpected attach exit did not kill owned tmux session, calls: %#v", runner.snapshot())
+}
+
+func waitCleanupCount(t *testing.T, cleanupCount *atomic.Int32, want int32) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if got := cleanupCount.Load(); got == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("cleanup count = %d, want %d", cleanupCount.Load(), want)
+}
+
+func TestTmuxBackedTerminalCleanAttachExitLeavesOwnedSessionRunning(t *testing.T) {
+	spec, _ := tmuxTestSpec()
+	runner := &tmuxTestRunner{failHasSession: true}
+	term, err := startTmuxBackedAgent(context.Background(), spec, 20, 3, runner.run, func(ctx context.Context, _ *exec.Cmd, width, height int) (*Terminal, error) {
+		return NewManager().StartCommand(ctx, exec.Command("sh", "-c", "exit 0"), width, height)
+	})
+	if err != nil {
+		t.Fatalf("startTmuxBackedAgent returned error: %v", err)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := term.Wait(waitCtx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+
+	if runner.called("kill-session") {
+		t.Fatalf("clean attach exit should not kill owned tmux session, calls: %#v", runner.snapshot())
+	}
+	if err := term.Terminate(); err != nil {
+		t.Fatalf("Terminate after clean attach exit returned error: %v", err)
+	}
+	if runner.called("kill-session") {
+		t.Fatalf("terminate after clean attach exit should not kill owned tmux session, calls: %#v", runner.snapshot())
+	}
 }
 
 func TestTmuxBackedTerminalRealTmuxDetachLeavesSessionAlive(t *testing.T) {
