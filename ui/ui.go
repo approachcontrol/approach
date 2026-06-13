@@ -284,7 +284,7 @@ type RenderParams struct {
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
-	FlowPhaseLaunchReady        bool
+	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
 	OverlayText                 string
@@ -454,7 +454,7 @@ func renderApplication(p RenderParams) string {
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
-	flowDeletableSelected := flowSelected && p.SelectedFlowPhaseID == ""
+	flowDeletableSelected := flowSelected && selectedFlowPhaseID == ""
 	if p.FlowTerminalFocused {
 		flowSelected = false
 		selectedFlowPhaseID = ""
@@ -499,7 +499,7 @@ func renderApplication(p RenderParams) string {
 		FlowHeadless:                p.FlowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
-		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
+		FlowNextLaunchReady:         p.FlowNextLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
 		TransientError:              p.TransientError,
@@ -651,8 +651,12 @@ func scopedSelectedFlowPhaseID(p RenderParams, flowSelected bool) string {
 	if p.ExpandedFlowID != flow.FlowID {
 		return ""
 	}
+	wantPhaseID := artifacts.NormalizePhaseID(p.SelectedFlowPhaseID)
+	if wantPhaseID == "" {
+		return ""
+	}
 	for _, phase := range flowstore.OrderedPhases(flow.Phases) {
-		if phase.PhaseID == p.SelectedFlowPhaseID {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == wantPhaseID {
 			return p.SelectedFlowPhaseID
 		}
 	}
@@ -758,7 +762,7 @@ type statusBarParams struct {
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
-	FlowPhaseLaunchReady        bool
+	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
 	TransientError              string
@@ -1189,8 +1193,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			if sp.FlowSelected {
 				autoHint := flowAutoModeShortcutHint(sp.FlowAutoModeSelected)
 				if sp.FlowPhaseSelected {
-					if sp.FlowPhaseLaunchReady {
-						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
+					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+					if sp.FlowNextLaunchReady {
+						actions = append(actions, shortcutHint{Key: "ctrl+enter", Label: "launch next"})
 					}
 					if sp.FlowPhaseResetReadySelected {
 						actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
@@ -1202,6 +1207,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					actions = append(actions, autoHint)
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+					if sp.FlowNextLaunchReady {
+						actions = append(actions, shortcutHint{Key: "ctrl+enter", Label: "launch next"})
+					}
 					if sp.FlowPlanLinked {
 						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 					}
@@ -1415,9 +1423,9 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	base := footerHintsForKeys(hints, "tab", "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
-	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "d")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
+	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+enter", "d")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),

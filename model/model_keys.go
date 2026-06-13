@@ -395,6 +395,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			m = m.clearSelectedFlowPhase()
 		}
+	case "ctrl+j", "ctrl+enter":
+		if m.mode == ui.ModeFlows {
+			return m.handleLaunchNextFlowPhase()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -634,10 +638,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
-	if m.selectedFlowPhaseID == "" {
-		return m.handleToggleFlowPhases()
-	}
-	return m.handleLaunchSelectedFlowPhase()
+	return m.handleToggleFlowPhases()
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
@@ -1299,17 +1300,21 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 	return m.launchAgentAtPath(path)
 }
 
-func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
-	target, ok, next := m.selectedFlowPhaseLaunchTarget()
+func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
+	target, ok, next := m.selectedFlowNextLaunchTarget()
 	if !ok {
 		return next, nil
 	}
+	return next.launchFlowPhaseTarget(target)
+}
+
+func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
 	launchID := newLaunchID()
-	switch agent.Normalize(next.agentCommand) {
+	switch agent.Normalize(m.agentCommand) {
 	case agent.CommandCodex, agent.CommandClaude:
-		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+		return m, m.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, m.flowHeadless)
 	}
-	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	return m, m.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
@@ -1413,17 +1418,10 @@ type flowPhaseLaunchTarget struct {
 	planPath     string
 }
 
-func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
-	record, ok := m.selectedFlow()
+func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
+	record, phase, ok := m.selectedFlowNextLaunchablePhase()
 	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	phase, ok := m.selectedFlowPhase()
-	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	if !flowPhaseCanLaunch(record, phase) {
-		m = m.setStatus(statusOther, flowPhaseNotLaunchableMessage(record, phase))
+		m = m.setStatus(statusOther, "No launchable Flow phase")
 		return flowPhaseLaunchTarget{}, false, m
 	}
 	return m.flowPhaseLaunchTarget(record, phase)
@@ -1890,22 +1888,6 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
 		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
-}
-
-func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	if phase.PhaseID == "autoreview" && flowAutoreviewMissingPRTarget(record) {
-		return "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
-	}
-	if phase.PhaseID == "implementation" && phase.Status == flowstore.PhasePending {
-		if review, ok := flowPhaseByID(record, "plan-review"); ok {
-			return "Implementation is not ready; Plan Review is " + flowPhaseStatusDetail(review)
-		}
-	}
-	detail := flowPhaseStatusDetail(phase)
-	if phase.PhaseID == "" {
-		return "Selected Flow phase is not launchable; status is " + detail
-	}
-	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
 }
 
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
@@ -2563,7 +2545,10 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || m.selectedFlowPhaseID != "" {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
