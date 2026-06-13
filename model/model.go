@@ -543,9 +543,18 @@ func (m Model) flowReasoningEffortLabel() string {
 	command := agent.Normalize(m.agentCommand)
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return fmt.Sprintf("%s effort: %s", command, reasoningEffortDisplay(m.ReasoningEffortFor(command)))
+		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
 	case agent.CommandCodexApp:
-		return "codex-app default"
+		return "app default"
+	default:
+		return ""
+	}
+}
+
+func (m Model) flowAgentShortcutLabel() string {
+	switch command := agent.Normalize(m.agentCommand); command {
+	case agent.CommandCodex, agent.CommandCodexApp, agent.CommandClaude:
+		return command
 	default:
 		return "choose agent"
 	}
@@ -684,6 +693,7 @@ func (m Model) View() string {
 		SelectedFlowPhaseID:         m.selectedFlowPhaseID,
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
 		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),

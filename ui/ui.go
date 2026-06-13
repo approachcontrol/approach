@@ -284,6 +284,7 @@ type RenderParams struct {
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
+	FlowAgentLabel              string
 	FlowReasoningEffort         string
 	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
@@ -499,6 +500,7 @@ func renderApplication(p RenderParams) string {
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowAgentLabel:              p.FlowAgentLabel,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
 		FlowNextLaunchReady:         p.FlowNextLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
@@ -762,6 +764,7 @@ type statusBarParams struct {
 	FlowPlanLinked              bool
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
+	FlowAgentLabel              string
 	FlowReasoningEffort         string
 	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
@@ -1044,8 +1047,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	global := []shortcutHint{
 		{Key: "tab", Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
-		{Key: "A", Label: "set agent"},
 		{Key: "f5", Label: "refresh"},
+	}
+	if sp.Mode != ModeFlows {
+		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
 
 	var actions []shortcutHint
@@ -1221,7 +1226,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					actions = append(actions, autoHint)
 				}
 			}
-			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
+		}
+		agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
+		actions = append(actions, shortcutHint{Key: "A", Label: agentLabel})
+		if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
+			actions = append(actions, shortcutHint{Key: "E", Label: effortLabel})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1263,15 +1272,22 @@ func flowAutoModeShortcutHint(enabled bool) shortcutHint {
 	return shortcutHint{Key: "m", Label: "auto: off"}
 }
 
+const flowChooseAgentLabel = "choose agent"
+
+func flowAgentShortcut(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == flowChooseAgentLabel {
+		return flowChooseAgentLabel, false
+	}
+	return value, true
+}
+
 func shortcutsMuted(sp statusBarParams) bool {
 	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
 }
 
 func flowReasoningEffortShortcutLabel(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return "effort: default"
-	}
 	return value
 }
 
@@ -1425,14 +1441,16 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+enter", "d")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "f", "F")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "A", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "A", "f", "F")
+	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
 		appendParts(base, upDown, arrow, actionsWithoutEffort),
 		appendParts(base, arrow, actionsWithoutEffort),
-		appendParts(base, arrow, actions),
+		appendParts(base, upDown, arrow, actionsWithoutAgentAndEffort),
+		appendParts(base, arrow, actionsWithoutAgentAndEffort),
 		appendParts(base, arrow, coreActions),
 		appendParts(arrow, coreActions),
 		appendParts(coreActions),
