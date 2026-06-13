@@ -428,25 +428,36 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 		Height:              12,
 		Mode:                ModeFlows,
 		ActivePane:          1,
-		FlowReasoningEffort: "codex effort: high",
+		FlowAgentLabel:      "codex",
+		FlowReasoningEffort: "effort: high",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "E      codex effort: high") {
-		t.Fatalf("flows shortcut pane should expose reasoning effort:\n%s", pane)
+	if !strings.Contains(pane, "A      codex\nE      effort: high") {
+		t.Fatalf("flows shortcut pane should group agent before reasoning effort:\n%s", pane)
+	}
+	if strings.Contains(pane, "A      set agent") {
+		t.Fatalf("flows shortcut pane should not show generic set-agent label:\n%s", pane)
+	}
+	if strings.Contains(pane, "E      codex effort: high") {
+		t.Fatalf("flows shortcut pane should not duplicate agent in effort label:\n%s", pane)
 	}
 }
 
 func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.T) {
 	tests := []struct {
-		effort string
-		want   string
+		name      string
+		agent     string
+		effort    string
+		want      string
+		wantNoKey string
 	}{
-		{effort: "codex-app default", want: "codex-app default"},
-		{effort: "choose agent", want: "choose agent"},
+		{name: "codex app", agent: "codex-app", effort: "app default", want: "A      codex-app\nE      app default"},
+		{name: "unset", agent: "choose agent", effort: "", want: "A      choose agent", wantNoKey: "E"},
+		{name: "missing agent label", effort: "effort: high", want: "A      choose agent", wantNoKey: "E"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.effort, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			view := Render(RenderParams{
 				Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 				Selected:            0,
@@ -454,10 +465,15 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 				Height:              12,
 				Mode:                ModeFlows,
 				ActivePane:          1,
+				FlowAgentLabel:      tt.agent,
 				FlowReasoningEffort: tt.effort,
 			})
-			if pane := shortcutPaneText(view); !strings.Contains(pane, "E      "+tt.want) {
-				t.Fatalf("flows shortcut pane should expose effort %q as %q:\n%s", tt.effort, tt.want, pane)
+			pane := shortcutPaneText(view)
+			if !strings.Contains(pane, tt.want) {
+				t.Fatalf("flows shortcut pane should expose special labels %q:\n%s", tt.want, pane)
+			}
+			if tt.wantNoKey != "" && strings.Contains(pane, tt.wantNoKey+"      ") {
+				t.Fatalf("flows shortcut pane should omit %s hint without configured agent:\n%s", tt.wantNoKey, pane)
 			}
 		})
 	}
@@ -485,7 +501,7 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	}
 }
 
-func TestStatusBar_FlowsModeShowsLaunchOnlyForLaunchableSelectedPhase(t *testing.T) {
+func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *testing.T) {
 	base := statusBarParams{
 		Width:        120,
 		Mode:         ModeFlows,
@@ -495,19 +511,19 @@ func TestStatusBar_FlowsModeShowsLaunchOnlyForLaunchableSelectedPhase(t *testing
 	}
 
 	flowRow := renderStatusBarWithState(base)
-	if strings.Contains(flowRow, "launch phase") {
+	if strings.Contains(flowRow, "launch next") {
 		t.Fatalf("Flow row should not expose launch action, got %q", flowRow)
 	}
 
 	base.FlowPhaseSelected = true
 	gated := renderStatusBarWithState(base)
-	if strings.Contains(gated, "launch phase") {
+	if strings.Contains(gated, "launch next") {
 		t.Fatalf("gated Flow phase should not expose launch action, got %q", gated)
 	}
 
-	base.FlowPhaseLaunchReady = true
+	base.FlowNextLaunchReady = true
 	ready := renderStatusBarWithState(base)
-	if !strings.Contains(ready, "enter: launch phase") {
+	if !strings.Contains(ready, "ctrl+enter: launch next") {
 		t.Fatalf("ready selected Flow phase should expose launch action, got %q", ready)
 	}
 	for _, notWant := range []string{"a: launch phase", "a: phase status", "i: embed phase"} {
@@ -522,7 +538,7 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   14,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -554,7 +570,7 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -586,7 +602,7 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -605,7 +621,6 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 		SelectedFlowPhaseID:         "implementation",
 		FlowPhaseResetReadySelected: true,
 		FlowPhaseResumableSelected:  false,
-		FlowPhaseLaunchReady:        false,
 	})
 
 	pane := shortcutPaneText(view)
@@ -622,7 +637,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -634,21 +649,21 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:           1,
-		FlowSelected:         0,
-		ExpandedFlowID:       "flow-1",
-		SelectedFlowPhaseID:  "implementation",
-		FlowPhaseLaunchReady: true,
-		FlowHeadless:         false,
+		ActivePane:          1,
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "implementation",
+		FlowNextLaunchReady: true,
+		FlowHeadless:        false,
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  launch phase", "h      headless off", "y      copy phase id"} {
+	for _, want := range []string{"enter  phases", "ctrl+enter launch next", "h      headless off", "y      copy phase id"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
 	}
-	for _, notWant := range []string{"x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
+	for _, notWant := range []string{"enter  launch phase", "x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
 		if strings.Contains(pane, notWant) {
 			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
 		}
@@ -704,8 +719,8 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	stalePhase := destructive
 	stalePhase.ExpandedFlowID = "flow-1"
 	stalePhase.SelectedFlowPhaseID = "old-phase"
-	if pane := shortcutPaneText(Render(stalePhase)); strings.Contains(pane, "d      delete") {
-		t.Fatalf("stale non-empty Flow phase selection should not expose delete shortcut:\n%s", pane)
+	if pane := shortcutPaneText(Render(stalePhase)); !strings.Contains(pane, "d      delete") {
+		t.Fatalf("stale non-empty Flow phase selection should fall back to whole-flow delete shortcut:\n%s", pane)
 	}
 
 	terminalFocused := destructive
@@ -718,14 +733,15 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 
 func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
-		Width:        80,
-		Mode:         ModeFlows,
-		ActivePane:   1,
-		RepoSelected: true,
-		FlowSelected: true,
-		FlowHeadless: true,
+		Width:               80,
+		Mode:                ModeFlows,
+		ActivePane:          1,
+		RepoSelected:        true,
+		FlowSelected:        true,
+		FlowHeadless:        true,
+		FlowNextLaunchReady: true,
 	})
-	for _, want := range []string{"←/→ pane/view", "h: headless on", "enter: phases"} {
+	for _, want := range []string{"h: headless on", "enter: phases", "ctrl+enter: launch next"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
 		}
@@ -735,6 +751,80 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 			t.Fatalf("narrow Flow footer should not include %q: %q", notWant, bar)
 		}
 	}
+}
+
+func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:               180,
+		Mode:                ModeFlows,
+		ActivePane:          1,
+		RepoSelected:        true,
+		FlowAgentLabel:      "codex",
+		FlowReasoningEffort: "effort: high",
+	})
+	agentIndex := strings.Index(bar, "A: codex")
+	effortIndex := strings.Index(bar, "E: effort: high")
+	if agentIndex < 0 || effortIndex < 0 || agentIndex > effortIndex {
+		t.Fatalf("Flow footer should group agent before effort, got %q", bar)
+	}
+	if strings.Contains(bar, "A: set agent") || strings.Contains(bar, "E: codex effort: high") {
+		t.Fatalf("Flow footer should not show generic or duplicated labels, got %q", bar)
+	}
+}
+
+func TestStatusBar_FlowsModeFooterShowsAgentOutsideFlowPane(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:               180,
+		Mode:                ModeFlows,
+		ActivePane:          0,
+		FlowAgentLabel:      "codex",
+		FlowReasoningEffort: "effort: high",
+	})
+	agentIndex := strings.Index(bar, "A: codex")
+	effortIndex := strings.Index(bar, "E: effort: high")
+	if agentIndex < 0 || effortIndex < 0 || agentIndex > effortIndex {
+		t.Fatalf("Flow footer should show grouped agent and effort outside Flow pane, got %q", bar)
+	}
+	if strings.Contains(bar, "A: set agent") {
+		t.Fatalf("Flow footer should not fall back to generic agent hint, got %q", bar)
+	}
+}
+
+func TestStatusBar_FlowsModeCompressedFooterDoesNotKeepEffortAfterDroppingAgent(t *testing.T) {
+	for width := 70; width <= 150; width++ {
+		bar := renderStatusBarWithState(statusBarParams{
+			Width:               width,
+			Mode:                ModeFlows,
+			ActivePane:          1,
+			RepoSelected:        true,
+			FlowSelected:        true,
+			FlowHeadless:        true,
+			FlowAgentLabel:      "codex",
+			FlowReasoningEffort: "effort: high",
+		})
+		if strings.Contains(bar, "E: effort: high") && !strings.Contains(bar, "A: codex") {
+			t.Fatalf("compressed Flow footer width %d should not keep effort after dropping agent, got %q", width, bar)
+		}
+	}
+}
+
+func TestStatusBar_FlowsModeCompressedFooterKeepsAgentWhenOnlyEffortIsDropped(t *testing.T) {
+	for width := 70; width <= 150; width++ {
+		bar := renderStatusBarWithState(statusBarParams{
+			Width:               width,
+			Mode:                ModeFlows,
+			ActivePane:          1,
+			RepoSelected:        true,
+			FlowSelected:        true,
+			FlowHeadless:        true,
+			FlowAgentLabel:      "codex",
+			FlowReasoningEffort: "effort: high",
+		})
+		if strings.Contains(bar, "A: codex") && !strings.Contains(bar, "E: effort: high") {
+			return
+		}
+	}
+	t.Fatal("compressed Flow footer never kept the agent hint while dropping only effort")
 }
 
 func TestStatusBar_FlowsModeNarrowFooterPreservesDeleteSafetyHints(t *testing.T) {

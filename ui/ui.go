@@ -285,8 +285,10 @@ type RenderParams struct {
 	SelectedPlanPhaseID         string
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
+	FlowAutoModeSelected        bool
+	FlowAgentLabel              string
 	FlowReasoningEffort         string
-	FlowPhaseLaunchReady        bool
+	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
 	OverlayText                 string
@@ -448,17 +450,20 @@ func renderApplication(p RenderParams) string {
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
+	flowAutoModeSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
+		flowAutoModeSelected = p.FlowAutoModeSelected
 	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
-	flowDeletableSelected := flowSelected && p.SelectedFlowPhaseID == ""
+	flowDeletableSelected := flowSelected && selectedFlowPhaseID == ""
 	if p.FlowTerminalFocused {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
+		flowAutoModeSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
 	flowPhaseSelected := selectedFlowPhaseID != ""
@@ -497,8 +502,10 @@ func renderApplication(p RenderParams) string {
 		FlowDeletableSelected:       flowDeletableSelected,
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
+		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowAgentLabel:              p.FlowAgentLabel,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
-		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
+		FlowNextLaunchReady:         p.FlowNextLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
 		TransientError:              p.TransientError,
@@ -650,8 +657,12 @@ func scopedSelectedFlowPhaseID(p RenderParams, flowSelected bool) string {
 	if p.ExpandedFlowID != flow.FlowID {
 		return ""
 	}
+	wantPhaseID := artifacts.NormalizePhaseID(p.SelectedFlowPhaseID)
+	if wantPhaseID == "" {
+		return ""
+	}
 	for _, phase := range flowstore.OrderedPhases(flow.Phases) {
-		if phase.PhaseID == p.SelectedFlowPhaseID {
+		if artifacts.NormalizePhaseID(phase.PhaseID) == wantPhaseID {
 			return p.SelectedFlowPhaseID
 		}
 	}
@@ -756,8 +767,10 @@ type statusBarParams struct {
 	FlowDeletableSelected       bool
 	FlowPlanLinked              bool
 	FlowHeadless                bool
+	FlowAutoModeSelected        bool
+	FlowAgentLabel              string
 	FlowReasoningEffort         string
-	FlowPhaseLaunchReady        bool
+	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
 	TransientError              string
@@ -1041,8 +1054,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	global := []shortcutHint{
 		{Key: "tab", Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
-		{Key: "A", Label: "set agent"},
 		{Key: "f5", Label: "refresh"},
+	}
+	if sp.Mode != ModeFlows {
+		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
 
 	var actions []shortcutHint
@@ -1190,8 +1205,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
 				if sp.FlowPhaseSelected {
-					if sp.FlowPhaseLaunchReady {
-						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
+					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+					if sp.FlowNextLaunchReady {
+						actions = append(actions, shortcutHint{Key: "ctrl+enter", Label: "launch next"})
 					}
 					if sp.FlowPhaseResetReadySelected {
 						actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
@@ -1202,6 +1218,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					}
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+					if sp.FlowNextLaunchReady {
+						actions = append(actions, shortcutHint{Key: "ctrl+enter", Label: "launch next"})
+					}
 					if sp.FlowPlanLinked {
 						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 					}
@@ -1211,7 +1230,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					}
 				}
 			}
-			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
+		}
+		agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
+		actions = append(actions, shortcutHint{Key: "A", Label: agentLabel})
+		if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
+			actions = append(actions, shortcutHint{Key: "E", Label: effortLabel})
 		}
 	}
 	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
@@ -1246,15 +1269,29 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	return sections
 }
 
+func flowAutoModeShortcutHint(enabled bool) shortcutHint {
+	if enabled {
+		return shortcutHint{Key: "m", Label: "auto: on", SuccessSuffix: "on"}
+	}
+	return shortcutHint{Key: "m", Label: "auto: off"}
+}
+
+const flowChooseAgentLabel = "choose agent"
+
+func flowAgentShortcut(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == flowChooseAgentLabel {
+		return flowChooseAgentLabel, false
+	}
+	return value, true
+}
+
 func shortcutsMuted(sp statusBarParams) bool {
 	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
 }
 
 func flowReasoningEffortShortcutLabel(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return "effort: default"
-	}
 	return value
 }
 
@@ -1407,15 +1444,17 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	base := footerHintsForKeys(hints, "tab", "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
-	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "d")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
+	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+enter", "d")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "A", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "A", "f", "F")
+	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+enter", "x", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
 		appendParts(base, upDown, arrow, actionsWithoutEffort),
 		appendParts(base, arrow, actionsWithoutEffort),
-		appendParts(base, arrow, actions),
+		appendParts(base, upDown, arrow, actionsWithoutAgentAndEffort),
+		appendParts(base, arrow, actionsWithoutAgentAndEffort),
 		appendParts(base, arrow, coreActions),
 		appendParts(arrow, coreActions),
 		appendParts(coreActions),

@@ -395,6 +395,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			m = m.clearSelectedFlowPhase()
 		}
+	case "ctrl+j", "ctrl+enter":
+		if m.mode == ui.ModeFlows {
+			return m.handleLaunchNextFlowPhase()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -428,6 +432,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "m":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
+		}
+		if m.mode == ui.ModeFlows {
+			return m.handleToggleFlowAutoMode()
 		}
 	case "N":
 		if m.mode == ui.ModeWorktrees {
@@ -631,10 +638,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
-	if m.selectedFlowPhaseID == "" {
-		return m.handleToggleFlowPhases()
-	}
-	return m.handleLaunchSelectedFlowPhase()
+	return m.handleToggleFlowPhases()
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
@@ -675,6 +679,46 @@ func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
 		m = m.setExpandedFlowID(flowID)
 	}
 	return m, nil
+}
+
+func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
+	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+		return m, nil
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return m, nil
+	}
+	return m, m.setFlowAutoModeCmd(repoPath, record.FlowID, !record.AutoMode)
+}
+
+func (m Model) setFlowAutoModeCmd(repoPath, flowID string, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowAutoMode(flowstore.AutoModeUpdate{
+			FlowID:  flowID,
+			Enabled: enabled,
+		})
+		if err != nil {
+			return FlowAutoModeSetFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   flowID,
+				Err:      fmt.Sprintf("failed to set Flow auto mode: %v", err),
+			}
+		}
+		return FlowAutoModeSetMsg{
+			RepoPath: repoPath,
+			FlowID:   flowID,
+			Flow:     flow,
+			Enabled:  enabled,
+		}
+	}
 }
 
 func (m Model) handleToggleWorktreeSessions() (tea.Model, tea.Cmd) {
@@ -871,6 +915,7 @@ const (
 	flowCreateTitleField        = "title"
 	flowCreateInstructionsField = "instructions"
 	flowCreateBaseRefField      = "base-ref"
+	flowCreateHeadlessField     = "headless"
 )
 
 func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
@@ -999,7 +1044,8 @@ func (m Model) handleNewPullRequestWorktree() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
-	if _, ok := m.currentRepoPath(); !ok {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
 		return m, nil
 	}
 	if m.agentCommand == "" {
@@ -1013,13 +1059,16 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 			{ID: flowCreateTitleField, Kind: modal.FormText, Label: "Title", Placeholder: ui.FlowTitleInputPlaceholder},
 			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
 			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
+			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
 		},
 		Validate: validateFlowCreateForm,
 		Submit: func(values modal.FormValues) tea.Cmd {
-			return m.createFlowAndLaunchPlan(
+			return m.createFlowAndLaunchPlanForRepo(
+				repoPath,
 				values.Text[flowCreateTitleField],
 				values.Text[flowCreateInstructionsField],
 				values.Text[flowCreateBaseRefField],
+				values.Checked[flowCreateHeadlessField],
 			)
 		},
 	})
@@ -1252,17 +1301,99 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 	return m.launchAgentAtPath(path)
 }
 
-func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
-	target, ok, next := m.selectedFlowPhaseLaunchTarget()
+func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
+	target, ok, next := m.selectedFlowNextLaunchTarget()
 	if !ok {
 		return next, nil
 	}
+	return next.launchFlowPhaseTarget(target)
+}
+
+func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
 	launchID := newLaunchID()
-	switch agent.Normalize(next.agentCommand) {
+	command, _ := m.flowLaunchAgentSettings()
+	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+		return m, m.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, m.flowHeadless)
 	}
-	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	return m, m.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+}
+
+func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
+	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previousFlows))
+	for _, record := range previousFlows {
+		if record.FlowID != "" {
+			previousByFlowID[record.FlowID] = record
+		}
+	}
+	var cmds []tea.Cmd
+	for _, record := range currentFlows {
+		if !record.AutoMode || record.FlowID == "" {
+			continue
+		}
+		previous, ok := previousByFlowID[record.FlowID]
+		if !ok {
+			continue
+		}
+		completedPhase, ok := newlyCompletedFlowPhase(previous, record)
+		if !ok {
+			continue
+		}
+		if artifacts.NormalizePhaseID(completedPhase.PhaseID) == "autoreview" {
+			continue
+		}
+		phase, ok := nextAutoLaunchPhase(record)
+		if !ok {
+			continue
+		}
+		target, ok, next := m.flowPhaseLaunchTarget(record, phase)
+		m = next
+		if !ok {
+			continue
+		}
+		launchID := newLaunchID()
+		command, _ := next.flowLaunchAgentSettings()
+		switch command {
+		case agent.CommandCodex, agent.CommandClaude:
+			cmds = append(cmds, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless))
+			continue
+		}
+		cmds = append(cmds, next.prepareAutoFlowPhaseLaunchCmd(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID))
+	}
+	return m, batchNonNil(cmds...)
+}
+
+func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
+	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
+	for _, phase := range previous.Phases {
+		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
+			previousByPhaseID[phaseID] = phase
+		}
+	}
+	for _, phase := range flowstore.OrderedPhases(current.Phases) {
+		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+		if phaseID == "" || phase.Status != flowstore.PhaseCompleted {
+			continue
+		}
+		previousPhase, ok := previousByPhaseID[phaseID]
+		if ok && previousPhase.Status != flowstore.PhaseCompleted {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		switch artifacts.NormalizePhaseID(phase.PhaseID) {
+		case "", "merge":
+			continue
+		}
+		if phase.Status == flowstore.PhaseReady {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
 }
 
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
@@ -1290,17 +1421,10 @@ type flowPhaseLaunchTarget struct {
 	planPath     string
 }
 
-func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
-	record, ok := m.selectedFlow()
+func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
+	record, phase, ok := m.selectedFlowNextLaunchablePhase()
 	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	phase, ok := m.selectedFlowPhase()
-	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	if !flowPhaseCanLaunch(record, phase) {
-		m = m.setStatus(statusOther, flowPhaseNotLaunchableMessage(record, phase))
+		m = m.setStatus(statusOther, "No launchable Flow phase")
 		return flowPhaseLaunchTarget{}, false, m
 	}
 	return m.flowPhaseLaunchTarget(record, phase)
@@ -1428,19 +1552,33 @@ func (m Model) flowPhaseLaunchTarget(record flowstore.FlowRecord, phase flowstor
 func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
 	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
 		return PlanLaunchRequestedMsg{LaunchContext: ctx}
-	})
+	}, false)
+}
+
+func (m Model) prepareAutoFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
+	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
+		return PlanLaunchRequestedMsg{LaunchContext: ctx}
+	}, true)
 }
 
 func (m Model) prepareFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
+	return m.prepareFlowPhaseEmbeddedLaunchWithAuto(record, phase, repoPath, worktreePath, planPath, launchID, headless, false)
+}
+
+func (m Model) prepareAutoFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
+	return m.prepareFlowPhaseEmbeddedLaunchWithAuto(record, phase, repoPath, worktreePath, planPath, launchID, headless, true)
+}
+
+func (m Model) prepareFlowPhaseEmbeddedLaunchWithAuto(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless, autoLaunch bool) tea.Cmd {
 	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
 		ctx.FlowLaunchTracked = true
 		ctx.Embedded = true
 		ctx.Headless = headless
 		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-	})
+	}, autoLaunch)
 }
 
-func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg) tea.Cmd {
+func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg, autoLaunch bool) tea.Cmd {
 	return func() tea.Msg {
 		planBody := ""
 		if record.PlanID != "" && flowPhasePromptNeedsPlanBody(phase.PhaseID) {
@@ -1451,20 +1589,25 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 			planBody = body
 		}
 		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-			FlowID:   record.FlowID,
-			PhaseID:  phase.PhaseID,
-			LaunchID: launchID,
+			FlowID:     record.FlowID,
+			PhaseID:    phase.PhaseID,
+			LaunchID:   launchID,
+			AutoLaunch: autoLaunch,
 		})
 		if err != nil {
+			if autoLaunch && flowstore.IsAutoLaunchOutdated(err) {
+				return nil
+			}
 			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
 		}
 		launchPhase := phase
 		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
 			launchPhase = persistedPhase
 		}
+		command, reasoningEffort := m.flowLaunchAgentSettings()
 		return wrap(actions.AgentLaunchContext{
-			Command:          m.agentCommand,
-			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+			Command:          command,
+			ReasoningEffort:  reasoningEffort,
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
 			WorktreePath:     worktreePath,
@@ -1749,22 +1892,6 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
 		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
-}
-
-func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	if phase.PhaseID == "autoreview" && flowAutoreviewMissingPRTarget(record) {
-		return "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
-	}
-	if phase.PhaseID == "implementation" && phase.Status == flowstore.PhasePending {
-		if review, ok := flowPhaseByID(record, "plan-review"); ok {
-			return "Implementation is not ready; Plan Review is " + flowPhaseStatusDetail(review)
-		}
-	}
-	detail := flowPhaseStatusDetail(phase)
-	if phase.PhaseID == "" {
-		return "Selected Flow phase is not launchable; status is " + detail
-	}
-	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
 }
 
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
@@ -2422,7 +2549,10 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || m.selectedFlowPhaseID != "" {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()

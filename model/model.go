@@ -91,6 +91,7 @@ type Model struct {
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -167,6 +168,7 @@ type Options struct {
 	ListFlows                func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase           func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow               func(flowID string) error
@@ -234,6 +236,17 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.SetPhase(update)
+		}
+	}
+	setFlowAutoMode := opts.SetFlowAutoMode
+	if setFlowAutoMode == nil {
+		root := opts.SessionStateRoot
+		setFlowAutoMode = func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetAutoMode(update)
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -376,6 +389,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		listFlows:                listFlows,
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
+		setFlowAutoMode:          setFlowAutoMode,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
 		resetFlowPhase:           resetFlowPhase,
 		deleteFlow:               deleteFlow,
@@ -411,6 +425,19 @@ func startupMode(mode ui.Mode) ui.Mode {
 		return mode
 	}
 	return ui.ModeWorktrees
+}
+
+func batchNonNil(cmds ...tea.Cmd) tea.Cmd {
+	filtered := make([]tea.Cmd, 0, len(cmds))
+	for _, cmd := range cmds {
+		if cmd != nil {
+			filtered = append(filtered, cmd)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return tea.Batch(filtered...)
 }
 
 func newLaunchID() string {
@@ -509,13 +536,27 @@ func (m Model) launchReasoningEffortFor(command string) string {
 	}
 }
 
+func (m Model) flowLaunchAgentSettings() (string, string) {
+	command := agent.Normalize(m.agentCommand)
+	return command, m.launchReasoningEffortFor(command)
+}
+
 func (m Model) flowReasoningEffortLabel() string {
 	command := agent.Normalize(m.agentCommand)
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return fmt.Sprintf("%s effort: %s", command, reasoningEffortDisplay(m.ReasoningEffortFor(command)))
+		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
 	case agent.CommandCodexApp:
-		return "codex-app default"
+		return "app default"
+	default:
+		return ""
+	}
+}
+
+func (m Model) flowAgentShortcutLabel() string {
+	switch command := agent.Normalize(m.agentCommand); command {
+	case agent.CommandCodex, agent.CommandCodexApp, agent.CommandClaude:
+		return command
 	default:
 		return "choose agent"
 	}
@@ -564,6 +605,10 @@ func (m Model) View() string {
 	sessions, sessionSelected, sessionScroll := m.sessions.View()
 	plans, planSelected, planScroll := m.plans.View()
 	flows, flowSelected, flowScroll := m.flows.View()
+	flowAutoModeSelected := false
+	if flowSelected >= 0 && flowSelected < len(flows) {
+		flowAutoModeSelected = flows[flowSelected].AutoMode
+	}
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
 	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows))
 	if len(repos) == 0 {
@@ -649,8 +694,10 @@ func (m Model) View() string {
 		SelectedPlanPhaseID:         m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:         m.selectedFlowPhaseID,
 		FlowHeadless:                m.flowHeadless,
+		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
-		FlowPhaseLaunchReady:        m.selectedFlowPhaseLaunchReady(),
+		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
 		OverlayText:                 modalView.Text,
@@ -1019,8 +1066,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PlanResultMsg:
 		return m.handlePlanResult(msg), nil
 	case FlowResultMsg:
-		next := m.handleFlowResult(msg)
-		return next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
+		next, autoLaunchCmd := m.handleFlowResult(msg)
+		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
+		return next, batchNonNil(refreshCmd, autoLaunchCmd)
+	case FlowAutoModeSetMsg:
+		return m.handleFlowAutoModeSet(msg), nil
+	case FlowAutoModeSetFailedMsg:
+		return m.handleFlowAutoModeSetFailed(msg), nil
 	case flowPhaseResetConfirmedMsg:
 		return m.handleFlowPhaseResetConfirmed(msg)
 	case flowPhaseResetMsg:
@@ -1275,13 +1327,22 @@ func (m Model) selectedFlowPhaseResumable() bool {
 	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
 }
 
-func (m Model) selectedFlowPhaseLaunchReady() bool {
+func (m Model) selectedFlowHasLaunchablePhase() bool {
+	_, _, ok := m.selectedFlowNextLaunchablePhase()
+	return ok
+}
+
+func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
 	record, ok := m.selectedFlow()
-	if !ok {
-		return false
+	if !ok || record.FlowID == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
-	phase, ok := m.selectedFlowPhase()
-	return ok && flowPhaseCanLaunch(record, phase)
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if flowPhaseCanLaunch(record, phase) {
+			return record, phase, true
+		}
+	}
+	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 }
 
 func (m Model) selectedFlowPhaseResettable() bool {
