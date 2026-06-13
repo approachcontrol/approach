@@ -1216,6 +1216,9 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if m.mode != ui.ModeFlows {
 		return m, nil
 	}
+	if m.flowFocus != flowFocusTerminal {
+		m = m.syncActiveFlowTerminalToSelectedFlow()
+	}
 	return m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
 }
 

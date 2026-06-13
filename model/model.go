@@ -1606,6 +1606,7 @@ func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.clearSelectedFlowPhase()
 			m = m.setExpandedFlowID("")
+			m = m.syncActiveFlowTerminalToSelectedFlow()
 		}
 		return m, true
 	}
