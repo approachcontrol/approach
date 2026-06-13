@@ -395,6 +395,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			m = m.clearSelectedFlowPhase()
 		}
+	case "ctrl+j", "ctrl+enter":
+		if m.mode == ui.ModeFlows {
+			return m.handleLaunchNextFlowPhase()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -634,10 +638,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
-	if m.selectedFlowPhaseID == "" {
-		return m.handleToggleFlowPhases()
-	}
-	return m.handleLaunchSelectedFlowPhase()
+	return m.handleToggleFlowPhases()
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
@@ -1304,12 +1305,24 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 	if !ok {
 		return next, nil
 	}
-	launchID := newLaunchID()
-	switch agent.Normalize(next.agentCommand) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+	return next.launchFlowPhaseTarget(target)
+}
+
+func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
+	target, ok, next := m.selectedFlowNextLaunchTarget()
+	if !ok {
+		return next, nil
 	}
-	return next, next.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	return next.launchFlowPhaseTarget(target)
+}
+
+func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
+	launchID := newLaunchID()
+	switch agent.Normalize(m.agentCommand) {
+	case agent.CommandCodex, agent.CommandClaude:
+		return m, m.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, m.flowHeadless)
+	}
+	return m, m.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
@@ -1424,6 +1437,15 @@ func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Mod
 	}
 	if !flowPhaseCanLaunch(record, phase) {
 		m = m.setStatus(statusOther, flowPhaseNotLaunchableMessage(record, phase))
+		return flowPhaseLaunchTarget{}, false, m
+	}
+	return m.flowPhaseLaunchTarget(record, phase)
+}
+
+func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
+	record, phase, ok := m.selectedFlowNextLaunchablePhase()
+	if !ok {
+		m = m.setStatus(statusOther, "No launchable Flow phase")
 		return flowPhaseLaunchTarget{}, false, m
 	}
 	return m.flowPhaseLaunchTarget(record, phase)

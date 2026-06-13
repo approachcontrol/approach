@@ -543,7 +543,7 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	}
 }
 
-func TestStatusBar_FlowsModeShowsLaunchOnlyForLaunchableSelectedPhase(t *testing.T) {
+func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *testing.T) {
 	base := statusBarParams{
 		Width:        120,
 		Mode:         ModeFlows,
@@ -553,19 +553,19 @@ func TestStatusBar_FlowsModeShowsLaunchOnlyForLaunchableSelectedPhase(t *testing
 	}
 
 	flowRow := renderStatusBarWithState(base)
-	if strings.Contains(flowRow, "launch phase") {
+	if strings.Contains(flowRow, "launch next") {
 		t.Fatalf("Flow row should not expose launch action, got %q", flowRow)
 	}
 
 	base.FlowPhaseSelected = true
 	gated := renderStatusBarWithState(base)
-	if strings.Contains(gated, "launch phase") {
+	if strings.Contains(gated, "launch next") {
 		t.Fatalf("gated Flow phase should not expose launch action, got %q", gated)
 	}
 
-	base.FlowPhaseLaunchReady = true
+	base.FlowNextLaunchReady = true
 	ready := renderStatusBarWithState(base)
-	if !strings.Contains(ready, "enter: launch phase") {
+	if !strings.Contains(ready, "ctrl+enter: launch next") {
 		t.Fatalf("ready selected Flow phase should expose launch action, got %q", ready)
 	}
 	for _, notWant := range []string{"a: launch phase", "a: phase status", "i: embed phase"} {
@@ -580,7 +580,7 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   14,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -612,7 +612,7 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -687,7 +687,7 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -723,7 +723,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
 		Width:    180,
-		Height:   12,
+		Height:   16,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -735,21 +735,21 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:           1,
-		FlowSelected:         0,
-		ExpandedFlowID:       "flow-1",
-		SelectedFlowPhaseID:  "implementation",
-		FlowPhaseLaunchReady: true,
-		FlowHeadless:         false,
+		ActivePane:          1,
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "implementation",
+		FlowNextLaunchReady: true,
+		FlowHeadless:        false,
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  launch phase", "h      headless off", "y      copy phase id"} {
+	for _, want := range []string{"enter  phases", "ctrl+enter launch next", "h      headless off", "y      copy phase id"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
 	}
-	for _, notWant := range []string{"x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
+	for _, notWant := range []string{"enter  launch phase", "x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
 		if strings.Contains(pane, notWant) {
 			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
 		}
@@ -805,8 +805,8 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	stalePhase := destructive
 	stalePhase.ExpandedFlowID = "flow-1"
 	stalePhase.SelectedFlowPhaseID = "old-phase"
-	if pane := shortcutPaneText(Render(stalePhase)); strings.Contains(pane, "d      delete") {
-		t.Fatalf("stale non-empty Flow phase selection should not expose delete shortcut:\n%s", pane)
+	if pane := shortcutPaneText(Render(stalePhase)); !strings.Contains(pane, "d      delete") {
+		t.Fatalf("stale non-empty Flow phase selection should fall back to whole-flow delete shortcut:\n%s", pane)
 	}
 
 	terminalFocused := destructive
@@ -819,14 +819,15 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 
 func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
-		Width:        80,
-		Mode:         ModeFlows,
-		ActivePane:   1,
-		RepoSelected: true,
-		FlowSelected: true,
-		FlowHeadless: true,
+		Width:               80,
+		Mode:                ModeFlows,
+		ActivePane:          1,
+		RepoSelected:        true,
+		FlowSelected:        true,
+		FlowHeadless:        true,
+		FlowNextLaunchReady: true,
 	})
-	for _, want := range []string{"←/→ pane/view", "h: headless on", "enter: phases"} {
+	for _, want := range []string{"h: headless on", "enter: phases", "ctrl+enter: launch next"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
 		}

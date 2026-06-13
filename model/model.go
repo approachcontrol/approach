@@ -686,6 +686,7 @@ func (m Model) View() string {
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
 		FlowPhaseLaunchReady:        m.selectedFlowPhaseLaunchReady(),
+		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
 		OverlayText:                 modalView.Text,
@@ -1324,6 +1325,24 @@ func (m Model) selectedFlowPhaseLaunchReady() bool {
 	}
 	phase, ok := m.selectedFlowPhase()
 	return ok && flowPhaseCanLaunch(record, phase)
+}
+
+func (m Model) selectedFlowHasLaunchablePhase() bool {
+	_, _, ok := m.selectedFlowNextLaunchablePhase()
+	return ok
+}
+
+func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+	}
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if flowPhaseCanLaunch(record, phase) {
+			return record, phase, true
+		}
+	}
+	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 }
 
 func (m Model) selectedFlowPhaseResettable() bool {
