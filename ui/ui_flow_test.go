@@ -891,6 +891,25 @@ func TestStatusBar_FlowsModeCompressedFooterDoesNotKeepEffortAfterDroppingAgent(
 	}
 }
 
+func TestStatusBar_FlowsModeCompressedFooterKeepsAgentWhenOnlyEffortIsDropped(t *testing.T) {
+	for width := 70; width <= 150; width++ {
+		bar := renderStatusBarWithState(statusBarParams{
+			Width:               width,
+			Mode:                ModeFlows,
+			ActivePane:          1,
+			RepoSelected:        true,
+			FlowSelected:        true,
+			FlowHeadless:        true,
+			FlowAgentLabel:      "codex",
+			FlowReasoningEffort: "effort: high",
+		})
+		if strings.Contains(bar, "A: codex") && !strings.Contains(bar, "E: effort: high") {
+			return
+		}
+	}
+	t.Fatal("compressed Flow footer never kept the agent hint while dropping only effort")
+}
+
 func TestStatusBar_FlowsModeNarrowFooterPreservesDeleteSafetyHints(t *testing.T) {
 	readOnly := renderStatusBarWithState(statusBarParams{
 		Width:        80,

@@ -1433,13 +1433,15 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "d")
 	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "A", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "A", "f", "F")
+	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "x", "o", "y", "d", "r", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
 		appendParts(base, upDown, arrow, actionsWithoutEffort),
 		appendParts(base, arrow, actionsWithoutEffort),
-		appendParts(base, arrow, actions),
+		appendParts(base, upDown, arrow, actionsWithoutAgentAndEffort),
+		appendParts(base, arrow, actionsWithoutAgentAndEffort),
 		appendParts(base, arrow, coreActions),
 		appendParts(arrow, coreActions),
 		appendParts(coreActions),
