@@ -2116,7 +2116,7 @@ func TestRepoList_ScrollsWhenSelectionExceedsHeight(t *testing.T) {
 		{Path: "/e", DisplayName: "echo"},
 	}
 	// Height of 3 means only 3 visible at a time; scroll=2 shows repos 2-4
-	lines := renderRepoList(repos, 4, 2, LeftPaneWidth-2, 3, "")
+	lines := renderRepoList(repos, 4, 2, LeftPaneWidth-2, 3, "", nil)
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "echo") {
 		t.Error("selected item 'echo' should be visible")
@@ -2131,11 +2131,86 @@ func TestRepoList_TruncatesLongNames(t *testing.T) {
 	repos := []scanner.Repo{
 		{Path: "/a", DisplayName: "this-is-a-very-long-repository-name-that-exceeds-width"},
 	}
-	lines := renderRepoList(repos, 0, 0, width, 3, "")
+	lines := renderRepoList(repos, 0, 0, width, 3, "", nil)
 	for i, line := range lines {
 		if lipgloss.Width(line) > width {
 			t.Errorf("line %d width %d exceeds pane width %d", i, lipgloss.Width(line), width)
 		}
+	}
+}
+
+func TestRepoList_RendersActiveTerminalMarkersWithStableSpacing(t *testing.T) {
+	forceTrueColor(t)
+	width := LeftPaneWidth - 2
+	repos := []scanner.Repo{
+		{Path: "/alpha", DisplayName: "alpha"},
+		{Path: "/bravo", DisplayName: "bravo"},
+		{Path: "/charlie", DisplayName: "charlie"},
+		{Path: "/delta", DisplayName: "delta"},
+	}
+	activeRepos := map[string]bool{
+		"/alpha":   true,
+		"/charlie": true,
+	}
+
+	lines := renderRepoList(repos, 0, 0, width, len(repos), "", activeRepos)
+	stripped := stripLines(lines)
+
+	wantPrefixes := []string{
+		" > ● alpha",
+		"     bravo",
+		"   ● charlie",
+		"     delta",
+	}
+	for i, want := range wantPrefixes {
+		if !strings.HasPrefix(stripped[i], want) {
+			t.Fatalf("line %d = %q, want prefix %q", i, stripped[i], want)
+		}
+	}
+	for i, line := range lines {
+		if !strings.Contains(line, cleanStyle.Render("●")) {
+			if i == 0 || i == 2 {
+				t.Fatalf("active line %d should render marker with clean style: %q", i, line)
+			}
+		}
+		if lipgloss.Width(line) != width {
+			t.Fatalf("line %d width = %d, want %d: %q", i, lipgloss.Width(line), width, stripped[i])
+		}
+	}
+
+	lines = renderRepoList(repos, 1, 0, width, len(repos), "", activeRepos)
+	stripped = stripLines(lines)
+	if !strings.HasPrefix(stripped[1], " >   bravo") {
+		t.Fatalf("selected inactive line = %q, want prefix %q", stripped[1], " >   bravo")
+	}
+}
+
+func TestRepoList_ActiveTerminalMarkerDoesNotExpandTruncatedRows(t *testing.T) {
+	width := LeftPaneWidth - 2
+	repos := []scanner.Repo{
+		{Path: "/active", DisplayName: "active-repository-name-that-exceeds-the-pane-width"},
+		{Path: "/inactive", DisplayName: "inactive-repository-name-that-exceeds-the-pane-width"},
+	}
+
+	lines := renderRepoList(repos, 0, 0, width, len(repos), "", map[string]bool{"/active": true})
+
+	requireLinesWithinWidth(t, stripLines(lines), width)
+	if got := lipgloss.Width(lines[0]); got != width {
+		t.Fatalf("active row width = %d, want %d", got, width)
+	}
+	if got := lipgloss.Width(lines[1]); got != width {
+		t.Fatalf("inactive row width = %d, want %d", got, width)
+	}
+}
+
+func TestRepoList_ActiveTerminalMarkerMatchesCleanedRepoPath(t *testing.T) {
+	width := LeftPaneWidth - 2
+	repos := []scanner.Repo{{Path: "/alpha/", DisplayName: "alpha"}}
+
+	lines := renderRepoList(repos, 0, 0, width, len(repos), "", map[string]bool{"/alpha": true})
+
+	if got := stripLines(lines)[0]; !strings.HasPrefix(got, " > ● alpha") {
+		t.Fatalf("line = %q, want active marker for cleaned repo path", got)
 	}
 }
 
@@ -4069,7 +4144,7 @@ func TestRender_EmptyStateMessagesDoNotPanicAtTinyHeights(t *testing.T) {
 func TestRender_EmptyStateMessagesFitPaneWidth(t *testing.T) {
 	longMessage := "No repo results for " + strings.Repeat("z", 80)
 
-	repoLines := renderRepoList(nil, 0, 0, 12, 3, longMessage)
+	repoLines := renderRepoList(nil, 0, 0, 12, 3, longMessage, nil)
 	for i, line := range repoLines {
 		if lipgloss.Width(line) > 12 {
 			t.Fatalf("repo empty line %d width %d exceeds pane width 12: %q", i, lipgloss.Width(line), line)
@@ -4085,7 +4160,7 @@ func TestRender_EmptyStateMessagesFitPaneWidth(t *testing.T) {
 }
 
 func TestRepoList_EmptyMessageIsVerticallyCentered(t *testing.T) {
-	lines := renderRepoList(nil, 0, 0, 20, 5, "No repos")
+	lines := renderRepoList(nil, 0, 0, 20, 5, "No repos", nil)
 	for i, line := range lines {
 		hasMessage := strings.Contains(line, "No repos")
 		if i == 2 && !hasMessage {

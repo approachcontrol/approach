@@ -215,6 +215,7 @@ const StashPrefixWidth = 15
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
 	Repos                       []scanner.Repo
+	ActiveTerminalRepoPaths     map[string]bool
 	Selected                    int
 	Width                       int
 	Height                      int
@@ -542,7 +543,7 @@ func renderApplication(p RenderParams) string {
 	}
 
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
-	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage)
+	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -1754,7 +1755,7 @@ func modeShortcutTitle(mode Mode) string {
 	}
 }
 
-func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string) []string {
+func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string, activeTerminalRepoPaths map[string]bool) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1767,15 +1768,32 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 		return lines
 	}
 
+	showActivityColumn := false
+	for i := 0; i < height; i++ {
+		idx := scroll + i
+		if idx < len(repos) && repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path) {
+			showActivityColumn = true
+			break
+		}
+	}
+
 	for i := 0; i < height; i++ {
 		idx := scroll + i
 		if idx < len(repos) {
 			name := repos[idx].DisplayName
+			activeRepo := repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path)
+			activityMarker := ""
+			if showActivityColumn {
+				activityMarker = "  "
+				if activeRepo {
+					activityMarker = cleanStyle.Render("●") + " "
+				}
+			}
 			if idx == selected {
-				line := truncateToWidth(fmt.Sprintf(" > %s", name), width)
+				line := truncateToWidth(fmt.Sprintf(" > %s%s", activityMarker, name), width)
 				lines[i] = selectedStyle.Width(width).Render(line)
 			} else {
-				line := truncateToWidth(fmt.Sprintf("   %s", name), width)
+				line := truncateToWidth(fmt.Sprintf("   %s%s", activityMarker, name), width)
 				lines[i] = repoStyle.Width(width).Render(line)
 			}
 		} else {
@@ -1784,6 +1802,20 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	}
 
 	return lines
+}
+
+func repoHasActiveTerminal(activeTerminalRepoPaths map[string]bool, repoPath string) bool {
+	if len(activeTerminalRepoPaths) == 0 {
+		return false
+	}
+	if activeTerminalRepoPaths[repoPath] {
+		return true
+	}
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return false
+	}
+	return activeTerminalRepoPaths[filepath.Clean(repoPath)]
 }
 
 func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width, height int, repoPath string) []string {
