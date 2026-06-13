@@ -10,11 +10,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/scanner"
+	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -53,6 +55,69 @@ func (t *internalFakeDetachableEmbeddedTerminal) Detach() error {
 }
 
 func (t *internalFakeDetachableEmbeddedTerminal) DetachTarget() string { return t.target }
+
+type prefillReadyFakeEmbeddedTerminal struct {
+	lines       [][]string
+	visibleHits int
+	writes      []string
+}
+
+func (t *prefillReadyFakeEmbeddedTerminal) VisibleLines(int, int) []string {
+	t.visibleHits++
+	if len(t.lines) == 0 {
+		return nil
+	}
+	index := t.visibleHits - 1
+	if index >= len(t.lines) {
+		index = len(t.lines) - 1
+	}
+	return t.lines[index]
+}
+
+func (t *prefillReadyFakeEmbeddedTerminal) Write(p []byte) (int, error) {
+	t.writes = append(t.writes, string(p))
+	return len(p), nil
+}
+
+func (t *prefillReadyFakeEmbeddedTerminal) Resize(int, int) error      { return nil }
+func (t *prefillReadyFakeEmbeddedTerminal) Terminate() error           { return nil }
+func (t *prefillReadyFakeEmbeddedTerminal) Wait(context.Context) error { return nil }
+func (t *prefillReadyFakeEmbeddedTerminal) State() string              { return "running" }
+
+func TestPrefillEmbeddedPromptWaitsForVisibleTerminalOutput(t *testing.T) {
+	originalInterval := embeddedPromptPrefillPollInterval
+	embeddedPromptPrefillPollInterval = 0
+	t.Cleanup(func() {
+		embeddedPromptPrefillPollInterval = originalInterval
+	})
+
+	term := &prefillReadyFakeEmbeddedTerminal{
+		lines: [][]string{
+			{"", "   "},
+			{"Codex ready", ""},
+		},
+	}
+
+	err := prefillEmbeddedPromptIfNeeded(term, actions.AgentLaunchContext{
+		Command:           "codex",
+		Embedded:          true,
+		FlowID:            "flow-1",
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		InitialPrompt:     "Build it",
+	})
+	if err != nil {
+		t.Fatalf("prefill returned error: %v", err)
+	}
+
+	if term.visibleHits != 2 {
+		t.Fatalf("visible calls = %d, want wait until second ready frame", term.visibleHits)
+	}
+	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
+	if len(term.writes) != 1 || term.writes[0] != wantWrite {
+		t.Fatalf("writes = %#v, want %q", term.writes, wantWrite)
+	}
+}
 
 func internalFlowsModel(records ...flowstore.FlowRecord) Model {
 	return Model{
@@ -170,6 +235,135 @@ func waitInternalFileContains(t *testing.T, path, want string) {
 	}
 	body, _ := os.ReadFile(path)
 	t.Fatalf("%s did not contain %q:\n%s", path, want, body)
+}
+
+func TestActiveTerminalRepoPathsIncludesOnlyRunningOwnedTerminals(t *testing.T) {
+	m := Model{
+		embeddedTerminals: []embeddedTerminalSlot{
+			{RepoPath: "/dev/alpha", Terminal: internalFakeEmbeddedTerminal{}},
+			{RepoPath: "/dev/beta", Terminal: internalFakeEmbeddedTerminal{state: "exited"}},
+			{RepoPath: "/dev/gamma", Terminal: internalFakeEmbeddedTerminal{state: "starting"}},
+			{RepoPath: "", Terminal: internalFakeEmbeddedTerminal{}},
+			{RepoPath: "/dev/delta", Terminal: nil},
+		},
+	}
+
+	active := m.activeTerminalRepoPaths()
+
+	for _, repoPath := range []string{"/dev/alpha", "/dev/gamma"} {
+		if !active[repoPath] {
+			t.Fatalf("active terminal repo paths missing %s: %#v", repoPath, active)
+		}
+	}
+	for _, repoPath := range []string{"/dev/beta", "", "/dev/delta"} {
+		if active[repoPath] {
+			t.Fatalf("active terminal repo paths unexpectedly includes %q: %#v", repoPath, active)
+		}
+	}
+}
+
+func TestActiveTerminalRepoPathsClearsWhenLastRunningSlotIsDismissed(t *testing.T) {
+	m := Model{
+		embeddedTerminals: []embeddedTerminalSlot{
+			{ID: 1, Number: 1, Scope: embeddedTerminalScopeSession, RepoPath: "/dev/alpha", Terminal: internalFakeEmbeddedTerminal{state: "exited"}},
+			{ID: 2, Number: 2, Scope: embeddedTerminalScopeSession, RepoPath: "/dev/alpha", Terminal: internalFakeEmbeddedTerminal{}},
+		},
+	}
+
+	if !m.activeTerminalRepoPaths()["/dev/alpha"] {
+		t.Fatalf("repo should remain active while one matching slot is running")
+	}
+
+	m = m.dismissEmbeddedTerminal(2)
+
+	if m.activeTerminalRepoPaths()["/dev/alpha"] {
+		t.Fatalf("repo should stop being active after last running slot is dismissed")
+	}
+}
+
+func TestOpenEmbeddedTerminalStoresSessionRepoPath(t *testing.T) {
+	m := Model{
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+
+	next, opened, err := m.openEmbeddedTerminal(actions.AgentLaunchContext{
+		RepoPath:     "/dev/alpha/",
+		WorktreePath: "/dev/alpha-worktrees/feature",
+	}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"})
+	if err != nil {
+		t.Fatalf("open embedded terminal returned error: %v", err)
+	}
+	if !opened {
+		t.Fatal("open embedded terminal should open a slot")
+	}
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminal count = %d, want 1", len(next.embeddedTerminals))
+	}
+	if got := next.embeddedTerminals[0].RepoPath; got != "/dev/alpha" {
+		t.Fatalf("slot repo path = %q, want cleaned repo path %q", got, "/dev/alpha")
+	}
+}
+
+func TestOpenFlowEmbeddedTerminalStoresFlowRepoPath(t *testing.T) {
+	m := Model{
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+
+	next, opened, err := m.openFlowEmbeddedTerminal(actions.AgentLaunchContext{
+		Command:       "codex",
+		RepoPath:      "/dev/alpha",
+		WorktreePath:  "/dev/alpha-worktrees/feature",
+		FlowID:        "flow-1",
+		FlowPhaseID:   "implementation",
+		InitialPrompt: "Build it",
+	})
+	if err != nil {
+		t.Fatalf("open Flow embedded terminal returned error: %v", err)
+	}
+	if !opened {
+		t.Fatal("open Flow embedded terminal should open a slot")
+	}
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminal count = %d, want 1", len(next.embeddedTerminals))
+	}
+	if got := next.embeddedTerminals[0].RepoPath; got != "/dev/alpha" {
+		t.Fatalf("slot repo path = %q, want repo path %q", got, "/dev/alpha")
+	}
+}
+
+func TestViewMarksRepoWithRunningTerminalByCleanRepoPath(t *testing.T) {
+	m := Model{
+		width:      80,
+		height:     12,
+		mode:       ui.ModeWorktrees,
+		activePane: 0,
+		repos: newRepoPane().SetItems([]scanner.Repo{
+			{Path: "/dev/alpha", DisplayName: "alpha"},
+			{Path: "/dev/alpha-worktrees/feature", DisplayName: "feature"},
+		}),
+		embeddedTerminals: []embeddedTerminalSlot{
+			{
+				RepoPath: "/dev/alpha/",
+				Terminal: internalFakeEmbeddedTerminal{},
+			},
+		},
+	}
+
+	view := ansi.Strip(m.View())
+
+	if !strings.Contains(view, " > ● alpha") {
+		t.Fatalf("view should mark repo with running terminal:\n%s", view)
+	}
+	if !strings.Contains(view, "     feature") {
+		t.Fatalf("view should reserve inactive marker spacing for worktree row without marking it:\n%s", view)
+	}
+	if strings.Contains(view, "● feature") {
+		t.Fatalf("view should not mark worktree path as active repo:\n%s", view)
+	}
 }
 
 func TestSyncActiveFlowTerminalToSelectedFlowSelectsNewestMatchingTerminal(t *testing.T) {

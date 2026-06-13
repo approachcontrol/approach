@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -20,6 +23,16 @@ import (
 )
 
 const embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
+
+const (
+	embeddedPromptPasteStart = "\x1b[200~"
+	embeddedPromptPasteEnd   = "\x1b[201~"
+)
+
+var (
+	embeddedPromptPrefillTimeout      = 2 * time.Second
+	embeddedPromptPrefillPollInterval = 25 * time.Millisecond
+)
 
 // terminalCommandKey toggles wtui command handling inside embedded terminals.
 // It must stay off keys interactive agents bind themselves (Claude Code and
@@ -69,6 +82,7 @@ type embeddedTerminalSlot struct {
 	Scope       embeddedTerminalScope
 	Provider    string
 	Identity    string
+	RepoPath    string
 	FlowID      string
 	FlowPhaseID string
 	Terminal    EmbeddedTerminal
@@ -212,6 +226,18 @@ func (m Model) flowTerminalActivity() []ui.FlowTerminalActivity {
 	return activity
 }
 
+func (m Model) activeTerminalRepoPaths() map[string]bool {
+	active := make(map[string]bool)
+	for _, slot := range m.embeddedTerminals {
+		repoPath := cleanEmbeddedTerminalRepoPath(slot.RepoPath)
+		if repoPath == "" || !embeddedTerminalRunning(slot.Terminal) {
+			continue
+		}
+		active[repoPath] = true
+	}
+	return active
+}
+
 func (m Model) syncActiveFlowTerminalToSelectedFlow() Model {
 	if m.mode != ui.ModeFlows {
 		return m
@@ -349,12 +375,20 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		m = m.setStatus(statusOther, err.Error())
 		return m, false, err
 	}
+	if err := prefillEmbeddedPromptIfNeeded(term, ctx); err != nil {
+		if terminateErr := term.Terminate(); terminateErr != nil {
+			err = errors.Join(err, fmt.Errorf("terminate embedded terminal after prefill failure: %w", terminateErr))
+		}
+		m = m.setStatus(statusOther, err.Error())
+		return m, false, err
+	}
 	m.nextEmbeddedTerminalID++
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
 		Number:      number,
 		Scope:       scope,
 		Provider:    provider,
 		Identity:    identity,
+		RepoPath:    cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
 		FlowID:      flowID,
 		FlowPhaseID: flowPhaseID,
 		Terminal:    term,
@@ -366,6 +400,112 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		m.activeEmbeddedTerminalNum = number
 	}
 	return m, true, nil
+}
+
+func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunchContext) error {
+	if !actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		return nil
+	}
+	waitForEmbeddedPromptPrefillReady(term)
+	payload := []byte(embeddedPromptPasteStart + sanitizeEmbeddedPromptPaste(ctx.InitialPrompt) + embeddedPromptPasteEnd)
+	n, err := term.Write(payload)
+	if err != nil {
+		return fmt.Errorf("prefill embedded prompt: %w", err)
+	}
+	if n != len(payload) {
+		return fmt.Errorf("prefill embedded prompt: %w: wrote %d of %d bytes", io.ErrShortWrite, n, len(payload))
+	}
+	return nil
+}
+
+func waitForEmbeddedPromptPrefillReady(term EmbeddedTerminal) {
+	if term == nil || embeddedPromptPrefillTimeout <= 0 {
+		return
+	}
+	deadline := time.Now().Add(embeddedPromptPrefillTimeout)
+	for {
+		lines := term.VisibleLines(80, 24)
+		if len(lines) == 0 || embeddedTerminalHasVisibleOutput(lines) {
+			return
+		}
+		if !embeddedTerminalRunning(term) || !time.Now().Before(deadline) {
+			return
+		}
+		if embeddedPromptPrefillPollInterval > 0 {
+			time.Sleep(embeddedPromptPrefillPollInterval)
+		}
+	}
+}
+
+func embeddedTerminalHasVisibleOutput(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeEmbeddedPromptPaste(prompt string) string {
+	var b strings.Builder
+	b.Grow(len(prompt))
+	for i := 0; i < len(prompt); {
+		c := prompt[i]
+		if c == 0x1b {
+			i = skipTerminalEscape(prompt, i)
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(prompt[i:])
+		if r == utf8.RuneError && size == 1 {
+			i++
+			continue
+		}
+		i += size
+		switch r {
+		case '\n', '\t':
+			b.WriteRune(r)
+		default:
+			if !unicode.IsControl(r) {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
+}
+
+func skipTerminalEscape(s string, i int) int {
+	if i+1 >= len(s) {
+		return len(s)
+	}
+	switch s[i+1] {
+	case '[':
+		for j := i + 2; j < len(s); j++ {
+			if s[j] >= 0x40 && s[j] <= 0x7e {
+				return j + 1
+			}
+		}
+		return len(s)
+	case ']':
+		for j := i + 2; j < len(s); j++ {
+			if s[j] == 0x07 {
+				return j + 1
+			}
+			if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+				return j + 2
+			}
+		}
+		return len(s)
+	default:
+		return i + 2
+	}
+}
+
+func cleanEmbeddedTerminalRepoPath(repoPath string) string {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return ""
+	}
+	return filepath.Clean(repoPath)
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {

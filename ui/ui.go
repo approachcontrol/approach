@@ -215,6 +215,7 @@ const StashPrefixWidth = 15
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
 	Repos                       []scanner.Repo
+	ActiveTerminalRepoPaths     map[string]bool
 	Selected                    int
 	Width                       int
 	Height                      int
@@ -542,7 +543,7 @@ func renderApplication(p RenderParams) string {
 	}
 
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
-	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage)
+	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -1755,7 +1756,7 @@ func modeShortcutTitle(mode Mode) string {
 	}
 }
 
-func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string) []string {
+func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string, activeTerminalRepoPaths map[string]bool) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -1768,16 +1769,24 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 		return lines
 	}
 
+	showActivityColumn := repoListHasActiveTerminal(repos, activeTerminalRepoPaths)
+
 	for i := 0; i < height; i++ {
 		idx := scroll + i
 		if idx < len(repos) {
 			name := repos[idx].DisplayName
+			activeRepo := repoHasActiveTerminal(activeTerminalRepoPaths, repos[idx].Path)
+			activityMarker := ""
+			if showActivityColumn {
+				activityMarker = "  "
+				if activeRepo {
+					activityMarker = "● "
+				}
+			}
 			if idx == selected {
-				line := truncateToWidth(fmt.Sprintf(" > %s", name), width)
-				lines[i] = selectedStyle.Width(width).Render(line)
+				lines[i] = renderSelectedRepoRow(name, activityMarker, activeRepo, showActivityColumn, width)
 			} else {
-				line := truncateToWidth(fmt.Sprintf("   %s", name), width)
-				lines[i] = repoStyle.Width(width).Render(line)
+				lines[i] = renderRepoRow(name, activityMarker, activeRepo, showActivityColumn, width)
 			}
 		} else {
 			lines[i] = strings.Repeat(" ", width)
@@ -1785,6 +1794,58 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	}
 
 	return lines
+}
+
+func renderSelectedRepoRow(name, activityMarker string, activeRepo, showActivityColumn bool, width int) string {
+	line := selectedStyle.Render(" > ")
+	if showActivityColumn {
+		if activeRepo {
+			line += selectedSegment(cleanStyle, "●") + selectedStyle.Render(" ")
+		} else {
+			line += selectedStyle.Render(activityMarker)
+		}
+	}
+	line += selectedStyle.Render(name)
+	return renderSelectedRow(line, width)
+}
+
+func renderRepoRow(name, activityMarker string, activeRepo, showActivityColumn bool, width int) string {
+	line := repoStyle.Render("   ")
+	if showActivityColumn {
+		if activeRepo {
+			line += cleanStyle.Render("●") + repoStyle.Render(" ")
+		} else {
+			line += repoStyle.Render(activityMarker)
+		}
+	}
+	line += repoStyle.Render(name)
+	return renderStyledRow(line, repoStyle, width)
+}
+
+func repoHasActiveTerminal(activeTerminalRepoPaths map[string]bool, repoPath string) bool {
+	if len(activeTerminalRepoPaths) == 0 {
+		return false
+	}
+	if activeTerminalRepoPaths[repoPath] {
+		return true
+	}
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return false
+	}
+	return activeTerminalRepoPaths[filepath.Clean(repoPath)]
+}
+
+func repoListHasActiveTerminal(repos []scanner.Repo, activeTerminalRepoPaths map[string]bool) bool {
+	if len(activeTerminalRepoPaths) == 0 {
+		return false
+	}
+	for _, repo := range repos {
+		if repoHasActiveTerminal(activeTerminalRepoPaths, repo.Path) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderBranchPaneSelected(rows []gitquery.BranchRow, selected, scroll, width, height int, repoPath string) []string {
@@ -3856,9 +3917,13 @@ func selectedSegment(style lipgloss.Style, text string) string {
 }
 
 func renderSelectedRow(line string, width int) string {
+	return renderStyledRow(line, selectedStyle, width)
+}
+
+func renderStyledRow(line string, style lipgloss.Style, width int) string {
 	line = truncateToWidth(line, width)
 	if padding := width - lipgloss.Width(line); padding > 0 {
-		line += selectedStyle.Render(strings.Repeat(" ", padding))
+		line += style.Render(strings.Repeat(" ", padding))
 	}
 	return line
 }
