@@ -539,6 +539,11 @@ func (m Model) launchReasoningEffortFor(command string) string {
 	}
 }
 
+func (m Model) flowLaunchAgentSettings() (string, string) {
+	command := agent.Normalize(m.agentCommand)
+	return command, m.launchReasoningEffortFor(command)
+}
+
 func (m Model) flowReasoningEffortLabel() string {
 	command := agent.Normalize(m.agentCommand)
 	switch command {

@@ -459,14 +459,15 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 	if !ok {
 		return nil
 	}
+	command, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
 			RepoPath:         repoPath,
 			Title:            title,
 			Instructions:     instructions,
 			BaseRef:          baseRef,
-			AgentCommand:     m.agentCommand,
-			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+			AgentCommand:     command,
+			ReasoningEffort:  reasoningEffort,
 			SessionStateRoot: m.sessionStateRoot,
 			PlanPhaseID:      flowPlanPhaseID,
 			PlanPhaseTitle:   "Plan",

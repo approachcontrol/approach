@@ -1305,7 +1305,8 @@ func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	launchID := newLaunchID()
-	switch agent.Normalize(next.agentCommand) {
+	command, _ := next.flowLaunchAgentSettings()
+	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
 		return next, next.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
 	}
@@ -1345,7 +1346,8 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			continue
 		}
 		launchID := newLaunchID()
-		switch agent.Normalize(next.agentCommand) {
+		command, _ := next.flowLaunchAgentSettings()
+		switch command {
 		case agent.CommandCodex, agent.CommandClaude:
 			cmds = append(cmds, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless))
 			continue
@@ -1603,9 +1605,10 @@ func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flow
 		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
 			launchPhase = persistedPhase
 		}
+		command, reasoningEffort := m.flowLaunchAgentSettings()
 		return wrap(actions.AgentLaunchContext{
-			Command:          m.agentCommand,
-			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+			Command:          command,
+			ReasoningEffort:  reasoningEffort,
 			LaunchID:         launchID,
 			RepoPath:         repoPath,
 			WorktreePath:     worktreePath,

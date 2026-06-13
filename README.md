@@ -330,7 +330,8 @@ runtime-only embedded terminal inside the flows pane. Press `h` to choose the
 CLI command mode: headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. The same command mode applies to the initial Plan launch when creating
-a new Flow. Press
+a new Flow. Manual phase launches, auto-launched phases, and new Flow Plan
+launches all use the configured agent and that agent's configured effort. Press
 `E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
 the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
