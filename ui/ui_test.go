@@ -2168,10 +2168,11 @@ func TestRepoList_RendersActiveTerminalMarkersWithStableSpacing(t *testing.T) {
 		}
 	}
 	for i, line := range lines {
-		if !strings.Contains(line, cleanStyle.Render("●")) {
-			if i == 0 || i == 2 {
-				t.Fatalf("active line %d should render marker with clean style: %q", i, line)
-			}
+		if i == 0 && !strings.Contains(line, selectedSegment(cleanStyle, "●")) {
+			t.Fatalf("selected active line should render marker with selected clean style: %q", line)
+		}
+		if i == 2 && !strings.Contains(line, cleanStyle.Render("●")) {
+			t.Fatalf("active line %d should render marker with clean style: %q", i, line)
 		}
 		if lipgloss.Width(line) != width {
 			t.Fatalf("line %d width = %d, want %d: %q", i, lipgloss.Width(line), width, stripped[i])
@@ -2182,6 +2183,32 @@ func TestRepoList_RendersActiveTerminalMarkersWithStableSpacing(t *testing.T) {
 	stripped = stripLines(lines)
 	if !strings.HasPrefix(stripped[1], " >   bravo") {
 		t.Fatalf("selected inactive line = %q, want prefix %q", stripped[1], " >   bravo")
+	}
+}
+
+func TestRepoList_ActiveTerminalMarkerRestoresRowStyle(t *testing.T) {
+	forceTrueColor(t)
+	width := LeftPaneWidth - 2
+	repos := []scanner.Repo{
+		{Path: "/alpha", DisplayName: "alpha"},
+		{Path: "/bravo", DisplayName: "bravo"},
+	}
+	activeRepos := map[string]bool{"/alpha": true}
+
+	selectedActive := renderRepoList(repos, 0, 0, width, len(repos), "", activeRepos)[0]
+	if !strings.Contains(selectedActive, selectedSegment(cleanStyle, "●")) {
+		t.Fatalf("selected active marker should keep marker color with selected row styling: %q", selectedActive)
+	}
+	if !strings.Contains(selectedActive, selectedStyle.Render("alpha")) {
+		t.Fatalf("selected active row should restore selected styling after marker: %q", selectedActive)
+	}
+
+	unselectedActive := renderRepoList(repos, 1, 0, width, len(repos), "", activeRepos)[0]
+	if !strings.Contains(unselectedActive, cleanStyle.Render("●")) {
+		t.Fatalf("unselected active marker should keep marker color: %q", unselectedActive)
+	}
+	if !strings.Contains(unselectedActive, repoStyle.Render("alpha")) {
+		t.Fatalf("unselected active row should restore repo styling after marker: %q", unselectedActive)
 	}
 }
 
