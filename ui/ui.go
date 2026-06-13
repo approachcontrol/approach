@@ -285,7 +285,6 @@ type RenderParams struct {
 	SelectedPlanPhaseID         string
 	SelectedFlowPhaseID         string
 	FlowHeadless                bool
-	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
@@ -449,10 +448,8 @@ func renderApplication(p RenderParams) string {
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
-	flowAutoModeSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
-		flowAutoModeSelected = p.FlowAutoModeSelected
 	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
@@ -462,7 +459,6 @@ func renderApplication(p RenderParams) string {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
-		flowAutoModeSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
 	flowPhaseSelected := selectedFlowPhaseID != ""
@@ -471,6 +467,7 @@ func renderApplication(p RenderParams) string {
 		Mode:                        p.Mode,
 		Overlay:                     p.Overlay,
 		InputMode:                   inputRenderParamsFrom(p).mode,
+		FormHasMultiline:            formHasMultilineField(p.Form),
 		WorktreeInputPrompt:         p.WorktreeInputPrompt,
 		ActivePane:                  p.ActivePane,
 		Destructive:                 p.Destructive,
@@ -500,7 +497,6 @@ func renderApplication(p RenderParams) string {
 		FlowDeletableSelected:       flowDeletableSelected,
 		FlowPlanLinked:              flowPlanLinked,
 		FlowHeadless:                p.FlowHeadless,
-		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
 		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
@@ -730,6 +726,7 @@ type statusBarParams struct {
 	Mode                        Mode
 	Overlay                     OverlayState
 	InputMode                   InputMode
+	FormHasMultiline            bool
 	WorktreeInputPrompt         string
 	ActivePane                  int
 	Destructive                 bool
@@ -759,7 +756,6 @@ type statusBarParams struct {
 	FlowDeletableSelected       bool
 	FlowPlanLinked              bool
 	FlowHeadless                bool
-	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
 	FlowPhaseLaunchReady        bool
 	FlowPhaseResetReadySelected bool
@@ -861,7 +857,10 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	case overlay == OverlaySelect:
 		return renderStatusText(width, "  up/down select  enter: confirm  esc: cancel")
 	case overlay == OverlayForm:
-		return renderStatusText(width, "  tab/up/down: fields  space: toggle/select  enter: submit  esc: cancel")
+		if sp.FormHasMultiline {
+			return renderStatusText(width, "  tab/shift+tab: fields  alt+enter: newline  enter: submit  esc: cancel")
+		}
+		return renderStatusText(width, "  tab/shift+tab: fields  space: toggle/select  enter: submit  esc: cancel")
 	case overlay != OverlayNone:
 		return statusStyle.Width(width).Render("  ↑/↓ scroll  esc: close")
 	}
@@ -1190,7 +1189,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 			actions = append(actions, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 			if sp.FlowSelected {
-				autoHint := flowAutoModeShortcutHint(sp.FlowAutoModeSelected)
 				if sp.FlowPhaseSelected {
 					if sp.FlowPhaseLaunchReady {
 						actions = append(actions, shortcutHint{Key: "enter", Label: "launch phase"})
@@ -1202,7 +1200,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.FlowPhaseResumableSelected {
 						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 					}
-					actions = append(actions, autoHint)
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 					if sp.FlowPlanLinked {
@@ -1212,7 +1209,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.Destructive && sp.FlowDeletableSelected {
 						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 					}
-					actions = append(actions, autoHint)
 				}
 			}
 			actions = append(actions, shortcutHint{Key: "E", Label: flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort)})
@@ -1248,13 +1244,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	sections = append(sections, shortcutSection{Title: "Global", Hints: global})
 	return sections
-}
-
-func flowAutoModeShortcutHint(enabled bool) shortcutHint {
-	if enabled {
-		return shortcutHint{Key: "m", Label: "auto: on", SuccessSuffix: "on"}
-	}
-	return shortcutHint{Key: "m", Label: "auto: off"}
 }
 
 func shortcutsMuted(sp statusBarParams) bool {
@@ -2294,15 +2283,6 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
 		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
 		titleCell := stashMsgStyle.Render(record.Title)
-		if record.AutoMode && !rowSelected {
-			statusCell = flowAutoModeStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
-			branchCell = flowAutoModeStyle.Render(fitSessionColumn(branch, flowBranchWidth))
-			phaseCell = flowAutoModeStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
-			planCell = flowAutoModeStyle.Render(fitSessionColumn(plan, flowPlanWidth))
-			prCell = flowAutoModeStyle.Render(fitSessionColumn(pr, flowPRWidth))
-			updatedCell = flowAutoModeStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
-			titleCell = flowAutoModeStyle.Render(record.Title)
-		}
 		line := formatFlowColumns(flowRowPrefix(false, active.hasFlow(record.FlowID)),
 			statusCell,
 			branchCell,
@@ -3065,6 +3045,7 @@ func renderOverlay(p RenderParams) string {
 		Mode:                   p.Mode,
 		Overlay:                p.Overlay,
 		InputMode:              inputParams.mode,
+		FormHasMultiline:       formHasMultilineField(p.Form),
 		WorktreeInputPrompt:    inputParams.prompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
@@ -3090,7 +3071,10 @@ func renderOverlay(p RenderParams) string {
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayForm {
-		lines := renderFormDialogOverApplication(p, contentHeight)
+		lines := renderFormDialog(p.Form, p.Width, contentHeight)
+		if p.Form.Purpose == "flow-create" {
+			lines = renderFormDialogOverApplication(p, contentHeight)
+		}
 		return strings.Join(lines, "\n") + "\n" + statusBar
 	}
 	if p.Overlay == OverlayPlanText {
@@ -3150,14 +3134,8 @@ func renderFormDialogOverApplication(p RenderParams, contentHeight int) []string
 	for i := 0; i < contentHeight && i < len(base); i++ {
 		lines[i] = base[i]
 	}
-	panelLines := renderFormDialog(p.Form, p.Width, contentHeight)
-	for i, line := range panelLines {
-		if strings.TrimSpace(ansi.Strip(line)) == "" {
-			continue
-		}
-		lines[i] = line
-	}
-	return lines
+	panelLines, x, y := formDialogPanel(p.Form, p.Width, contentHeight)
+	return compositePanel(lines, panelLines, x, y, p.Width)
 }
 
 func renderConfirmDialog(prompt string, force bool, width, height int) []string {
@@ -3179,8 +3157,23 @@ func renderConfirmDialog(prompt string, force bool, width, height int) []string 
 
 func renderFormDialog(form FormView, width, height int) []string {
 	lines := make([]string, height)
-	if width <= 0 || height <= 0 {
+	panelLines, _, top := formDialogPanel(form, width, height)
+	if len(panelLines) == 0 {
 		return lines
+	}
+	for i, line := range panelLines {
+		row := top + i
+		if row >= len(lines) {
+			break
+		}
+		lines[row] = centeredLine(line, width)
+	}
+	return lines
+}
+
+func formDialogPanel(form FormView, width, height int) ([]string, int, int) {
+	if width <= 0 || height <= 0 {
+		return nil, 0, 0
 	}
 	panelWidth := formPanelWidth(form, width)
 	contentWidth := panelWidth - 4
@@ -3208,14 +3201,26 @@ func renderFormDialog(form FormView, width, height int) []string {
 	if top < 0 {
 		top = 0
 	}
-	for i, line := range panelLines {
-		row := top + i
-		if row >= len(lines) {
-			break
+	renderedPanelWidth := 0
+	for _, line := range panelLines {
+		if lineWidth := lipgloss.Width(line); lineWidth > renderedPanelWidth {
+			renderedPanelWidth = lineWidth
 		}
-		lines[row] = centeredLine(line, width)
 	}
-	return lines
+	x := (width - renderedPanelWidth) / 2
+	if x < 0 {
+		x = 0
+	}
+	return panelLines, x, top
+}
+
+func formHasMultilineField(form FormView) bool {
+	for _, field := range form.Fields {
+		if field.Kind == FormMultilineText {
+			return true
+		}
+	}
+	return false
 }
 
 func formPanelWidth(form FormView, width int) int {

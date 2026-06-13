@@ -262,19 +262,6 @@ type FlowResultMsg struct {
 	ListRequest uint64
 }
 
-type FlowAutoModeSetMsg struct {
-	RepoPath string
-	FlowID   string
-	Flow     flowstore.FlowRecord
-	Enabled  bool
-}
-
-type FlowAutoModeSetFailedMsg struct {
-	RepoPath string
-	FlowID   string
-	Err      string
-}
-
 type PlanReadResultMsg struct {
 	RepoPath    string
 	PlanID      string
@@ -1195,13 +1182,12 @@ func (m Model) handlePlanResult(msg PlanResultMsg) Model {
 	return m
 }
 
-func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
+func (m Model) handleFlowResult(msg FlowResultMsg) Model {
 	var ok bool
 	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeFlows, msg.ListRequest)
 	if !ok {
-		return m, nil
+		return m
 	}
-	previousFlows := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
 	selectedFlowID := m.selectedFlowID()
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
@@ -1213,54 +1199,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	}
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.clampSelectionsAfterFilter()
-	return m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
-}
-
-func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || msg.FlowID == "" {
-		return m
-	}
-	return m.replaceFlowRecord(msg.Flow)
-}
-
-func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
-		return m
-	}
-	errText := strings.TrimSpace(msg.Err)
-	if errText == "" {
-		errText = "failed to set Flow auto mode"
-	}
-	return m.setStatus(statusOther, errText)
-}
-
-func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
-	if flow.FlowID == "" {
-		return m
-	}
-	selectedFlowID := m.selectedFlowID()
-	expandedFlowID := m.expandedFlowID
-	selectedFlowPhaseID := m.selectedFlowPhaseID
-	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
-	replaced := false
-	for i := range items {
-		if items[i].FlowID == flow.FlowID {
-			items[i] = flow
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		return m
-	}
-	m.flows = m.flows.SetItems(items)
-	if selectedFlowID != "" {
-		m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool {
-			return record.FlowID == selectedFlowID
-		})
-	}
-	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
-	return m.clampSelectionsAfterFilter()
+	return m
 }
 
 func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {

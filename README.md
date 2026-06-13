@@ -83,7 +83,7 @@ filter matches, or a load failure with details in the status bar.
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
-| `m` | Move or rename a linked worktree (worktrees view), or toggle auto mode for the selected Flow (flows view) |
+| `m` | Move or rename a linked worktree (worktrees view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
@@ -300,37 +300,30 @@ skill dirs for use across repos. v1 has no TUI plan deletion.
 
 Browse persisted Flow records for the selected repo. Rows show status, branch
 or worktree basename, phase progress plus the current phase state, linked plan
-ID when present, PR number or label, updated date, and title. Auto-mode Flows
-use a subtle non-selected row highlight. Use `/` to filter
+ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
-`n` to create a new Flow. On a Flow row, `enter` expands or collapses phase
-detail rows; `o` pages the linked plan body in `less -R`, and wtui shows a
-status message when the selected Flow has no linked plan. With destructive mode
-enabled (`D`), `d` deletes only the selected top-level Flow record under the
-Flow artifact store; it does not remove repositories, worktrees, branches,
-checked-out code, linked plans, sessions, transcripts, or active embedded
-terminals. Expanded phase rows cannot be deleted with this action. On an
+`n` to create a new Flow with one form for title, multiline instructions, and
+optional base ref; use `alt+enter` for instruction newlines. On a Flow row,
+`enter` expands or collapses phase detail rows; `o` pages the linked plan body
+in `less -R`, and wtui shows a status message when the selected Flow has no
+linked plan. With destructive mode enabled (`D`), `d` deletes only the selected
+top-level Flow record under the Flow artifact store; it does not remove
+repositories, worktrees, branches, checked-out code, linked plans, sessions,
+transcripts, or active embedded terminals. Expanded phase rows cannot be deleted
+with this action. On an
 expanded phase row, `enter` launches the configured agent for that selected
 phase when it is ready, and it never falls back to another ready phase in the
 same Flow. Press `y` to copy the selected Flow ID, or the selected phase ID
 when a phase row is selected. Press `r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
-existing app thread without extra launch tracking. Press `m` on a Flow row or
-expanded phase row to toggle per-Flow auto mode, which is off by default and
-persisted on that Flow record. When auto mode is on, a successful completed
-phase transition launches the next ready non-merge phase in that same Flow
-through the same path as pressing `enter`; skipped, blocked, needs-attention,
-failed-launch, or missing-PR-metadata states do not auto-launch. Automation
-stops before Merge: if Autoreview completes and Merge becomes ready, wtui keeps
-auto mode on and requires the existing manual Merge launch. Flow headless mode
-is on by default: selected CLI `codex` and `claude` phase launches run in a
-runtime-only embedded terminal inside the flows pane. Press `h` to choose the
-CLI command mode: headless runs `codex exec` or `claude --print`, while
-headless off runs interactive `codex` or `claude` in the same embedded Flow
-terminal. The same command mode applies to the initial Plan launch when creating
-a new Flow. Press
+existing app thread without extra launch tracking. Flow headless mode is on by
+default: selected CLI `codex` and `claude` phase launches run in a runtime-only
+embedded terminal inside the flows pane. Press `h` to choose the CLI command
+mode: headless runs `codex exec` or `claude --print`, while headless off runs
+interactive `codex` or `claude` in the same embedded Flow terminal. The same
+command mode applies to the initial Plan launch when creating a new Flow. Press
 `E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
 the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
@@ -384,9 +377,6 @@ wtui flow create --title "Ship saved plans" \
 # List or read flows.
 wtui flow list --repo-path "$REPO" --json
 wtui flow read --flow-id "$FLOW_ID"
-
-# Enable or disable TUI auto mode for one flow.
-wtui flow auto set --flow-id "$FLOW_ID" --enabled true
 
 # Link a saved plan artifact back to a flow.
 wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"

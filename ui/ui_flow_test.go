@@ -251,64 +251,6 @@ func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 	}
 }
 
-func TestRender_FlowsModeHighlightsAutoModeRowsWithoutShiftingColumns(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	previousDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(previousProfile)
-		lipgloss.SetHasDarkBackground(previousDarkBackground)
-	})
-
-	flows := []flowstore.FlowRecord{
-		{
-			FlowID:   "flow-auto",
-			Title:    "Auto flow",
-			Status:   flowstore.StatusInProgress,
-			Branch:   "flow/auto",
-			AutoMode: true,
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
-			},
-		},
-		{
-			FlowID: "flow-manual",
-			Title:  "Manual flow",
-			Status: flowstore.StatusInProgress,
-			Branch: "flow/manual",
-			Phases: []flowstore.FlowPhase{
-				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
-			},
-		},
-	}
-
-	view := strings.Join(renderFlowPane(flows, -1, 0, 220, 6, "", "", nil), "\n")
-	autoRow := rawLineContaining(view, "flow/auto")
-	manualRow := rawLineContaining(view, "flow/manual")
-	if want := flowAutoModeStyle.Render(fitSessionColumn(flowstore.StatusInProgress, flowStatusWidth)); !strings.Contains(autoRow, want) {
-		t.Fatalf("auto-mode row should style status with auto highlight:\n%q\nmissing %q", autoRow, want)
-	}
-	if want := flowAutoModeStyle.Render("Auto flow"); !strings.Contains(autoRow, want) {
-		t.Fatalf("auto-mode row should style title with auto highlight:\n%q\nmissing %q", autoRow, want)
-	}
-	if unwanted := flowAutoModeStyle.Render("Manual flow"); strings.Contains(manualRow, unwanted) {
-		t.Fatalf("manual non-selected row should not use auto highlight:\n%q", manualRow)
-	}
-	if visibleColumn(ansi.Strip(autoRow), "in_progress") != visibleColumn(ansi.Strip(manualRow), "in_progress") {
-		t.Fatalf("auto-mode highlight shifted status column, auto=%q manual=%q", ansi.Strip(autoRow), ansi.Strip(manualRow))
-	}
-
-	view = strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "", "", nil), "\n")
-	selectedAutoRow := rawLineContaining(view, "flow/auto")
-	if !strings.HasPrefix(selectedAutoRow, selectedStyle.Render(">  ")) {
-		t.Fatalf("selected auto-mode row should use selected row prefix, got %q", selectedAutoRow)
-	}
-	if want := selectedStyle.Render(fitSessionColumn(flowstore.StatusInProgress, flowStatusWidth)); !strings.Contains(selectedAutoRow, want) {
-		t.Fatalf("selected auto-mode row should keep selected styling:\n%q\nmissing %q", selectedAutoRow, want)
-	}
-}
-
 func visibleColumn(line, needle string) int {
 	index := strings.Index(line, needle)
 	if index < 0 {
@@ -636,49 +578,6 @@ func TestRender_FlowsModeShowsCopyPhaseIDShortcutForSelectedPhase(t *testing.T) 
 	}
 	if strings.Contains(pane, "y      copy id") {
 		t.Fatalf("selected Flow phase should not expose whole-flow copy shortcut:\n%s", view)
-	}
-}
-
-func TestRender_FlowsModeShowsAutoModeShortcutForSelectedFlowAndPhase(t *testing.T) {
-	base := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
-		Selected: 0,
-		Width:    180,
-		Height:   24,
-		Mode:     ModeFlows,
-		Flows: []flowstore.FlowRecord{{
-			FlowID: "flow-1",
-			Title:  "Auto mode flow",
-			Status: flowstore.StatusInProgress,
-			Phases: []flowstore.FlowPhase{{
-				PhaseID: "implementation",
-				Title:   "Implementation",
-				Status:  flowstore.PhaseReady,
-			}},
-		}},
-		ActivePane:   1,
-		FlowSelected: 0,
-	}
-
-	offPane := shortcutPaneText(Render(base))
-	if !strings.Contains(offPane, "m      auto: off") {
-		t.Fatalf("selected Flow should expose auto off shortcut:\n%s", offPane)
-	}
-	if strings.Contains(offPane, "m      move") {
-		t.Fatalf("Flows mode should not expose worktree move shortcut:\n%s", offPane)
-	}
-
-	base.FlowAutoModeSelected = true
-	onPane := shortcutPaneText(Render(base))
-	if !strings.Contains(onPane, "m      auto: on") {
-		t.Fatalf("selected Flow should expose auto on shortcut:\n%s", onPane)
-	}
-
-	base.ExpandedFlowID = "flow-1"
-	base.SelectedFlowPhaseID = "implementation"
-	phasePane := shortcutPaneText(Render(base))
-	if !strings.Contains(phasePane, "m      auto: on") {
-		t.Fatalf("selected Flow phase should expose parent auto shortcut:\n%s", phasePane)
 	}
 }
 
