@@ -695,7 +695,7 @@ func (m Model) View() string {
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
-		FlowPhaseLaunchReady:        m.selectedFlowPhaseLaunchReady(),
+		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
 		OverlayText:                 modalView.Text,
@@ -1145,6 +1145,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFlowTitleSubmitted(msg), nil
 	case FlowInstructionsSubmittedMsg:
 		return m.handleFlowInstructionsSubmitted(msg), nil
+	case FlowBaseRefSubmittedMsg:
+		return m.handleFlowBaseRefSubmitted(msg), nil
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:
@@ -1327,13 +1329,22 @@ func (m Model) selectedFlowPhaseResumable() bool {
 	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
 }
 
-func (m Model) selectedFlowPhaseLaunchReady() bool {
+func (m Model) selectedFlowHasLaunchablePhase() bool {
+	_, _, ok := m.selectedFlowNextLaunchablePhase()
+	return ok
+}
+
+func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
 	record, ok := m.selectedFlow()
-	if !ok {
-		return false
+	if !ok || record.FlowID == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
-	phase, ok := m.selectedFlowPhase()
-	return ok && flowPhaseCanLaunch(record, phase)
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if flowPhaseCanLaunch(record, phase) {
+			return record, phase, true
+		}
+	}
+	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 }
 
 func (m Model) selectedFlowPhaseResettable() bool {
