@@ -1222,7 +1222,9 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	}
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.clampSelectionsAfterFilter()
-	m = m.syncActiveFlowTerminalToSelectedFlow()
+	if m.flowFocus != flowFocusTerminal {
+		m = m.syncActiveFlowTerminalToSelectedFlow()
+	}
 	return m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
 }
 

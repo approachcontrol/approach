@@ -243,6 +243,47 @@ func TestHandleFlowResultSyncsTerminalAfterPreservingSelectedFlow(t *testing.T) 
 	}
 }
 
+func TestHandleFlowResultPreservesActiveTerminalWhileTerminalFocused(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.activeFlowTerminalNum = 2
+	m.flowFocus = flowFocusTerminal
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+	const request = 44
+	m.listRequests[int(ui.ModeFlows)] = request
+
+	m, _ = m.handleFlowResult(FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: request,
+		Flows: []flowstore.FlowRecord{
+			{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one updated"},
+			{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two updated"},
+		},
+	})
+
+	if got := m.selectedFlowID(); got != "flow-1" {
+		t.Fatalf("selected Flow = %q, want flow-1", got)
+	}
+	if m.activeFlowTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want explicitly selected terminal 2", m.activeFlowTerminalNum)
+	}
+}
+
 func TestHandleFlowResultPreservesActiveTerminalWhenClampedSelectionHasNoMatch(t *testing.T) {
 	m := internalFlowsModel(
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
