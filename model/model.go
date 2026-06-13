@@ -548,9 +548,18 @@ func (m Model) flowReasoningEffortLabel() string {
 	command := agent.Normalize(m.agentCommand)
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
-		return fmt.Sprintf("%s effort: %s", command, reasoningEffortDisplay(m.ReasoningEffortFor(command)))
+		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
 	case agent.CommandCodexApp:
-		return "codex-app default"
+		return "app default"
+	default:
+		return ""
+	}
+}
+
+func (m Model) flowAgentShortcutLabel() string {
+	switch command := agent.Normalize(m.agentCommand); command {
+	case agent.CommandCodex, agent.CommandCodexApp, agent.CommandClaude:
+		return command
 	default:
 		return "choose agent"
 	}
@@ -689,8 +698,9 @@ func (m Model) View() string {
 		SelectedFlowPhaseID:         m.selectedFlowPhaseID,
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
-		FlowPhaseLaunchReady:        m.selectedFlowPhaseLaunchReady(),
+		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
 		OverlayText:                 modalView.Text,
@@ -1140,6 +1150,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFlowTitleSubmitted(msg), nil
 	case FlowInstructionsSubmittedMsg:
 		return m.handleFlowInstructionsSubmitted(msg), nil
+	case FlowBaseRefSubmittedMsg:
+		return m.handleFlowBaseRefSubmitted(msg), nil
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:
@@ -1322,13 +1334,22 @@ func (m Model) selectedFlowPhaseResumable() bool {
 	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
 }
 
-func (m Model) selectedFlowPhaseLaunchReady() bool {
+func (m Model) selectedFlowHasLaunchablePhase() bool {
+	_, _, ok := m.selectedFlowNextLaunchablePhase()
+	return ok
+}
+
+func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
 	record, ok := m.selectedFlow()
-	if !ok {
-		return false
+	if !ok || record.FlowID == "" {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
-	phase, ok := m.selectedFlowPhase()
-	return ok && flowPhaseCanLaunch(record, phase)
+	for _, phase := range flowstore.OrderedPhases(record.Phases) {
+		if flowPhaseCanLaunch(record, phase) {
+			return record, phase, true
+		}
+	}
+	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 }
 
 func (m Model) selectedFlowPhaseResettable() bool {
