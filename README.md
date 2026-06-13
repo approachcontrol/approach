@@ -80,7 +80,7 @@ filter matches, or a load failure with details in the status bar.
 | `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
-| `ctrl+enter` | Launch the next launchable phase for the selected Flow in flows view; supported terminals report this to Bubble Tea as `ctrl+j` |
+| `ctrl+j` | Launch the next launchable phase for the selected Flow in flows view |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
@@ -313,8 +313,8 @@ Flow artifact store; it does not remove repositories, worktrees, branches,
 checked-out code, linked plans, sessions, transcripts, or active embedded
 terminals. Expanded phase rows cannot be deleted with this action. On a Flow
 row or an expanded phase row, `enter` expands or collapses the phase list. Press
-`ctrl+enter` to launch the first launchable phase in the selected Flow's
-canonical phase order; in terminals this is the `ctrl+j` key event. This action
+`ctrl+j` to launch the first launchable phase in the selected Flow's
+canonical phase order. This action
 uses the selected Flow, so a highlighted pending phase row can still launch an
 earlier ready sibling, and nothing is persisted when no phase is launchable.
 Press `y` to copy the selected Flow ID, or the selected phase ID when a phase
@@ -325,7 +325,7 @@ existing app thread without extra launch tracking. Press `m` on a Flow row or
 expanded phase row to toggle per-Flow auto mode, which is off by default and
 persisted on that Flow record. When auto mode is on, a successful completed
 phase transition launches the next ready non-merge phase in that same Flow
-through the same launch path as pressing `ctrl+enter`; skipped, blocked, needs-attention,
+through the same launch path as pressing `ctrl+j`; skipped, blocked, needs-attention,
 failed-launch, or missing-PR-metadata states do not auto-launch. Automation
 stops before Merge: if Autoreview completes and Merge becomes ready, wtui keeps
 auto mode on and requires the existing manual Merge launch. Flow headless mode
@@ -564,7 +564,7 @@ foundation fields for provider, launch, and agent settings.
 
 ### Agent session hooks
 
-CLI agents launched from wtui with `a`, `N`, Flow `ctrl+enter`, or
+CLI agents launched from wtui with `a`, `N`, Flow `ctrl+j`, or
 session resume `r` are wired automatically: wtui passes Claude Code or Codex a
 session-end hook that calls the current wtui binary, and it exports `WTUI_*`
 metadata so hook records can be associated with the repo, worktree, branch, and
