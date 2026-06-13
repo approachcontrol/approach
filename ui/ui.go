@@ -1027,6 +1027,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		if sp.EmbeddedTerminalPrefix {
 			hints = []shortcutHint{
 				{Key: "ctrl+]", Label: "send"},
+				{Key: "d", Label: "detach"},
 				{Key: "x", Label: "close"},
 				{Key: "q/esc", Label: "quit"},
 				{Key: "1-9", Label: "switch"},

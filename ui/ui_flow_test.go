@@ -933,7 +933,7 @@ func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}

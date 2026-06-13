@@ -213,12 +213,19 @@ exist, the saved-session table is hidden and the pane shows a compact numbered
 terminal header plus the active terminal screen. Keys go directly to the active
 PTY (including agent shortcuts like `ctrl+g`); press `ctrl+]` for wtui
 commands: `ctrl+] 1`-`9` switches terminals, `ctrl+] l` opens a saved-session
-picker, `ctrl+] x` dismisses an exited terminal or confirms termination of a
+picker, `ctrl+] d` detaches a tmux-backed terminal to its tmux session,
+`ctrl+] x` dismisses an exited terminal or confirms termination of a
 running one, `ctrl+] q` or `ctrl+] esc` quits with cleanup, and
 `ctrl+] ctrl+]` sends a literal `ctrl+]` to the agent.
+When `tmux` is available at launch time, embedded CLI terminals start inside a
+per-launch tmux session so detach can close wtui's embedded client while the
+agent keeps running in tmux. If `tmux` is unavailable, wtui keeps the direct
+embedded PTY behavior and `ctrl+] d` reports that detach is unavailable.
 Quitting wtui from anywhere while embedded terminals are still running asks for
-confirmation and terminates them first. Embedded terminals are not restored
-after wtui restarts.
+confirmation and terminates them first. Terminate/quit cleanup kills tmux
+sessions created by that embedded launch; detached tmux sessions are no longer
+owned by wtui and are not prompted for on quit. Embedded terminals are not
+restored after wtui restarts.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/wtui/sessions/v1`, or
@@ -351,8 +358,9 @@ still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them. Flow terminal focus starts in wtui command
 mode: `left`/`right` cycle Flow terminals, `1`-`9` switches by number, `x`
-closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
-`ctrl+]` sends a literal `ctrl+]`, and `i` enters terminal input mode. In input
+closes, `d` detaches to tmux when available, `q`/`esc` quits, unknown ordinary
+keys do not pass through to the PTY, `ctrl+]` sends a literal `ctrl+]`, and `i`
+enters terminal input mode. In input
 mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
 and `ctrl+]` returns to command mode. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state

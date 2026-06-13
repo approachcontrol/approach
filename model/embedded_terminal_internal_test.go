@@ -2,11 +2,13 @@ package model
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -26,6 +28,26 @@ func (t internalFakeEmbeddedTerminal) State() string {
 	}
 	return t.state
 }
+
+type internalFakeDetachableEmbeddedTerminal struct {
+	internalFakeEmbeddedTerminal
+	target   string
+	detached bool
+	writes   [][]byte
+}
+
+func (t *internalFakeDetachableEmbeddedTerminal) Write(p []byte) (int, error) {
+	t.writes = append(t.writes, append([]byte(nil), p...))
+	return len(p), nil
+}
+
+func (t *internalFakeDetachableEmbeddedTerminal) Detach() error {
+	t.detached = true
+	t.state = "exited"
+	return nil
+}
+
+func (t *internalFakeDetachableEmbeddedTerminal) DetachTarget() string { return t.target }
 
 func internalFlowsModel(records ...flowstore.FlowRecord) Model {
 	return Model{
@@ -444,5 +466,167 @@ func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 	}
 	if !m.terminalPrefixActive {
 		t.Fatal("session terminal command state should survive background Flow terminal dismissal")
+	}
+}
+
+func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	m := Model{
+		mode:                      ui.ModeSessions,
+		activeEmbeddedTerminalNum: 1,
+		terminalPrefixActive:      true,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:   1,
+			Scope:    embeddedTerminalScopeSession,
+			Provider: "codex",
+			Identity: "session",
+			Terminal: term,
+			ID:       1,
+		}},
+	}
+
+	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+
+	if !consumed {
+		t.Fatal("detach key should be consumed")
+	}
+	if !term.detached {
+		t.Fatal("terminal was not detached")
+	}
+	if len(next.embeddedTerminals) != 0 {
+		t.Fatalf("embedded terminals = %#v, want detached terminal dismissed", next.embeddedTerminals)
+	}
+	if !strings.Contains(next.status.Text, "wtui-agent-session") {
+		t.Fatalf("status = %q, want detach target", next.status.Text)
+	}
+}
+
+func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-flow-agent"}
+	m := Model{
+		mode:                  ui.ModeFlows,
+		activePane:            1,
+		flowFocus:             flowFocusTerminal,
+		activeFlowTerminalNum: 1,
+		terminalPrefixActive:  true,
+		terminalConfirmID:     1,
+		terminalConfirmScope:  embeddedTerminalScopeFlow,
+		modal:                 modal.OpenConfirm(embeddedTerminalTerminatePrompt, nil),
+		embeddedTerminals: []embeddedTerminalSlot{
+			{
+				Number:      1,
+				Scope:       embeddedTerminalScopeFlow,
+				Provider:    "codex",
+				Identity:    "implementation",
+				FlowID:      "flow-1",
+				FlowPhaseID: "implementation",
+				Terminal:    term,
+				ID:          1,
+			},
+			{
+				Number:      2,
+				Scope:       embeddedTerminalScopeFlow,
+				Provider:    "claude",
+				Identity:    "review",
+				FlowID:      "flow-1",
+				FlowPhaseID: "review",
+				Terminal:    internalFakeEmbeddedTerminal{},
+				ID:          2,
+			},
+			{
+				Number:   1,
+				Scope:    embeddedTerminalScopeSession,
+				Provider: "codex",
+				Identity: "session",
+				Terminal: internalFakeEmbeddedTerminal{},
+				ID:       3,
+			},
+		},
+	}
+
+	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
+
+	if !consumed {
+		t.Fatal("detach key should be consumed")
+	}
+	if !term.detached {
+		t.Fatal("terminal was not detached")
+	}
+	if len(next.embeddedTerminals) != 2 {
+		t.Fatalf("embedded terminals = %#v, want detached Flow terminal removed only", next.embeddedTerminals)
+	}
+	if next.embeddedTerminals[0].Scope != embeddedTerminalScopeFlow || next.embeddedTerminals[0].Number != 1 {
+		t.Fatalf("remaining Flow terminal not renumbered to 1: %#v", next.embeddedTerminals)
+	}
+	if next.embeddedTerminals[1].Scope != embeddedTerminalScopeSession || next.embeddedTerminals[1].Number != 1 {
+		t.Fatalf("session terminal should be preserved: %#v", next.embeddedTerminals)
+	}
+	if next.terminalConfirmID != 0 || next.modal.View().Kind != modal.None {
+		t.Fatalf("stale confirmation was not cleared: confirm=%d modal=%#v", next.terminalConfirmID, next.modal.View())
+	}
+	if activity := next.flowTerminalActivity(); len(activity) != 1 || activity[0].PhaseID != "review" {
+		t.Fatalf("flow terminal activity = %#v, want only remaining Flow terminal", activity)
+	}
+}
+
+func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
+	m := Model{
+		mode:                      ui.ModeSessions,
+		activeEmbeddedTerminalNum: 1,
+		terminalPrefixActive:      true,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:   1,
+			Scope:    embeddedTerminalScopeSession,
+			Provider: "codex",
+			Identity: "session",
+			Terminal: internalFakeEmbeddedTerminal{},
+			ID:       1,
+		}},
+	}
+
+	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+
+	if !consumed {
+		t.Fatal("detach key should be consumed")
+	}
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("non-detachable terminal should remain, got %#v", next.embeddedTerminals)
+	}
+	if !strings.Contains(next.status.Text, "Detach unavailable") {
+		t.Fatalf("status = %q, want unavailable message", next.status.Text)
+	}
+}
+
+func TestFlowTerminalInputModeDPassesThrough(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-flow-agent"}
+	m := Model{
+		mode:                  ui.ModeFlows,
+		activePane:            1,
+		flowFocus:             flowFocusTerminal,
+		activeFlowTerminalNum: 1,
+		terminalPrefixActive:  false,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			Provider: "codex",
+			Identity: "implementation",
+			Terminal: term,
+			ID:       1,
+		}},
+	}
+
+	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
+
+	if !consumed {
+		t.Fatal("terminal input key should be consumed")
+	}
+	if term.detached {
+		t.Fatal("input-mode d should not detach")
+	}
+	if len(term.writes) != 1 || string(term.writes[0]) != "d" {
+		t.Fatalf("writes = %#v, want d passed through", term.writes)
+	}
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("terminal should remain, got %#v", next.embeddedTerminals)
 	}
 }

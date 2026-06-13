@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"os"
@@ -818,6 +819,63 @@ func TestCodexAppLaunchRejectsUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	t.Setenv("TMUX", "/tmp/parent-tmux.sock")
+	ctx := planAgentContext()
+	ctx.Embedded = true
+	ctx.Headless = true
+	ctx.LaunchID = "launch/tmux"
+
+	spec, err := embeddedTmuxAgentCommand(ctx, fakeLookPath("tmux"))
+	if err != nil {
+		t.Fatalf("embeddedTmuxAgentCommand returned error: %v", err)
+	}
+	defer spec.Cleanup()
+
+	if want := WorktreeSessionName(ctx.WorktreePath) + "-agent-launch-tmux"; spec.SessionName != want {
+		t.Fatalf("session name = %q, want per-launch agent session", spec.SessionName)
+	}
+	if got, want := spec.HasSessionCommand.Args, []string{"tmux", "has-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("has-session args = %#v, want %#v", got, want)
+	}
+	if got, want := spec.AttachCommand.Args, []string{"tmux", "attach-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attach args = %#v, want %#v", got, want)
+	}
+	if envValue(spec.AttachCommand.Env, "TMUX") != "" {
+		t.Fatalf("attach command inherited TMUX: %#v", spec.AttachCommand.Env)
+	}
+	if got, want := spec.NewSessionCommand.Args[:7], []string{"tmux", "new-session", "-d", "-s", spec.SessionName, "-c", "/repo/worktree"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("new-session args prefix = %#v, want %#v", got, want)
+	}
+	if got := spec.NewSessionCommand.Args[7]; got != "exec sh "+shellQuote(spec.ScriptPath) {
+		t.Fatalf("new-session script command = %q, want private script exec", got)
+	}
+	if got, want := spec.KillSessionCommand.Args, []string{"tmux", "kill-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("kill-session args = %#v, want %#v", got, want)
+	}
+
+	script := agentLaunchScript(t)
+	for _, want := range []string{
+		"cd '/repo/worktree' || exit",
+		"WTUI_LAUNCH_ID='launch/tmux'",
+		"WTUI_PLAN_ID='plan-1'",
+		"codex",
+		"exec",
+		"Read the plan and begin implementation.",
+	} {
+		requireScriptContains(t, script, want)
+	}
+}
+
+func TestEmbeddedTmuxAgentCommandReportsMissingTmux(t *testing.T) {
+	putAgentOnPath(t, "codex")
+	_, err := embeddedTmuxAgentCommand(planAgentContext(), fakeLookPath())
+	if !errors.Is(err, ErrEmbeddedTmuxUnavailable) {
+		t.Fatalf("error = %v, want ErrEmbeddedTmuxUnavailable", err)
+	}
+}
+
 func assertNoWTUIEnv(t *testing.T, env []string) {
 	t.Helper()
 	for _, entry := range env {
@@ -826,4 +884,14 @@ func assertNoWTUIEnv(t *testing.T, env []string) {
 			t.Fatalf("expected codex-app open command to scrub WTUI env, found %q in %#v", key, env)
 		}
 	}
+}
+
+func envValue(env []string, key string) string {
+	for _, entry := range env {
+		k, v, ok := strings.Cut(entry, "=")
+		if ok && k == key {
+			return v
+		}
+	}
+	return ""
 }

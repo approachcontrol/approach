@@ -595,6 +595,22 @@ type TerminalLaunchSpec struct {
 	Cleanup  func()
 }
 
+// ErrEmbeddedTmuxUnavailable tells callers they can use the direct embedded PTY
+// path because tmux is not installed.
+var ErrEmbeddedTmuxUnavailable = errors.New("tmux is not available for embedded terminal detach")
+
+// EmbeddedTmuxAgentSpec describes a CLI agent launch that runs inside a tmux
+// session while wtui embeds only an attached tmux client.
+type EmbeddedTmuxAgentSpec struct {
+	SessionName        string
+	ScriptPath         string
+	HasSessionCommand  *exec.Cmd
+	NewSessionCommand  *exec.Cmd
+	AttachCommand      *exec.Cmd
+	KillSessionCommand *exec.Cmd
+	Cleanup            func()
+}
+
 // LaunchOptions customizes external terminal transports without changing
 // multiplexer/session selection.
 type LaunchOptions struct {
@@ -742,6 +758,51 @@ func sanitizeSessionSuffix(s string) string {
 func AgentCommand(ctx AgentLaunchContext) (*exec.Cmd, error) {
 	cmd, _, err := agentCommandSpec(ctx)
 	return cmd, err
+}
+
+// EmbeddedTmuxAgentCommand builds the tmux lifecycle commands for a detachable
+// embedded CLI agent launch. It does not start tmux.
+func EmbeddedTmuxAgentCommand(ctx AgentLaunchContext) (EmbeddedTmuxAgentSpec, error) {
+	return embeddedTmuxAgentCommand(ctx, exec.LookPath)
+}
+
+func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (EmbeddedTmuxAgentSpec, error) {
+	if !commandExists("tmux", lookPath) {
+		return EmbeddedTmuxAgentSpec{}, ErrEmbeddedTmuxUnavailable
+	}
+	ctx.Embedded = true
+	cmd, _, err := agentCommandSpec(ctx)
+	if err != nil {
+		return EmbeddedTmuxAgentSpec{}, err
+	}
+	sessionSource := ctx.WorktreePath
+	if sessionSource == "" {
+		sessionSource = cmd.Dir
+	}
+	argv, err := resolvedCommandArgv(cmd)
+	if err != nil {
+		return EmbeddedTmuxAgentSpec{}, err
+	}
+	sessionName := agentSessionName(sessionSource, ctx.LaunchID)
+	termCommand, err := newTerminalCommand(cmd.Dir, cmd.Env, argv, sessionName)
+	if err != nil {
+		return EmbeddedTmuxAgentSpec{}, err
+	}
+	tmuxEnv := envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	spec := EmbeddedTmuxAgentSpec{
+		SessionName:        sessionName,
+		ScriptPath:         termCommand.scriptPath,
+		HasSessionCommand:  exec.Command("tmux", "has-session", "-t", sessionName),
+		NewSessionCommand:  exec.Command("tmux", "new-session", "-d", "-s", sessionName, "-c", cmd.Dir, termCommand.shellCommand()),
+		AttachCommand:      exec.Command("tmux", "attach-session", "-t", sessionName),
+		KillSessionCommand: exec.Command("tmux", "kill-session", "-t", sessionName),
+		Cleanup:            termCommand.cleanup,
+	}
+	spec.HasSessionCommand.Env = tmuxEnv
+	spec.NewSessionCommand.Env = tmuxEnv
+	spec.AttachCommand.Env = tmuxEnv
+	spec.KillSessionCommand.Env = tmuxEnv
+	return spec, nil
 }
 
 func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
@@ -937,6 +998,24 @@ func envWithoutPrefix(prefix string) []string {
 		env = append(env, entry)
 	}
 	return env
+}
+
+func envWithoutKeys(env []string, keys ...string) []string {
+	drop := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		drop[key] = struct{}{}
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, found := drop[key]; found {
+				continue
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func envWithOverrides(overrides ...envVar) []string {

@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -36,6 +37,11 @@ type EmbeddedTerminal interface {
 	Terminate() error
 	Wait(context.Context) error
 	State() string
+}
+
+type detachableEmbeddedTerminal interface {
+	Detach() error
+	DetachTarget() string
 }
 
 type EmbeddedTerminalStarter func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error)
@@ -82,11 +88,31 @@ type embeddedTerminalTickMsg struct {
 }
 
 type realEmbeddedTerminal struct {
-	term *embeddedterm.Terminal
+	term realEmbeddedTerminalRuntime
+}
+
+type realEmbeddedTerminalRuntime interface {
+	VisibleLines(width, height int) []string
+	Write([]byte) (int, error)
+	Resize(width, height int) error
+	Terminate() error
+	Wait(context.Context) error
+	State() embeddedterm.State
 }
 
 func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
 	ctx.Embedded = true
+	tmuxSpec, err := actions.EmbeddedTmuxAgentCommand(ctx)
+	if err == nil {
+		term, err := embeddedterm.StartTmuxBackedAgent(context.Background(), tmuxSpec, width, height)
+		if err != nil {
+			return nil, err
+		}
+		return realEmbeddedTerminal{term: term}, nil
+	}
+	if !errors.Is(err, actions.ErrEmbeddedTmuxUnavailable) {
+		return nil, err
+	}
 	cmd, err := actions.AgentCommand(ctx)
 	if err != nil {
 		return nil, err
@@ -111,6 +137,20 @@ func (t realEmbeddedTerminal) Wait(ctx context.Context) error {
 	return t.term.Wait(ctx)
 }
 func (t realEmbeddedTerminal) State() string { return string(t.term.State()) }
+func (t realEmbeddedTerminal) Detach() error {
+	detachable, ok := t.term.(interface{ Detach() error })
+	if !ok {
+		return fmt.Errorf("detach unavailable: tmux was not available when this terminal started")
+	}
+	return detachable.Detach()
+}
+func (t realEmbeddedTerminal) DetachTarget() string {
+	detachable, ok := t.term.(interface{ DetachTarget() string })
+	if !ok {
+		return ""
+	}
+	return detachable.DetachTarget()
+}
 
 const embeddedTerminalRepaintInterval = time.Second / 30
 
@@ -458,6 +498,8 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 				return m, nil, true
 			case "x":
 				return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
+			case "d":
+				return m.handleEmbeddedTerminalDetachPrefix(scope), nil, true
 			case "q", "esc":
 				next, cmd := m.handleEmbeddedTerminalQuitPrefix()
 				return next, cmd, true
@@ -485,6 +527,8 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 			return m.setStatus(statusOther, "Unknown terminal prefix command"), nil, true
 		case "x":
 			return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
+		case "d":
+			return m.handleEmbeddedTerminalDetachPrefix(scope), nil, true
 		case "q", "esc":
 			next, cmd := m.handleEmbeddedTerminalQuitPrefix()
 			return next, cmd, true
@@ -555,6 +599,26 @@ func (m Model) handleEmbeddedTerminalClosePrefix(scope embeddedTerminalScope) Mo
 		return func() tea.Msg { return terminateEmbeddedTerminalMsg{ID: slot.ID} }
 	})
 	return m
+}
+
+func (m Model) handleEmbeddedTerminalDetachPrefix(scope embeddedTerminalScope) Model {
+	slot, _, ok := m.activeEmbeddedTerminalForScope(scope)
+	if !ok || slot.Terminal == nil {
+		return m
+	}
+	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
+	if !ok {
+		return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started")
+	}
+	target := strings.TrimSpace(detachable.DetachTarget())
+	if err := detachable.Detach(); err != nil {
+		return m.setStatus(statusOther, err.Error())
+	}
+	m = m.dismissEmbeddedTerminal(slot.ID)
+	if target == "" {
+		target = "tmux"
+	}
+	return m.setStatus(statusOther, "Detached embedded terminal to tmux: "+target)
 }
 
 func embeddedTerminalRunning(term EmbeddedTerminal) bool {
