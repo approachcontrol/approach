@@ -624,6 +624,7 @@ func (m Model) View() string {
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
 		Repos:                       repos,
+		ActiveTerminalRepoPaths:     m.activeTerminalRepoPaths(),
 		Selected:                    selected,
 		Width:                       m.width,
 		Height:                      m.height,
