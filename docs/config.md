@@ -441,11 +441,11 @@ skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
 Implementation point to the saved plan artifact, while Review Loop and PR
 Creation include only the worktree, branch, and start commit metadata needed to
 inspect the changes. Built-in prompts tell Plan to produce only a plan,
-Plan Review to use the review-loop skill with max 6 loops, Implementation to
-use the `commit` skill, Review Loop to use the review-loop workflow with goal
-`review-and-revise` and `commit` when revisions are made, PR Creation to use
-the `ship` skill, and Autoreview to use `ship` when fixes require commits or
-pushes.
+Plan Review to use the review-loop workflow with goal `review-and-revise` and
+max 6 loops, Implementation to use the `commit` skill, Review Loop to use the
+review-loop workflow with goal `review-and-revise` and `commit` when revisions
+are made, PR Creation to use the `ship` skill, and Autoreview to use `ship`
+when fixes require commits or pushes.
 Autoreview launch prompts include the PR target metadata but leave completion,
 needs-attention, blocked, and restart mechanics to the high-level Flow phase
 commands.

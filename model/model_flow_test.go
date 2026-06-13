@@ -3144,7 +3144,7 @@ func TestModel_CtrlJLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *tes
 		t.Fatalf("launch context = %#v", launched)
 	}
 	wantPrompt := strings.Join([]string{
-		"Use the review-loop skill to review the saved plan, max 6 loops.",
+		"Use the review-loop workflow with goal: review-and-revise. Review the saved plan, max 6 loops.",
 		"Use the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
 		"",
 		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
@@ -3220,6 +3220,9 @@ func TestModel_FlowPlanReviewPromptTemplateOverridesBuiltInPrompt(t *testing.T) 
 	want := "Custom plan-review for flow-1: /state/plans/plan-1/plan.md on flow/template; keep {unknown}"
 	if launched.InitialPrompt != want {
 		t.Fatalf("templated plan-review prompt = %q, want %q", launched.InitialPrompt, want)
+	}
+	if strings.Contains(launched.InitialPrompt, "review-and-revise") {
+		t.Fatalf("templated plan-review prompt should not include built-in goal wording:\n%s", launched.InitialPrompt)
 	}
 }
 

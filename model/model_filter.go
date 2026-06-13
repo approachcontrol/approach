@@ -193,6 +193,9 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowSessions()
 	m = m.reflowPlans()
 	m = m.reflowFlows()
+	if m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
+		m = m.syncActiveFlowTerminalToSelectedFlow()
+	}
 	return m
 }
 

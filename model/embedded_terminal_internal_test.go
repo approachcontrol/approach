@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
@@ -158,6 +160,42 @@ func TestMoveCursorSyncsActiveFlowTerminalToSelectedFlow(t *testing.T) {
 	}
 	if m.terminalPrefixActive {
 		t.Fatal("list navigation should not enable terminal command mode")
+	}
+}
+
+func TestFlowFilterSyncsActiveTerminalToSelectedFlow(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Alpha"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Bravo"},
+	)
+	m.activeFlowTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+	m = m.setSearchActive(true)
+
+	next, _ := m.handleSearchKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Bravo")})
+	m = next.(Model)
+
+	if got := m.selectedFlowID(); got != "flow-2" {
+		t.Fatalf("selected Flow = %q, want flow-2", got)
+	}
+	if m.activeFlowTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	}
+	if m.flowFocus != flowFocusList {
+		t.Fatalf("flow focus = %d, want list focus", m.flowFocus)
 	}
 }
 

@@ -84,7 +84,7 @@ filter matches, or a load failure with details in the status bar.
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
-| `m` | Move or rename a linked worktree (worktrees view) |
+| `m` | Move or rename a linked worktree (worktrees view), or toggle per-Flow auto mode (flows view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
@@ -456,11 +456,12 @@ completed or explicitly skipped with notes. Flow phase launch prompts stay
 minimal: Plan Review and Implementation point to the saved plan artifact, while
 Review Loop and PR Creation include only the worktree, branch, and start commit
 metadata needed to inspect the changes. Built-in prompts tell Plan to produce
-only a plan, Plan Review to use the review-loop skill with max 6 loops,
-Implementation to use the `commit` skill, Review Loop to use the review-loop
-workflow with goal `review-and-revise` and `commit` when revisions are made,
-PR Creation to use the `ship` skill, and Autoreview to use `ship` when fixes
-require commits or pushes without embedding phase-restart recipes. Use
+only a plan, Plan Review to use the review-loop workflow with goal
+`review-and-revise` and max 6 loops, Implementation to use the `commit` skill,
+Review Loop to use the review-loop workflow with goal `review-and-revise` and
+`commit` when revisions are made, PR Creation to use the `ship` skill, and
+Autoreview to use `ship` when fixes require commits or pushes without
+embedding phase-restart recipes. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if notes are omitted, wtui records a standard rerun note.
 
