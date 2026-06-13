@@ -604,6 +604,8 @@ var ErrEmbeddedTmuxUnavailable = errors.New("tmux is not available for embedded 
 type EmbeddedTmuxAgentSpec struct {
 	SessionName        string
 	ScriptPath         string
+	StatusPath         string
+	DetachTarget       string
 	HasSessionCommand  *exec.Cmd
 	NewSessionCommand  *exec.Cmd
 	AttachCommand      *exec.Cmd
@@ -784,18 +786,22 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 		return EmbeddedTmuxAgentSpec{}, err
 	}
 	sessionName := agentSessionName(sessionSource, ctx.LaunchID)
-	termCommand, err := newTerminalCommand(cmd.Dir, cmd.Env, argv, sessionName)
+	termCommand, err := newTerminalCommandWithStatus(cmd.Dir, cmd.Env, argv, sessionName)
 	if err != nil {
 		return EmbeddedTmuxAgentSpec{}, err
 	}
 	tmuxEnv := envWithoutKeys(os.Environ(), "TMUX", "ZELLIJ")
+	socketName := tmuxSocketName(sessionName)
+	tmuxArgs := isolatedTmuxArgs(socketName)
 	spec := EmbeddedTmuxAgentSpec{
 		SessionName:        sessionName,
 		ScriptPath:         termCommand.scriptPath,
-		HasSessionCommand:  exec.Command("tmux", "has-session", "-t", sessionName),
-		NewSessionCommand:  exec.Command("tmux", "new-session", "-d", "-s", sessionName, "-c", cmd.Dir, termCommand.shellCommand()),
-		AttachCommand:      exec.Command("tmux", "attach-session", "-t", sessionName),
-		KillSessionCommand: exec.Command("tmux", "kill-session", "-t", sessionName),
+		StatusPath:         termCommand.statusPath,
+		DetachTarget:       tmuxDetachTarget(socketName, sessionName),
+		HasSessionCommand:  exec.Command("tmux", append(tmuxArgs, "has-session", "-t", sessionName)...),
+		NewSessionCommand:  exec.Command("tmux", append(append([]string{}, tmuxArgs...), tmuxNewSessionArgs(sessionName, cmd.Dir, termCommand.shellCommand())...)...),
+		AttachCommand:      tmuxAttachStatusCommand(socketName, sessionName, termCommand.statusPath),
+		KillSessionCommand: exec.Command("tmux", append(tmuxArgs, "kill-session", "-t", sessionName)...),
 		Cleanup:            termCommand.cleanup,
 	}
 	spec.HasSessionCommand.Env = tmuxEnv
@@ -803,6 +809,47 @@ func embeddedTmuxAgentCommand(ctx AgentLaunchContext, lookPath lookPathFunc) (Em
 	spec.AttachCommand.Env = tmuxEnv
 	spec.KillSessionCommand.Env = tmuxEnv
 	return spec, nil
+}
+
+func isolatedTmuxArgs(socketName string) []string {
+	return []string{"-f", "/dev/null", "-L", socketName}
+}
+
+func tmuxSocketName(sessionName string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sessionName))
+	return fmt.Sprintf("wtui-agent-%08x", h.Sum32())
+}
+
+func tmuxDetachTarget(socketName, sessionName string) string {
+	return "env -u TMUX tmux -f /dev/null -L " + shellQuote(socketName) + " attach-session -t " + shellQuote(sessionName)
+}
+
+func tmuxNewSessionArgs(sessionName, dir, shellCommand string) []string {
+	return []string{
+		"start-server",
+		";", "set-option", "-g", "prefix", "None",
+		";", "unbind-key", "C-b",
+		";", "set-option", "-g", "status", "off",
+		";", "new-session", "-d", "-s", sessionName, "-c", dir, shellCommand,
+	}
+}
+
+func tmuxAttachStatusCommand(socketName, sessionName, statusPath string) *exec.Cmd {
+	script := strings.TrimSpace(`
+tmux -f /dev/null -L "$1" attach-session -t "$2"
+tmux_status=$?
+if [ -r "$3" ]; then
+	IFS= read -r agent_status < "$3"
+	rm -f "$3"
+	case "$agent_status" in
+		""|*[!0-9]*) exit "$tmux_status" ;;
+		*) exit "$agent_status" ;;
+	esac
+fi
+exit "$tmux_status"
+`)
+	return exec.Command("/bin/sh", "-c", script, "wtui", socketName, sessionName, statusPath)
 }
 
 func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
@@ -1124,17 +1171,38 @@ func wtuiSessionHookCommand(provider string) string {
 // tmux/zellij/osascript/terminal argv.
 type terminalCommand struct {
 	scriptPath string
+	statusPath string
 	// session overrides the tmux/Zellij session name for this launch. When
 	// empty, the transport falls back to WorktreeSessionName(path).
 	session string
 }
 
 func newTerminalCommand(dir string, env []string, argv []string, session string) (*terminalCommand, error) {
-	scriptPath, err := writeTerminalCommandScript(dir, env, argv)
+	return newTerminalCommandWithStatusPath(dir, env, argv, session, "")
+}
+
+func newTerminalCommandWithStatus(dir string, env []string, argv []string, session string) (*terminalCommand, error) {
+	statusFile, err := os.CreateTemp("", "wtui-agent-status-*.txt")
 	if err != nil {
 		return nil, err
 	}
-	return &terminalCommand{scriptPath: scriptPath, session: session}, nil
+	statusPath := statusFile.Name()
+	if err := statusFile.Close(); err != nil {
+		_ = os.Remove(statusPath)
+		return nil, err
+	}
+	return newTerminalCommandWithStatusPath(dir, env, argv, session, statusPath)
+}
+
+func newTerminalCommandWithStatusPath(dir string, env []string, argv []string, session, statusPath string) (*terminalCommand, error) {
+	scriptPath, err := writeTerminalCommandScript(dir, env, argv, statusPath)
+	if err != nil {
+		if statusPath != "" {
+			_ = os.Remove(statusPath)
+		}
+		return nil, err
+	}
+	return &terminalCommand{scriptPath: scriptPath, statusPath: statusPath, session: session}, nil
 }
 
 // shellCommand renders only the safe transport command. The script it calls
@@ -1148,9 +1216,12 @@ func (c *terminalCommand) cleanup() {
 	if c != nil && c.scriptPath != "" {
 		_ = os.Remove(c.scriptPath)
 	}
+	if c != nil && c.statusPath != "" {
+		_ = os.Remove(c.statusPath)
+	}
 }
 
-func writeTerminalCommandScript(dir string, env []string, argv []string) (string, error) {
+func writeTerminalCommandScript(dir string, env []string, argv []string, statusPath string) (string, error) {
 	if len(argv) == 0 {
 		return "", fmt.Errorf("agent command has no argv")
 	}
@@ -1180,12 +1251,27 @@ func writeTerminalCommandScript(dir string, env []string, argv []string) (string
 	}
 	b.WriteString("cleanup\n")
 	b.WriteString("trap - EXIT HUP INT TERM\n")
-	b.WriteString("exec")
+	if statusPath == "" {
+		b.WriteString("exec")
+	} else {
+		b.WriteString("set +e\n")
+	}
 	for _, arg := range argv {
 		b.WriteByte(' ')
 		b.WriteString(shellQuote(arg))
 	}
 	b.WriteByte('\n')
+	if statusPath != "" {
+		b.WriteString("status=$?\n")
+		b.WriteString("if [ -e ")
+		b.WriteString(shellQuote(statusPath))
+		b.WriteString(" ]; then\n")
+		b.WriteString("printf '%s\\n' \"$status\" > ")
+		b.WriteString(shellQuote(statusPath))
+		b.WriteByte('\n')
+		b.WriteString("fi\n")
+		b.WriteString("exit \"$status\"\n")
+	}
 
 	if _, err := file.WriteString(b.String()); err != nil {
 		cleanup()

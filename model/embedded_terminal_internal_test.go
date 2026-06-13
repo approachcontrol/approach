@@ -73,17 +73,19 @@ func TestDefaultEmbeddedTerminalStarterUsesTmuxWhenAvailable(t *testing.T) {
 	t.Setenv("WTUI_TMUX_LOG", logPath)
 	writeInternalFakeExecutable(t, dir, "tmux", `#!/bin/sh
 echo "$@" >> "$WTUI_TMUX_LOG"
-case "$1" in
-  has-session) exit 1 ;;
-  new-session)
-    rm -f "$6"/wtui-agent-*.sh
-    exit 0
-    ;;
-  attach-session) /bin/sleep 30 ;;
-  kill-session) exit 0 ;;
-esac
+for arg in "$@"; do
+  case "$arg" in
+    has-session) exit 1 ;;
+    new-session)
+      rm -f "$TMPDIR"/wtui-agent-*.sh
+      exit 0
+      ;;
+    attach-session) /bin/sleep 30 ;;
+    kill-session) exit 0 ;;
+  esac
+done
 exit 0
-`)
+	`)
 	t.Setenv("PATH", dir)
 
 	term, err := defaultEmbeddedTerminalStarter(actions.AgentLaunchContext{
@@ -101,8 +103,8 @@ exit 0
 	if !ok {
 		t.Fatalf("default starter returned %T, want detachable tmux-backed terminal", term)
 	}
-	if target := detachable.DetachTarget(); !strings.Contains(target, "agent-launch-1") {
-		t.Fatalf("detach target = %q, want per-launch agent tmux session", target)
+	if target := detachable.DetachTarget(); !strings.Contains(target, "env -u TMUX tmux -f /dev/null -L 'wtui-agent-") || !strings.Contains(target, "attach-session -t") || !strings.Contains(target, "agent-launch-1") {
+		t.Fatalf("detach target = %q, want reattach command for per-launch agent tmux session", target)
 	}
 	waitInternalFileContains(t, logPath, "attach-session")
 	if err := detachable.Detach(); err != nil {

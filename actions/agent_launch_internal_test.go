@@ -836,22 +836,43 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	if want := WorktreeSessionName(ctx.WorktreePath) + "-agent-launch-tmux"; spec.SessionName != want {
 		t.Fatalf("session name = %q, want per-launch agent session", spec.SessionName)
 	}
-	if got, want := spec.HasSessionCommand.Args, []string{"tmux", "has-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
+	if spec.StatusPath == "" {
+		t.Fatal("expected status path for tmux exit propagation")
+	}
+	socketName := spec.HasSessionCommand.Args[4]
+	if !strings.HasPrefix(socketName, "wtui-agent-") || len(socketName) != len("wtui-agent-00000000") {
+		t.Fatalf("socket name = %q, want short hashed wtui-agent name", socketName)
+	}
+	if strings.Contains(socketName, spec.SessionName) {
+		t.Fatalf("socket name %q should not embed full session name %q", socketName, spec.SessionName)
+	}
+	if got, want := spec.DetachTarget, "env -u TMUX tmux -f /dev/null -L "+shellQuote(socketName)+" attach-session -t "+shellQuote(spec.SessionName); got != want {
+		t.Fatalf("detach target = %q, want %q", got, want)
+	}
+	if got, want := spec.HasSessionCommand.Args, []string{"tmux", "-f", "/dev/null", "-L", socketName, "has-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("has-session args = %#v, want %#v", got, want)
 	}
-	if got, want := spec.AttachCommand.Args, []string{"tmux", "attach-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("attach args = %#v, want %#v", got, want)
+	if got, want := spec.AttachCommand.Args[:3], []string{"/bin/sh", "-c", "tmux -f /dev/null -L \"$1\" attach-session -t \"$2\"\ntmux_status=$?\nif [ -r \"$3\" ]; then\n\tIFS= read -r agent_status < \"$3\"\n\trm -f \"$3\"\n\tcase \"$agent_status\" in\n\t\t\"\"|*[!0-9]*) exit \"$tmux_status\" ;;\n\t\t*) exit \"$agent_status\" ;;\n\tesac\nfi\nexit \"$tmux_status\""}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attach args prefix = %#v, want %#v", got, want)
+	}
+	if got, want := spec.AttachCommand.Args[3:], []string{"wtui", socketName, spec.SessionName, spec.StatusPath}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attach wrapper args = %#v, want %#v", got, want)
 	}
 	if envValue(spec.AttachCommand.Env, "TMUX") != "" {
 		t.Fatalf("attach command inherited TMUX: %#v", spec.AttachCommand.Env)
 	}
-	if got, want := spec.NewSessionCommand.Args[:7], []string{"tmux", "new-session", "-d", "-s", spec.SessionName, "-c", "/repo/worktree"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("new-session args prefix = %#v, want %#v", got, want)
+	wantNewSession := []string{
+		"tmux", "-f", "/dev/null", "-L", socketName,
+		"start-server",
+		";", "set-option", "-g", "prefix", "None",
+		";", "unbind-key", "C-b",
+		";", "set-option", "-g", "status", "off",
+		";", "new-session", "-d", "-s", spec.SessionName, "-c", "/repo/worktree", "exec sh " + shellQuote(spec.ScriptPath),
 	}
-	if got := spec.NewSessionCommand.Args[7]; got != "exec sh "+shellQuote(spec.ScriptPath) {
-		t.Fatalf("new-session script command = %q, want private script exec", got)
+	if got := spec.NewSessionCommand.Args; !reflect.DeepEqual(got, wantNewSession) {
+		t.Fatalf("new-session args = %#v, want %#v", got, wantNewSession)
 	}
-	if got, want := spec.KillSessionCommand.Args, []string{"tmux", "kill-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
+	if got, want := spec.KillSessionCommand.Args, []string{"tmux", "-f", "/dev/null", "-L", socketName, "kill-session", "-t", spec.SessionName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("kill-session args = %#v, want %#v", got, want)
 	}
 
@@ -863,8 +884,17 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 		"codex",
 		"exec",
 		"Read the plan and begin implementation.",
+		"if [ -e " + shellQuote(spec.StatusPath) + " ]; then",
+		"printf '%s\\n' \"$status\" > " + shellQuote(spec.StatusPath),
 	} {
 		requireScriptContains(t, script, want)
+	}
+	spec.Cleanup()
+	if _, err := os.Stat(spec.ScriptPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("script cleanup error = %v, want removed", err)
+	}
+	if _, err := os.Stat(spec.StatusPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("status cleanup error = %v, want removed", err)
 	}
 }
 

@@ -290,3 +290,61 @@ func TestTmuxBackedTerminalRealTmuxDetachLeavesSessionAlive(t *testing.T) {
 		t.Fatalf("detached tmux session is not alive: %v", err)
 	}
 }
+
+func TestTmuxBackedTerminalRealTmuxPropagatesAgentFailure(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	dir := t.TempDir()
+	sessionName := "wtui-test-fail-" + strings.ReplaceAll(filepath.Base(dir), ".", "-")
+	statusPath := filepath.Join(dir, "status.txt")
+	scriptPath := filepath.Join(dir, "agent.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf '7\\n' > "+shellQuoteForTest(statusPath)+"\nexit 7\n"), 0o700); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "kill-session", "-t", sessionName).Run()
+	})
+
+	spec := actions.EmbeddedTmuxAgentSpec{
+		SessionName:        sessionName,
+		ScriptPath:         scriptPath,
+		StatusPath:         statusPath,
+		HasSessionCommand:  exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "has-session", "-t", sessionName),
+		NewSessionCommand:  exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "new-session", "-d", "-s", sessionName, "-c", dir, "exec sh "+shellQuoteForTest(scriptPath)),
+		AttachCommand:      exec.Command("/bin/sh", "-c", tmuxAttachStatusScriptForTest, "wtui", sessionName, sessionName, statusPath),
+		KillSessionCommand: exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "kill-session", "-t", sessionName),
+		Cleanup: func() {
+			_ = os.Remove(scriptPath)
+			_ = os.Remove(statusPath)
+		},
+	}
+	term, err := StartTmuxBackedAgent(context.Background(), spec, 40, 10)
+	if err != nil {
+		t.Fatalf("StartTmuxBackedAgent returned error: %v", err)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := term.Wait(waitCtx); err == nil {
+		t.Fatal("Wait returned nil, want propagated agent failure")
+	}
+	if got := term.State(); got != StateFailed {
+		t.Fatalf("State = %q, want %q", got, StateFailed)
+	}
+}
+
+const tmuxAttachStatusScriptForTest = `tmux -f /dev/null -L "$1" attach-session -t "$2"
+tmux_status=$?
+if [ -r "$3" ]; then
+	IFS= read -r agent_status < "$3"
+	rm -f "$3"
+	case "$agent_status" in
+		""|*[!0-9]*) exit "$tmux_status" ;;
+		*) exit "$agent_status" ;;
+	esac
+fi
+exit "$tmux_status"`
+
+func shellQuoteForTest(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}

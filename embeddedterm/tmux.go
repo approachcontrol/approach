@@ -66,9 +66,13 @@ func startTmuxBackedAgent(ctx context.Context, spec actions.EmbeddedTmuxAgentSpe
 		return nil, err
 	}
 
+	target := spec.DetachTarget
+	if target == "" {
+		target = spec.SessionName
+	}
 	t := &TmuxBackedTerminal{
 		term:        term,
-		target:      spec.SessionName,
+		target:      target,
 		owned:       owned,
 		killCommand: spec.KillSessionCommand,
 		cleanup:     spec.Cleanup,
@@ -129,6 +133,10 @@ func (t *TmuxBackedTerminal) Detach() error {
 
 func (t *TmuxBackedTerminal) Terminate() error {
 	t.mu.Lock()
+	if t.detached {
+		t.mu.Unlock()
+		return nil
+	}
 	t.terminating = true
 	owned := t.owned && !t.detached
 	killCommand := t.killCommand
