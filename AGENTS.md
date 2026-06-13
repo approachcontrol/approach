@@ -16,7 +16,7 @@ CI requires clean `gofmt -l .`, `make test`, and `make build`.
 
 `wtui` is a Go Bubble Tea TUI for managing git worktrees across repositories. User-facing behavior, key bindings, and CLI examples are documented in `README.md`; config reference is `docs/config.md`; Flow phase semantics are `docs/flow-phases.md`.
 
-- `cmd/wtui/` — entrypoint. Handles `--version`, `session-hook --provider claude|codex`, and the `plan save|list|read|phase set` and `flow create|list|read|phase complete|phase block|phase needs-attention|phase restart|phase set|phase add-child|plan set|pr set|merge set|auto set` subcommands (`plan.go`, `flow.go`). Subcommands resolve the artifact root without scanning repos or starting the TUI.
+- `cmd/wtui/` — entrypoint. Handles `--version`, `session-hook --provider claude|codex`, and the `plan save|list|read|phase set` and `flow create|list|read|phase complete|phase block|phase needs-attention|phase restart|phase set|phase add-child|plan set|pr set|merge set` subcommands (`plan.go`, `flow.go`). Subcommands resolve the artifact root without scanning repos or starting the TUI.
 - `config/` — optional TOML from `$XDG_CONFIG_HOME/wtui/config.toml` or `~/.config/wtui/config.toml`. Missing config is non-fatal; an existing but unreadable or malformed config is startup-fatal.
 - `scanner/` — discovers repos under `WORKTREE_ROOT`, `[scan].root`, or `~/dev` (default depth 2, reducible via `[scan].max_depth`), excluding `*-worktrees`.
 - `gitquery/` — read-only git queries. `parse.go` is pure parsing; `runner.go` defines the `Runner` seam wrapped by a `Querier` (`NewQuerier` injects a fake `Runner` for tests).

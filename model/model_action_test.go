@@ -3446,6 +3446,68 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	}
 }
 
+func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
+	tests := []struct {
+		name       string
+		options    model.Options
+		wantAgent  string
+		wantEffort string
+		notWant    []string
+	}{
+		{
+			name:       "codex",
+			options:    model.Options{AgentCommand: "codex", CodexReasoningEffort: "high"},
+			wantAgent:  "A      codex",
+			wantEffort: "E      effort: high",
+			notWant:    []string{"A      set agent", "E      codex effort: high"},
+		},
+		{
+			name:       "codex app",
+			options:    model.Options{AgentCommand: "codex-app"},
+			wantAgent:  "A      codex-app",
+			wantEffort: "E      app default",
+			notWant:    []string{"E      codex-app default"},
+		},
+		{
+			name:       "claude",
+			options:    model.Options{AgentCommand: "claude", ClaudeReasoningEffort: "max"},
+			wantAgent:  "A      claude",
+			wantEffort: "E      effort: max",
+			notWant:    []string{"E      claude effort: max"},
+		},
+		{
+			name:      "unset",
+			wantAgent: "A      choose agent",
+			notWant:   []string{"E      choose agent", "E      effort:", "E      app default"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model.NewWithOptions(testRepos(), tt.options)
+			m = inRightPane(m)
+			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 12})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+			view := ansi.Strip(m.View())
+			agentIndex := strings.Index(view, tt.wantAgent)
+			if agentIndex < 0 {
+				t.Fatalf("Flow shortcuts missing agent label %q:\n%s", tt.wantAgent, view)
+			}
+			if tt.wantEffort != "" {
+				effortIndex := strings.Index(view, tt.wantEffort)
+				if effortIndex < 0 || agentIndex > effortIndex {
+					t.Fatalf("Flow shortcuts should group agent before effort %q:\n%s", tt.wantEffort, view)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(view, notWant) {
+					t.Fatalf("Flow shortcuts should not include %q:\n%s", notWant, view)
+				}
+			}
+		})
+	}
+}
+
 func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "claude"})
 	m = inRightPane(m)

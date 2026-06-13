@@ -343,15 +343,6 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	Request       uint64
 }
 
-type FlowTitleSubmittedMsg struct {
-	Title string
-}
-
-type FlowInstructionsSubmittedMsg struct {
-	Title        string
-	Instructions string
-}
-
 type FlowCreateFailedMsg struct {
 	RepoPath string
 	Title    string
@@ -1222,6 +1213,9 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	}
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.clampSelectionsAfterFilter()
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
 	return m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
 }
 

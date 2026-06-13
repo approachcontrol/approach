@@ -22,7 +22,7 @@ func runFlow(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr|merge|auto> [flags]")
+		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -39,10 +39,8 @@ func runFlow(args []string, deps runDeps) error {
 		return runFlowPR(args[3:], deps)
 	case "merge":
 		return runFlowMerge(args[3:], deps)
-	case "auto":
-		return runFlowAuto(args[3:], deps)
 	default:
-		return unknownCommandError(args[2], []string{"create", "list", "read", "phase", "plan", "pr", "merge", "auto"}, flowHelpText)
+		return unknownCommandError(args[2], []string{"create", "list", "read", "phase", "plan", "pr", "merge"}, flowHelpText)
 	}
 }
 
@@ -50,7 +48,7 @@ func printFlowHelp(w io.Writer) {
 	io.WriteString(w, flowHelpText)
 }
 
-const flowHelpText = `Usage: wtui flow <create|list|read|phase|plan|pr|merge|auto> [flags]
+const flowHelpText = `Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]
 
 Create and update task-centric Flow records under the wtui agent-artifact root.
 
@@ -68,7 +66,6 @@ Commands:
   plan set         Link a saved plan artifact to a Flow.
   pr set           Record pull request metadata.
   merge set        Record merge metadata.
-  auto set         Enable or disable TUI auto mode for a Flow.
 
 Examples:
   wtui flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
@@ -81,7 +78,6 @@ Examples:
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
   wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
   wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
-  wtui flow auto set --flow-id "$FLOW_ID" --enabled true
 
 Most commands accept:
   --state-root PATH  Override the artifact state root after the leaf command.
@@ -861,90 +857,6 @@ Common flags:
 
 Example:
   wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
-`)
-}
-
-func runFlowAuto(args []string, deps runDeps) error {
-	if len(args) == 1 && isHelpArg(args[0]) {
-		printFlowAutoHelp(deps.stdout)
-		return nil
-	}
-	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow auto set [flags]")
-	}
-	if args[0] != "set" {
-		return unknownCommandError(args[0], []string{"set"}, flowAutoHelpText)
-	}
-	return runFlowAutoSet(args[1:], deps)
-}
-
-func printFlowAutoHelp(w io.Writer) {
-	io.WriteString(w, flowAutoHelpText)
-}
-
-const flowAutoHelpText = `Usage: wtui flow auto set [flags]
-
-Enable or disable TUI auto mode for a Flow.
-
-Example:
-  wtui flow auto set --flow-id "$FLOW_ID" --enabled true
-`
-
-func runFlowAutoSet(args []string, deps runDeps) error {
-	flags := flag.NewFlagSet("flow auto set", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	flags.Usage = func() { printFlowAutoSetHelp(deps.stdout) }
-	flowID := flags.String("flow-id", "", "flow id")
-	enabledValue := flags.String("enabled", "", "true or false")
-	stateRoot := flags.String("state-root", "", "artifact state root")
-	if help, err := parseCommandFlags(flags, args); help || err != nil {
-		if help {
-			return nil
-		}
-		return err
-	}
-	if *flowID == "" {
-		return fmt.Errorf("flow auto set requires --flow-id")
-	}
-	var enabled bool
-	switch strings.ToLower(strings.TrimSpace(*enabledValue)) {
-	case "":
-		return fmt.Errorf("flow auto set requires --enabled true|false")
-	case "true":
-		enabled = true
-	case "false":
-		enabled = false
-	default:
-		return fmt.Errorf("invalid --enabled %q: use true or false", *enabledValue)
-	}
-	store, err := newFlowStore(*stateRoot, deps)
-	if err != nil {
-		return err
-	}
-	record, err := store.SetAutoMode(flowstore.AutoModeUpdate{
-		FlowID:  *flowID,
-		Enabled: enabled,
-	})
-	if err != nil {
-		return err
-	}
-	return writeFlowJSON(deps.stdout, record)
-}
-
-func printFlowAutoSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow auto set [flags]
-
-Enable or disable TUI auto mode for a Flow.
-
-Required flags:
-  --flow-id FLOW_ID
-  --enabled true|false
-
-Common flags:
-  --state-root PATH
-
-Example:
-  wtui flow auto set --flow-id "$FLOW_ID" --enabled true
 `)
 }
 

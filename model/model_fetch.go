@@ -454,19 +454,24 @@ func (m Model) createPullRequestWorktree(input string, request uint64) tea.Cmd {
 	}
 }
 
-func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.Cmd {
+func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, headless bool) tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {
 		return nil
 	}
+	return m.createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef, headless)
+}
+
+func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
+	command, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
 			RepoPath:         repoPath,
 			Title:            title,
 			Instructions:     instructions,
 			BaseRef:          baseRef,
-			AgentCommand:     m.agentCommand,
-			ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+			AgentCommand:     command,
+			ReasoningEffort:  reasoningEffort,
 			SessionStateRoot: m.sessionStateRoot,
 			PlanPhaseID:      flowPlanPhaseID,
 			PlanPhaseTitle:   "Plan",
@@ -475,7 +480,7 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string) tea.
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
 		}
-		return flowPlanLaunchMessage(result.LaunchContext, m.flowHeadless)
+		return flowPlanLaunchMessage(result.LaunchContext, headless)
 	}
 }
 
