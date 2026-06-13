@@ -1216,6 +1216,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.FlowPhaseResumableSelected {
 						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
 					}
+					actions = append(actions, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
 				} else {
 					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 					if sp.FlowNextLaunchReady {
@@ -1228,6 +1229,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 					if sp.Destructive && sp.FlowDeletableSelected {
 						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
 					}
+					actions = append(actions, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
 				}
 			}
 		}
