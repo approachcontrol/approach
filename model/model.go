@@ -685,7 +685,6 @@ func (m Model) View() string {
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
-		FlowPhaseLaunchReady:        m.selectedFlowPhaseLaunchReady(),
 		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
@@ -1316,15 +1315,6 @@ func (m Model) selectedFlowPhaseResumable() bool {
 		return false
 	}
 	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
-}
-
-func (m Model) selectedFlowPhaseLaunchReady() bool {
-	record, ok := m.selectedFlow()
-	if !ok {
-		return false
-	}
-	phase, ok := m.selectedFlowPhase()
-	return ok && flowPhaseCanLaunch(record, phase)
 }
 
 func (m Model) selectedFlowHasLaunchablePhase() bool {

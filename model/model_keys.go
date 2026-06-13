@@ -1300,14 +1300,6 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 	return m.launchAgentAtPath(path)
 }
 
-func (m Model) handleLaunchSelectedFlowPhase() (tea.Model, tea.Cmd) {
-	target, ok, next := m.selectedFlowPhaseLaunchTarget()
-	if !ok {
-		return next, nil
-	}
-	return next.launchFlowPhaseTarget(target)
-}
-
 func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	target, ok, next := m.selectedFlowNextLaunchTarget()
 	if !ok {
@@ -1424,22 +1416,6 @@ type flowPhaseLaunchTarget struct {
 	repoPath     string
 	worktreePath string
 	planPath     string
-}
-
-func (m Model) selectedFlowPhaseLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
-	record, ok := m.selectedFlow()
-	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	phase, ok := m.selectedFlowPhase()
-	if !ok {
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	if !flowPhaseCanLaunch(record, phase) {
-		m = m.setStatus(statusOther, flowPhaseNotLaunchableMessage(record, phase))
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	return m.flowPhaseLaunchTarget(record, phase)
 }
 
 func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
@@ -1912,22 +1888,6 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
 		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
-}
-
-func flowPhaseNotLaunchableMessage(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	if phase.PhaseID == "autoreview" && flowAutoreviewMissingPRTarget(record) {
-		return "Autoreview needs PR metadata; run `wtui flow pr set` after PR Creation records the PR target"
-	}
-	if phase.PhaseID == "implementation" && phase.Status == flowstore.PhasePending {
-		if review, ok := flowPhaseByID(record, "plan-review"); ok {
-			return "Implementation is not ready; Plan Review is " + flowPhaseStatusDetail(review)
-		}
-	}
-	detail := flowPhaseStatusDetail(phase)
-	if phase.PhaseID == "" {
-		return "Selected Flow phase is not launchable; status is " + detail
-	}
-	return "Selected Flow phase " + phase.PhaseID + " is not launchable; status is " + detail
 }
 
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
@@ -2585,7 +2545,10 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || m.selectedFlowPhaseID != "" {
+	if m.mode != ui.ModeFlows {
+		return m, nil
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()

@@ -284,7 +284,6 @@ type RenderParams struct {
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
-	FlowPhaseLaunchReady        bool
 	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -500,7 +499,6 @@ func renderApplication(p RenderParams) string {
 		FlowHeadless:                p.FlowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
-		FlowPhaseLaunchReady:        p.FlowPhaseLaunchReady,
 		FlowNextLaunchReady:         p.FlowNextLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
@@ -764,7 +762,6 @@ type statusBarParams struct {
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
 	FlowReasoningEffort         string
-	FlowPhaseLaunchReady        bool
 	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool

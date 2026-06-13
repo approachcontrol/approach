@@ -706,7 +706,6 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 		SelectedFlowPhaseID:         "implementation",
 		FlowPhaseResetReadySelected: true,
 		FlowPhaseResumableSelected:  false,
-		FlowPhaseLaunchReady:        false,
 	})
 
 	pane := shortcutPaneText(view)
