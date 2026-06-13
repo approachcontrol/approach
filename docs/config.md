@@ -328,11 +328,11 @@ provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and
 terminal. Terminal focus starts in wtui command mode: `left`/`right` cycles Flow
-terminals, `1`-`9` switches by number, `x` closes, `q`/`esc` quits, unknown
-ordinary keys do not pass through to the PTY, and `ctrl+]` sends a literal
-`ctrl+]`; `i` enters terminal input mode. In input mode, keys pass through to the
-PTY (including agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command
-mode. Embedded headless output is rendered as
+terminals, `1`-`9` switches by number, `d` detaches to tmux when available, `x`
+closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
+and `ctrl+]` sends a literal `ctrl+]`; `i` enters terminal input mode. In input
+mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`) and
+`ctrl+]` returns to command mode. Embedded headless output is rendered as
 readable terminal text rather than raw provider event JSON; `codex exec` streams
 progress while it runs, whereas `claude --print` only prints its result once the
 run completes. Expanded rows
@@ -443,11 +443,11 @@ skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
 Implementation point to the saved plan artifact, while Review Loop and PR
 Creation include only the worktree, branch, and start commit metadata needed to
 inspect the changes. Built-in prompts tell Plan to produce only a plan,
-Plan Review to use the review-loop workflow with goal `review-and-revise` and
-max 6 loops, Implementation to use the `commit` skill, Review Loop to use the
-review-loop workflow with goal `review-and-revise` and `commit` when revisions
-are made, PR Creation to use the `ship` skill, and Autoreview to use `ship`
-when fixes require commits or pushes.
+Plan Review to use the review-loop skill with max 6 loops, Implementation to
+use the `commit` skill, Review Loop to use the review-loop workflow with goal
+`review-and-revise` and `commit` when revisions are made, PR Creation to use
+the `ship` skill, and Autoreview to use `ship` when fixes require commits or
+pushes.
 Autoreview launch prompts include the PR target metadata but leave completion,
 needs-attention, blocked, and restart mechanics to the high-level Flow phase
 commands.
@@ -597,15 +597,21 @@ Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with
 `claude ... --resume <session-id>`, while preserving the same wtui hook and
 metadata environment wiring as fresh launches. In the full sessions view, those
-CLI resumes run inside runtime-only embedded PTYs in the sessions pane. Fresh
-Flow selected-phase launches and Flow phase-session resumes run CLI agents
-inside runtime-only embedded PTYs in the flows pane; Flow headless mode chooses
+CLI resumes run inside runtime-only embedded PTYs in the sessions pane. When
+`tmux` is available at launch time, those embedded CLI terminals are backed by a
+per-launch tmux session and `ctrl+] d` detaches wtui's embedded client while the
+agent continues in tmux. When `tmux` is unavailable, wtui uses the direct
+embedded PTY path and reports detach unavailable. Fresh Flow selected-phase
+launches and Flow phase-session resumes run CLI agents inside runtime-only
+embedded PTYs in the flows pane; Flow headless mode chooses
 headless provider commands (`codex exec` / `claude --print`) versus interactive
 provider commands (`codex` / `claude`) inside that embedded terminal. Flow
 phase-session resumes also run inside runtime-only embedded PTYs in the flows
 pane. Other non-Flow agent launches keep using their existing external terminal
 transport, and `codex-app` Flow launches and resumes keep using deep-link
-transport. The TUI refuses to
+transport. `ctrl+] x` and quit cleanup terminate embedded terminals and kill
+tmux sessions created by the current embedded launch; detached sessions are no
+longer owned by wtui and are not terminated when wtui exits. The TUI refuses to
 resume a stored session whose provider session ID is blank (it reports this in
 the status line instead), and command construction trims resume session IDs and
 rejects whitespace-only ones, so a resume command never carries a blank `--resume`
