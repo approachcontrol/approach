@@ -602,7 +602,7 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	enterIndex := strings.Index(bar, "enter: phases")
 	headlessIndex := strings.Index(bar, "h: headless on")
 	agentIndex := strings.Index(bar, "A: codex")
-	tabIndex := strings.Index(bar, "tab: pane")
+	tabIndex := strings.Index(bar, "f2/tab: pane")
 	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || tabIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}

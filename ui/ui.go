@@ -1449,10 +1449,10 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 		{"f5"},
 		{"f5", "A"},
 		{"f5", "A", "D"},
-		{"f5", "A", "D", "↑/↓"},
-		{"f5", "A", "D", "↑/↓", "q/esc"},
-		{"f5", "A", "D", "↑/↓", "q/esc", "←/→"},
-		{"f5", "A", "D", "↑/↓", "q/esc", "←/→", "f2/tab"},
+		{"f5", "A", "D", "←/→"},
+		{"f5", "A", "D", "←/→", "↑/↓"},
+		{"f5", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "A", "D", "←/→", "↑/↓", "q/esc", "f2/tab"},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {

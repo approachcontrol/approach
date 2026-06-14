@@ -891,7 +891,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 	}
 }
 
-func TestModel_ModalSuppressesHorizontalArrowNavigation(t *testing.T) {
+func TestModel_ModalSuppressesPaneNavigationKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
@@ -902,7 +902,7 @@ func TestModel_ModalSuppressesHorizontalArrowNavigation(t *testing.T) {
 		t.Fatalf("Overlay() = %d, want worktree input", m.Overlay())
 	}
 
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyRight}} {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyRight}, {Type: tea.KeyF2}} {
 		before := listRequests(m)
 		m2, cmd := update(m, key)
 		if cmd != nil {
