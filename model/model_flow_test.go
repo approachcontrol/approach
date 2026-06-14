@@ -15,6 +15,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -237,6 +238,28 @@ func TestModel_F3ActiveFlowFetchErrorUsesActiveFetchMode(t *testing.T) {
 	}
 	if !strings.Contains(view, "Could not load flows; see status bar") {
 		t.Fatalf("empty active Flow surface should show Flow fetch failure placeholder:\n%s", view)
+	}
+}
+
+func TestModel_F3ActiveFlowSearchAcceptsDigits(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.Title = "Release Flow 123"
+	flow.Branch = "release/123"
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if cmd != nil {
+		t.Fatalf("digit in active Flow search returned command %T, want nil", cmd)
+	}
+	if got := m.ItemSearch(); got != "1" {
+		t.Fatalf("active Flow search query = %q, want 1", got)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") || !strings.Contains(view, "release/123") {
+		t.Fatalf("digit search should keep active Flow surface visible and filtered:\n%s", view)
 	}
 }
 
@@ -3370,6 +3393,40 @@ func TestModel_FlowDeleteRequiresDestructiveMode(t *testing.T) {
 	}
 	if deleted {
 		t.Fatal("DeleteFlow should not run while destructive mode is disabled")
+	}
+}
+
+func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Delete visible Flow",
+		Status:   flowstore.StatusPending,
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{
+		RepoPath: "/dev/alpha",
+		Stashes: []gitquery.Stash{{
+			Index:   0,
+			Date:    "2026-06-14 12:00:00 -0400",
+			Message: "hidden stash",
+		}},
+		ListRequest: m.ListRequest(ui.ModeStashes),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd != nil {
+		t.Fatalf("opening active Flow delete confirm returned command %T, want nil", cmd)
+	}
+	prompt := m.ConfirmPrompt()
+	if !strings.Contains(prompt, "Delete Flow Delete visible Flow (flow-1)") {
+		t.Fatalf("active Flow delete prompt = %q, want visible Flow delete confirmation", prompt)
+	}
+	if strings.Contains(prompt, "hidden stash") {
+		t.Fatalf("active Flow delete should not target hidden stash: %q", prompt)
 	}
 }
 

@@ -53,7 +53,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "f3" {
 		return m.toggleActiveFlowsSurface()
 	}
-	if m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
+	if !m.searchActive && m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd
@@ -891,14 +891,14 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if !m.destructive {
 		return m, nil
 	}
+	if m.flowSurfaceVisible() && len(m.currentFilteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
+		return m.confirmFlowDelete()
+	}
 	if m.mode == ui.ModeHistory || m.mode == ui.ModeReflog {
 		return m, nil
 	}
 	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmStashDrop()
-	}
-	if m.flowSurfaceVisible() && len(m.currentFilteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
-		return m.confirmFlowDelete()
 	}
 	if m.mode == ui.ModeBranches && len(m.filteredRepos()) > 0 {
 		return m.confirmBranchDelete()
