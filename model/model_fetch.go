@@ -23,6 +23,9 @@ const visibleRepoFetchStatusTTL = 3 * time.Second
 const visibleRepoFetchFadeStepDuration = 1 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
+	if m.activeFlowSurfaceVisible() {
+		return m.startFlowRefreshFetch()
+	}
 	return m.startFetchMode(m.mode)
 }
 
@@ -47,9 +50,10 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 
 	cmds := []tea.Cmd{scanCmd}
 	if repoPath, ok := m.currentRepoPath(); ok {
-		if _, ok := listFetchDescriptorForMode(m.mode); ok {
+		fetchMode := m.activeContentFetchMode()
+		if _, ok := listFetchDescriptorForMode(fetchMode); ok {
 			inlineWorktreePath := ""
-			if m.mode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
+			if fetchMode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
 				inlineWorktreePath = m.inlineWorktreeSessionPath
 			}
 			var fetchCmd tea.Cmd
@@ -71,7 +75,8 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 }
 
 func (m Model) fetchForMode() tea.Cmd {
-	return m.fetchMode(m.mode, m.currentListRequest(m.mode))
+	mode := m.activeContentFetchMode()
+	return m.fetchMode(mode, m.currentListRequest(mode))
 }
 
 func (m Model) currentListRequest(mode ui.Mode) uint64 {

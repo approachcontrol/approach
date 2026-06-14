@@ -46,6 +46,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if key == "f3" {
+		return m.toggleActiveFlowsSurface()
+	}
+	if m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
+		next, cmd, handled := m.switchModeFromKey(key)
+		if handled {
+			return next, cmd
+		}
+	}
+
 	if next, cmd, handled := m.handleEmbeddedTerminalKey(msg); handled {
 		return next, cmd
 	}
@@ -271,6 +281,9 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
+	if m.activeFlowSurfaceVisible() {
+		return m.handleActiveFlowSurfaceKey(key)
+	}
 	switch key {
 	case "up", "k":
 		return m.handleCursorUp()
@@ -468,12 +481,69 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		return m.handleCursorUp()
+	case "down", "j":
+		return m.handleCursorDown()
+	case "left":
+		return m.handleHorizontalNavigation(-1)
+	case "right":
+		return m.handleHorizontalNavigation(1)
+	case "h":
+		return m.handleToggleFlowHeadless()
+	case "tab":
+		if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+			m.flowFocus = flowFocusTerminal
+			m.terminalPrefixActive = true
+			return m, nil
+		}
+		m.activePane = 0
+		m = m.clearSelectedFlowPhase()
+	case "ctrl+j":
+		return m.handleLaunchNextFlowPhase()
+	case "enter":
+		return m.handleFlowEnter()
+	case "n":
+		return m.handleNewFlow()
+	case "o":
+		return m.handleOpenFlowPlanText()
+	case "m":
+		return m.handleToggleFlowAutoMode()
+	case "y":
+		return m.handleCopyFlowWorktreePath()
+	case "r":
+		return m.handleResumeFlowPhaseSession()
+	case "E":
+		return m.handleSetReasoningEffort()
+	case "x":
+		return m.handleResetSelectedFlowPhase()
+	case "d":
+		return m.handleDelete()
+	case "f":
+		return m.handleFetch()
+	case "F":
+		return m.handlePull()
+	case "t":
+		return m.handleOpenTerminal()
+	case "c":
+		return m.handleOpenCode()
+	case "q", "ctrl+c", "esc":
+		return m.handleEmbeddedTerminalQuitPrefix()
+	}
+	return m, nil
+}
+
 func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	if direction == 0 {
 		return m, nil
 	}
 	if m.activePane == 0 {
 		m.activePane = 1
+		if m.activeFlowSurfaceVisible() {
+			return m, nil
+		}
 		targetMode := ui.ModeWorktrees
 		if direction < 0 {
 			targetMode = ui.ModeFlows
@@ -490,6 +560,11 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	}
 
 	if direction > 0 {
+		if m.activeFlowSurfaceVisible() {
+			m.activePane = 0
+			m = m.clearSelectedFlowPhase()
+			return m, nil
+		}
 		if m.mode == ui.ModeFlows {
 			m.activePane = 0
 			m = m.clearSelectedFlowPhase()
@@ -526,6 +601,25 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 // (-1 for up, +1 for down) and keeps the new selection visible.
 func (m Model) moveCursor(delta int) Model {
 	h, w := m.contentHeightForMode(), m.contentWidth()
+	if m.activeFlowSurfaceVisible() {
+		if next, ok := m.moveSelectedFlowPhase(delta); ok {
+			return next
+		}
+		if m.canScrollExpandedFlow(delta, h) {
+			m.activeFlows = m.activeFlows.ScrollBy(delta, h, w)
+			return m
+		}
+		if m.activeFlows.Len() <= 1 {
+			return m
+		}
+		before := m.selectedFlowID()
+		m.activeFlows = m.activeFlows.Move(delta, h, w)
+		if after := m.selectedFlowID(); before != "" && after != before {
+			m = m.setExpandedFlowID("")
+		}
+		m = m.syncActiveFlowTerminalToSelectedFlow()
+		return m
+	}
 	switch m.mode {
 	case ui.ModeWorktrees:
 		if m.inlineWorktreeSessionPath != "" {
@@ -643,7 +737,7 @@ func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
 	m.flowHeadless = !m.flowHeadless
@@ -667,7 +761,7 @@ func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
 		return m, nil
 	}
 	flowID := m.selectedFlowID()
@@ -683,7 +777,7 @@ func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleToggleFlowAutoMode() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
@@ -751,7 +845,7 @@ func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows || len(m.filteredFlows()) == 0 {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
@@ -801,7 +895,7 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmStashDrop()
 	}
-	if m.mode == ui.ModeFlows && len(m.filteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
+	if m.flowSurfaceVisible() && len(m.currentFilteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmFlowDelete()
 	}
 	if m.mode == ui.ModeBranches && len(m.filteredRepos()) > 0 {
@@ -2129,7 +2223,7 @@ func (m Model) confirmWorktreeDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
 	if _, ok := m.selectedFlowPhase(); ok {
@@ -2201,8 +2295,14 @@ func (m Model) resetModeCursors() Model {
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
+	m.activeFlows = m.activeFlows.ResetSelection()
 	m = m.setExpandedPlanID("")
-	m = m.setExpandedFlowID("")
+	m.expandedFlowID = ""
+	m.selectedFlowPhaseID = ""
+	m.flows = m.flows.SetItemHeight(flowItemHeight(""))
+	m.expandedActiveFlowID = ""
+	m.selectedActiveFlowPhaseID = ""
+	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
 	m.flowFocus = flowFocusList
 	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()
@@ -2222,8 +2322,14 @@ func (m Model) resetRightPaneCursors() Model {
 	m.sessions = m.sessions.SetItems(nil).ResetSelection()
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
+	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
 	m = m.setExpandedPlanID("")
-	m = m.setExpandedFlowID("")
+	m.expandedFlowID = ""
+	m.selectedFlowPhaseID = ""
+	m.flows = m.flows.SetItemHeight(flowItemHeight(""))
+	m.expandedActiveFlowID = ""
+	m.selectedActiveFlowPhaseID = ""
+	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
 	m.flowFocus = flowFocusList
 	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()

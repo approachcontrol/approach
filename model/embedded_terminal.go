@@ -628,7 +628,7 @@ func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) 
 	if m.mode == ui.ModeSessions && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
 		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeSession)
 	}
-	if m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeFlow)
 	}
 	return m, nil, false

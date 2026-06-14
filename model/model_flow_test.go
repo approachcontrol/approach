@@ -44,6 +44,105 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 	}
 }
 
+func TestModel_F3ShowsActiveFlowsFromCurrentRepoCache(t *testing.T) {
+	active := flowWithPhaseDetails()
+	active.FlowID = "active-flow"
+	active.Title = "Active Flow"
+	merged := flowWithPhaseDetails()
+	merged.FlowID = "merged-flow"
+	merged.Title = "Merged Flow"
+	merged.Status = flowstore.StatusMerged
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{active, merged})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %v, want worktrees before F3", m.Mode())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF3})
+	if cmd == nil {
+		t.Fatal("F3 should start or continue a Flow refresh")
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %v, want preserved worktrees mode", m.Mode())
+	}
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Active flows", "Active Flow", "F3"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("active-flow view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Merged Flow") {
+		t.Fatalf("active-flow view should filter merged flows:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, "worktrees") || strings.Contains(view, "Active Flow") {
+		t.Fatalf("second F3 should restore worktrees pane:\n%s", view)
+	}
+}
+
+func TestModel_F3UsesSeparateActiveFlowSelectionForActions(t *testing.T) {
+	activeOne := flowWithPhaseDetails()
+	activeOne.FlowID = "active-one"
+	activeOne.Title = "Active One"
+	activeTwo := flowWithPhaseDetails()
+	activeTwo.FlowID = "active-two"
+	activeTwo.Title = "Active Two"
+	merged := flowWithPhaseDetails()
+	merged.FlowID = "merged-flow"
+	merged.Title = "Merged Flow"
+	merged.Status = flowstore.StatusMerged
+
+	var launched flowstore.PhaseLaunchUpdate
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launched = update
+			updated := activeTwo
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+	}), []flowstore.FlowRecord{activeOne, merged, activeTwo})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("normal Flow selection = %d, want merged row index 1", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active Two") || strings.Contains(view, "Merged Flow") {
+		t.Fatalf("active-flow surface should select among non-merged rows only:\n%s", view)
+	}
+
+	m, cmd := update(m, flowCtrlJKey())
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 || launches[0].LaunchContext.FlowID != "active-two" {
+		t.Fatalf("launches = %#v, want active-two", launches)
+	}
+	if launched.FlowID != "active-two" || launched.PhaseID != "implementation" {
+		t.Fatalf("launch update = %#v, want active-two implementation", launched)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	view = ansi.Strip(m.View())
+	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 1 || !strings.Contains(view, "Merged Flow") {
+		t.Fatalf("normal Flow mode should retain merged selection after F3 exit; selected=%d view:\n%s", m.FlowSelected(), view)
+	}
+}
+
 func flowWithAwaitingImplementation() flowstore.FlowRecord {
 	flow := flowWithPhaseDetails()
 	for i := range flow.Phases {
