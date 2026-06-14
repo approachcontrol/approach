@@ -46,6 +46,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if next, cmd, handled := m.handleEmbeddedTerminalKey(msg); handled {
+		return next, cmd
+	}
+
 	if key == "f3" {
 		return m.toggleActiveFlowsSurface()
 	}
@@ -54,10 +58,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if handled {
 			return next, cmd
 		}
-	}
-
-	if next, cmd, handled := m.handleEmbeddedTerminalKey(msg); handled {
-		return next, cmd
 	}
 
 	m = m.clearAnyStatus()

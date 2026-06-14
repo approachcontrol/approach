@@ -1475,7 +1475,7 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 				msg.ListRequest == m.activeWorktreeSessionReq &&
 				msg.WorktreePath == m.inlineWorktreeSessionPath
 		}
-		return msg.Mode == m.mode && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
+		return msg.Mode == m.activeContentFetchMode() && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
 	case FetchWorktreeDiff:
 		if !m.activeViewMatches(FetchWorktreeDiff, ui.ModeWorktrees, msg.DiffRequest) {
 			return false
