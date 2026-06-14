@@ -217,6 +217,28 @@ func TestModel_F3ActiveFlowLKeyNavigatesLikeRightArrow(t *testing.T) {
 	}
 }
 
+func TestModel_F3ActiveFlowLeftKeyPreservesUnderlyingMode(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if cmd != nil {
+		t.Fatalf("left from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("left from active Flow surface left active pane = %d, want left pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("left from active Flow surface changed underlying mode = %d, want sessions", m.Mode())
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("left from active Flow surface should keep active Flow view visible:\n%s", view)
+	}
+}
+
 func TestModel_F3ActiveFlowFetchErrorUsesActiveFetchMode(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), nil)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})

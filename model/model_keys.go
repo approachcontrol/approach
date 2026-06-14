@@ -488,7 +488,9 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		return m.handleCursorDown()
 	case "left":
-		return m.handleHorizontalNavigation(-1)
+		m.activePane = 0
+		m = m.clearSelectedFlowPhase()
+		return m, nil
 	case "right", "l":
 		return m.handleHorizontalNavigation(1)
 	case "h":
