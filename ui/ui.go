@@ -1467,7 +1467,7 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	if sp.EmbeddedTerminalActive {
 		return renderGenericFooterShortcuts(sp, sections)
 	}
-	full := "  " + renderFooterHintList(footerSectionOrder(sections))
+	full := "  " + renderFooterHintList(flowFooterSectionOrder(sections))
 	if lipgloss.Width(full) <= sp.Width {
 		return full
 	}
@@ -1670,6 +1670,23 @@ func footerSectionOrder(sections []shortcutSection) []shortcutSection {
 	}
 	for _, section := range sections {
 		if section.Title != "Global" && section.Title != "Navigate" && section.Title != "Actions" && section.Title != "Legend" {
+			ordered = append(ordered, section)
+		}
+	}
+	return ordered
+}
+
+func flowFooterSectionOrder(sections []shortcutSection) []shortcutSection {
+	ordered := make([]shortcutSection, 0, len(sections))
+	for _, title := range []string{"Actions", "Mode", "Agent", "Global"} {
+		for _, section := range sections {
+			if section.Title == title {
+				ordered = append(ordered, section)
+			}
+		}
+	}
+	for _, section := range sections {
+		if section.Title != "Actions" && section.Title != "Mode" && section.Title != "Agent" && section.Title != "Global" {
 			ordered = append(ordered, section)
 		}
 	}

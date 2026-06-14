@@ -751,7 +751,7 @@ func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
 	if cmd == nil {
-		t.Fatal("enter on ready phase should prepare embedded terminal launch")
+		t.Fatal("ctrl+j on ready Flow should prepare embedded terminal launch")
 	}
 	m, _ = update(m, cmd())
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithAwaitingImplementation()}, ListRequest: m.ListRequest(ui.ModeFlows)})
@@ -843,7 +843,7 @@ func TestModel_XKeyKeepsFlowTerminalFocusCloseBehavior(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
 	if cmd == nil {
-		t.Fatal("enter on ready phase should prepare embedded terminal launch")
+		t.Fatal("ctrl+j on ready Flow should prepare embedded terminal launch")
 	}
 	m, _ = update(m, cmd())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -1480,7 +1480,7 @@ func TestModel_CtrlJOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHead
 		t.Fatalf("ctrl+j launched %#v with update %#v, want first launchable implementation", started, launchUpdate)
 	}
 	if started.Command != "claude" || started.ReasoningEffort != "max" {
-		t.Fatalf("selected-phase launch agent settings = command %q effort %q, want claude/max", started.Command, started.ReasoningEffort)
+		t.Fatalf("Flow phase launch agent settings = command %q effort %q, want claude/max", started.Command, started.ReasoningEffort)
 	}
 	if !started.Embedded || !started.Headless || !started.FlowLaunchTracked {
 		t.Fatalf("Flow launch should be embedded, headless, and tracked: %#v", started)

@@ -583,6 +583,34 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                    240,
+		Mode:                     ModeFlows,
+		ActivePane:               1,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowWorktreePathSelected: true,
+		FlowPlanLinked:           true,
+		FlowHeadless:             true,
+		FlowAutoModeSelected:     true,
+		FlowAgentLabel:           "codex",
+		FlowReasoningEffort:      "effort: high",
+		FlowNextLaunchReady:      true,
+	})
+
+	enterIndex := strings.Index(bar, "enter: phases")
+	headlessIndex := strings.Index(bar, "h: headless on")
+	agentIndex := strings.Index(bar, "A: codex")
+	tabIndex := strings.Index(bar, "tab: pane")
+	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || tabIndex < 0 {
+		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
+	}
+	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < tabIndex) {
+		t.Fatalf("full Flow footer should order Actions, Mode, Agent, Global, got %q", bar)
+	}
+}
+
 func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 	flowRow := renderStatusBarWithState(statusBarParams{
 		Width:                180,
