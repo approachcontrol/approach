@@ -521,14 +521,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleResetSelectedFlowPhase()
 	case "d":
 		return m.handleDelete()
-	case "f":
-		return m.handleFetch()
-	case "F":
-		return m.handlePull()
-	case "t":
-		return m.handleOpenTerminal()
-	case "c":
-		return m.handleOpenCode()
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}

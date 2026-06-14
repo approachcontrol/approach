@@ -263,6 +263,31 @@ func TestModel_F3ActiveFlowSearchAcceptsDigits(t *testing.T) {
 	}
 }
 
+func TestModel_F3ActiveFlowPullDoesNotTargetHiddenWorktree(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/visible-flow"
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, model.WorktreeResultMsg{
+		RepoPath: "/dev/alpha",
+		Worktrees: []gitquery.Worktree{{
+			Path:       "/dev/alpha-worktrees/hidden-worktree",
+			BranchName: "hidden",
+		}},
+		ListRequest: m.ListRequest(ui.ModeWorktrees),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd != nil {
+		t.Fatalf("F from active Flow surface returned command %T, want nil to avoid hidden worktree pull", cmd)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("F from active Flow surface should leave active Flow view visible:\n%s", view)
+	}
+}
+
 func TestModel_EnterTogglesActiveFlowPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
