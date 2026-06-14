@@ -2,6 +2,7 @@ package model
 
 import (
 	"github.com/brian-bell/wtui/embeddedterm"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -31,4 +32,16 @@ func EmbeddedTerminalTickMsgForTest(m Model) any {
 
 func HasRunningFlowEmbeddedTerminalForPhaseForTest(m Model, flowID, phaseID string) bool {
 	return m.hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID)
+}
+
+func FlowPhaseDoneInstructionForTest() string {
+	return flowPhaseDoneInstruction
+}
+
+func FlowPlanPromptForTest(record flowstore.FlowRecord, templates FlowPromptTemplates) string {
+	return flowPlanPrompt(record, templates)
+}
+
+func FlowPhasePromptForTest(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
+	return flowPhasePrompt(record, phase, planPath, planBody, templates)
 }

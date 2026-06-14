@@ -194,7 +194,7 @@ func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
 		t.Fatalf("StartPlan returned error: %v", err)
 	}
 
-	want := "Plan flow-1: Build the thing in /dev/alpha-worktrees/flow-plan on flow/plan from abc123; keep {unknown}"
+	want := appendFlowDoneInstructionForTest("Plan flow-1: Build the thing in /dev/alpha-worktrees/flow-plan on flow/plan from abc123; keep {unknown}")
 	if result.LaunchContext.InitialPrompt != want {
 		t.Fatalf("plan prompt = %q, want %q", result.LaunchContext.InitialPrompt, want)
 	}

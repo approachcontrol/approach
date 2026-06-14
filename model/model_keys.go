@@ -2152,24 +2152,27 @@ func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
 
 func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
 	if template := templates.templateForPhase(phase.PhaseID); strings.TrimSpace(template) != "" {
-		return renderFlowPromptTemplate(template, record, phase, planPath, planBody)
+		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody)
+		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
+	var prompt string
 	switch phase.PhaseID {
 	case "plan-review":
-		return flowPlanReviewPrompt(record, phase, planPath, planBody)
+		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case "implementation":
-		return flowImplementationPrompt(record, phase, planPath, planBody)
+		prompt = flowImplementationPrompt(record, phase, planPath, planBody)
 	case "review-loop":
-		return flowReviewLoopPrompt(record, phase, planPath, planBody)
+		prompt = flowReviewLoopPrompt(record, phase, planPath, planBody)
 	case "pr-creation":
-		return flowPRCreationPrompt(record, phase, planPath, planBody)
+		prompt = flowPRCreationPrompt(record, phase, planPath, planBody)
 	case "autoreview":
-		return flowAutoreviewPrompt(record, phase, planPath, planBody)
+		prompt = flowAutoreviewPrompt(record, phase, planPath, planBody)
 	case "merge":
-		return flowMergePrompt(record, phase, planPath, planBody)
+		prompt = flowMergePrompt(record, phase, planPath, planBody)
 	default:
-		return flowGenericPhasePrompt(record, phase, planPath, planBody)
+		prompt = flowGenericPhasePrompt(record, phase, planPath, planBody)
 	}
+	return ensureFlowPhaseDoneInstruction(prompt, "")
 }
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
