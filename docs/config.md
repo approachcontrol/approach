@@ -127,9 +127,15 @@ to `$EDITOR`.
 
 ### `[terminal]`
 
-Configures the external terminal fallback used by the `t` action and by
-detached agent-launch scripts. Active tmux/Zellij sessions still take
-precedence, and `TERMINAL` still overrides this setting.
+Configures the external terminal fallback used by the `t` action, detached
+agent-launch scripts, and embedded-terminal detach handoff. Active tmux/Zellij
+sessions still take precedence for normal `t` and agent launches, and
+`TERMINAL` still overrides this setting. Embedded detach handoff is different:
+after `ctrl+] d` detaches a tmux-backed embedded terminal, wtui uses
+`TERMINAL`, then `[terminal].command`, then the macOS Terminal AppleScript
+fallback when available. It never uses the active tmux/Zellij client, installed
+inactive tmux/Zellij commands, `$SHELL`, or the current TTY as the handoff
+transport.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -154,11 +160,12 @@ terminals and detached agent scripts open in iTerm.
 
 Other command values are treated as whitespace-separated CLI terminal commands
 when the first field exists on `PATH`; configured arguments are preserved as
-separate argv entries and agent launches append `-e sh -c <script>`. Shell
-quoting is not interpreted in this setting. On macOS, an unsupported GUI app
-name can open a plain worktree terminal with `open -a <app> <path>`, but it
-cannot run detached agent scripts. Use a supported GUI alias or a CLI terminal
-command for agent launches.
+separate argv entries and agent launches or detach handoff append
+`-e sh -c <script>`. Shell quoting is not interpreted in this setting. On macOS,
+an unsupported GUI app name can open a plain worktree terminal with
+`open -a <app> <path>`, but it cannot run detached agent scripts or detach
+handoff. Use a supported GUI alias or a CLI terminal command for agent launches
+and embedded detach handoff.
 
 ### `[provider]`
 
@@ -600,8 +607,12 @@ metadata environment wiring as fresh launches. In the full sessions view, those
 CLI resumes run inside runtime-only embedded PTYs in the sessions pane. When
 `tmux` is available at launch time, those embedded CLI terminals are backed by a
 per-launch tmux session and `ctrl+] d` detaches wtui's embedded client while the
-agent continues in tmux. When `tmux` is unavailable, wtui uses the direct
-embedded PTY path and reports detach unavailable. Fresh Flow selected-phase
+agent continues in tmux. wtui then opens a new external terminal running the
+tmux reattach command, using the detach handoff order described in
+`[terminal]`. Platforms without `$TERMINAL`, `[terminal].command`, or the macOS
+Terminal AppleScript fallback report the handoff error after detach; the agent
+continues in the detached tmux session. When `tmux` is unavailable, wtui uses
+the direct embedded PTY path and reports detach unavailable. Fresh Flow selected-phase
 launches and Flow phase-session resumes run CLI agents inside runtime-only
 embedded PTYs in the flows pane; Flow headless mode chooses
 headless provider commands (`codex exec` / `claude --print`) versus interactive
