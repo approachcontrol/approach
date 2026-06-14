@@ -324,11 +324,12 @@ selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `codex exec` or `claude --print`, while headless off runs interactive `codex` or
 `claude` in the same embedded Flow terminal. Headless-off Flow launches prefill
-the phase prompt without submitting it, so you can review or edit it before
-pressing enter. Creating a new Flow has its own default-off Headless checkbox
-for the initial Plan launch; that checkbox does not change the selected-phase
-`h` setting. Press `E` to choose the configured CLI agent's reasoning effort
-for future launches; the shortcut pane shows the current value. Manual phase
+the phase prompt without submitting it, then focus the Flow terminal in input
+mode so you can review or edit it before pressing enter. Headless launches keep
+focus on the Flow list. Creating a new Flow has its own default-off Headless
+checkbox for the initial Plan launch; that checkbox does not change the
+selected-phase `h` setting. Press `E` to choose the configured CLI agent's
+reasoning effort for future launches; the shortcut pane shows the current value. Manual phase
 launches, auto-launched phases, and new Flow Plan launches all use the
 configured agent and that agent's configured effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses
@@ -336,12 +337,13 @@ app-side/default reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and
-terminal. Terminal focus starts in wtui command mode: `left`/`right` cycles Flow
-terminals, `1`-`9` switches by number, `d` detaches to tmux when available, `x`
-closes, `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY,
-and `ctrl+]` sends a literal `ctrl+]`; `i` enters terminal input mode. In input
-mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`) and
-`ctrl+]` returns to command mode. Embedded headless output is rendered as
+terminal. Manually tabbing into Flow terminal focus starts in wtui command mode:
+`left`/`right` cycles Flow terminals, `1`-`9` switches by number, `d` detaches to
+tmux when available, `x` closes, `q`/`esc` quits, unknown ordinary keys do not
+pass through to the PTY, and `ctrl+]` sends a literal `ctrl+]`; `i` enters
+terminal input mode. In input mode, keys pass through to the PTY (including
+agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command mode. Embedded
+headless output is rendered as
 readable terminal text rather than raw provider event JSON; `codex exec` streams
 progress while it runs, whereas `claude --print` only prints its result once the
 run completes. Expanded rows
