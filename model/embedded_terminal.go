@@ -87,6 +87,7 @@ type embeddedTerminalSlot struct {
 	WorkingDir   string
 	FlowID       string
 	FlowPhaseID  string
+	LaunchID     string
 	Terminal     EmbeddedTerminal
 	ID           embeddedTerminalID
 }
@@ -395,6 +396,7 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		WorkingDir:   cleanEmbeddedTerminalPath(ctx.WorkingDir),
 		FlowID:       flowID,
 		FlowPhaseID:  flowPhaseID,
+		LaunchID:     strings.TrimSpace(ctx.LaunchID),
 		Terminal:     term,
 		ID:           embeddedTerminalID(m.nextEmbeddedTerminalID),
 	})
@@ -884,6 +886,7 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		if slot.ID != id {
 			next = append(next, slot)
 		} else {
+			m = m.clearDeferredAutoFlowLaunchForTerminal(slot)
 			removedScope = slot.Scope
 			removed = true
 		}

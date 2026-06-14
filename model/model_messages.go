@@ -1224,7 +1224,14 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
-	return m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
+	var cmds []tea.Cmd
+	var autoCmd tea.Cmd
+	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
+	cmds = append(cmds, autoCmd)
+	var deferredCmd tea.Cmd
+	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches()
+	cmds = append(cmds, deferredCmd)
+	return m, batchNonNil(cmds...)
 }
 
 func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {

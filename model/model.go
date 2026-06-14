@@ -26,102 +26,103 @@ const listRequestSlots = int(ui.ModeFlows) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
-	repos                     pane.Pane[scanner.Repo]
-	width                     int
-	height                    int
-	mode                      ui.Mode
-	rows                      pane.Pane[gitquery.BranchRow]
-	stashes                   pane.Pane[gitquery.Stash]
-	worktrees                 pane.Pane[gitquery.Worktree]
-	worktreeSessions          pane.Pane[sessions.SessionRecord]
-	commits                   pane.Pane[gitquery.Commit]
-	reflogs                   pane.Pane[gitquery.ReflogEntry]
-	sessions                  pane.Pane[sessions.SessionRecord]
-	plans                     pane.Pane[planstore.PlanRecord]
-	flows                     pane.Pane[flowstore.FlowRecord]
-	expandedPlanID            string
-	expandedFlowID            string
-	selectedPlanPhaseID       string
-	selectedFlowPhaseID       string
-	flowHeadless              bool
-	modal                     modal.Modal
-	diffRequestSeq            uint64
-	activeViewRequest         uint64
-	activeViewKind            FetchKind
-	activeViewMode            ui.Mode
-	listRequestSeq            uint64
-	worktreeSessionRequestSeq uint64
-	activeWorktreeSessionReq  uint64
-	inlineWorktreeSessionRepo string
-	inlineWorktreeSessionPath string
-	pendingInlineSessionRepo  string
-	pendingInlineSessionPath  string
-	pendingInlineSessionList  uint64
-	worktreeCreateSeq         uint64
-	activeWorktreeCreate      uint64
-	repoCreateSeq             uint64
-	activeRepoCreate          uint64
-	flowCreateSeq             uint64
-	activeFlowCreate          uint64
-	repoRefreshSeq            uint64
-	activeRepoRefresh         uint64
-	pendingRepoSelection      string
-	listRequests              [listRequestSlots]uint64
-	activePane                int // 0=left (repos), 1=right (content)
-	destructive               bool
-	status                    statusError
-	visibleRepoFetchSeq       uint64
-	visibleRepoFetchStatusSeq uint64
-	visibleRepoFetch          visibleRepoFetchState
-	searchActive              bool
-	pendingBranchSelection    string
-	pendingWorktreeSelection  string
-	agentCommand              string
-	codexReasoningEffort      string
-	claudeReasoningEffort     string
-	planPromptTemplate        string
-	flowPromptTemplates       FlowPromptTemplates
-	repoCreateRoot            string
-	scanRepos                 func() ([]scanner.Repo, error)
-	createRepo                func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
-	fetchRepo                 func(string) error
-	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
-	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
-	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
-	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
-	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
-	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
-	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
-	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
-	deleteFlow                func(string) error
-	readPlan                  func(string) (string, error)
-	planMarkdownPath          func(string) (string, error)
-	copyToClipboard           func(string) error
-	pageText                  func(string) (actions.TerminalLaunchSpec, error)
-	editFile                  func(string) (actions.TerminalLaunchSpec, error)
-	saveAgent                 func(string) error
-	saveAgentReasoningEffort  func(string, string) error
-	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
-	launchDetachedTerminal    func(string, string) (actions.TerminalLaunchSpec, error)
-	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
-	startEmbeddedTerminal     EmbeddedTerminalStarter
-	embeddedTerminals         []embeddedTerminalSlot
-	nextEmbeddedTerminalID    int
-	activeEmbeddedTerminalNum int
-	activeFlowTerminalNum     int
-	flowFocus                 flowFocus
-	deferredAutoFlowLaunches  map[deferredAutoFlowLaunchKey]struct{}
-	embeddedTerminalTickGen   uint64
-	flowRefreshTickGen        uint64
-	flowRefreshInFlight       uint64
-	terminalPrefixActive      bool
-	terminalConfirmID         embeddedTerminalID
-	terminalConfirmScope      embeddedTerminalScope
-	finalizeAgentSession      func(actions.AgentLaunchContext) error
-	sessionStateRoot          string
-	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
+	repos                      pane.Pane[scanner.Repo]
+	width                      int
+	height                     int
+	mode                       ui.Mode
+	rows                       pane.Pane[gitquery.BranchRow]
+	stashes                    pane.Pane[gitquery.Stash]
+	worktrees                  pane.Pane[gitquery.Worktree]
+	worktreeSessions           pane.Pane[sessions.SessionRecord]
+	commits                    pane.Pane[gitquery.Commit]
+	reflogs                    pane.Pane[gitquery.ReflogEntry]
+	sessions                   pane.Pane[sessions.SessionRecord]
+	plans                      pane.Pane[planstore.PlanRecord]
+	flows                      pane.Pane[flowstore.FlowRecord]
+	expandedPlanID             string
+	expandedFlowID             string
+	selectedPlanPhaseID        string
+	selectedFlowPhaseID        string
+	flowHeadless               bool
+	modal                      modal.Modal
+	diffRequestSeq             uint64
+	activeViewRequest          uint64
+	activeViewKind             FetchKind
+	activeViewMode             ui.Mode
+	listRequestSeq             uint64
+	worktreeSessionRequestSeq  uint64
+	activeWorktreeSessionReq   uint64
+	inlineWorktreeSessionRepo  string
+	inlineWorktreeSessionPath  string
+	pendingInlineSessionRepo   string
+	pendingInlineSessionPath   string
+	pendingInlineSessionList   uint64
+	worktreeCreateSeq          uint64
+	activeWorktreeCreate       uint64
+	repoCreateSeq              uint64
+	activeRepoCreate           uint64
+	flowCreateSeq              uint64
+	activeFlowCreate           uint64
+	repoRefreshSeq             uint64
+	activeRepoRefresh          uint64
+	pendingRepoSelection       string
+	listRequests               [listRequestSlots]uint64
+	activePane                 int // 0=left (repos), 1=right (content)
+	destructive                bool
+	status                     statusError
+	visibleRepoFetchSeq        uint64
+	visibleRepoFetchStatusSeq  uint64
+	visibleRepoFetch           visibleRepoFetchState
+	searchActive               bool
+	pendingBranchSelection     string
+	pendingWorktreeSelection   string
+	agentCommand               string
+	codexReasoningEffort       string
+	claudeReasoningEffort      string
+	planPromptTemplate         string
+	flowPromptTemplates        FlowPromptTemplates
+	repoCreateRoot             string
+	scanRepos                  func() ([]scanner.Repo, error)
+	createRepo                 func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
+	fetchRepo                  func(string) error
+	listSessions               func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	readTranscript             func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
+	listPlans                  func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
+	listFlows                  func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	startFlowPlan              func(FlowStartRequest) (FlowStartResult, error)
+	setFlowPhase               func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
+	setFlowAutoMode            func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	addFlowPhaseLaunchID       func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
+	resetFlowPhase             func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
+	deleteFlow                 func(string) error
+	readPlan                   func(string) (string, error)
+	planMarkdownPath           func(string) (string, error)
+	copyToClipboard            func(string) error
+	pageText                   func(string) (actions.TerminalLaunchSpec, error)
+	editFile                   func(string) (actions.TerminalLaunchSpec, error)
+	saveAgent                  func(string) error
+	saveAgentReasoningEffort   func(string, string) error
+	launchTerminal             func(string) (actions.TerminalLaunchSpec, error)
+	launchDetachedTerminal     func(string, string) (actions.TerminalLaunchSpec, error)
+	launchAgent                func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
+	startEmbeddedTerminal      EmbeddedTerminalStarter
+	embeddedTerminals          []embeddedTerminalSlot
+	nextEmbeddedTerminalID     int
+	activeEmbeddedTerminalNum  int
+	activeFlowTerminalNum      int
+	flowFocus                  flowFocus
+	deferredAutoFlowLaunches   map[deferredAutoFlowLaunchKey]struct{}
+	suppressedAutoFlowLaunches map[suppressedAutoFlowLaunchKey]struct{}
+	embeddedTerminalTickGen    uint64
+	flowRefreshTickGen         uint64
+	flowRefreshInFlight        uint64
+	terminalPrefixActive       bool
+	terminalConfirmID          embeddedTerminalID
+	terminalConfirmScope       embeddedTerminalScope
+	finalizeAgentSession       func(actions.AgentLaunchContext) error
+	sessionStateRoot           string
+	bootstrapHookForRepo       func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook           func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type statusSource int
@@ -997,9 +998,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		exitedFlowTerminals := m.exitedFlowEmbeddedTerminalAutoCloseKeys()
 		m = m.dismissExitedFlowEmbeddedTerminals()
 		var cmds []tea.Cmd
-		var deferredCmd tea.Cmd
-		m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches(exitedFlowTerminals)
-		cmds = append(cmds, deferredCmd)
 		if len(exitedFlowTerminals) > 0 {
 			var refreshCmd tea.Cmd
 			m, refreshCmd = m.startFlowRefreshFetch()
