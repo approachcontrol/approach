@@ -477,7 +477,9 @@ only a plan, Plan Review to use the review-loop skill with max 6 loops,
 Implementation to use the `commit` skill, Review Loop to use the review-loop
 workflow with goal `review-and-revise` and `commit` when revisions are made,
 PR Creation to use the `ship` skill, and Autoreview to use `ship` when fixes
-require commits or pushes without embedding phase-restart recipes. Use
+require commits or pushes without embedding phase-restart recipes. All Flow
+phase launch prompts also end with the common instruction to mark the phase
+done with `wtui-flow` after completing the phase goal. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if notes are omitted, wtui records a standard rerun note.
 
@@ -565,7 +567,9 @@ the parent directory for left-pane repo creation.
 configure provider-specific effort for new CLI agent launches; empty or
 `default` keeps provider defaults. `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while
-`[flow_prompts]` customizes Flow phase launch templates.
+`[flow_prompts]` customizes Flow phase launch templates. wtui appends the
+common phase-done instruction to configured Flow templates unless the template
+already ends with that exact standalone instruction.
 `[editor].command` customizes the editor used by the plans pane edit action.
 See [docs/config.md](docs/config.md) for the full config reference, including
 sessions storage, bootstrap hook settings, terminal settings, and parsed

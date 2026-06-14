@@ -1674,7 +1674,7 @@ func TestModel_CtrlJOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalContro
 		t.Fatal("expected embedded Flow launch to return repaint/fetch command")
 	}
 
-	wantWrite := "\x1b[200~Alpha\nBeta\tOmegaDone\x1b[201~"
+	wantWrite := "\x1b[200~" + appendFlowDoneInstructionForTest("Alpha\nBeta\tOmegaDone") + "\x1b[201~"
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != wantWrite {
 		t.Fatalf("prefill writes = %#v, want exact sanitized bracketed paste %q", fakeTerm.writes, wantWrite)
 	}
@@ -3309,7 +3309,7 @@ func TestModel_CtrlJLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *tes
 		!launched.FlowLaunchTracked {
 		t.Fatalf("launch context = %#v", launched)
 	}
-	wantPrompt := strings.Join([]string{
+	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the review-loop skill to review the saved plan, max 6 loops.",
 		"Use the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
 		"",
@@ -3317,7 +3317,7 @@ func TestModel_CtrlJLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *tes
 		"Worktree: /dev/alpha-worktrees/flow-review",
 		"Branch: flow/review",
 		"Start commit: abc123",
-	}, "\n")
+	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("plan-review prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
 	}
@@ -3383,7 +3383,7 @@ func TestModel_FlowPlanReviewPromptTemplateOverridesBuiltInPrompt(t *testing.T) 
 	}
 	runPreparedFlowEmbeddedLaunch(t, m, cmd)
 
-	want := "Custom plan-review for flow-1: /state/plans/plan-1/plan.md on flow/template; keep {unknown}"
+	want := appendFlowDoneInstructionForTest("Custom plan-review for flow-1: /state/plans/plan-1/plan.md on flow/template; keep {unknown}")
 	if launched.InitialPrompt != want {
 		t.Fatalf("templated plan-review prompt = %q, want %q", launched.InitialPrompt, want)
 	}
@@ -3453,7 +3453,7 @@ func TestModel_CtrlJLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.
 		!launched.FlowLaunchTracked {
 		t.Fatalf("launch context = %#v", launched)
 	}
-	wantPrompt := strings.Join([]string{
+	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Implement the approved plan.",
 		"Use the commit skill before completing this phase.",
 		"",
@@ -3461,7 +3461,7 @@ func TestModel_CtrlJLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.
 		"Worktree: /dev/alpha-worktrees/flow-implementation",
 		"Branch: flow/implementation",
 		"Start commit: fed321",
-	}, "\n")
+	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("implementation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
 	}
@@ -3587,7 +3587,7 @@ func TestModel_CtrlJLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByD
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
 		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
 	}
-	wantPrompt := strings.Join([]string{
+	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Implement the approved plan.",
 		"Use the commit skill before completing this phase.",
 		"",
@@ -3595,7 +3595,7 @@ func TestModel_CtrlJLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByD
 		"Worktree: /dev/alpha-worktrees/flow-implementation",
 		"Branch: flow/implementation",
 		"Start commit: fed321",
-	}, "\n")
+	}, "\n"))
 	if started.InitialPrompt != wantPrompt {
 		t.Fatalf("embedded prompt = %q, want %q", started.InitialPrompt, wantPrompt)
 	}
@@ -5445,7 +5445,7 @@ func TestModel_FlowPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 	}
 	runPreparedFlowEmbeddedLaunch(t, m, cmd)
 
-	want := "Custom implementation for flow-1: /state/plans/plan-1/plan.md @ /dev/alpha-worktrees/flow-template on flow/template from c0ffee; keep {unknown}"
+	want := appendFlowDoneInstructionForTest("Custom implementation for flow-1: /state/plans/plan-1/plan.md @ /dev/alpha-worktrees/flow-template on flow/template from c0ffee; keep {unknown}")
 	if launched.InitialPrompt != want {
 		t.Fatalf("templated flow prompt = %q, want %q", launched.InitialPrompt, want)
 	}
@@ -5563,7 +5563,7 @@ func TestModel_CtrlJLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T
 	if launched.FlowID != "flow-1" || launched.FlowPhaseID != "review-loop" || launched.PlanID != "plan-1" {
 		t.Fatalf("launch context = %#v", launched)
 	}
-	wantPrompt := strings.Join([]string{
+	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the review-loop workflow with goal: review-and-revise.",
 		"Use the commit skill when revisions are made.",
 		"Use the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.",
@@ -5571,7 +5571,7 @@ func TestModel_CtrlJLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T
 		"Worktree: /dev/alpha-worktrees/flow-review-loop",
 		"Branch: flow/review-loop",
 		"Start commit: def456",
-	}, "\n")
+	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("review-loop prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
 	}
@@ -5648,7 +5648,7 @@ func TestModel_FlowReviewLoopPromptTemplateOverridesBuiltInPrompt(t *testing.T) 
 	}
 	runPreparedFlowEmbeddedLaunch(t, m, cmd)
 
-	want := "Custom review-loop for flow-1: /dev/alpha-worktrees/flow-review-template on flow/review-template from baddad; plan /state/plans/plan-1/plan.md; keep {unknown}"
+	want := appendFlowDoneInstructionForTest("Custom review-loop for flow-1: /dev/alpha-worktrees/flow-review-template on flow/review-template from baddad; plan /state/plans/plan-1/plan.md; keep {unknown}")
 	if launched.InitialPrompt != want {
 		t.Fatalf("templated review-loop prompt = %q, want %q", launched.InitialPrompt, want)
 	}
@@ -5712,14 +5712,14 @@ func TestModel_CtrlJLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 	if launched.FlowID != "flow-1" || launched.FlowPhaseID != "pr-creation" || launched.PlanID != "plan-1" {
 		t.Fatalf("launch context = %#v", launched)
 	}
-	wantPrompt := strings.Join([]string{
+	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the ship skill to create a PR for the changes.",
 		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
 		"Start commit: abc789",
-	}, "\n")
+	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
 	}
@@ -5781,14 +5781,14 @@ func TestModel_CtrlJLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *t
 	}
 	runPreparedFlowEmbeddedLaunch(t, m, cmd)
 
-	wantPrompt := strings.Join([]string{
+	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the ship skill to create a PR for the changes.",
 		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
 		"Start commit: abc789",
-	}, "\n")
+	}, "\n"))
 	if launched.InitialPrompt != wantPrompt {
 		t.Fatalf("pr-creation prompt = %q, want %q", launched.InitialPrompt, wantPrompt)
 	}
