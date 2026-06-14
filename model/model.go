@@ -1362,19 +1362,6 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 	return ok
 }
 
-func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
-	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" {
-		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-	}
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if flowPhaseCanLaunch(record, phase) {
-			return record, phase, true
-		}
-	}
-	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-}
-
 func (m Model) selectedFlowPhaseResettable() bool {
 	record, ok := m.selectedFlow()
 	if !ok {

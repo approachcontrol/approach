@@ -25,7 +25,7 @@ type FlowPromptTemplates struct {
 }
 
 func (templates FlowPromptTemplates) templateForPhase(phaseID string) string {
-	switch phaseID {
+	switch artifacts.NormalizePhaseID(phaseID) {
 	case "plan":
 		return templates.Plan
 	case "plan-review":
@@ -109,7 +109,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
 	var prompt string
-	switch phase.PhaseID {
+	switch artifacts.NormalizePhaseID(phase.PhaseID) {
 	case "plan-review":
 		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case "implementation":
