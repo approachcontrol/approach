@@ -445,7 +445,7 @@ func renderApplication(p RenderParams) string {
 	stashSelected := p.Mode == ModeStashes && p.StashSelected >= 0 && p.StashSelected < len(p.Stashes)
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
-	embeddedTerminalActive := p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0
+	embeddedTerminalActive := p.Mode == ModeSessions && !p.ActiveFlows && len(p.EmbeddedTerminals) > 0
 	flowSurfaceActive := p.Mode == ModeFlows || p.ActiveFlows
 	flowEmbeddedTerminalActive := flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0
 	terminalShortcutsActive := embeddedTerminalActive || (flowEmbeddedTerminalActive && p.FlowTerminalFocused)

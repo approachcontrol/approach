@@ -198,6 +198,24 @@ func TestModel_F3ActiveFlowRefreshPreparesAutoLaunch(t *testing.T) {
 	}
 }
 
+func TestModel_F3ActiveFlowLKeyNavigatesLikeRightArrow(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if cmd != nil {
+		t.Fatalf("l from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("l from active Flow surface left active pane = %d, want left pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("l from active Flow surface changed underlying mode = %d, want worktrees", m.Mode())
+	}
+}
+
 func TestModel_EnterTogglesActiveFlowPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
