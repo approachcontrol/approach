@@ -395,7 +395,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			m = m.clearSelectedFlowPhase()
 		}
-	case "ctrl+j":
+	case "g":
 		if m.mode == ui.ModeFlows {
 			return m.handleLaunchNextFlowPhase()
 		}
