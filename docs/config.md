@@ -207,9 +207,9 @@ link path cannot carry a verified effort setting.
 
 Optional templates for Flow phase launch prompts. Blank or omitted keys use
 the built-in prompt for that phase. Unknown placeholders remain literal. wtui
-appends the common phase-done instruction to both built-in prompts and
-configured templates unless the template already ends with that exact
-standalone instruction.
+appends `After completing this phase goal, mark this Flow phase done with wtui-flow.`
+to both built-in prompts and configured templates unless the template already
+ends with that exact standalone instruction.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -461,8 +461,8 @@ Plan Review to use the review-loop skill with max 6 loops, Implementation to
 use the `commit` skill, Review Loop to use the review-loop workflow with goal
 `review-and-revise` and `commit` when revisions are made, PR Creation to use
 the `ship` skill, and Autoreview to use `ship` when fixes require commits or
-pushes. All Flow phase launch prompts also end with the common instruction to
-mark the phase done with `wtui-flow` after completing the phase goal.
+pushes. All Flow phase launch prompts also end with:
+`After completing this phase goal, mark this Flow phase done with wtui-flow.`
 Autoreview launch prompts include the PR target metadata but leave detailed
 completion, needs-attention, blocked, and restart mechanics to the high-level
 Flow phase commands.

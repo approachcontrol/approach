@@ -139,8 +139,8 @@ func TestFlowPromptPhaseDoneInstructionDuplicateGuard(t *testing.T) {
 		Commit:       "abc123",
 	}
 
-	t.Run("plan template final standalone line", func(t *testing.T) {
-		template := "Plan {flow_id}\n\n" + instruction + "  \n\n"
+	t.Run("plan template exact final standalone line", func(t *testing.T) {
+		template := "Plan {flow_id}\n\n" + instruction + "\n\n"
 		got := model.FlowPlanPromptForTest(record, model.FlowPromptTemplates{Plan: template})
 		if strings.Count(got, instruction) != 1 {
 			t.Fatalf("prompt should contain one completion instruction:\n%s", got)
@@ -148,11 +148,20 @@ func TestFlowPromptPhaseDoneInstructionDuplicateGuard(t *testing.T) {
 		assertFinalFlowDoneInstruction(t, got)
 	})
 
-	t.Run("non-plan template final standalone line", func(t *testing.T) {
-		template := "Review {flow_id}\n\n" + instruction + "  \n\n"
+	t.Run("non-plan template exact final standalone line", func(t *testing.T) {
+		template := "Review {flow_id}\n\n" + instruction + "\n\n"
 		got := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop"}, record.PlanPath, "", model.FlowPromptTemplates{ReviewLoop: template})
 		if strings.Count(got, instruction) != 1 {
 			t.Fatalf("prompt should contain one completion instruction:\n%s", got)
+		}
+		assertFinalFlowDoneInstruction(t, got)
+	})
+
+	t.Run("trailing spaces on final line still appends exact instruction", func(t *testing.T) {
+		template := "Review {flow_id}\n\n" + instruction + "  \n\n"
+		got := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop"}, record.PlanPath, "", model.FlowPromptTemplates{ReviewLoop: template})
+		if strings.Count(got, instruction) != 2 {
+			t.Fatalf("prompt should append completion instruction when the authored final line has extra spaces:\n%s", got)
 		}
 		assertFinalFlowDoneInstruction(t, got)
 	})
@@ -185,6 +194,35 @@ func TestFlowPromptPhaseDoneInstructionDuplicateGuard(t *testing.T) {
 	})
 }
 
+func TestFlowGenericPhasePromptPreservesContextAndAppendsPhaseDoneInstruction(t *testing.T) {
+	record := flowstore.FlowRecord{
+		Instructions: "Build the requested change.",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/plans/plan-1/plan.md",
+	}
+	phase := flowstore.FlowPhase{PhaseID: "qa-check", Title: "QA Check"}
+	planBody := "Confirm the release notes."
+
+	want := appendFlowDoneInstructionForTest(strings.Join([]string{
+		"Use the wtui-flow skill for this launch.",
+		"",
+		"Flow phase: QA Check (qa-check).",
+		"",
+		"Custom instructions:",
+		"Build the requested change.",
+		"",
+		"Linked plan: plan-1 at /state/plans/plan-1/plan.md",
+		"",
+		"Saved plan body:",
+		"Confirm the release notes.",
+		"",
+		"Advance this phase with `wtui flow phase set` only after the corresponding work is complete, blocked, or needs attention.",
+	}, "\n"))
+	if got := model.FlowPhasePromptForTest(record, phase, record.PlanPath, planBody, model.FlowPromptTemplates{}); got != want {
+		t.Fatalf("generic phase prompt = %q, want %q", got, want)
+	}
+}
+
 func assertFinalFlowDoneInstruction(t *testing.T, prompt string) {
 	t.Helper()
 	instruction := model.FlowPhaseDoneInstructionForTest()
@@ -194,10 +232,11 @@ func assertFinalFlowDoneInstruction(t *testing.T, prompt string) {
 }
 
 func lastNonEmptyLine(text string) string {
-	lines := strings.Split(strings.TrimRight(text, " \t\r\n"), "\n")
+	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if trimmed := strings.TrimSpace(lines[i]); trimmed != "" {
-			return trimmed
+		line := strings.TrimSuffix(lines[i], "\r")
+		if strings.TrimSpace(line) != "" {
+			return line
 		}
 	}
 	return ""

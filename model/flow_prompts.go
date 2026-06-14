@@ -91,10 +91,11 @@ func ensureFlowPhaseDoneInstruction(prompt, guardSource string) string {
 }
 
 func lastNonEmptyPromptLine(text string) string {
-	lines := strings.Split(strings.TrimRight(text, " \t\r\n"), "\n")
+	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if trimmed := strings.TrimSpace(lines[i]); trimmed != "" {
-			return trimmed
+		line := strings.TrimSuffix(lines[i], "\r")
+		if strings.TrimSpace(line) != "" {
+			return line
 		}
 	}
 	return ""
