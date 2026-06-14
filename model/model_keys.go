@@ -1311,13 +1311,7 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
-	launchID := newLaunchID()
-	command, _ := m.flowLaunchAgentSettings()
-	switch command {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m, m.prepareFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, m.flowHeadless)
-	}
-	return m, m.prepareFlowPhaseLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	return m, m.prepareFlowPhaseLaunch(target)
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
@@ -1477,19 +1471,17 @@ func newDeferredAutoFlowLaunchKey(flowID, phaseID string) (deferredAutoFlowLaunc
 }
 
 func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, phase flowstore.FlowPhase) (Model, tea.Cmd) {
-	target, ok, next := m.flowPhaseLaunchTarget(record, phase)
+	target, ok, next := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
+		Record:     record,
+		Phase:      phase,
+		AutoLaunch: true,
+		Headless:   m.flowHeadless,
+	})
 	m = next
 	if !ok {
 		return m, nil
 	}
-	launchID := newLaunchID()
-	command, _ := next.flowLaunchAgentSettings()
-	switch command {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
-	default:
-		return m, next.prepareAutoFlowPhaseLaunchCmd(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
-	}
+	return m, next.prepareFlowPhaseLaunch(target)
 }
 
 func (m Model) prepareDeferredAutoFlowPhaseLaunches() (Model, tea.Cmd) {
@@ -1530,39 +1522,6 @@ func (m Model) prepareDeferredAutoFlowPhaseLaunches() (Model, tea.Cmd) {
 	return m, batchNonNil(cmds...)
 }
 
-func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
-	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
-	for _, phase := range previous.Phases {
-		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
-			previousByPhaseID[phaseID] = phase
-		}
-	}
-	for _, phase := range flowstore.OrderedPhases(current.Phases) {
-		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
-		if phaseID == "" || phase.Status != flowstore.PhaseCompleted {
-			continue
-		}
-		previousPhase, ok := previousByPhaseID[phaseID]
-		if ok && previousPhase.Status != flowstore.PhaseCompleted {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
-}
-
-func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		switch artifacts.NormalizePhaseID(phase.PhaseID) {
-		case "", "merge":
-			continue
-		}
-		if phase.Status == flowstore.PhaseReady {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
-}
-
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
 	record, phase, repoPath, ok := m.selectedFlowPhaseResetTarget()
 	if !ok {
@@ -1581,11 +1540,7 @@ func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
 }
 
 type flowPhaseLaunchTarget struct {
-	record       flowstore.FlowRecord
-	phase        flowstore.FlowPhase
-	repoPath     string
-	worktreePath string
-	planPath     string
+	FlowPhaseLaunchPreparedRequest
 }
 
 func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
@@ -1594,7 +1549,11 @@ func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Mode
 		m = m.setStatus(statusOther, "No launchable Flow phase")
 		return flowPhaseLaunchTarget{}, false, m
 	}
-	return m.flowPhaseLaunchTarget(record, phase)
+	return m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
+		Record:   record,
+		Phase:    phase,
+		Headless: m.flowHeadless,
+	})
 }
 
 func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.FlowPhase, string, bool) {
@@ -1736,117 +1695,33 @@ func (m Model) resetFlowPhaseCmd(repoPath, flowID, phaseID string) tea.Cmd {
 	}
 }
 
-func (m Model) flowPhaseLaunchTarget(record flowstore.FlowRecord, phase flowstore.FlowPhase) (flowPhaseLaunchTarget, bool, Model) {
-	if m.agentCommand == "" {
-		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent")
+func (m Model) flowPhaseLaunchTarget(req FlowPhaseLaunchRequest) (flowPhaseLaunchTarget, bool, Model) {
+	prepared, err := m.flowPhaseLauncher().Preflight(req)
+	if err != nil {
+		m = m.setStatus(statusOther, err.Error())
 		return flowPhaseLaunchTarget{}, false, m
 	}
-	repoPath := record.RepoPath
-	if repoPath == "" {
-		repoPath, _ = m.currentRepoPath()
-	}
-	worktreePath := record.WorktreePath
-	if worktreePath == "" {
-		worktreePath = repoPath
-	}
-	if worktreePath == "" {
-		m = m.setStatus(statusOther, "Cannot determine launch path for this flow")
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	planPath := record.PlanPath
-	if record.PlanID != "" && planPath == "" {
-		var err error
-		planPath, err = m.planMarkdownPath(record.PlanID)
-		if err != nil {
-			m = m.setStatus(statusOther, err.Error())
-			return flowPhaseLaunchTarget{}, false, m
-		}
-	}
-	if phase.PhaseID == "plan-review" && record.PlanID == "" {
-		m = m.setStatus(statusOther, "Plan Review needs a linked plan before launch")
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	return flowPhaseLaunchTarget{
-		record:       record,
-		phase:        phase,
-		repoPath:     repoPath,
-		worktreePath: worktreePath,
-		planPath:     planPath,
-	}, true, m
+	return flowPhaseLaunchTarget{FlowPhaseLaunchPreparedRequest: prepared}, true, m
 }
 
-func (m Model) prepareFlowPhaseLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
-	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
-		return PlanLaunchRequestedMsg{LaunchContext: ctx}
-	}, false)
-}
-
-func (m Model) prepareAutoFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string) tea.Cmd {
-	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
-		return PlanLaunchRequestedMsg{LaunchContext: ctx}
-	}, true)
-}
-
-func (m Model) prepareFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
-	return m.prepareFlowPhaseEmbeddedLaunchWithAuto(record, phase, repoPath, worktreePath, planPath, launchID, headless, false)
-}
-
-func (m Model) prepareAutoFlowPhaseEmbeddedLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless bool) tea.Cmd {
-	return m.prepareFlowPhaseEmbeddedLaunchWithAuto(record, phase, repoPath, worktreePath, planPath, launchID, headless, true)
-}
-
-func (m Model) prepareFlowPhaseEmbeddedLaunchWithAuto(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, headless, autoLaunch bool) tea.Cmd {
-	return m.prepareFlowPhaseLaunchCmd(record, phase, repoPath, worktreePath, planPath, launchID, func(ctx actions.AgentLaunchContext) tea.Msg {
-		ctx.FlowLaunchTracked = true
-		ctx.Embedded = true
-		ctx.Headless = headless
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-	}, autoLaunch)
-}
-
-func (m Model) prepareFlowPhaseLaunchCmd(record flowstore.FlowRecord, phase flowstore.FlowPhase, repoPath, worktreePath, planPath, launchID string, wrap func(actions.AgentLaunchContext) tea.Msg, autoLaunch bool) tea.Cmd {
+func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 	return func() tea.Msg {
-		planBody := ""
-		if record.PlanID != "" && flowPhasePromptNeedsPlanBody(phase.PhaseID) {
-			body, err := m.readPlan(record.PlanID)
-			if err != nil {
-				return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to read linked plan %s: %v", record.PlanID, err)}
-			}
-			planBody = body
-		}
-		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-			FlowID:     record.FlowID,
-			PhaseID:    phase.PhaseID,
-			LaunchID:   launchID,
-			AutoLaunch: autoLaunch,
-		})
+		result, err := m.flowPhaseLauncher().Prepare(target.FlowPhaseLaunchPreparedRequest)
 		if err != nil {
-			if autoLaunch && flowstore.IsAutoLaunchOutdated(err) {
-				return nil
-			}
-			return ActionFailedMsg{RepoPath: repoPath, Err: fmt.Sprintf("failed to mark flow phase running: %v", err)}
+			return ActionFailedMsg{RepoPath: target.RepoPath, Err: err.Error()}
 		}
-		launchPhase := phase
-		if persistedPhase, ok := flowPhaseByID(updated, phase.PhaseID); ok {
-			launchPhase = persistedPhase
+		if result.Skipped {
+			return nil
 		}
-		command, reasoningEffort := m.flowLaunchAgentSettings()
-		return wrap(actions.AgentLaunchContext{
-			Command:          command,
-			ReasoningEffort:  reasoningEffort,
-			LaunchID:         launchID,
-			RepoPath:         repoPath,
-			WorktreePath:     worktreePath,
-			Branch:           record.Branch,
-			Commit:           record.Commit,
-			SessionStateRoot: m.sessionStateRoot,
-			PlanID:           record.PlanID,
-			PlanPath:         planPath,
-			FlowID:           record.FlowID,
-			FlowPhaseID:      launchPhase.PhaseID,
-			InitialPrompt:    flowPhasePrompt(record, launchPhase, planPath, planBody, m.flowPromptTemplates),
-		})
+		return m.flowPhaseLaunchMessage(result)
 	}
+}
+
+func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
+	if result.Route == FlowPhaseLaunchEmbedded {
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: result.Context}
+	}
+	return PlanLaunchRequestedMsg{LaunchContext: result.Context}
 }
 
 func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
@@ -2108,289 +1983,6 @@ func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, ph
 		phaseStatus = "(unknown)"
 	}
 	return fmt.Sprintf("Implement only the selected phase of the saved wtui plan %q (ID: %s) at %s. Selected phase: %s (%q), status %s. Read the plan file, then begin implementation of only that phase.", title, plan.PlanID, planPath, phase.PhaseID, phaseTitle, phaseStatus)
-}
-
-func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
-	if phase.Status == flowstore.PhaseReady {
-		return true
-	}
-	return phase.PhaseID == "autoreview" &&
-		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
-		flowstore.HasPRTarget(record.PR) &&
-		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
-}
-
-func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
-	detail := strings.TrimSpace(phase.Status)
-	if detail == "" {
-		detail = "unknown"
-	}
-	if phase.Outcome != "" {
-		detail += " / " + phase.Outcome
-	}
-	if phase.Notes != "" {
-		detail += ": " + phase.Notes
-	} else if phase.Summary != "" {
-		detail += ": " + phase.Summary
-	}
-	return detail
-}
-
-func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
-	if flowstore.HasPRTarget(record.PR) {
-		return false
-	}
-	prCreation, hasPRCreation := flowPhaseByID(record, "pr-creation")
-	autoreview, hasAutoreview := flowPhaseByID(record, "autoreview")
-	if !hasPRCreation || !hasAutoreview || prCreation.Status != flowstore.PhaseCompleted {
-		return false
-	}
-	return autoreview.Status == flowstore.PhasePending ||
-		autoreview.Status == flowstore.PhaseNeedsAttention ||
-		autoreview.Status == flowstore.PhaseBlocked
-}
-
-func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
-	if template := templates.templateForPhase(phase.PhaseID); strings.TrimSpace(template) != "" {
-		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody)
-		return ensureFlowPhaseDoneInstruction(prompt, template)
-	}
-	var prompt string
-	switch phase.PhaseID {
-	case "plan-review":
-		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
-	case "implementation":
-		prompt = flowImplementationPrompt(record, phase, planPath, planBody)
-	case "review-loop":
-		prompt = flowReviewLoopPrompt(record, phase, planPath, planBody)
-	case "pr-creation":
-		prompt = flowPRCreationPrompt(record, phase, planPath, planBody)
-	case "autoreview":
-		prompt = flowAutoreviewPrompt(record, phase, planPath, planBody)
-	case "merge":
-		prompt = flowMergePrompt(record, phase, planPath, planBody)
-	default:
-		prompt = flowGenericPhasePrompt(record, phase, planPath, planBody)
-	}
-	return ensureFlowPhaseDoneInstruction(prompt, "")
-}
-
-func flowPhasePromptNeedsPlanBody(phaseID string) bool {
-	switch artifacts.NormalizePhaseID(phaseID) {
-	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
-		return false
-	default:
-		return true
-	}
-}
-
-func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalArtifactPrompt("Use the review-loop skill to review the saved plan, max 6 loops.\nUse the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
-}
-
-func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	if strings.TrimSpace(planPath) == "" {
-		return flowImplementationWithoutPlanPrompt(record, phase)
-	}
-	return flowMinimalArtifactPrompt("Implement the approved plan.\nUse the commit skill before completing this phase.", planPath, record, phase)
-}
-
-func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	var b strings.Builder
-	b.WriteString("Implement the Flow instructions.\n\n")
-	writeFlowChangeMetadata(&b, record)
-	writeFlowPromptHeader(&b, record, "")
-	writeFlowPromptPlanContext(&b, record, "")
-	writeFlowPromptPhaseSummary(&b, record, "Plan Review context", "plan-review")
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	b.WriteString("\nUse the commit skill before completing this phase.")
-	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the implementation is complete, blocked, or needs attention.")
-	return b.String()
-}
-
-func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
-}
-
-func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	head := strings.TrimSpace(record.Branch)
-	if head == "" {
-		head = "<head>"
-	}
-	base := strings.TrimSpace(record.BaseRef)
-	if base == "" {
-		base = "<base>"
-	}
-	instruction := fmt.Sprintf("Use the ship skill to create a PR for the changes.\nAfter the PR exists, run `wtui flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
-	return flowMinimalChangePrompt(instruction, record, phase)
-}
-
-func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	var b strings.Builder
-	b.WriteString(instruction)
-	b.WriteString("\n\nPlan: ")
-	b.WriteString(planPath)
-	b.WriteString("\n")
-	writeFlowChangeMetadata(&b, record)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	return b.String()
-}
-
-func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	var b strings.Builder
-	b.WriteString("Use the autoreview skill for this second-level review.\n")
-	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
-	b.WriteString("Use the wtui-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
-	writeFlowChangeMetadata(&b, record)
-	if flowstore.HasPRTarget(record.PR) {
-		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
-		if record.PR.Status != "" {
-			fmt.Fprintf(&b, "\n- Status: %s", record.PR.Status)
-		}
-	} else {
-		b.WriteString("\nPR target: missing. Do not run Autoreview until `wtui flow pr set` records provider, number, URL, head, and base.\n")
-	}
-	return b.String()
-}
-
-func writeFlowRestartPromptIfNeeded(b *strings.Builder, record flowstore.FlowRecord, phase flowstore.FlowPhase) {
-	if phase.Status != flowstore.PhaseNeedsAttention && phase.Status != flowstore.PhaseBlocked {
-		return
-	}
-	fmt.Fprintf(b, "\nRestart required: this phase is %s. Before marking it completed, record the rerun:\n", phase.Status)
-	fmt.Fprintf(b, "wtui flow phase restart --flow-id %s --phase-id %s --notes \"Rerunning %s after addressing prior findings.\"\n", record.FlowID, phase.PhaseID, phase.Title)
-}
-
-func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	var b strings.Builder
-	b.WriteString("Merge the PR deliberately.\n\n")
-	writeFlowChangeMetadata(&b, record)
-	if flowstore.HasPRTarget(record.PR) {
-		fmt.Fprintf(&b, "\n\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s\n", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
-		if record.PR.Status != "" {
-			fmt.Fprintf(&b, "- Status: %s\n", record.PR.Status)
-		}
-	} else {
-		b.WriteString("\n\nPR target: missing. Do not merge until `wtui flow pr set` records provider, number, URL, head, and base.\n")
-	}
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	fmt.Fprintf(&b, "\nmerged:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "wtui flow merge set --flow-id %s --status merged --commit <merge-commit> --merged-at <rfc3339>\n\n", record.FlowID)
-	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "wtui flow merge set --flow-id %s --status blocked", record.FlowID)
-	return b.String()
-}
-
-func flowMinimalChangePrompt(instruction string, record flowstore.FlowRecord, phase flowstore.FlowPhase) string {
-	var b strings.Builder
-	b.WriteString(instruction)
-	b.WriteString("\n\n")
-	writeFlowChangeMetadata(&b, record)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	return b.String()
-}
-
-func writeFlowChangeMetadata(b *strings.Builder, record flowstore.FlowRecord) {
-	b.WriteString("Worktree: ")
-	b.WriteString(record.WorktreePath)
-	b.WriteString("\nBranch: ")
-	b.WriteString(record.Branch)
-	b.WriteString("\nStart commit: ")
-	b.WriteString(record.Commit)
-}
-
-func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	var b strings.Builder
-	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
-	b.WriteString("Flow phase: ")
-	if phase.Title != "" {
-		b.WriteString(phase.Title)
-	} else {
-		b.WriteString(phase.PhaseID)
-	}
-	b.WriteString(" (")
-	b.WriteString(phase.PhaseID)
-	b.WriteString(").\n")
-	writeFlowPromptHeader(&b, record, planPath)
-	writeFlowPromptPlanContext(&b, record, planBody)
-	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
-	return b.String()
-}
-
-func writeFlowPromptPhaseSummary(b *strings.Builder, record flowstore.FlowRecord, title, phaseID string) {
-	b.WriteString("\n")
-	b.WriteString(title)
-	b.WriteString(":\n")
-	if phase, ok := flowPhaseByID(record, phaseID); ok {
-		writeFlowPhaseContext(b, phase)
-		return
-	}
-	b.WriteString("- Phase: ")
-	b.WriteString(phaseID)
-	b.WriteString("\n")
-}
-
-func writeFlowPromptHeader(b *strings.Builder, record flowstore.FlowRecord, planPath string) {
-	if record.Instructions != "" {
-		b.WriteString("\nCustom instructions:\n")
-		b.WriteString(record.Instructions)
-		b.WriteString("\n")
-	}
-	if record.PlanID != "" {
-		b.WriteString("\nLinked plan: ")
-		b.WriteString(record.PlanID)
-		if planPath != "" {
-			b.WriteString(" at ")
-			b.WriteString(planPath)
-		}
-		b.WriteString("\n")
-	}
-}
-
-func writeFlowPromptPlanContext(b *strings.Builder, record flowstore.FlowRecord, planBody string) {
-	if plan, ok := flowPhaseByID(record, "plan"); ok {
-		b.WriteString("\nPrior Plan context:\n")
-		writeFlowPhaseContext(b, plan)
-	}
-	if planBody != "" {
-		b.WriteString("\nSaved plan body:\n")
-		b.WriteString(planBody)
-		if !strings.HasSuffix(planBody, "\n") {
-			b.WriteString("\n")
-		}
-	}
-}
-
-func writeFlowPhaseContext(b *strings.Builder, phase flowstore.FlowPhase) {
-	if phase.PhaseID != "" {
-		b.WriteString("- Phase: ")
-		b.WriteString(phase.PhaseID)
-		b.WriteString("\n")
-	}
-	if phase.Title != "" {
-		b.WriteString("- Title: ")
-		b.WriteString(phase.Title)
-		b.WriteString("\n")
-	}
-	b.WriteString("- Status: ")
-	b.WriteString(phase.Status)
-	b.WriteString("\n")
-	if phase.Outcome != "" {
-		b.WriteString("- Outcome: ")
-		b.WriteString(phase.Outcome)
-		b.WriteString("\n")
-	}
-	if phase.Summary != "" {
-		b.WriteString("- Summary: ")
-		b.WriteString(phase.Summary)
-		b.WriteString("\n")
-	}
-	if phase.Notes != "" {
-		b.WriteString("- Notes: ")
-		b.WriteString(phase.Notes)
-		b.WriteString("\n")
-	}
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
