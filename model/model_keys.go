@@ -2219,15 +2219,26 @@ func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Mo
 		next = next.setStatus(statusOther, errText)
 		return next, nil
 	}
-	if !ctx.Headless && next.mode == ui.ModeFlows {
-		next.activePane = 1
-		next.flowFocus = flowFocusTerminal
-		next.terminalPrefixActive = false
-	}
+	next = next.updateFlowTerminalFocusAfterLaunch(ctx)
 	if needsTick {
 		return next.startEmbeddedTerminalTick()
 	}
 	return next, nil
+}
+
+func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
+	if m.mode != ui.ModeFlows {
+		return m
+	}
+	if ctx.Headless {
+		m.flowFocus = flowFocusList
+		m.terminalPrefixActive = false
+		return m
+	}
+	m.activePane = 1
+	m.flowFocus = flowFocusTerminal
+	m.terminalPrefixActive = false
+	return m
 }
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
@@ -2266,6 +2277,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 		}
 		return next, nil
 	}
+	next = next.updateFlowTerminalFocusAfterLaunch(ctx)
 	var launchCmd tea.Cmd
 	if needsTick {
 		next, launchCmd = next.startEmbeddedTerminalTick()

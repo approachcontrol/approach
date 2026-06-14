@@ -1495,6 +1495,57 @@ func TestModel_CtrlJOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHead
 	}
 }
 
+func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{state: "running"},
+		{state: "running"},
+	}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-selected",
+		Status:       flowstore.StatusInProgress,
+	}})
+
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:     "codex",
+		FlowID:      "flow-1",
+		FlowPhaseID: "implementation",
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(terms[0].writes) != 1 || terms[0].writes[0] != "z" {
+		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", terms[0].writes)
+	}
+
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:     "codex",
+		FlowID:      "flow-1",
+		FlowPhaseID: "review-loop",
+		Headless:    true,
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(terms[0].writes) != 1 {
+		t.Fatalf("headless Flow launch should leave previous terminal writes unchanged, got %#v", terms[0].writes)
+	}
+	if len(terms[1].writes) != 0 {
+		t.Fatalf("headless Flow launch should not inherit terminal input focus, got writes %#v", terms[1].writes)
+	}
+}
+
 func TestModel_CtrlJOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *testing.T) {
 	for _, command := range []string{"codex", "claude"} {
 		t.Run(command, func(t *testing.T) {
@@ -2574,7 +2625,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected selected Flow phase resume command")
 	}
@@ -2606,6 +2657,10 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	}
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("Flow phase resume should not prefill embedded terminal, got writes %#v", fakeTerm.writes)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
+		t.Fatalf("interactive Flow phase resume should focus terminal input and forward z: %#v", fakeTerm.writes)
 	}
 }
 
