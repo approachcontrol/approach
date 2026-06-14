@@ -24,3 +24,11 @@ func ActiveFlowCreateForTest(m Model) uint64 {
 func FlowHeadlessForTest(m Model) bool {
 	return m.flowHeadless
 }
+
+func EmbeddedTerminalTickMsgForTest(m Model) any {
+	return embeddedTerminalTickMsg{Generation: m.embeddedTerminalTickGen}
+}
+
+func HasRunningFlowEmbeddedTerminalForPhaseForTest(m Model, flowID, phaseID string) bool {
+	return m.hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID)
+}

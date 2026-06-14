@@ -146,6 +146,28 @@ func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.
 	return cmd, &updates
 }
 
+func flowEmbeddedLaunchesFromCommand(t *testing.T, cmd tea.Cmd) []model.FlowEmbeddedLaunchRequestedMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	msgs := []tea.Msg{msg}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		msgs = msgs[:0]
+		for _, subcmd := range batch {
+			msgs = append(msgs, subcmd())
+		}
+	}
+	launches := make([]model.FlowEmbeddedLaunchRequestedMsg, 0)
+	for _, msg := range msgs {
+		if launch, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg); ok {
+			launches = append(launches, launch)
+		}
+	}
+	return launches
+}
+
 func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
@@ -347,6 +369,20 @@ func flowResultFromCommand(t *testing.T, cmd tea.Cmd) model.FlowResultMsg {
 		t.Fatalf("flow fetch command returned %T, want FlowResultMsg", msg)
 	}
 	return result
+}
+
+func applyFlowResultFollowup(t *testing.T, m model.Model, cmd tea.Cmd) model.Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	result, ok := msg.(model.FlowResultMsg)
+	if !ok {
+		t.Fatalf("follow-up command returned %T, want FlowResultMsg", msg)
+	}
+	m, _ = update(m, result)
+	return m
 }
 
 func prepareSelectedFlowPhaseLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
@@ -971,6 +1007,324 @@ func TestModel_FlowAutoModeLaunchesImplementationAfterPlanReviewCompletes(t *tes
 		!launchMsg.LaunchContext.FlowLaunchTracked ||
 		!launchMsg.LaunchContext.Embedded {
 		t.Fatalf("launch context = %#v, want embedded implementation launch", launchMsg.LaunchContext)
+	}
+}
+
+func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+		"review-loop":    flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+		"review-loop":    flowstore.PhasePending,
+	})
+	current.Phases[1].Outcome = flowstore.OutcomeApproved
+	var updates []flowstore.PhaseLaunchUpdate
+	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			launched := current
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return sourceTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	var cmd tea.Cmd
+	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-auto",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "plan-review",
+	}})
+	if cmd == nil {
+		t.Fatal("starting the source Flow terminal should schedule refresh and repaint")
+	}
+	if !model.HasRunningFlowEmbeddedTerminalForPhaseForTest(m, "flow-1", "plan-review") {
+		t.Fatal("test setup should attach a running Flow terminal to plan-review")
+	}
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{previous},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	m, cmd = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd != nil {
+		t.Fatalf("completed phase with running terminal returned auto-launch command %T, want nil", cmd)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("launch updates = %#v, want none while source terminal runs", updates)
+	}
+
+	sourceTerm.state = "exited"
+	m, cmd = update(m, model.EmbeddedTerminalTickMsgForTest(m))
+	if cmd == nil {
+		t.Fatal("exiting the deferred source terminal should prepare the next auto launch")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("deferred launch command returned %d embedded launches, want 1", len(launches))
+	}
+	launchMsg := launches[0]
+	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].FlowID != "flow-1" || updates[0].PhaseID != "implementation" || updates[0].LaunchID == "" {
+		t.Fatalf("launch updates after source terminal exit = %#v, want implementation auto launch", updates)
+	}
+	if launchMsg.LaunchContext.FlowID != "flow-1" ||
+		launchMsg.LaunchContext.FlowPhaseID != "implementation" ||
+		!launchMsg.LaunchContext.Embedded ||
+		!launchMsg.LaunchContext.Headless ||
+		!launchMsg.LaunchContext.FlowLaunchTracked {
+		t.Fatalf("deferred launch context = %#v", launchMsg.LaunchContext)
+	}
+	if strings.Contains(m.View(), "source output") || model.HasRunningFlowEmbeddedTerminalForPhaseForTest(m, "flow-1", "plan-review") {
+		t.Fatalf("source terminal should be dismissed after exited tick:\n%s", m.View())
+	}
+}
+
+func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	current.Phases[1].Outcome = flowstore.OutcomeApproved
+	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
+	listCalls := 0
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listCalls++
+			if filter.RepoPath != "/dev/alpha" {
+				t.Fatalf("FlowFilter.RepoPath = %q, want /dev/alpha", filter.RepoPath)
+			}
+			return []flowstore.FlowRecord{current}, nil
+		},
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			launched := current
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return sourceTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	var cmd tea.Cmd
+	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-auto",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "plan-review",
+	}})
+	if cmd == nil {
+		t.Fatal("starting the source Flow terminal should schedule refresh and repaint")
+	}
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{previous},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	sourceTerm.state = "exited"
+	m, cmd = update(m, model.EmbeddedTerminalTickMsgForTest(m))
+	if cmd == nil {
+		t.Fatal("exiting a Flow terminal should schedule a Flow refresh")
+	}
+	refresh := flowResultFromCommand(t, cmd)
+	if listCalls != 1 {
+		t.Fatalf("ListFlows calls after exit tick command = %d, want 1", listCalls)
+	}
+
+	m, cmd = update(m, refresh)
+	if cmd == nil {
+		t.Fatal("exit-triggered refresh should prepare auto launch after observing completion")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("exit-triggered refresh returned %d embedded launches, want 1", len(launches))
+	}
+	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
+		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
+	}
+	if launches[0].LaunchContext.FlowID != "flow-1" ||
+		launches[0].LaunchContext.FlowPhaseID != "implementation" ||
+		!launches[0].LaunchContext.Embedded ||
+		!launches[0].LaunchContext.FlowLaunchTracked {
+		t.Fatalf("launch context = %#v", launches[0].LaunchContext)
+	}
+}
+
+func TestModel_FlowAutoModeDeferredLaunchNoopsAfterAutoModeDisabled(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	current.Title = "Stale deferred auto command"
+	current.Instructions = "do not launch after auto mode off"
+	current.RepoPath = "/dev/alpha"
+	current.AutoMode = true
+	current, err = store.Create(current)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	previous := current
+	previous.Phases = append([]flowstore.FlowPhase(nil), current.Phases...)
+	for i := range previous.Phases {
+		switch previous.Phases[i].PhaseID {
+		case "plan-review":
+			previous.Phases[i].Status = flowstore.PhaseRunning
+		case "implementation":
+			previous.Phases[i].Status = flowstore.PhasePending
+		}
+	}
+	sourceTerm := &fakeEmbeddedTerminal{state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:         "codex",
+		AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return sourceTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	var cmd tea.Cmd
+	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-auto",
+		FlowID:       current.FlowID,
+		FlowPhaseID:  "plan-review",
+	}})
+	if cmd == nil {
+		t.Fatal("starting the source Flow terminal should schedule refresh and repaint")
+	}
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{previous},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, cmd = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd != nil {
+		t.Fatalf("deferred completion returned command %T, want nil", cmd)
+	}
+	if _, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: current.FlowID, Enabled: false}); err != nil {
+		t.Fatalf("SetAutoMode(false) error = %v", err)
+	}
+
+	sourceTerm.state = "exited"
+	m, cmd = update(m, model.EmbeddedTerminalTickMsgForTest(m))
+	if cmd == nil {
+		t.Fatal("exiting the deferred source terminal should attempt stale auto launch")
+	}
+	if launches := flowEmbeddedLaunchesFromCommand(t, cmd); len(launches) != 0 {
+		t.Fatalf("stale deferred launch produced %#v, want none", launches)
+	}
+	read, err := store.Read(current.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(read, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status = %q, want ready after stale deferred command", got)
+	}
+}
+
+func TestModel_FlowAutoModeDeferredLaunchWaitsOnFailedSourceTerminal(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"failed output"}, state: "running"}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return sourceTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	var cmd tea.Cmd
+	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-auto",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "plan-review",
+	}})
+	if cmd == nil {
+		t.Fatal("starting the source Flow terminal should schedule refresh and repaint")
+	}
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{previous},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	sourceTerm.state = "failed"
+	m, cmd = update(m, model.EmbeddedTerminalTickMsgForTest(m))
+	if cmd != nil {
+		t.Fatalf("failed source terminal returned command %T, want nil", cmd)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("launch updates = %#v, want none after failed source terminal", updates)
+	}
+	if !strings.Contains(m.View(), "failed output") || !strings.Contains(m.View(), "plan-review failed") {
+		t.Fatalf("failed source terminal should remain visible:\n%s", m.View())
 	}
 }
 
@@ -3637,7 +3991,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosesOnExitedTick(t *testing.T) {
 			continue
 		}
 		if followup != nil {
-			t.Fatalf("exited Flow terminal should not reschedule repaint, got %T", followup)
+			m = applyFlowResultFollowup(t, m, followup)
 		}
 	}
 
@@ -3751,7 +4105,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 		var followup tea.Cmd
 		m, followup = update(m, msg)
 		if followup != nil {
-			t.Fatalf("all-exited terminals should stop repaint loop, got %T", followup)
+			m = applyFlowResultFollowup(t, m, followup)
 		}
 	}
 

@@ -318,7 +318,12 @@ IDs when present; press `n` to create a new Flow. On a Flow row or expanded
 phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `ctrl+j` to launch the first
 launchable phase for the selected Flow. Press `y` to copy the selected Flow
-worktree path from either a Flow row or one of its expanded phase rows.
+worktree path from either a Flow row or one of its expanded phase rows. Press
+`m` to toggle per-Flow auto mode. When auto mode is on, completed CLI phases
+advance only after the completed phase's embedded Flow terminal exits normally
+and auto-closes; terminal exit also triggers a Flow refresh so newly persisted
+completion state is discovered without waiting for unrelated UI activity.
+Auto mode still skips non-completed outcomes and stops before Merge.
 Headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs

@@ -111,6 +111,7 @@ type Model struct {
 	activeEmbeddedTerminalNum int
 	activeFlowTerminalNum     int
 	flowFocus                 flowFocus
+	deferredAutoFlowLaunches  map[deferredAutoFlowLaunchKey]struct{}
 	embeddedTerminalTickGen   uint64
 	flowRefreshTickGen        uint64
 	flowRefreshInFlight       uint64
@@ -993,11 +994,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.embeddedTerminalTickGen {
 			return m, nil
 		}
+		exitedFlowTerminals := m.exitedFlowEmbeddedTerminalAutoCloseKeys()
 		m = m.dismissExitedFlowEmbeddedTerminals()
-		if m.hasRunningEmbeddedTerminal() {
-			return m, m.embeddedTerminalTickCmd()
+		var cmds []tea.Cmd
+		var deferredCmd tea.Cmd
+		m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches(exitedFlowTerminals)
+		cmds = append(cmds, deferredCmd)
+		if len(exitedFlowTerminals) > 0 {
+			var refreshCmd tea.Cmd
+			m, refreshCmd = m.startFlowRefreshFetch()
+			cmds = append(cmds, refreshCmd)
 		}
-		return m, nil
+		if m.hasRunningEmbeddedTerminal() {
+			cmds = append(cmds, m.embeddedTerminalTickCmd())
+		}
+		return m, batchNonNil(cmds...)
 	case flowRefreshTickMsg:
 		if msg.Generation != m.flowRefreshTickGen || m.mode != ui.ModeFlows {
 			return m, nil
@@ -1386,6 +1397,15 @@ func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flow
 		return record, flowstore.FlowPhase{}, false
 	}
 	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+}
+
+func (m Model) flowByID(flowID string) (flowstore.FlowRecord, bool) {
+	for _, record := range m.flows.Items() {
+		if record.FlowID == flowID {
+			return record, true
+		}
+	}
+	return flowstore.FlowRecord{}, false
 }
 
 func flowRecordPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {

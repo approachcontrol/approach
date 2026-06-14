@@ -838,6 +838,23 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 	return m
 }
 
+func (m Model) exitedFlowEmbeddedTerminalAutoCloseKeys() []deferredAutoFlowLaunchKey {
+	keys := make([]deferredAutoFlowLaunchKey, 0)
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+			continue
+		}
+		if !flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
+			continue
+		}
+		key, ok := newDeferredAutoFlowLaunchKey(slot.FlowID, slot.FlowPhaseID)
+		if ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 func flowEmbeddedTerminalAutoCloses(state string) bool {
 	return state == "exited"
 }

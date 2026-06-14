@@ -1343,23 +1343,92 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 		if artifacts.NormalizePhaseID(completedPhase.PhaseID) == "autoreview" {
 			continue
 		}
+		if m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, completedPhase.PhaseID) {
+			m = m.deferAutoFlowPhaseLaunch(record.FlowID, completedPhase.PhaseID)
+			continue
+		}
 		phase, ok := nextAutoLaunchPhase(record)
 		if !ok {
 			continue
 		}
-		target, ok, next := m.flowPhaseLaunchTarget(record, phase)
-		m = next
+		var cmd tea.Cmd
+		m, cmd = m.prepareAutoFlowPhaseLaunchForRecord(record, phase)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return m, batchNonNil(cmds...)
+}
+
+type deferredAutoFlowLaunchKey struct {
+	FlowID  string
+	PhaseID string
+}
+
+func (m Model) deferAutoFlowPhaseLaunch(flowID, phaseID string) Model {
+	key, ok := newDeferredAutoFlowLaunchKey(flowID, phaseID)
+	if !ok {
+		return m
+	}
+	if m.deferredAutoFlowLaunches == nil {
+		m.deferredAutoFlowLaunches = make(map[deferredAutoFlowLaunchKey]struct{})
+	}
+	m.deferredAutoFlowLaunches[key] = struct{}{}
+	return m
+}
+
+func newDeferredAutoFlowLaunchKey(flowID, phaseID string) (deferredAutoFlowLaunchKey, bool) {
+	phaseID = artifacts.NormalizePhaseID(phaseID)
+	if flowID == "" || phaseID == "" {
+		return deferredAutoFlowLaunchKey{}, false
+	}
+	return deferredAutoFlowLaunchKey{FlowID: flowID, PhaseID: phaseID}, true
+}
+
+func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, phase flowstore.FlowPhase) (Model, tea.Cmd) {
+	target, ok, next := m.flowPhaseLaunchTarget(record, phase)
+	m = next
+	if !ok {
+		return m, nil
+	}
+	launchID := newLaunchID()
+	command, _ := next.flowLaunchAgentSettings()
+	switch command {
+	case agent.CommandCodex, agent.CommandClaude:
+		return m, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless)
+	default:
+		return m, next.prepareAutoFlowPhaseLaunchCmd(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID)
+	}
+}
+
+func (m Model) prepareDeferredAutoFlowPhaseLaunches(exited []deferredAutoFlowLaunchKey) (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	for _, key := range exited {
+		if _, ok := m.deferredAutoFlowLaunches[key]; !ok {
+			continue
+		}
+		delete(m.deferredAutoFlowLaunches, key)
+		if m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
+			m.deferredAutoFlowLaunches[key] = struct{}{}
+			continue
+		}
+		record, ok := m.flowByID(key.FlowID)
 		if !ok {
 			continue
 		}
-		launchID := newLaunchID()
-		command, _ := next.flowLaunchAgentSettings()
-		switch command {
-		case agent.CommandCodex, agent.CommandClaude:
-			cmds = append(cmds, next.prepareAutoFlowPhaseEmbeddedLaunch(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID, next.flowHeadless))
+		if !record.AutoMode {
 			continue
 		}
-		cmds = append(cmds, next.prepareAutoFlowPhaseLaunchCmd(target.record, target.phase, target.repoPath, target.worktreePath, target.planPath, launchID))
+		if phase, ok := nextAutoLaunchPhase(record); ok {
+			var cmd tea.Cmd
+			m, cmd = m.prepareAutoFlowPhaseLaunchForRecord(record, phase)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+	if len(m.deferredAutoFlowLaunches) == 0 {
+		m.deferredAutoFlowLaunches = nil
 	}
 	return m, batchNonNil(cmds...)
 }
