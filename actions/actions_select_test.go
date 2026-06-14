@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -451,6 +452,212 @@ func TestTerminalLaunch_ReportsMissingTerminalCommand(t *testing.T) {
 		t.Fatal("expected missing TERMINAL command error")
 	}
 	for _, want := range []string{"TERMINAL", "ghostterm"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
+		}
+	}
+}
+
+func TestDetachedTerminalLaunch_UsesTerminalEnvCLI(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
+	const target = `env -u TMUX tmux -f /dev/null -L 'wtui-agent' attach-session -t 'agent launch'`
+
+	launch, err := detachedTerminalLaunch(target, "/repo/worktree", "linux", env, fakeLookPath("alacritty"), LaunchOptions{})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	if launch.Interactive {
+		t.Fatal("detached handoff should not require the caller TTY")
+	}
+	if !launch.Detached {
+		t.Fatal("detached handoff launch should be marked detached")
+	}
+	want := []string{"alacritty", "-e", "sh", "-c", target}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("handoff args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+	if launch.Cmd.Dir != "/repo/worktree" {
+		t.Fatalf("handoff dir = %q, want /repo/worktree", launch.Cmd.Dir)
+	}
+}
+
+func TestDetachedTerminalLaunch_UsesConfiguredCLIWhenTerminalEnvEmpty(t *testing.T) {
+	launch, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo/worktree", "linux", fakeGetenv(nil), fakeLookPath("wezterm"), LaunchOptions{
+		TerminalCommand: "wezterm start --cwd .",
+	})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	want := []string{"wezterm", "start", "--cwd", ".", "-e", "sh", "-c", "tmux attach-session -t agent"}
+	if !reflect.DeepEqual(launch.Cmd.Args, want) {
+		t.Fatalf("handoff args = %#v, want %#v", launch.Cmd.Args, want)
+	}
+	if launch.Cmd.Dir != "/repo/worktree" {
+		t.Fatalf("handoff dir = %q, want /repo/worktree", launch.Cmd.Dir)
+	}
+}
+
+func TestDetachedTerminalLaunch_OsascriptEscapesTargetShellCommand(t *testing.T) {
+	const target = `env -u TMUX tmux -L "sock"; do shell script "touch /tmp/PWNED"; echo '$HOME' \ attach-session -t agent`
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
+	}
+
+	const prefix = `tell application "Terminal" to do script `
+	var doScript string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) {
+			doScript = strings.TrimPrefix(arg, prefix)
+		}
+	}
+	if doScript == "" {
+		t.Fatalf("no Terminal do-script argument found in %#v", launch.Cmd.Args)
+	}
+	inner, err := strconv.Unquote(doScript)
+	if err != nil {
+		t.Fatalf("do-script payload is not a valid quoted string: %q", doScript)
+	}
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("do-script payload = %q, want exact handoff command %q", inner, want)
+	}
+}
+
+func TestDetachedTerminalLaunch_ITermOsascriptEscapesTargetShellCommand(t *testing.T) {
+	const target = `env -u TMUX tmux -L "sock"; do shell script "touch /tmp/PWNED"; echo '$HOME' \ attach-session -t agent`
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "iTerm",
+	})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "osascript" {
+		t.Fatalf("expected osascript transport, got %#v", launch.Cmd.Args)
+	}
+
+	const prefix = `tell current session of newWindow to write text `
+	var writeText string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) {
+			writeText = strings.TrimPrefix(arg, prefix)
+		}
+	}
+	if writeText == "" {
+		t.Fatalf("no iTerm write-text argument found in %#v", launch.Cmd.Args)
+	}
+	inner, err := strconv.Unquote(writeText)
+	if err != nil {
+		t.Fatalf("write-text payload is not a valid quoted string: %q", writeText)
+	}
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("write-text payload = %q, want exact handoff command %q", inner, want)
+	}
+	if strings.Contains(strings.Join(launch.Cmd.Args, "\n"), "current session of current window") {
+		t.Fatalf("iTerm handoff should not write into the user's current session: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestDetachedTerminalLaunch_ConfiguredTerminalAppPreservesCWD(t *testing.T) {
+	const target = `tmux attach-session -t agent`
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "Terminal.app",
+	})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+
+	const prefix = `tell application "Terminal" to do script `
+	var doScript string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) {
+			doScript = strings.TrimPrefix(arg, prefix)
+		}
+	}
+	if doScript == "" {
+		t.Fatalf("no Terminal do-script argument found in %#v", launch.Cmd.Args)
+	}
+	inner, err := strconv.Unquote(doScript)
+	if err != nil {
+		t.Fatalf("do-script payload is not a valid quoted string: %q", doScript)
+	}
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("do-script payload = %q, want exact handoff command %q", inner, want)
+	}
+}
+
+func TestDetachedTerminalLaunch_IgnoresActiveMultiplexerWhenTerminalConfigured(t *testing.T) {
+	env := fakeGetenv(map[string]string{
+		"TMUX":     "/tmp/tmux.sock",
+		"ZELLIJ":   "0",
+		"TERMINAL": "alacritty",
+	})
+	launch, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo/worktree", "linux", env, fakeLookPath("tmux", "zellij", "alacritty"), LaunchOptions{})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	if launch.Cmd.Args[0] != "alacritty" {
+		t.Fatalf("handoff should use configured external terminal, got %#v", launch.Cmd.Args)
+	}
+}
+
+func TestDetachedTerminalLaunch_DoesNotFallbackToMultiplexersOrShell(t *testing.T) {
+	env := fakeGetenv(map[string]string{
+		"TMUX":   "/tmp/tmux.sock",
+		"ZELLIJ": "0",
+		"SHELL":  "/bin/zsh",
+	})
+	_, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo/worktree", "linux", env, fakeLookPath("tmux", "zellij", "sh"), LaunchOptions{})
+	if err == nil {
+		t.Fatal("expected missing external terminal error")
+	}
+	if !strings.Contains(err.Error(), "external terminal required for detached handoff") {
+		t.Fatalf("error = %q, want external-terminal-required message", err.Error())
+	}
+}
+
+func TestDetachedTerminalLaunch_DarwinFallsBackToTerminalAppleScript(t *testing.T) {
+	launch, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo/worktree", "darwin", fakeGetenv(nil), fakeLookPath("tmux", "osascript"), LaunchOptions{})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+	joined := strings.Join(launch.Cmd.Args, "\n")
+	for _, want := range []string{"osascript", `tell application "Terminal" to do script `, `tell application "Terminal" to activate`} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected macOS fallback args to contain %q, got %#v", want, launch.Cmd.Args)
+		}
+	}
+}
+
+func TestDetachedTerminalLaunch_ReportsMissingExternalTerminal(t *testing.T) {
+	env := fakeGetenv(map[string]string{"TERMINAL": "ghostterm"})
+	_, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo/worktree", "linux", env, fakeLookPath(), LaunchOptions{})
+	if err == nil {
+		t.Fatal("expected missing TERMINAL command error")
+	}
+	for _, want := range []string{"TERMINAL", "ghostterm"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
+		}
+	}
+}
+
+func TestDetachedTerminalLaunch_RejectsSupportedGUIAliasWithArgs(t *testing.T) {
+	_, err := detachedTerminalLaunch("tmux attach-session -t agent", "/repo/worktree", "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "iTerm --new-window",
+	})
+	if err == nil {
+		t.Fatal("expected supported GUI alias with args to be rejected")
+	}
+	for _, want := range []string{"[terminal].command", "iTerm --new-window", "unsupported arguments"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to mention %q, got %q", want, err.Error())
 		}

@@ -298,6 +298,11 @@ type TerminalResultMsg struct {
 	Err string
 }
 
+type EmbeddedTerminalDetachHandoffResultMsg struct {
+	Target string
+	Err    string
+}
+
 type PlanEditResultMsg struct {
 	RepoPath string
 	Err      string

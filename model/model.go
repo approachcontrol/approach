@@ -103,6 +103,7 @@ type Model struct {
 	saveAgent                 func(string) error
 	saveAgentReasoningEffort  func(string, string) error
 	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
+	launchDetachedTerminal    func(string, string) (actions.TerminalLaunchSpec, error)
 	launchAgent               func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
@@ -180,6 +181,7 @@ type Options struct {
 	SaveAgentCommand         func(string) error
 	SaveAgentReasoningEffort func(string, string) error
 	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
+	LaunchDetachedTerminal   func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error)
 	LaunchAgent              func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
 	StartEmbeddedTerminal    EmbeddedTerminalStarter
 	FinalizeAgentSession     func(actions.AgentLaunchContext) error
@@ -309,6 +311,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if launchTerminal == nil {
 		launchTerminal = actions.TerminalLaunch
 	}
+	launchDetachedTerminal := opts.LaunchDetachedTerminal
+	if launchDetachedTerminal == nil {
+		launchDetachedTerminal = func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error) {
+			return actions.DetachedTerminalLaunch(targetShellCommand, cwd, actions.LaunchOptions{})
+		}
+	}
 	launchAgent := opts.LaunchAgent
 	if launchAgent == nil {
 		launchAgent = actions.AgentLaunch
@@ -401,6 +409,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		saveAgent:                saveAgent,
 		saveAgentReasoningEffort: saveAgentReasoningEffort,
 		launchTerminal:           launchTerminal,
+		launchDetachedTerminal:   launchDetachedTerminal,
 		launchAgent:              launchAgent,
 		startEmbeddedTerminal:    startEmbeddedTerminal,
 		finalizeAgentSession:     finalizeAgentSession,
@@ -1101,6 +1110,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)
 		}
+		return m, nil
+	case EmbeddedTerminalDetachHandoffResultMsg:
+		if msg.Err != "" {
+			m = m.setStatus(statusOther, "Detached embedded terminal, but failed to open terminal: "+msg.Err)
+			return m, nil
+		}
+		target := strings.TrimSpace(msg.Target)
+		if target == "" {
+			target = "tmux"
+		}
+		m = m.setStatus(statusOther, "Detached embedded terminal and opened terminal: "+target)
 		return m, nil
 	case PlanEditResultMsg:
 		if !m.isCurrentRepo(msg.RepoPath) {

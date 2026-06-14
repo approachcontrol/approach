@@ -1343,6 +1343,37 @@ func TerminalLaunchWithOptions(path string, opts LaunchOptions) (TerminalLaunchS
 	return terminalLaunchWithOptions(path, runtime.GOOS, os.Getenv, exec.LookPath, nil, opts)
 }
 
+// DetachedTerminalLaunch builds a non-interactive handoff command that opens an
+// external terminal and runs targetShellCommand. It intentionally ignores active
+// or installed multiplexers; the target command already attaches to the
+// detached tmux-backed embedded terminal.
+func DetachedTerminalLaunch(targetShellCommand, cwd string, opts LaunchOptions) (TerminalLaunchSpec, error) {
+	return detachedTerminalLaunch(targetShellCommand, cwd, runtime.GOOS, os.Getenv, exec.LookPath, opts)
+}
+
+func detachedTerminalLaunch(targetShellCommand, cwd, goos string, getenv getenvFunc, lookPath lookPathFunc, opts LaunchOptions) (TerminalLaunchSpec, error) {
+	targetShellCommand = strings.TrimSpace(targetShellCommand)
+	if targetShellCommand == "" {
+		return TerminalLaunchSpec{}, fmt.Errorf("detached terminal handoff command cannot be empty")
+	}
+	preference := selectTerminalPreference(getenv("TERMINAL"), opts.TerminalCommand, lookPath)
+	if preference.kind != terminalPreferenceNone {
+		launch, err := detachedTerminalLaunchFromPreference(goos, cwd, lookPath, preference, targetShellCommand)
+		if err != nil {
+			return TerminalLaunchSpec{}, err
+		}
+		launch.Detached = true
+		return launch, nil
+	}
+	if goos == "darwin" && commandExists("osascript", lookPath) {
+		return TerminalLaunchSpec{
+			Cmd:      macOSTerminalScriptCommand("Terminal", detachedTerminalShellCommand(targetShellCommand, cwd)),
+			Detached: true,
+		}, nil
+	}
+	return TerminalLaunchSpec{}, fmt.Errorf("external terminal required for detached handoff; set TERMINAL or [terminal].command")
+}
+
 // terminalLaunch chooses a transport for path. When command is nil it opens a
 // plain shell/terminal session (the `t` shortcut). When command is non-nil it
 // runs that command inside the chosen session instead.
@@ -1548,6 +1579,40 @@ func terminalLaunchFromPreference(goos, path string, lookPath lookPathFunc, pref
 	default:
 		return TerminalLaunchSpec{}, fmt.Errorf("%s is empty", pref.source)
 	}
+}
+
+func detachedTerminalLaunchFromPreference(goos, cwd string, lookPath lookPathFunc, pref terminalPreference, shellCommand string) (TerminalLaunchSpec, error) {
+	switch pref.kind {
+	case terminalPreferenceCLICommand:
+		cmd, err := cliTerminalLaunchForShell(pref.argv, cwd, shellCommand)
+		if err != nil {
+			return TerminalLaunchSpec{}, err
+		}
+		return TerminalLaunchSpec{Cmd: cmd}, nil
+	case terminalPreferenceGUIApp:
+		if goos != "darwin" {
+			return TerminalLaunchSpec{}, missingTerminalCommandError(pref)
+		}
+		if !commandExists("osascript", lookPath) {
+			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch detached terminal handoff: osascript is required to run a command in %s", pref.app)
+		}
+		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand(pref.app, detachedTerminalShellCommand(shellCommand, cwd))}, nil
+	case terminalPreferenceUnsupportedGUIApp:
+		if pref.reason != "" {
+			return TerminalLaunchSpec{}, fmt.Errorf("%s", pref.reason)
+		}
+		return TerminalLaunchSpec{}, missingTerminalCommandError(pref)
+	default:
+		return TerminalLaunchSpec{}, fmt.Errorf("%s is empty", pref.source)
+	}
+}
+
+func detachedTerminalShellCommand(shellCommand, cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return shellCommand
+	}
+	return "cd " + shellQuote(cwd) + " && " + shellCommand
 }
 
 func cliTerminalLaunch(argv []string, path string, command *terminalCommand) (TerminalLaunchSpec, error) {

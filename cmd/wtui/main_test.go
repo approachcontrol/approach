@@ -466,6 +466,18 @@ func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
 	if agentLaunch.Cleanup != nil {
 		agentLaunch.Cleanup()
 	}
+
+	detachLaunch, err := opts.LaunchDetachedTerminal("tmux attach-session -t agent", "/repo/worktree")
+	if err != nil {
+		t.Fatalf("LaunchDetachedTerminal returned error: %v", err)
+	}
+	wantDetachArgs := []string{terminalCommand, "--reuse", "-e", "sh", "-c", "tmux attach-session -t agent"}
+	if !reflect.DeepEqual(detachLaunch.Cmd.Args, wantDetachArgs) {
+		t.Fatalf("expected LaunchDetachedTerminal to use configured terminal command, got %#v", detachLaunch.Cmd.Args)
+	}
+	if detachLaunch.Cmd.Dir != "/repo/worktree" {
+		t.Fatalf("LaunchDetachedTerminal dir = %q, want /repo/worktree", detachLaunch.Cmd.Dir)
+	}
 }
 
 func TestModelOptionsFromConfigTerminalEnvOverridesConfiguredCommand(t *testing.T) {

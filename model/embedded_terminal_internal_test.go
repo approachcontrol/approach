@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -291,6 +292,7 @@ func TestOpenEmbeddedTerminalStoresSessionRepoPath(t *testing.T) {
 	next, opened, err := m.openEmbeddedTerminal(actions.AgentLaunchContext{
 		RepoPath:     "/dev/alpha/",
 		WorktreePath: "/dev/alpha-worktrees/feature",
+		WorkingDir:   "/dev/alpha-worktrees/feature/subdir",
 	}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"})
 	if err != nil {
 		t.Fatalf("open embedded terminal returned error: %v", err)
@@ -303,6 +305,12 @@ func TestOpenEmbeddedTerminalStoresSessionRepoPath(t *testing.T) {
 	}
 	if got := next.embeddedTerminals[0].RepoPath; got != "/dev/alpha" {
 		t.Fatalf("slot repo path = %q, want cleaned repo path %q", got, "/dev/alpha")
+	}
+	if got := next.embeddedTerminals[0].WorktreePath; got != "/dev/alpha-worktrees/feature" {
+		t.Fatalf("slot worktree path = %q, want cleaned worktree path", got)
+	}
+	if got := next.embeddedTerminals[0].WorkingDir; got != "/dev/alpha-worktrees/feature/subdir" {
+		t.Fatalf("slot working dir = %q, want cleaned working dir", got)
 	}
 }
 
@@ -777,21 +785,34 @@ func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 
 func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	var gotTarget, gotCWD string
 	m := Model{
 		mode:                      ui.ModeSessions,
 		activeEmbeddedTerminalNum: 1,
 		terminalPrefixActive:      true,
+		launchDetachedTerminal: func(target, cwd string) (actions.TerminalLaunchSpec, error) {
+			gotTarget = target
+			gotCWD = cwd
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+		finalizeAgentSession: func(actions.AgentLaunchContext) error {
+			t.Fatal("detach should not finalize the agent session")
+			return nil
+		},
 		embeddedTerminals: []embeddedTerminalSlot{{
-			Number:   1,
-			Scope:    embeddedTerminalScopeSession,
-			Provider: "codex",
-			Identity: "session",
-			Terminal: term,
-			ID:       1,
+			Number:       1,
+			Scope:        embeddedTerminalScopeSession,
+			Provider:     "codex",
+			Identity:     "session",
+			RepoPath:     "/dev/repo",
+			WorktreePath: "/dev/worktree",
+			WorkingDir:   "/dev/worktree/subdir",
+			Terminal:     term,
+			ID:           1,
 		}},
 	}
 
-	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -802,13 +823,35 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 	if len(next.embeddedTerminals) != 0 {
 		t.Fatalf("embedded terminals = %#v, want detached terminal dismissed", next.embeddedTerminals)
 	}
-	if !strings.Contains(next.status.Text, "wtui-agent-session") {
-		t.Fatalf("status = %q, want detach target", next.status.Text)
+	if gotTarget != "wtui-agent-session" {
+		t.Fatalf("handoff target = %q, want wtui-agent-session", gotTarget)
+	}
+	if gotCWD != "/dev/worktree/subdir" {
+		t.Fatalf("handoff cwd = %q, want /dev/worktree/subdir", gotCWD)
+	}
+	if cmd == nil {
+		t.Fatal("detach should return a handoff command")
+	}
+	if !strings.Contains(next.status.Text, "opening terminal: wtui-agent-session") {
+		t.Fatalf("status = %q, want opening-terminal detach target", next.status.Text)
+	}
+	msg, ok := cmd().(EmbeddedTerminalDetachHandoffResultMsg)
+	if !ok {
+		t.Fatalf("handoff command message = %#v, want EmbeddedTerminalDetachHandoffResultMsg", msg)
+	}
+	if msg.Target != "wtui-agent-session" || msg.Err != "" {
+		t.Fatalf("handoff message = %#v, want successful target", msg)
+	}
+	updated, _ := next.Update(msg)
+	next = updated.(Model)
+	if !strings.Contains(next.status.Text, "Detached embedded terminal and opened terminal: wtui-agent-session") {
+		t.Fatalf("status = %q, want opened-terminal detach target", next.status.Text)
 	}
 }
 
 func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-flow-agent"}
+	var gotTarget, gotCWD string
 	m := Model{
 		mode:                  ui.ModeFlows,
 		activePane:            1,
@@ -818,16 +861,27 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 		terminalConfirmID:     1,
 		terminalConfirmScope:  embeddedTerminalScopeFlow,
 		modal:                 modal.OpenConfirm(embeddedTerminalTerminatePrompt, nil),
+		launchDetachedTerminal: func(target, cwd string) (actions.TerminalLaunchSpec, error) {
+			gotTarget = target
+			gotCWD = cwd
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+		finalizeAgentSession: func(actions.AgentLaunchContext) error {
+			t.Fatal("detach should not finalize the agent session")
+			return nil
+		},
 		embeddedTerminals: []embeddedTerminalSlot{
 			{
-				Number:      1,
-				Scope:       embeddedTerminalScopeFlow,
-				Provider:    "codex",
-				Identity:    "implementation",
-				FlowID:      "flow-1",
-				FlowPhaseID: "implementation",
-				Terminal:    term,
-				ID:          1,
+				Number:       1,
+				Scope:        embeddedTerminalScopeFlow,
+				Provider:     "codex",
+				Identity:     "implementation",
+				RepoPath:     "/dev/repo",
+				WorktreePath: "/dev/worktree",
+				FlowID:       "flow-1",
+				FlowPhaseID:  "implementation",
+				Terminal:     term,
+				ID:           1,
 			},
 			{
 				Number:      2,
@@ -850,7 +904,7 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 		},
 	}
 
-	next, _, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeFlow)
 
 	if !consumed {
 		t.Fatal("detach key should be consumed")
@@ -872,6 +926,104 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 	}
 	if activity := next.flowTerminalActivity(); len(activity) != 1 || activity[0].PhaseID != "review" {
 		t.Fatalf("flow terminal activity = %#v, want only remaining Flow terminal", activity)
+	}
+	if gotTarget != "wtui-flow-agent" {
+		t.Fatalf("handoff target = %q, want wtui-flow-agent", gotTarget)
+	}
+	if gotCWD != "/dev/worktree" {
+		t.Fatalf("handoff cwd = %q, want /dev/worktree", gotCWD)
+	}
+	if cmd == nil {
+		t.Fatal("detach should return a handoff command")
+	}
+}
+
+func TestTerminalPrefixDReportsHandoffConstructionFailureAfterDetach(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	m := Model{
+		mode:                      ui.ModeSessions,
+		activeEmbeddedTerminalNum: 1,
+		terminalPrefixActive:      true,
+		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, errors.New("no external terminal")
+		},
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:   1,
+			Scope:    embeddedTerminalScopeSession,
+			Provider: "codex",
+			Identity: "session",
+			Terminal: term,
+			ID:       1,
+		}},
+	}
+
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+
+	if !consumed {
+		t.Fatal("detach key should be consumed")
+	}
+	if !term.detached {
+		t.Fatal("terminal was not detached")
+	}
+	if len(next.embeddedTerminals) != 0 {
+		t.Fatalf("embedded terminals = %#v, want detached terminal dismissed", next.embeddedTerminals)
+	}
+	if cmd != nil {
+		t.Fatal("construction failure should not return a handoff command")
+	}
+	if !strings.Contains(next.status.Text, "Detached embedded terminal, but failed to open terminal: no external terminal") {
+		t.Fatalf("status = %q, want detach-success handoff failure", next.status.Text)
+	}
+}
+
+func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	cleaned := false
+	m := Model{
+		mode:                      ui.ModeSessions,
+		activeEmbeddedTerminalNum: 1,
+		terminalPrefixActive:      true,
+		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{
+				Cmd:     exec.Command("sh", "-c", "exit 7"),
+				Cleanup: func() { cleaned = true },
+			}, nil
+		},
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:   1,
+			Scope:    embeddedTerminalScopeSession,
+			Provider: "codex",
+			Identity: "session",
+			Terminal: term,
+			ID:       1,
+		}},
+	}
+
+	next, cmd, consumed := m.handleEmbeddedTerminalKeyForScope(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}, embeddedTerminalScopeSession)
+
+	if !consumed {
+		t.Fatal("detach key should be consumed")
+	}
+	if len(next.embeddedTerminals) != 0 {
+		t.Fatalf("embedded terminals = %#v, want detached terminal dismissed", next.embeddedTerminals)
+	}
+	if cmd == nil {
+		t.Fatal("detach should return a handoff command")
+	}
+	msg, ok := cmd().(EmbeddedTerminalDetachHandoffResultMsg)
+	if !ok {
+		t.Fatalf("handoff command message = %#v, want EmbeddedTerminalDetachHandoffResultMsg", msg)
+	}
+	if msg.Err == "" {
+		t.Fatalf("handoff message = %#v, want run error", msg)
+	}
+	if !cleaned {
+		t.Fatal("handoff cleanup should run when handoff command fails")
+	}
+	updated, _ := next.Update(msg)
+	next = updated.(Model)
+	if !strings.Contains(next.status.Text, "Detached embedded terminal, but failed to open terminal:") {
+		t.Fatalf("status = %q, want detach-success handoff failure", next.status.Text)
 	}
 }
 
