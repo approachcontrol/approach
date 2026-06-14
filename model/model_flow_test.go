@@ -3477,6 +3477,31 @@ func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) 
 	}
 }
 
+func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = flowsInRightPane(t, m, nil)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{
+		RepoPath: "/dev/alpha",
+		Stashes: []gitquery.Stash{{
+			Index:   0,
+			Date:    "2026-06-14 12:00:00 -0400",
+			Message: "hidden stash",
+		}},
+		ListRequest: m.ListRequest(ui.ModeStashes),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd != nil {
+		t.Fatalf("d with no visible active Flow returned command %T, want nil", cmd)
+	}
+	if prompt := m.ConfirmPrompt(); prompt != "" {
+		t.Fatalf("d with no visible active Flow opened hidden-pane confirmation %q", prompt)
+	}
+}
+
 func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
 	deleted := false
 	m := model.NewWithOptions(testRepos(), model.Options{

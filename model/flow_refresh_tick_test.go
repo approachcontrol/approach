@@ -384,6 +384,44 @@ func TestModel_FlowRefreshTracksRepoChangeRefetchBeforePendingTick(t *testing.T)
 	}
 }
 
+func TestModel_ActiveFlowRefreshRepoChangeSupersedesInFlightFetch(t *testing.T) {
+	repos := []scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/bravo", DisplayName: "bravo"},
+	}
+	m := NewWithOptions(repos, Options{
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
+		},
+	})
+	m.activePane = 1
+	var cmd tea.Cmd
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	if cmd == nil {
+		t.Fatal("expected active Flow surface entry to fetch flows")
+	}
+	alphaRequest := m.flowRefreshInFlight
+	if alphaRequest == 0 {
+		t.Fatal("expected alpha active Flow fetch to be in flight")
+	}
+	m.activePane = 0
+
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
+	if cmd == nil {
+		t.Fatal("expected repo change to supersede in-flight active Flow fetch")
+	}
+	if got := m.ListRequest(ui.ModeFlows); got == alphaRequest {
+		t.Fatalf("flows list request = %d, want changed from alpha request %d", got, alphaRequest)
+	}
+	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("flow refresh in-flight request = %d, want repo-change request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+	}
+	result := flowResultFromCommand(t, cmd)
+	if result.RepoPath != "/dev/bravo" {
+		t.Fatalf("FlowResultMsg.RepoPath = %q, want /dev/bravo", result.RepoPath)
+	}
+}
+
 func TestModel_FlowRefreshTracksActionRefetchBeforePendingTick(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
 		StartupMode: ui.ModeFlows,

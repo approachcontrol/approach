@@ -885,8 +885,11 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if !m.destructive {
 		return m, nil
 	}
-	if m.flowSurfaceVisible() && len(m.currentFilteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
-		return m.confirmFlowDelete()
+	if m.flowSurfaceVisible() {
+		if len(m.currentFilteredFlows()) > 0 && len(m.filteredRepos()) > 0 {
+			return m.confirmFlowDelete()
+		}
+		return m, nil
 	}
 	if m.mode == ui.ModeHistory || m.mode == ui.ModeReflog {
 		return m, nil
