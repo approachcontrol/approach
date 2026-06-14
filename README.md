@@ -95,7 +95,7 @@ filter matches, or a load failure with details in the status bar.
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected `await-session` Flow phase after confirmation |
-| `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or Flow/phase ID (flows view) |
+| `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
@@ -331,8 +331,8 @@ the phase list. Press
 canonical phase order. This action
 uses the selected Flow, so a highlighted pending phase row can still launch an
 earlier ready sibling, and nothing is persisted when no phase is launchable.
-Press `y` to copy the selected Flow ID, or the selected phase ID when a phase
-row is selected. Press `r` on an expanded phase row with an
+Press `y` to copy the selected Flow worktree path from either a Flow row or one
+of its expanded phase rows. Press `r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
 existing app thread without extra launch tracking. Press `m` on a Flow row or

@@ -1579,20 +1579,15 @@ func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleCopyFlowID() (tea.Model, tea.Cmd) {
+func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeFlows {
 		return m, nil
 	}
-	value := ""
-	if phase, ok := m.selectedFlowPhase(); ok {
-		value = phase.PhaseID
-	} else {
-		flow, ok := m.selectedFlow()
-		if !ok {
-			return m, nil
-		}
-		value = flow.FlowID
+	flow, ok := m.selectedFlow()
+	if !ok {
+		return m, nil
 	}
+	value := flow.WorktreePath
 	if strings.TrimSpace(value) == "" {
 		return m, nil
 	}

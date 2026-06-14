@@ -354,7 +354,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleCopySessionID()
 		}
 		if m.mode == ui.ModeFlows {
-			return m.handleCopyFlowID()
+			return m.handleCopyFlowWorktreePath()
 		}
 		return m.handleCopyHash()
 	case "s":

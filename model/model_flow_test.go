@@ -751,7 +751,7 @@ func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
 	if cmd == nil {
-		t.Fatal("enter on ready phase should prepare embedded terminal launch")
+		t.Fatal("ctrl+j on ready Flow should prepare embedded terminal launch")
 	}
 	m, _ = update(m, cmd())
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithAwaitingImplementation()}, ListRequest: m.ListRequest(ui.ModeFlows)})
@@ -843,7 +843,7 @@ func TestModel_XKeyKeepsFlowTerminalFocusCloseBehavior(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
 	if cmd == nil {
-		t.Fatal("enter on ready phase should prepare embedded terminal launch")
+		t.Fatal("ctrl+j on ready Flow should prepare embedded terminal launch")
 	}
 	m, _ = update(m, cmd())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -1480,7 +1480,7 @@ func TestModel_CtrlJOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHead
 		t.Fatalf("ctrl+j launched %#v with update %#v, want first launchable implementation", started, launchUpdate)
 	}
 	if started.Command != "claude" || started.ReasoningEffort != "max" {
-		t.Fatalf("selected-phase launch agent settings = command %q effort %q, want claude/max", started.Command, started.ReasoningEffort)
+		t.Fatalf("Flow phase launch agent settings = command %q effort %q, want claude/max", started.Command, started.ReasoningEffort)
 	}
 	if !started.Embedded || !started.Headless || !started.FlowLaunchTracked {
 		t.Fatalf("Flow launch should be embedded, headless, and tracked: %#v", started)
@@ -1789,7 +1789,7 @@ func TestModel_FlowPhasesAutoCollapseWhenSelectionChanges(t *testing.T) {
 	}
 }
 
-func TestModel_YKeyCopiesSelectedFlowOrPhaseID(t *testing.T) {
+func TestModel_YKeyCopiesSelectedFlowWorktreePath(t *testing.T) {
 	var copied []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
@@ -1798,9 +1798,10 @@ func TestModel_YKeyCopiesSelectedFlowOrPhaseID(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
-		FlowID: "flow-1",
-		Title:  "Copy flow ids",
-		Status: flowstore.StatusInProgress,
+		FlowID:       "flow-1",
+		Title:        "Copy flow path",
+		Status:       flowstore.StatusInProgress,
+		WorktreePath: "/dev/alpha-worktrees/flow-1",
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
@@ -1808,22 +1809,57 @@ func TestModel_YKeyCopiesSelectedFlowOrPhaseID(t *testing.T) {
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
-		t.Fatal("expected flow id copy command")
+		t.Fatal("expected flow worktree path copy command")
 	}
 	_ = cmd()
-	if got := copied[len(copied)-1]; got != "flow-1" {
-		t.Fatalf("copied flow id = %q, want flow-1", got)
+	if got := copied[len(copied)-1]; got != "/dev/alpha-worktrees/flow-1" {
+		t.Fatalf("copied flow worktree path = %q, want /dev/alpha-worktrees/flow-1", got)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
-		t.Fatal("expected flow phase id copy command")
+		t.Fatal("expected selected phase to copy parent Flow worktree path")
 	}
 	_ = cmd()
-	if got := copied[len(copied)-1]; got != "implementation" {
-		t.Fatalf("copied phase id = %q, want implementation", got)
+	if got := copied[len(copied)-1]; got != "/dev/alpha-worktrees/flow-1" {
+		t.Fatalf("copied selected phase parent worktree path = %q, want /dev/alpha-worktrees/flow-1", got)
+	}
+}
+
+func TestModel_YKeyDoesNothingWhenSelectedFlowWorktreePathIsBlank(t *testing.T) {
+	copied := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(string) error {
+			copied = true
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		Title:        "Blank flow path",
+		Status:       flowstore.StatusInProgress,
+		WorktreePath: "  ",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}})
+
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+		t.Fatalf("blank Flow worktree path returned copy command %T, want nil", cmd)
+	}
+	if copied {
+		t.Fatal("blank Flow worktree path should not copy to clipboard")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
+		t.Fatalf("blank parent Flow worktree path from phase row returned copy command %T, want nil", cmd)
+	}
+	if copied {
+		t.Fatal("blank parent Flow worktree path should not copy to clipboard")
 	}
 }
 
