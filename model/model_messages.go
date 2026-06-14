@@ -1228,9 +1228,6 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
-	if m.activeFlowSurfaceVisible() {
-		return m, nil
-	}
 	var cmds []tea.Cmd
 	var autoCmd tea.Cmd
 	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)

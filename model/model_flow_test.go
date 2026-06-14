@@ -143,6 +143,61 @@ func TestModel_F3UsesSeparateActiveFlowSelectionForActions(t *testing.T) {
 	}
 }
 
+func TestModel_F3ActiveFlowRefreshPreparesAutoLaunch(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			launched := current
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	_, cmd := update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd == nil {
+		t.Fatal("active Flow refresh should return auto-launch command")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("active Flow refresh returned %d embedded launches, want 1", len(launches))
+	}
+	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].FlowID != "flow-1" || updates[0].PhaseID != "implementation" || updates[0].LaunchID == "" {
+		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
+	}
+	launch := launches[0]
+	if launch.LaunchContext.FlowID != "flow-1" ||
+		launch.LaunchContext.FlowPhaseID != "implementation" ||
+		!launch.LaunchContext.Embedded ||
+		!launch.LaunchContext.Headless ||
+		!launch.LaunchContext.FlowLaunchTracked {
+		t.Fatalf("active Flow launch context = %#v", launch.LaunchContext)
+	}
+}
+
 func TestModel_EnterTogglesActiveFlowPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
