@@ -339,13 +339,17 @@ existing app thread without extra launch tracking. Press `m` on a Flow row or
 expanded phase row to toggle per-Flow auto mode, which is off by default and
 persisted on that Flow record. When auto mode is on, a successful completed
 phase transition launches the next ready non-merge phase in that same Flow
-through the same launch path as pressing `ctrl+j`; skipped, blocked, needs-attention,
-failed-launch, or missing-PR-metadata states do not auto-launch. Automation
-stops before Merge: if Autoreview completes and Merge becomes ready, wtui keeps
-auto mode on and requires the existing manual Merge launch. Flow headless mode
-is on by default: selected CLI `codex` and `claude` phase launches run in a
-runtime-only embedded terminal inside the flows pane. Press `h` to choose the
-CLI command mode: headless runs `codex exec` or `claude --print`, while
+through the same launch path as pressing `ctrl+j`. For CLI phases running in an
+embedded Flow terminal, wtui waits until the completed phase's terminal exits
+normally and auto-closes before launching the next phase; that exit also
+triggers a Flow refresh so completions recorded after the last refresh are
+picked up promptly. Skipped, blocked, needs-attention, failed-launch, or
+missing-PR-metadata states do not auto-launch. Automation stops before Merge:
+if Autoreview completes and Merge becomes ready, wtui keeps auto mode on and
+requires the existing manual Merge launch. Flow headless mode is on by default:
+selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
+terminal inside the flows pane. Press `h` to choose the CLI command mode:
+headless runs `codex exec` or `claude --print`, while
 headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. Headless-off Flow launches prefill the phase prompt without
 submitting it, then focus the Flow terminal in input mode so you can review or
