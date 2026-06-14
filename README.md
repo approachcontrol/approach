@@ -45,7 +45,7 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 
 ### Keys
 
-The UI has two panes: repos on the left, content on the right. `tab` switches focus between them. When a Flow embedded terminal is open, `tab` also switches focus between the Flow list and that terminal while the right pane remains active. The active pane is highlighted with a blue border.
+The UI has two panes: repos on the left, content on the right. `tab` or `f2` switches focus between them. When a Flow embedded terminal is open, `tab` also switches focus between the Flow list and that terminal while the right pane remains active. The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
 
@@ -65,7 +65,7 @@ filter matches, or a load failure with details in the status bar.
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
-| `tab` | Switch focus to right pane |
+| `tab`/`f2` | Switch focus to right pane |
 | `q`/`esc` | Quit |
 
 **Right pane (content)**
@@ -102,7 +102,7 @@ filter matches, or a load failure with details in the status bar.
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
-| `tab` | Switch focus to left pane |
+| `tab`/`f2` | Switch focus to left pane |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to

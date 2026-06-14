@@ -1338,7 +1338,7 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "q/esc: quit") {
 		t.Fatalf("wide render footer should not carry shortcut hints, got %q", footer)
 	}
-	if !strings.Contains(shortcutPaneText(view), "tab    pane") {
+	if !strings.Contains(shortcutPaneText(view), "f2/tab pane") {
 		t.Fatal("wide render should still expose global shortcuts in the shortcut pane")
 	}
 }
@@ -1354,6 +1354,9 @@ func TestRender_NarrowLayoutKeepsFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "f2/tab: pane") {
+		t.Fatalf("narrow render should expose f2/tab pane hint, got %q", footer)
+	}
 	if !strings.Contains(footer, "tab: pane") {
 		t.Fatalf("narrow render should keep footer hints, got %q", footer)
 	}
@@ -1464,7 +1467,7 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 	navigate := strings.Index(pane, "Navigate")
 	global := strings.Index(pane, "Global")
 	newWorktree := strings.Index(pane, "new worktree")
-	tabPane := strings.Index(pane, "tab    pane")
+	tabPane := strings.Index(pane, "f2/tab pane")
 	if actions < 0 || navigate < 0 || global < 0 || !(actions < navigate && navigate < global) {
 		t.Fatalf("shortcut pane should order Actions, Navigate, Global, got:\n%s", pane)
 	}
@@ -1730,6 +1733,9 @@ func TestRender_ShortcutPaneShowsArrowPaneViewHint(t *testing.T) {
 			Mode:       ModeFlows,
 			ActivePane: activePane,
 		}, 26, 18))
+		if !strings.Contains(pane, "f2/tab") || !strings.Contains(pane, "pane") {
+			t.Fatalf("shortcut pane activePane=%d should include f2/tab pane hint, got:\n%s", activePane, pane)
+		}
 		if !strings.Contains(pane, "←/→") || !strings.Contains(pane, "pane/view") {
 			t.Fatalf("shortcut pane activePane=%d should include arrow pane/view hint, got:\n%s", activePane, pane)
 		}

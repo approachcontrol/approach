@@ -492,7 +492,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
-		"tab    pane",
+		"f2/tab pane",
 		"q/esc  quit",
 		"f5     refresh",
 	} {
