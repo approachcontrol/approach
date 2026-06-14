@@ -1367,7 +1367,7 @@ func detachedTerminalLaunch(targetShellCommand, cwd, goos string, getenv getenvF
 	}
 	if goos == "darwin" && commandExists("osascript", lookPath) {
 		return TerminalLaunchSpec{
-			Cmd:      macOSTerminalScriptCommand("Terminal", targetShellCommand),
+			Cmd:      macOSTerminalScriptCommand("Terminal", detachedTerminalShellCommand(targetShellCommand, cwd)),
 			Detached: true,
 		}, nil
 	}
@@ -1596,7 +1596,7 @@ func detachedTerminalLaunchFromPreference(goos, cwd string, lookPath lookPathFun
 		if !commandExists("osascript", lookPath) {
 			return TerminalLaunchSpec{}, fmt.Errorf("cannot launch detached terminal handoff: osascript is required to run a command in %s", pref.app)
 		}
-		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand(pref.app, shellCommand)}, nil
+		return TerminalLaunchSpec{Cmd: macOSTerminalScriptCommand(pref.app, detachedTerminalShellCommand(shellCommand, cwd))}, nil
 	case terminalPreferenceUnsupportedGUIApp:
 		if pref.reason != "" {
 			return TerminalLaunchSpec{}, fmt.Errorf("%s", pref.reason)
@@ -1605,6 +1605,14 @@ func detachedTerminalLaunchFromPreference(goos, cwd string, lookPath lookPathFun
 	default:
 		return TerminalLaunchSpec{}, fmt.Errorf("%s is empty", pref.source)
 	}
+}
+
+func detachedTerminalShellCommand(shellCommand, cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return shellCommand
+	}
+	return "cd " + shellQuote(cwd) + " && " + shellCommand
 }
 
 func cliTerminalLaunch(argv []string, path string, command *terminalCommand) (TerminalLaunchSpec, error) {

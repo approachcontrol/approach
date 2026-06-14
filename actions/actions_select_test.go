@@ -499,7 +499,8 @@ func TestDetachedTerminalLaunch_UsesConfiguredCLIWhenTerminalEnvEmpty(t *testing
 
 func TestDetachedTerminalLaunch_OsascriptEscapesTargetShellCommand(t *testing.T) {
 	const target = `env -u TMUX tmux -L "sock"; do shell script "touch /tmp/PWNED"; echo '$HOME' \ attach-session -t agent`
-	launch, err := detachedTerminalLaunch(target, "/repo/worktree", "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{})
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{})
 	if err != nil {
 		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
 	}
@@ -521,14 +522,16 @@ func TestDetachedTerminalLaunch_OsascriptEscapesTargetShellCommand(t *testing.T)
 	if err != nil {
 		t.Fatalf("do-script payload is not a valid quoted string: %q", doScript)
 	}
-	if inner != target {
-		t.Fatalf("do-script payload = %q, want exact target %q", inner, target)
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("do-script payload = %q, want exact handoff command %q", inner, want)
 	}
 }
 
 func TestDetachedTerminalLaunch_ITermOsascriptEscapesTargetShellCommand(t *testing.T) {
 	const target = `env -u TMUX tmux -L "sock"; do shell script "touch /tmp/PWNED"; echo '$HOME' \ attach-session -t agent`
-	launch, err := detachedTerminalLaunch(target, "/repo/worktree", "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
 		TerminalCommand: "iTerm",
 	})
 	if err != nil {
@@ -552,11 +555,42 @@ func TestDetachedTerminalLaunch_ITermOsascriptEscapesTargetShellCommand(t *testi
 	if err != nil {
 		t.Fatalf("write-text payload is not a valid quoted string: %q", writeText)
 	}
-	if inner != target {
-		t.Fatalf("write-text payload = %q, want exact target %q", inner, target)
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("write-text payload = %q, want exact handoff command %q", inner, want)
 	}
 	if strings.Contains(strings.Join(launch.Cmd.Args, "\n"), "current session of current window") {
 		t.Fatalf("iTerm handoff should not write into the user's current session: %#v", launch.Cmd.Args)
+	}
+}
+
+func TestDetachedTerminalLaunch_ConfiguredTerminalAppPreservesCWD(t *testing.T) {
+	const target = `tmux attach-session -t agent`
+	const cwd = `/repo/work tree's`
+	launch, err := detachedTerminalLaunch(target, cwd, "darwin", fakeGetenv(nil), fakeLookPath("osascript"), LaunchOptions{
+		TerminalCommand: "Terminal.app",
+	})
+	if err != nil {
+		t.Fatalf("detachedTerminalLaunch returned error: %v", err)
+	}
+
+	const prefix = `tell application "Terminal" to do script `
+	var doScript string
+	for _, arg := range launch.Cmd.Args {
+		if strings.HasPrefix(arg, prefix) {
+			doScript = strings.TrimPrefix(arg, prefix)
+		}
+	}
+	if doScript == "" {
+		t.Fatalf("no Terminal do-script argument found in %#v", launch.Cmd.Args)
+	}
+	inner, err := strconv.Unquote(doScript)
+	if err != nil {
+		t.Fatalf("do-script payload is not a valid quoted string: %q", doScript)
+	}
+	want := "cd " + shellQuote(cwd) + " && " + target
+	if inner != want {
+		t.Fatalf("do-script payload = %q, want exact handoff command %q", inner, want)
 	}
 }
 
