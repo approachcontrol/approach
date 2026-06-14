@@ -600,8 +600,9 @@ func (m Model) handleCursorDown() (tea.Model, tea.Cmd) {
 // moveCursor moves the selected item in the active right-pane view by delta
 // (-1 for up, +1 for down) and keeps the new selection visible.
 func (m Model) moveCursor(delta int) Model {
-	h, w := m.contentHeightForMode(), m.contentWidth()
+	w := m.contentWidth()
 	if m.activeFlowSurfaceVisible() {
+		h := m.flowSurfaceContentHeight()
 		if next, ok := m.moveSelectedFlowPhase(delta); ok {
 			return next
 		}
@@ -620,6 +621,7 @@ func (m Model) moveCursor(delta int) Model {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 		return m
 	}
+	h := m.contentHeightForMode()
 	switch m.mode {
 	case ui.ModeWorktrees:
 		if m.inlineWorktreeSessionPath != "" {
@@ -768,7 +770,7 @@ func (m Model) handleToggleFlowPhases() (tea.Model, tea.Cmd) {
 	if flowID == "" {
 		return m, nil
 	}
-	if m.expandedFlowID == flowID {
+	if m.currentExpandedFlowID() == flowID {
 		m = m.setExpandedFlowID("")
 	} else {
 		m = m.setExpandedFlowID(flowID)
@@ -1180,7 +1182,7 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 		errText = "Unable to create flow"
 	}
 	m = m.setStatus(statusOther, errText)
-	if m.mode == ui.ModeFlows {
+	if m.flowSurfaceVisible() {
 		return m.startFetchMode(ui.ModeFlows)
 	}
 	return m, nil
@@ -1326,7 +1328,7 @@ func (m Model) canLaunchAgent() bool {
 	if m.activePane != 1 {
 		return false
 	}
-	if m.mode == ui.ModeFlows {
+	if m.flowSurfaceVisible() {
 		_, ok := m.selectedFlow()
 		return ok
 	}
@@ -1579,11 +1581,11 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
 	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
+	if !ok || record.FlowID == "" || record.FlowID != m.currentExpandedFlowID() || m.currentSelectedFlowPhaseID() == "" {
 		return m, nil
 	}
 	phase, ok := m.selectedFlowPhase()
@@ -1883,7 +1885,7 @@ func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Mo
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m
 	}
 	if ctx.Headless {
@@ -1927,7 +1929,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 		}
 		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
 		next = next.setStatus(statusOther, errText)
-		if next.mode == ui.ModeFlows {
+		if next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, fetchCmd
 		}
@@ -1938,7 +1940,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	if needsTick {
 		next, launchCmd = next.startEmbeddedTerminalTick()
 	}
-	if next.mode == ui.ModeFlows {
+	if next.flowSurfaceVisible() {
 		next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 		return next, tea.Batch(fetchCmd, launchCmd)
 	}

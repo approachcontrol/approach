@@ -143,6 +143,217 @@ func TestModel_F3UsesSeparateActiveFlowSelectionForActions(t *testing.T) {
 	}
 }
 
+func TestModel_EnterTogglesActiveFlowPhaseRows(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("enter on active Flow row returned command %T, want nil", cmd)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Plan Review") || !strings.Contains(view, "Implementation") {
+		t.Fatalf("enter should expand active Flow phase rows:\n%s", view)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("second enter on active Flow row returned command %T, want nil", cmd)
+	}
+	view = ansi.Strip(m.View())
+	if strings.Contains(view, "Plan Review") || strings.Contains(view, "Implementation") {
+		t.Fatalf("second enter should collapse active Flow phase rows:\n%s", view)
+	}
+}
+
+func TestModel_ActiveFlowRefreshPreservesNormalFlowSelection(t *testing.T) {
+	activeOne := flowWithPhaseDetails()
+	activeOne.FlowID = "active-one"
+	activeOne.Title = "Active One"
+	activeTwo := flowWithPhaseDetails()
+	activeTwo.FlowID = "active-two"
+	activeTwo.Title = "Active Two"
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{activeOne, activeTwo})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("normal Flow selection = %d, want active-two", got)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{activeOne, activeTwo},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("normal Flow selection after active refresh = %d, want preserved active-two", got)
+	}
+}
+
+func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var started actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/active-resume"
+	flow.Phases = []flowstore.FlowPhase{{
+		PhaseID: "review-loop",
+		Title:   "Review loop",
+		Status:  flowstore.PhaseCompleted,
+		Sessions: []flowstore.Session{
+			{Provider: "codex", SessionID: "codex-review", Status: "ended", StartedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
+		},
+	}}
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow phase resume command")
+	}
+	if started.ResumeSessionID != "codex-review" ||
+		started.FlowID != "flow-1" ||
+		started.FlowPhaseID != "review-loop" ||
+		started.WorktreePath != "/dev/alpha-worktrees/active-resume" ||
+		!started.Embedded ||
+		started.Headless ||
+		!started.FlowLaunchTracked {
+		t.Fatalf("unexpected active Flow phase resume context: %#v", started)
+	}
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || !launchUpdate.Resume {
+		t.Fatalf("launch update = %#v, want tracked resume for review-loop", launchUpdate)
+	}
+}
+
+func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) {
+	var started actions.AgentLaunchContext
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, flowCtrlJKey())
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	m, _ = update(m, launchMsg)
+	if started.FlowID != "flow-1" || started.FlowPhaseID != "implementation" || started.Headless {
+		t.Fatalf("unexpected active Flow launch context: %#v", started)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) == 0 || fakeTerm.writes[len(fakeTerm.writes)-1] != "z" {
+		t.Fatalf("interactive active Flow launch should focus terminal input and forward z: %#v", fakeTerm.writes)
+	}
+}
+
+func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
+	var sessionTerm *fakeEmbeddedTerminal
+	var flowTerm *fakeEmbeddedTerminal
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			if ctx.FlowID == "" {
+				sessionTerm = &fakeEmbeddedTerminal{state: "running", lines: []string{"session-terminal"}}
+				return sessionTerm, nil
+			}
+			flowTerm = &fakeEmbeddedTerminal{state: "running"}
+			return flowTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if sessionTick == nil || sessionTerm == nil {
+		t.Fatal("expected session resume to start a session embedded terminal")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "flow/with-phases") || strings.Contains(view, "session-terminal") {
+		t.Fatalf("active flows should visually override session terminal:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, flowCtrlJKey())
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command over Sessions")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	m, _ = update(m, launchMsg)
+	if flowTerm == nil {
+		t.Fatal("expected active Flow launch to start a flow embedded terminal")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(flowTerm.writes) == 0 || flowTerm.writes[len(flowTerm.writes)-1] != "z" {
+		t.Fatalf("active Flow input over Sessions should go to flow terminal: %#v", flowTerm.writes)
+	}
+	if len(sessionTerm.writes) != 0 {
+		t.Fatalf("active Flow input over Sessions should not go to session terminal: %#v", sessionTerm.writes)
+	}
+}
+
 func flowWithAwaitingImplementation() flowstore.FlowRecord {
 	flow := flowWithPhaseDetails()
 	for i := range flow.Phases {

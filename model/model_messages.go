@@ -1207,7 +1207,10 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	previousFlows := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
-	selectedFlowID := m.selectedFlowID()
+	selectedFlowID := ""
+	if record, ok := m.flows.Selected(); ok {
+		selectedFlowID = record.FlowID
+	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
 	m.flows = m.flows.SetItems(msg.Flows)
@@ -1260,7 +1263,10 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	if flow.FlowID == "" {
 		return m
 	}
-	selectedFlowID := m.selectedFlowID()
+	selectedFlowID := ""
+	if record, ok := m.flows.Selected(); ok {
+		selectedFlowID = record.FlowID
+	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
@@ -1614,7 +1620,7 @@ func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
 	flow, ok := m.selectedFlow()

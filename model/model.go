@@ -1033,7 +1033,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, batchNonNil(cmds...)
 	case flowRefreshTickMsg:
-		if msg.Generation != m.flowRefreshTickGen || m.mode != ui.ModeFlows {
+		if msg.Generation != m.flowRefreshTickGen || !m.flowSurfaceVisible() {
 			return m, nil
 		}
 		return m.startFlowRefreshFetch()
@@ -1182,7 +1182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
-		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
+		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
@@ -1195,7 +1195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
 		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
-		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
+		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
@@ -1219,7 +1219,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if resultErr != "" {
 			m, resultErr = m.markFlowLaunchNeedsAttention(msg.LaunchContext, resultErr)
 			m = m.setStatus(statusOther, resultErr)
-			if msg.LaunchContext.FlowID != "" && m.mode == ui.ModeFlows {
+			if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
 				return m.startFetchMode(ui.ModeFlows)
 			}
 		} else if msg.Detached {
@@ -1235,7 +1235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
 		next := m.handleActionFailed(msg)
-		if next.mode == ui.ModeFlows && next.isCurrentRepo(msg.RepoPath) {
+		if next.flowSurfaceVisible() && next.isCurrentRepo(msg.RepoPath) {
 			return next.startFetchMode(ui.ModeFlows)
 		}
 		return next, nil
