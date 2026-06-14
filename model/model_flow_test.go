@@ -2597,6 +2597,58 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	}
 }
 
+func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
+	tests := []struct {
+		name string
+		key  rune
+		mode ui.Mode
+	}{
+		{name: "worktrees", key: '1', mode: ui.ModeWorktrees},
+		{name: "branches", key: '2', mode: ui.ModeBranches},
+		{name: "plans", key: '7', mode: ui.ModePlans},
+		{name: "sessions", key: '6', mode: ui.ModeSessions},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			addLaunchRan := false
+			launchAgentRan := false
+			startEmbeddedRan := false
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex-app",
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					addLaunchRan = true
+					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+				},
+				LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+					launchAgentRan = true
+					return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					startEmbeddedRan = true
+					return &fakeEmbeddedTerminal{}, nil
+				},
+			})
+			m = inRightPane(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			if m.Mode() != tc.mode {
+				t.Fatalf("starting mode = %d, want %d", m.Mode(), tc.mode)
+			}
+
+			m, cmd := update(m, flowLaunchKey())
+			if cmd != nil {
+				t.Fatalf("g outside flows mode returned command %T, want nil", cmd)
+			}
+			if addLaunchRan || launchAgentRan || startEmbeddedRan {
+				t.Fatalf("g outside flows mode launched phase: add=%v launch=%v embedded=%v", addLaunchRan, launchAgentRan, startEmbeddedRan)
+			}
+			if got := m.TransientError(); got != "" {
+				t.Fatalf("g outside flows mode set status %q, want none", got)
+			}
+		})
+	}
+}
+
 func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 
