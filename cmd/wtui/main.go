@@ -343,6 +343,9 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		LaunchTerminal: func(path string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchWithOptions(path, launchOpts)
 		},
+		LaunchDetachedTerminal: func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error) {
+			return actions.DetachedTerminalLaunch(targetShellCommand, cwd, launchOpts)
+		},
 		EditFile: func(path string) (actions.TerminalLaunchSpec, error) {
 			return actions.EditFileWithOptions(path, actions.EditorOptions{EditorCommand: cfg.Editor.Command})
 		},

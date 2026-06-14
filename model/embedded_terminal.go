@@ -78,15 +78,17 @@ const (
 type embeddedTerminalID int
 
 type embeddedTerminalSlot struct {
-	Number      int
-	Scope       embeddedTerminalScope
-	Provider    string
-	Identity    string
-	RepoPath    string
-	FlowID      string
-	FlowPhaseID string
-	Terminal    EmbeddedTerminal
-	ID          embeddedTerminalID
+	Number       int
+	Scope        embeddedTerminalScope
+	Provider     string
+	Identity     string
+	RepoPath     string
+	WorktreePath string
+	WorkingDir   string
+	FlowID       string
+	FlowPhaseID  string
+	Terminal     EmbeddedTerminal
+	ID           embeddedTerminalID
 }
 
 type embeddedSessionPickerSelectedMsg struct {
@@ -384,15 +386,17 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 	}
 	m.nextEmbeddedTerminalID++
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
-		Number:      number,
-		Scope:       scope,
-		Provider:    provider,
-		Identity:    identity,
-		RepoPath:    cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
-		FlowID:      flowID,
-		FlowPhaseID: flowPhaseID,
-		Terminal:    term,
-		ID:          embeddedTerminalID(m.nextEmbeddedTerminalID),
+		Number:       number,
+		Scope:        scope,
+		Provider:     provider,
+		Identity:     identity,
+		RepoPath:     cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
+		WorktreePath: cleanEmbeddedTerminalPath(ctx.WorktreePath),
+		WorkingDir:   cleanEmbeddedTerminalPath(ctx.WorkingDir),
+		FlowID:       flowID,
+		FlowPhaseID:  flowPhaseID,
+		Terminal:     term,
+		ID:           embeddedTerminalID(m.nextEmbeddedTerminalID),
 	})
 	if scope == embeddedTerminalScopeFlow {
 		m.activeFlowTerminalNum = number
@@ -506,6 +510,14 @@ func cleanEmbeddedTerminalRepoPath(repoPath string) string {
 		return ""
 	}
 	return filepath.Clean(repoPath)
+}
+
+func cleanEmbeddedTerminalPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {
@@ -641,7 +653,8 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 			case "x":
 				return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
 			case "d":
-				return m.handleEmbeddedTerminalDetachPrefix(scope), nil, true
+				next, cmd := m.handleEmbeddedTerminalDetachPrefix(scope)
+				return next, cmd, true
 			case "q", "esc":
 				next, cmd := m.handleEmbeddedTerminalQuitPrefix()
 				return next, cmd, true
@@ -670,7 +683,8 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 		case "x":
 			return m.handleEmbeddedTerminalClosePrefix(scope), nil, true
 		case "d":
-			return m.handleEmbeddedTerminalDetachPrefix(scope), nil, true
+			next, cmd := m.handleEmbeddedTerminalDetachPrefix(scope)
+			return next, cmd, true
 		case "q", "esc":
 			next, cmd := m.handleEmbeddedTerminalQuitPrefix()
 			return next, cmd, true
@@ -743,27 +757,57 @@ func (m Model) handleEmbeddedTerminalClosePrefix(scope embeddedTerminalScope) Mo
 	return m
 }
 
-func (m Model) handleEmbeddedTerminalDetachPrefix(scope embeddedTerminalScope) Model {
+func (m Model) handleEmbeddedTerminalDetachPrefix(scope embeddedTerminalScope) (Model, tea.Cmd) {
 	slot, _, ok := m.activeEmbeddedTerminalForScope(scope)
 	if !ok || slot.Terminal == nil {
-		return m
+		return m, nil
 	}
 	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
 	if !ok {
-		return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started")
+		return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started"), nil
 	}
 	target := strings.TrimSpace(detachable.DetachTarget())
 	if err := detachable.Detach(); err != nil {
 		if errors.Is(err, errEmbeddedTerminalDetachUnavailable) {
-			return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started")
+			return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started"), nil
 		}
-		return m.setStatus(statusOther, err.Error())
+		return m.setStatus(statusOther, err.Error()), nil
 	}
 	m = m.dismissEmbeddedTerminal(slot.ID)
 	if target == "" {
 		target = "tmux"
 	}
-	return m.setStatus(statusOther, "Detached embedded terminal to tmux: "+target)
+	cwd := slot.detachHandoffCWD()
+	launch, err := m.launchDetachedTerminal(target, cwd)
+	if err != nil {
+		return m.setStatus(statusOther, "Detached embedded terminal, but failed to open terminal: "+err.Error()), nil
+	}
+	return m.setStatus(statusOther, "Detached embedded terminal; opening terminal: "+target), runEmbeddedTerminalDetachHandoff(target, launch)
+}
+
+func (slot embeddedTerminalSlot) detachHandoffCWD() string {
+	if slot.WorkingDir != "" {
+		return slot.WorkingDir
+	}
+	if slot.WorktreePath != "" {
+		return slot.WorktreePath
+	}
+	return slot.RepoPath
+}
+
+func runEmbeddedTerminalDetachHandoff(target string, launch actions.TerminalLaunchSpec) tea.Cmd {
+	return func() tea.Msg {
+		if launch.Cmd == nil {
+			return EmbeddedTerminalDetachHandoffResultMsg{Target: target, Err: "detached terminal handoff command is nil"}
+		}
+		if err := launch.Cmd.Run(); err != nil {
+			if launch.Cleanup != nil {
+				launch.Cleanup()
+			}
+			return EmbeddedTerminalDetachHandoffResultMsg{Target: target, Err: err.Error()}
+		}
+		return EmbeddedTerminalDetachHandoffResultMsg{Target: target}
+	}
 }
 
 func embeddedTerminalRunning(term EmbeddedTerminal) bool {
