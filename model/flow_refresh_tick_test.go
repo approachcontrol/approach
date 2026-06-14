@@ -422,6 +422,46 @@ func TestModel_ActiveFlowRefreshRepoChangeSupersedesInFlightFetch(t *testing.T) 
 	}
 }
 
+func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
+	repos := []scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/bravo", DisplayName: "bravo"},
+	}
+	m := NewWithOptions(repos, Options{
+		StartupMode: ui.ModeFlows,
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
+		},
+	})
+	alphaRequest := m.flowRefreshInFlight
+	if alphaRequest == 0 {
+		t.Fatal("expected startup Flow fetch to be in flight")
+	}
+	m.mode = ui.ModeWorktrees
+	m.activePane = 0
+	var cmd tea.Cmd
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
+	if cmd == nil {
+		t.Fatal("expected repo change in worktrees mode to fetch worktrees")
+	}
+	m.activePane = 1
+
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	if cmd == nil {
+		t.Fatal("expected F3 entry to supersede stale in-flight Flow fetch")
+	}
+	if got := m.ListRequest(ui.ModeFlows); got == alphaRequest {
+		t.Fatalf("flows list request = %d, want changed from alpha request %d", got, alphaRequest)
+	}
+	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("flow refresh in-flight request = %d, want F3 entry request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+	}
+	result := flowResultFromCommand(t, cmd)
+	if result.RepoPath != "/dev/bravo" {
+		t.Fatalf("FlowResultMsg.RepoPath = %q, want /dev/bravo", result.RepoPath)
+	}
+}
+
 func TestModel_FlowRefreshTracksActionRefetchBeforePendingTick(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
 		StartupMode: ui.ModeFlows,

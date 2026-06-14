@@ -28,7 +28,7 @@ func (m Model) enterActiveFlowsSurface() (Model, tea.Cmd) {
 	m.flowFocus = flowFocusList
 	m.terminalPrefixActive = false
 	m = m.syncActiveFlowsFromCache()
-	return m.startFlowRefreshFetch()
+	return m.startFlowsModeFetchWithRefreshTick()
 }
 
 func (m Model) exitActiveFlowsSurface() Model {

@@ -1053,7 +1053,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				{Key: "q/esc", Label: "quit"},
 				{Key: "1-9", Label: "switch"},
 			}
-			if sp.Mode == ModeSessions {
+			if sp.Mode == ModeSessions && !flowSurfaceActive {
 				hints = slices.Insert(hints, 1, shortcutHint{Key: "l", Label: "sessions"})
 			} else {
 				hints = slices.Insert(hints, 1,
