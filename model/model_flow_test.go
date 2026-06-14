@@ -5357,6 +5357,79 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 	}
 }
 
+func TestModel_F2SwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		flowWithPhaseDetails(),
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusInProgress},
+	})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, flowCtrlJKey())
+	if cmd == nil {
+		t.Fatal("ctrl+j should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	if m.ActivePane() != 0 {
+		t.Fatalf("f2 with inactive Flow terminal activePane = %d, want left pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("inactive Flow terminal should not receive f2 writes: %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("returning from f2 should keep Flow list focus, not terminal focus: %#v", fakeTerm.writes)
+	}
+	if got := m.SelectedFlowPhaseID(); got != "plan" {
+		t.Fatalf("selected Flow phase = %q, want list focus to move to first phase", got)
+	}
+}
+
+func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, flowCtrlJKey())
+	if cmd == nil {
+		t.Fatal("ctrl+j should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("terminal-owned f2 activePane = %d, want right pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1bOQ" {
+		t.Fatalf("terminal input f2 writes = %#v, want F2 escape sequence", fakeTerm.writes)
+	}
+}
+
 func TestModel_FlowEffortKeyDoesNotOpenPickerWhileFlowTerminalFocused(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
