@@ -1348,13 +1348,14 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			m = m.clearSuppressedAutoFlowLaunch(record.FlowID, completedPhase)
 			continue
 		}
-		if m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, completedPhase.PhaseID) ||
-			m.hasAutoClosingFlowEmbeddedTerminalForPhase(record.FlowID, completedPhase.PhaseID) {
+		sourceLaunchID := flowstore.LatestPhaseLaunchID(completedPhase)
+		if m.hasRunningFlowEmbeddedTerminalForPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID) ||
+			m.hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID) {
 			m = m.deferAutoFlowPhaseLaunch(record.FlowID, completedPhase.PhaseID)
 			continue
 		}
-		if m.hasFlowEmbeddedTerminalForPhase(record.FlowID, completedPhase.PhaseID) {
-			m = m.suppressAutoFlowPhaseLaunch(record.FlowID, completedPhase.PhaseID, flowstore.LatestPhaseLaunchID(completedPhase))
+		if m.hasFlowEmbeddedTerminalForPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID) {
+			m = m.suppressAutoFlowPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID)
 			continue
 		}
 		phase, ok := nextAutoLaunchPhase(record)
@@ -1495,22 +1496,24 @@ func (m Model) prepareDeferredAutoFlowPhaseLaunches() (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	for key := range m.deferredAutoFlowLaunches {
 		delete(m.deferredAutoFlowLaunches, key)
-		if m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
-			m.deferredAutoFlowLaunches[key] = struct{}{}
-			continue
-		}
-		if m.hasAutoClosingFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
-			m.deferredAutoFlowLaunches[key] = struct{}{}
-			continue
-		}
-		if m.hasFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
-			continue
-		}
 		record, ok := m.flowByID(key.FlowID)
 		if !ok {
 			continue
 		}
 		if !record.AutoMode {
+			continue
+		}
+		sourcePhase, sourcePhaseOK := flowRecordPhaseByID(record, key.PhaseID)
+		sourceLaunchID := flowstore.LatestPhaseLaunchID(sourcePhase)
+		if sourcePhaseOK && m.hasRunningFlowEmbeddedTerminalForPhaseLaunch(key.FlowID, key.PhaseID, sourceLaunchID) {
+			m.deferredAutoFlowLaunches[key] = struct{}{}
+			continue
+		}
+		if sourcePhaseOK && m.hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(key.FlowID, key.PhaseID, sourceLaunchID) {
+			m.deferredAutoFlowLaunches[key] = struct{}{}
+			continue
+		}
+		if sourcePhaseOK && m.hasFlowEmbeddedTerminalForPhaseLaunch(key.FlowID, key.PhaseID, sourceLaunchID) {
 			continue
 		}
 		if phase, ok := nextAutoLaunchPhase(record); ok {
@@ -1622,12 +1625,16 @@ func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.
 }
 
 func (m Model) hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID string) bool {
+	return m.hasRunningFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID, "")
+}
+
+func (m Model) hasRunningFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID, launchID string) bool {
 	wantPhaseID := artifacts.NormalizePhaseID(phaseID)
 	if wantPhaseID == "" {
 		return false
 	}
 	for _, slot := range m.embeddedTerminals {
-		if flowEmbeddedTerminalSlotMatchesPhase(slot, flowID, wantPhaseID) &&
+		if flowEmbeddedTerminalSlotMatchesPhaseLaunch(slot, flowID, wantPhaseID, launchID) &&
 			embeddedTerminalRunning(slot.Terminal) {
 			return true
 		}
@@ -1636,12 +1643,16 @@ func (m Model) hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID string) bo
 }
 
 func (m Model) hasFlowEmbeddedTerminalForPhase(flowID, phaseID string) bool {
+	return m.hasFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID, "")
+}
+
+func (m Model) hasFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID, launchID string) bool {
 	wantPhaseID := artifacts.NormalizePhaseID(phaseID)
 	if wantPhaseID == "" {
 		return false
 	}
 	for _, slot := range m.embeddedTerminals {
-		if flowEmbeddedTerminalSlotMatchesPhase(slot, flowID, wantPhaseID) {
+		if flowEmbeddedTerminalSlotMatchesPhaseLaunch(slot, flowID, wantPhaseID, launchID) {
 			return true
 		}
 	}
@@ -1649,12 +1660,16 @@ func (m Model) hasFlowEmbeddedTerminalForPhase(flowID, phaseID string) bool {
 }
 
 func (m Model) hasAutoClosingFlowEmbeddedTerminalForPhase(flowID, phaseID string) bool {
+	return m.hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID, "")
+}
+
+func (m Model) hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID, launchID string) bool {
 	wantPhaseID := artifacts.NormalizePhaseID(phaseID)
 	if wantPhaseID == "" {
 		return false
 	}
 	for _, slot := range m.embeddedTerminals {
-		if flowEmbeddedTerminalSlotMatchesPhase(slot, flowID, wantPhaseID) &&
+		if flowEmbeddedTerminalSlotMatchesPhaseLaunch(slot, flowID, wantPhaseID, launchID) &&
 			flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
 			return true
 		}
@@ -1674,6 +1689,14 @@ func flowEmbeddedTerminalSlotMatchesPhase(slot embeddedTerminalSlot, flowID, nor
 		slot.FlowID == flowID &&
 		artifacts.NormalizePhaseID(slot.FlowPhaseID) == normalizedPhaseID &&
 		slot.Terminal != nil
+}
+
+func flowEmbeddedTerminalSlotMatchesPhaseLaunch(slot embeddedTerminalSlot, flowID, normalizedPhaseID, launchID string) bool {
+	if !flowEmbeddedTerminalSlotMatchesPhase(slot, flowID, normalizedPhaseID) {
+		return false
+	}
+	launchID = strings.TrimSpace(launchID)
+	return launchID == "" || strings.TrimSpace(slot.LaunchID) == launchID
 }
 
 func (m Model) handleFlowPhaseResetConfirmed(msg flowPhaseResetConfirmedMsg) (Model, tea.Cmd) {

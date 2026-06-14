@@ -1626,6 +1626,90 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 	}
 }
 
+func TestModel_FlowAutoModeStaleTerminalDoesNotBlockLaterLaunchID(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	previous.Phases[1].LaunchIDs = []string{"launch-old"}
+	rerun := previous
+	rerun.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
+	rerun.Phases[1].LaunchIDs = []string{"launch-old", "launch-new"}
+	completed := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	completed.Phases[1].Outcome = flowstore.OutcomeApproved
+	completed.Phases[1].LaunchIDs = []string{"launch-old", "launch-new"}
+	staleTerm := &fakeEmbeddedTerminal{lines: []string{"old failed output"}, state: "running"}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			launched := completed
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return staleTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	var cmd tea.Cmd
+	m, cmd = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		LaunchID:     "launch-old",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-auto",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "plan-review",
+	}})
+	if cmd == nil {
+		t.Fatal("starting the stale Flow terminal should schedule refresh and repaint")
+	}
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{previous},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	staleTerm.state = "failed"
+
+	m, cmd = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{rerun},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd != nil {
+		t.Fatalf("new launch running refresh returned command %T, want nil", cmd)
+	}
+	m, cmd = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{completed},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd == nil {
+		t.Fatal("completion for newer launch ID should auto-launch next phase despite stale terminal")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("new launch completion returned %d embedded launches, want 1", len(launches))
+	}
+	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
+		t.Fatalf("launch updates after newer completion = %#v, want implementation auto launch", updates)
+	}
+	if !strings.Contains(m.View(), "old failed output") {
+		t.Fatalf("stale failed terminal should remain visible:\n%s", m.View())
+	}
+}
+
 func TestModel_FlowAutoModeLaunchesNextImplementationChildOrReviewLoop(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
