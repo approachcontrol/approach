@@ -7,6 +7,8 @@ import (
 	"github.com/brian-bell/wtui/flowstore"
 )
 
+const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with wtui-flow."
+
 // FlowPromptTemplates stores optional launch prompt templates for Flow phases.
 // Unknown placeholders are left literal so users can evolve templates safely.
 type FlowPromptTemplates struct {
@@ -75,4 +77,26 @@ func prNumberPlaceholder(number int) string {
 		return ""
 	}
 	return strconv.Itoa(number)
+}
+
+func ensureFlowPhaseDoneInstruction(prompt, guardSource string) string {
+	guard := guardSource
+	if strings.TrimSpace(guard) == "" {
+		guard = prompt
+	}
+	if lastNonEmptyPromptLine(guard) == flowPhaseDoneInstruction {
+		return strings.TrimRight(prompt, " \t\r\n")
+	}
+	return strings.TrimRight(prompt, " \t\r\n") + "\n\n" + flowPhaseDoneInstruction
+}
+
+func lastNonEmptyPromptLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSuffix(lines[i], "\r")
+		if strings.TrimSpace(line) != "" {
+			return line
+		}
+	}
+	return ""
 }

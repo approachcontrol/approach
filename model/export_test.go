@@ -2,6 +2,7 @@ package model
 
 import (
 	"github.com/brian-bell/wtui/embeddedterm"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -23,4 +24,16 @@ func ActiveFlowCreateForTest(m Model) uint64 {
 
 func FlowHeadlessForTest(m Model) bool {
 	return m.flowHeadless
+}
+
+func FlowPhaseDoneInstructionForTest() string {
+	return flowPhaseDoneInstruction
+}
+
+func FlowPlanPromptForTest(record flowstore.FlowRecord, templates FlowPromptTemplates) string {
+	return flowPlanPrompt(record, templates)
+}
+
+func FlowPhasePromptForTest(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
+	return flowPhasePrompt(record, phase, planPath, planBody, templates)
 }

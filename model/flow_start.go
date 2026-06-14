@@ -248,12 +248,13 @@ func flowStartPromptRecord(flow flowstore.FlowRecord, req FlowStartRequest, work
 
 func flowPlanPrompt(flow flowstore.FlowRecord, templates FlowPromptTemplates) string {
 	if strings.TrimSpace(templates.Plan) != "" {
-		return renderFlowPromptTemplate(templates.Plan, flow, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan"}, flow.PlanPath, "")
+		prompt := renderFlowPromptTemplate(templates.Plan, flow, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan"}, flow.PlanPath, "")
+		return ensureFlowPhaseDoneInstruction(prompt, templates.Plan)
 	}
 	var b strings.Builder
 	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)
 	b.WriteString("\n\nProduce a plan only; do not start coding in this phase.")
 	b.WriteString("\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.")
-	return b.String()
+	return ensureFlowPhaseDoneInstruction(b.String(), "")
 }
