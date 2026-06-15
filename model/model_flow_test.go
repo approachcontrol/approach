@@ -199,7 +199,7 @@ func TestModel_F3ActiveFlowRefreshPreparesAutoLaunch(t *testing.T) {
 	}
 }
 
-func TestModel_F3ActiveFlowLKeyNavigatesLikeRightArrow(t *testing.T) {
+func TestModel_F3ActiveFlowLKeyClampsAtFlowSurface(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
@@ -209,15 +209,15 @@ func TestModel_F3ActiveFlowLKeyNavigatesLikeRightArrow(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("l from active Flow surface returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("l from active Flow surface left active pane = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("l from active Flow surface active pane = %d, want right pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("l from active Flow surface changed underlying mode = %d, want worktrees", m.Mode())
 	}
 }
 
-func TestModel_F3ActiveFlowLeftKeyPreservesUnderlyingMode(t *testing.T) {
+func TestModel_F3ActiveFlowLeftKeyClampsAndPreservesUnderlyingMode(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
@@ -227,8 +227,8 @@ func TestModel_F3ActiveFlowLeftKeyPreservesUnderlyingMode(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("left from active Flow surface returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("left from active Flow surface left active pane = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("left from active Flow surface active pane = %d, want right pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeSessions {
 		t.Fatalf("left from active Flow surface changed underlying mode = %d, want sessions", m.Mode())
@@ -3380,7 +3380,6 @@ func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
 func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyTab},
-		{Type: tea.KeyRight},
 	} {
 		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -3393,6 +3392,27 @@ func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 		if got := m.SelectedFlowPhaseID(); got != "" {
 			t.Fatalf("%s left selected flow phase = %q, want cleared", key.String(), got)
 		}
+	}
+}
+
+func TestModel_SelectedFlowPhasePreservedWhenRightArrowClampsAtFlows(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	before := m.SelectedFlowPhaseID()
+	if before == "" {
+		t.Fatal("expected selected flow phase before right arrow")
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
+	if cmd != nil {
+		t.Fatalf("right from flows returned command %T, want nil", cmd)
+	}
+	if got := m.SelectedFlowPhaseID(); got != before {
+		t.Fatalf("right from flows selected flow phase = %q, want preserved %q", got, before)
+	}
+	if m.ActivePane() != 1 {
+		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
 }
 
@@ -3945,8 +3965,8 @@ func TestModel_RightNavigationReachesFlowsWithoutChangingExistingModeNumbers(t *
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("right from flows mode = %d, want still flows", m.Mode())
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("right from flows active pane = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
 	if cmd != nil {
 		t.Fatalf("right from flows mode should not fetch, got %T", cmd)

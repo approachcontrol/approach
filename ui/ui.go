@@ -1015,7 +1015,7 @@ func sidebarShortcutHints(hints []shortcutHint) []shortcutHint {
 			next := hints[i+1]
 			switch {
 			case hint.Key == "↑/↓" && next.Key == "←/→":
-				grouped = append(grouped, shortcutHint{Key: "↑/↓ ←/→", Label: "select/pane/view", Warning: hint.Warning || next.Warning})
+				grouped = append(grouped, shortcutHint{Key: "↑/↓ ←/→", Label: "select/view", Warning: hint.Warning || next.Warning})
 				i++
 				continue
 			case hint.Key == "f" && next.Key == "F":
@@ -1071,7 +1071,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 
 	navigation := []shortcutHint{
 		{Key: "↑/↓", Label: "select", Inline: true},
-		{Key: "←/→", Label: "pane/view", Inline: true},
+	}
+	if sp.ActivePane == 1 {
+		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 	}
 	global := []shortcutHint{
 		{Key: "f2/tab", Label: "pane"},

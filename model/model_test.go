@@ -680,14 +680,14 @@ func TestModel_LeftPaneModeKeysAreNoOps(t *testing.T) {
 	}
 }
 
-func TestModel_RightArrowFromLeftPaneMovesToRightPaneWithoutChangingMode(t *testing.T) {
+func TestModel_RightArrowFromLeftPaneIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 
-	if m.ActivePane() != 1 {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
+	if m.ActivePane() != 0 {
+		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
@@ -698,25 +698,25 @@ func TestModel_RightArrowFromLeftPaneMovesToRightPaneWithoutChangingMode(t *test
 	assertListRequestsUnchanged(t, before, m)
 }
 
-func TestModel_LeftArrowFromLeftPaneWrapsToFlowsMode(t *testing.T) {
+func TestModel_LeftArrowFromLeftPaneIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
 
-	if m.ActivePane() != 1 {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
+	if m.ActivePane() != 0 {
+		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("Mode() = %d, want flows", m.Mode())
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
 	}
-	if cmd == nil {
-		t.Fatal("left from left pane should fetch flows")
+	if cmd != nil {
+		t.Fatalf("left from left pane produced cmd %T, want nil", cmd)
 	}
-	assertOnlyListRequestAdvanced(t, before, m, ui.ModeFlows)
+	assertListRequestsUnchanged(t, before, m)
 }
 
-func TestModel_RightArrowFromLeftPaneEntersWorktreesFromNonEdgeMode(t *testing.T) {
+func TestModel_RightArrowFromLeftPaneInNonEdgeModeIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
@@ -728,22 +728,22 @@ func TestModel_RightArrowFromLeftPaneEntersWorktreesFromNonEdgeMode(t *testing.T
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 
-	if m.ActivePane() != 1 {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
+	if m.ActivePane() != 0 {
+		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
+	if m.Mode() != ui.ModeBranches {
+		t.Fatalf("Mode() = %d, want branches", m.Mode())
 	}
-	if m.BranchSelected() != 0 {
-		t.Fatalf("BranchSelected() = %d, want reset cursor 0", m.BranchSelected())
+	if m.BranchSelected() != 1 {
+		t.Fatalf("BranchSelected() = %d, want preserved cursor 1", m.BranchSelected())
 	}
-	if cmd == nil {
-		t.Fatal("right from left pane in branches should fetch worktrees")
+	if cmd != nil {
+		t.Fatalf("right from left pane in branches produced cmd %T, want nil", cmd)
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
+	assertListRequestsUnchanged(t, before, m)
 }
 
-func TestModel_LeftArrowFromLeftPaneAtFlowsIsPaneOnlyMove(t *testing.T) {
+func TestModel_LeftArrowFromLeftPaneAtFlowsIsNoOp(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -759,8 +759,8 @@ func TestModel_LeftArrowFromLeftPaneAtFlowsIsPaneOnlyMove(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
 
-	if m.ActivePane() != 1 {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
+	if m.ActivePane() != 0 {
+		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("Mode() = %d, want flows", m.Mode())
@@ -1573,7 +1573,7 @@ func TestModel_HLSwitchModes(t *testing.T) {
 	}
 }
 
-func TestModel_RightCyclesThroughAllViewsAndWrapsToLeftPane(t *testing.T) {
+func TestModel_RightCyclesThroughAllViewsAndClampsAtFlows(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	if m.Mode() != ui.ModeWorktrees {
@@ -1593,31 +1593,18 @@ func TestModel_RightCyclesThroughAllViewsAndWrapsToLeftPane(t *testing.T) {
 	before := listRequests(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("Mode() = %d, want flows after wrapping to left pane", m.Mode())
+		t.Fatalf("Mode() = %d, want flows after clamping", m.Mode())
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd != nil {
 		t.Fatalf("right from flows produced cmd %T, want nil", cmd)
 	}
 	assertListRequestsUnchanged(t, before, m)
-
-	before = listRequests(m)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees after re-entering from left pane", m.Mode())
-	}
-	if m.ActivePane() != 1 {
-		t.Fatalf("ActivePane() = %d, want right pane after re-entering from left pane", m.ActivePane())
-	}
-	if cmd == nil {
-		t.Fatal("right from left pane at flows should fetch worktrees")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
 }
 
-func TestModel_LeftCyclesBackThroughAllViewsAndWrapsToLeftPane(t *testing.T) {
+func TestModel_LeftCyclesBackThroughAllViewsAndClampsAtWorktrees(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
@@ -1635,31 +1622,18 @@ func TestModel_LeftCyclesBackThroughAllViewsAndWrapsToLeftPane(t *testing.T) {
 	before := listRequests(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
 	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees after wrapping to left pane", m.Mode())
+		t.Fatalf("Mode() = %d, want worktrees after clamping", m.Mode())
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd != nil {
 		t.Fatalf("left from worktrees produced cmd %T, want nil", cmd)
 	}
 	assertListRequestsUnchanged(t, before, m)
-
-	before = listRequests(m)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("Mode() = %d, want flows after re-entering from left pane", m.Mode())
-	}
-	if m.ActivePane() != 1 {
-		t.Fatalf("ActivePane() = %d, want right pane after re-entering from left pane", m.ActivePane())
-	}
-	if cmd == nil {
-		t.Fatal("left from left pane at worktrees should fetch flows")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
 }
 
-func TestModel_ArrowNavigationWrapsFromModeEdgesToLeftPane(t *testing.T) {
+func TestModel_ArrowNavigationClampsAtModeEdges(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
@@ -1673,8 +1647,8 @@ func TestModel_ArrowNavigationWrapsFromModeEdgesToLeftPane(t *testing.T) {
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if m.WorktreeSelected() != 1 {
 		t.Fatalf("WorktreeSelected() = %d, want preserved cursor 1", m.WorktreeSelected())
@@ -1685,7 +1659,6 @@ func TestModel_ArrowNavigationWrapsFromModeEdgesToLeftPane(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 
 	flow := flowWithPhaseDetails()
-	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
 		flow,
@@ -1699,8 +1672,8 @@ func TestModel_ArrowNavigationWrapsFromModeEdgesToLeftPane(t *testing.T) {
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("Mode() = %d, want flows", m.Mode())
 	}
-	if m.ActivePane() != 0 {
-		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if m.FlowSelected() != 1 || m.ExpandedFlowID() != "flow-2" {
 		t.Fatalf("flow state selected=%d expanded=%q, want selected 1 expanded flow-2", m.FlowSelected(), m.ExpandedFlowID())

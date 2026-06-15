@@ -1724,18 +1724,30 @@ func TestRender_LeftPaneShortcutPaneOmitsModeNumberHint(t *testing.T) {
 	}
 }
 
-func TestRender_ShortcutPaneShowsArrowPaneViewHint(t *testing.T) {
-	for _, activePane := range []int{0, 1} {
-		pane := shortcutPaneText(renderShortcutPane(statusBarParams{
-			Mode:       ModeFlows,
-			ActivePane: activePane,
-		}, 26, 18))
-		if !strings.Contains(pane, "f2/tab") || !strings.Contains(pane, "pane") {
-			t.Fatalf("shortcut pane activePane=%d should include f2/tab pane hint, got:\n%s", activePane, pane)
-		}
-		if !strings.Contains(pane, "←/→") || !strings.Contains(pane, "pane/view") {
-			t.Fatalf("shortcut pane activePane=%d should include arrow pane/view hint, got:\n%s", activePane, pane)
-		}
+func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
+	leftPane := shortcutPaneText(renderShortcutPane(statusBarParams{
+		Mode:       ModeFlows,
+		ActivePane: 0,
+	}, 26, 18))
+	if !strings.Contains(leftPane, "f2/tab") || !strings.Contains(leftPane, "pane") {
+		t.Fatalf("left-pane shortcut pane should include f2/tab pane hint, got:\n%s", leftPane)
+	}
+	if strings.Contains(leftPane, "←/→") || strings.Contains(leftPane, "pane/view") {
+		t.Fatalf("left-pane shortcut pane should not include arrow view hint, got:\n%s", leftPane)
+	}
+
+	rightPane := shortcutPaneText(renderShortcutPane(statusBarParams{
+		Mode:       ModeFlows,
+		ActivePane: 1,
+	}, 26, 18))
+	if !strings.Contains(rightPane, "f2/tab") || !strings.Contains(rightPane, "pane") {
+		t.Fatalf("right-pane shortcut pane should include f2/tab pane hint, got:\n%s", rightPane)
+	}
+	if !strings.Contains(rightPane, "←/→") || !strings.Contains(rightPane, "view") {
+		t.Fatalf("right-pane shortcut pane should include arrow view hint, got:\n%s", rightPane)
+	}
+	if strings.Contains(rightPane, "pane/view") || strings.Contains(rightPane, "select/pane/view") {
+		t.Fatalf("right-pane shortcut pane should not describe arrows as pane navigation, got:\n%s", rightPane)
 	}
 }
 
@@ -3466,8 +3478,8 @@ func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
 	}
 	for _, pair := range [][2]string{
 		{"f2/tab: pane", "q/esc: quit"},
-		{"↑/↓ select", "←/→ pane/view"},
-		{"←/→ pane/view", "enter: diff"},
+		{"↑/↓ select", "←/→ view"},
+		{"←/→ view", "enter: diff"},
 		{"enter: diff", "d: drop"},
 	} {
 		a := strings.Index(bar, pair[0])
@@ -3855,7 +3867,7 @@ func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T)
 			t.Fatalf("tight generic footer should keep %q, got %q", want, bar)
 		}
 	}
-	for _, notWant := range []string{"↑/↓ select", "←/→ pane/view"} {
+	for _, notWant := range []string{"↑/↓ select", "←/→ view"} {
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("tight generic footer should drop navigation hint %q before quit, got %q", notWant, bar)
 		}
@@ -3864,24 +3876,27 @@ func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T)
 
 func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
 	bar := RenderStatusBar(160, 1, 0, 1, false, false, false)
-	for _, hint := range []string{"f2/tab: pane", "q/esc: quit", "↑/↓ select", "←/→ pane/view"} {
+	for _, hint := range []string{"f2/tab: pane", "q/esc: quit", "↑/↓ select", "←/→ view"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode status bar should contain %q", hint)
 		}
 	}
 }
 
-func TestStatusBar_ShowsArrowPaneViewHintWhenLeftPaneActive(t *testing.T) {
+func TestStatusBar_HidesArrowViewHintWhenLeftPaneActive(t *testing.T) {
 	bar := RenderStatusBar(80, ModeFlows, OverlayNone, 0, false, false, false)
-	if !strings.Contains(bar, "←/→ pane/view") {
-		t.Fatalf("left-pane status bar should advertise arrow pane/view navigation, got %q", bar)
+	if strings.Contains(bar, "←/→") || strings.Contains(bar, "pane/view") {
+		t.Fatalf("left-pane status bar should not advertise arrow view navigation, got %q", bar)
 	}
 }
 
-func TestStatusBar_BranchesModeShowsArrowPaneViewHint(t *testing.T) {
+func TestStatusBar_BranchesModeShowsArrowViewHint(t *testing.T) {
 	bar := RenderStatusBar(120, ModeBranches, OverlayNone, 1, false, false, false)
-	if !strings.Contains(bar, "←/→ pane/view") {
-		t.Fatalf("branches status bar should advertise arrow pane/view navigation, got %q", bar)
+	if !strings.Contains(bar, "←/→ view") {
+		t.Fatalf("branches status bar should advertise arrow view navigation, got %q", bar)
+	}
+	if strings.Contains(bar, "pane/view") {
+		t.Fatalf("branches status bar should not describe arrows as pane navigation, got %q", bar)
 	}
 }
 
@@ -3938,15 +3953,16 @@ func TestStatusBar_BranchesModePrefersActionsOverLegendWhenTight(t *testing.T) {
 	}
 }
 
-func TestStatusBar_ArrowPaneViewHintFitsNarrowFooter(t *testing.T) {
+func TestStatusBar_ArrowViewHintFitsNarrowFooter(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		mode Mode
-		pane int
+		name      string
+		mode      Mode
+		pane      int
+		wantArrow bool
 	}{
 		{name: "worktrees left pane", mode: ModeWorktrees, pane: 0},
-		{name: "branches", mode: ModeBranches, pane: 1},
-		{name: "flows", mode: ModeFlows, pane: 1},
+		{name: "branches", mode: ModeBranches, pane: 1, wantArrow: true},
+		{name: "flows", mode: ModeFlows, pane: 1, wantArrow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bar := RenderStatusBar(80, tc.mode, OverlayNone, tc.pane, false, false, false)
@@ -3957,8 +3973,11 @@ func TestStatusBar_ArrowPaneViewHintFitsNarrowFooter(t *testing.T) {
 			if got := lipgloss.Width(stripped); got > 80 {
 				t.Fatalf("status bar width = %d, want <= 80: %q", got, bar)
 			}
-			if !strings.Contains(bar, "←/→ pane/view") {
-				t.Fatalf("status bar should include arrow pane/view hint, got %q", bar)
+			if tc.wantArrow && !strings.Contains(bar, "←/→ view") {
+				t.Fatalf("status bar should include arrow view hint, got %q", bar)
+			}
+			if !tc.wantArrow && strings.Contains(bar, "←/→") {
+				t.Fatalf("status bar should hide arrow view hint, got %q", bar)
 			}
 		})
 	}
@@ -3971,7 +3990,7 @@ func TestStatusBar_GenericActionModesDoNotWrapNarrowFooter(t *testing.T) {
 		destructive bool
 		wantHints   []string
 	}{
-		{name: "stashes destructive", mode: ModeStashes, destructive: true, wantHints: []string{"←/→ pane/view", "enter: diff", "d: drop"}},
+		{name: "stashes destructive", mode: ModeStashes, destructive: true, wantHints: []string{"←/→ view", "enter: diff", "d: drop"}},
 		{name: "reflog", mode: ModeReflog, wantHints: []string{"q/esc: quit", "enter: diff", "y: copy hash"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4098,10 +4117,10 @@ func TestStatusBar_WorktreesModeDoesNotWrapNarrowFooter(t *testing.T) {
 		dirty       bool
 		wantHints   []string
 	}{
-		{name: "clean", wantHints: []string{"←/→ pane/view", "n: new worktree", "f: fetch", "F: pull"}},
-		{name: "dirty", dirty: true, wantHints: []string{"←/→ pane/view", "enter: diff"}},
-		{name: "destructive", destructive: true, wantHints: []string{"←/→ pane/view", "d: delete"}},
-		{name: "stale", destructive: true, stale: true, wantHints: []string{"←/→ pane/view", "p: prune"}},
+		{name: "clean", wantHints: []string{"←/→ view", "n: new worktree", "f: fetch", "F: pull"}},
+		{name: "dirty", dirty: true, wantHints: []string{"←/→ view", "enter: diff"}},
+		{name: "destructive", destructive: true, wantHints: []string{"←/→ view", "d: delete"}},
+		{name: "stale", destructive: true, stale: true, wantHints: []string{"←/→ view", "p: prune"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bar := RenderStatusBar(80, ModeWorktrees, OverlayNone, 1, tc.destructive, tc.stale, tc.dirty)
