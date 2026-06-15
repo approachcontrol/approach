@@ -220,6 +220,7 @@ type RenderParams struct {
 	Width                       int
 	Height                      int
 	Mode                        Mode
+	ActiveFlows                 bool
 	Branches                    []gitquery.BranchRow
 	Stashes                     []gitquery.Stash
 	BranchSelected              int
@@ -444,12 +445,13 @@ func renderApplication(p RenderParams) string {
 	stashSelected := p.Mode == ModeStashes && p.StashSelected >= 0 && p.StashSelected < len(p.Stashes)
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
-	embeddedTerminalActive := p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0
-	flowEmbeddedTerminalActive := p.Mode == ModeFlows && len(p.FlowEmbeddedTerminals) > 0
+	embeddedTerminalActive := p.Mode == ModeSessions && !p.ActiveFlows && len(p.EmbeddedTerminals) > 0
+	flowSurfaceActive := p.Mode == ModeFlows || p.ActiveFlows
+	flowEmbeddedTerminalActive := flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0
 	terminalShortcutsActive := embeddedTerminalActive || (flowEmbeddedTerminalActive && p.FlowTerminalFocused)
 	sessionSelected := p.Mode == ModeSessions && !embeddedTerminalActive && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
-	flowSelected := p.Mode == ModeFlows && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
+	flowSelected := flowSurfaceActive && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
 	flowWorktreePathSelected := false
 	flowAutoModeSelected := false
@@ -474,6 +476,7 @@ func renderApplication(p RenderParams) string {
 	status := statusBarParams{
 		Width:                       p.Width,
 		Mode:                        p.Mode,
+		ActiveFlows:                 p.ActiveFlows,
 		Overlay:                     p.Overlay,
 		InputMode:                   inputRenderParamsFrom(p).mode,
 		FormHasMultiline:            formHasMultilineField(p.Form),
@@ -559,6 +562,9 @@ func renderApplication(p RenderParams) string {
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery)
 
 	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
+	if p.ActiveFlows {
+		modeHeader = renderActiveFlowsHeader(rightContentWidth)
+	}
 	rightContentHeight := p.Height - BranchContentOverhead
 
 	// Hide cursor in right pane when left pane is active
@@ -589,6 +595,10 @@ func renderApplication(p RenderParams) string {
 
 	var rightLines []string
 	switch {
+	case flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0:
+		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused)
+	case flowSurfaceActive && len(p.Flows) > 0:
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
 	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
 		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
 	case p.Mode == ModeBranches && len(p.Branches) > 0:
@@ -605,10 +615,6 @@ func renderApplication(p RenderParams) string {
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
-	case p.Mode == ModeFlows && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused)
-	case p.Mode == ModeFlows && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -703,6 +709,12 @@ func renderModeHeader(mode Mode, width int) string {
 	return line + "\n" + separator
 }
 
+func renderActiveFlowsHeader(width int) string {
+	line := ansi.Truncate(" "+activeModeStyle.Render("F3 Active flows")+statusStyle.Render("  current repo, non-merged"), width, "")
+	separator := strings.Repeat("─", width)
+	return line + "\n" + separator
+}
+
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
 func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
 	fetchAvailable := activePane == 1 && (mode == ModeWorktrees || mode == ModeBranches)
@@ -740,6 +752,7 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 type statusBarParams struct {
 	Width                       int
 	Mode                        Mode
+	ActiveFlows                 bool
 	Overlay                     OverlayState
 	InputMode                   InputMode
 	FormHasMultiline            bool
@@ -909,10 +922,11 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 		modeStyle = statusStyle
 		groupStyle = statusStyle
 	}
-	title := titleStyle.Render("Shortcuts") + "  " + modeStyle.Render(modeShortcutTitle(sp.Mode))
+	title := titleStyle.Render("Shortcuts") + "  " + modeStyle.Render(modeShortcutTitleForStatus(sp))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
-	tight := height <= 7 || (sp.Mode == ModeFlows && height <= 14)
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.ActiveFlows
+	tight := height <= 7 || (flowSurfaceActive && height <= 14)
 	if !compact && !tight {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
@@ -1028,7 +1042,8 @@ func padShortcutKey(key string, width int) string {
 }
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
-	if (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive {
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.ActiveFlows
+	if (sp.Mode == ModeSessions || flowSurfaceActive) && sp.EmbeddedTerminalActive {
 		hints := []shortcutHint{{Key: "ctrl+]", Label: "commands"}}
 		if sp.EmbeddedTerminalPrefix {
 			hints = []shortcutHint{
@@ -1038,7 +1053,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				{Key: "q/esc", Label: "quit"},
 				{Key: "1-9", Label: "switch"},
 			}
-			if sp.Mode == ModeSessions {
+			if sp.Mode == ModeSessions && !flowSurfaceActive {
 				hints = slices.Insert(hints, 1, shortcutHint{Key: "l", Label: "sessions"})
 			} else {
 				hints = slices.Insert(hints, 1,
@@ -1062,19 +1077,21 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		{Key: "tab", Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
 		{Key: "f5", Label: "refresh"},
+		{Key: "f3", Label: "active flows"},
 	}
-	if sp.Mode != ModeFlows {
+	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
 
 	var actions []shortcutHint
-	var flowModeControls []shortcutHint
-	var flowAgentControls []shortcutHint
 	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
 		actions = append(actions, shortcutHint{Key: "f", Label: "fetch visible"})
 	}
 	if sp.ActivePane == 0 && sp.RepoCreateAvailable {
 		actions = append(actions, shortcutHint{Key: "n", Label: "new repo"})
+	}
+	if flowSurfaceActive {
+		return flowShortcutSections(sp, actions, navigation, global)
 	}
 	switch sp.Mode {
 	case ModeWorktrees:
@@ -1202,56 +1219,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				shortcutHint{Key: "y", Label: "copy path"},
 			)
 		}
-	case ModeFlows:
-		if sp.ActivePane == 1 && sp.RepoSelected {
-			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
-			headlessLabel := "headless off"
-			headlessSuccessSuffix := ""
-			if sp.FlowHeadless {
-				headlessLabel = "headless on"
-				headlessSuccessSuffix = "on"
-			}
-			flowModeControls = append(flowModeControls, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
-			if sp.FlowSelected {
-				if sp.FlowPhaseSelected {
-					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
-					if sp.FlowNextLaunchReady {
-						actions = append(actions, shortcutHint{Key: "ctrl+j", Label: "launch next"})
-					}
-					if sp.FlowPhaseResetReadySelected {
-						actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
-					}
-					if sp.FlowWorktreePathSelected {
-						actions = append(actions, shortcutHint{Key: "y", Label: "copy path"})
-					}
-					if sp.FlowPhaseResumableSelected {
-						actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
-					}
-				} else {
-					actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
-					if sp.FlowNextLaunchReady {
-						actions = append(actions, shortcutHint{Key: "ctrl+j", Label: "launch next"})
-					}
-					if sp.FlowPlanLinked {
-						actions = append(actions, shortcutHint{Key: "o", Label: "open"})
-					}
-					if sp.FlowWorktreePathSelected {
-						actions = append(actions, shortcutHint{Key: "y", Label: "copy path"})
-					}
-					if sp.Destructive && sp.FlowDeletableSelected {
-						actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
-					}
-				}
-				flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
-			}
-		}
-		agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
-		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "A", Label: agentLabel})
-		if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
-			flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
-		}
 	}
-	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches {
+	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches && !sp.ActiveFlows {
 		if sp.FetchAvailable {
 			actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
 		}
@@ -1259,22 +1228,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			actions = append(actions, shortcutHint{Key: "F", Label: "pull"})
 		}
 	}
-	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes || sp.Mode == ModeFlows) {
+	if !sp.Destructive && (sp.Mode == ModeWorktrees || sp.Mode == ModeBranches || sp.Mode == ModeStashes) {
 		actions = append([]shortcutHint{{Key: "D", Label: "destructive mode"}}, actions...)
-	}
-	if sp.Mode == ModeFlows {
-		var sections []shortcutSection
-		if len(actions) > 0 {
-			sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
-		}
-		if len(flowModeControls) > 0 {
-			sections = append(sections, shortcutSection{Title: "Mode", Hints: flowModeControls})
-		}
-		if len(flowAgentControls) > 0 {
-			sections = append(sections, shortcutSection{Title: "Agent", Hints: flowAgentControls})
-		}
-		sections = append(sections, shortcutSection{Title: "Global", Hints: append(navigation, global...)})
-		return sections
 	}
 	var sections []shortcutSection
 	if len(actions) > 0 {
@@ -1304,6 +1259,63 @@ func flowAutoModeShortcutHint(enabled bool) shortcutHint {
 	return shortcutHint{Key: "m", Label: "auto: off"}
 }
 
+func flowShortcutSections(sp statusBarParams, actions, navigation, global []shortcutHint) []shortcutSection {
+	var flowModeControls []shortcutHint
+	var flowAgentControls []shortcutHint
+	if sp.ActivePane == 1 && sp.RepoSelected {
+		actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+		headlessLabel := "headless off"
+		headlessSuccessSuffix := ""
+		if sp.FlowHeadless {
+			headlessLabel = "headless on"
+			headlessSuccessSuffix = "on"
+		}
+		flowModeControls = append(flowModeControls, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
+		if sp.FlowSelected {
+			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+			if sp.FlowNextLaunchReady {
+				actions = append(actions, shortcutHint{Key: "ctrl+j", Label: "launch next"})
+			}
+			if sp.FlowPhaseSelected && sp.FlowPhaseResetReadySelected {
+				actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
+			}
+			if !sp.FlowPhaseSelected && sp.FlowPlanLinked {
+				actions = append(actions, shortcutHint{Key: "o", Label: "open"})
+			}
+			if sp.FlowWorktreePathSelected {
+				actions = append(actions, shortcutHint{Key: "y", Label: "copy path"})
+			}
+			if sp.FlowPhaseSelected && sp.FlowPhaseResumableSelected {
+				actions = append(actions, shortcutHint{Key: "r", Label: "resume"})
+			}
+			if !sp.FlowPhaseSelected && sp.Destructive && sp.FlowDeletableSelected {
+				actions = append(actions, shortcutHint{Key: "d", Label: "delete", Warning: true})
+			}
+			flowModeControls = append(flowModeControls, flowAutoModeShortcutHint(sp.FlowAutoModeSelected))
+		}
+	}
+	if !sp.Destructive {
+		actions = append([]shortcutHint{{Key: "D", Label: "destructive mode"}}, actions...)
+	}
+	agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
+	flowAgentControls = append(flowAgentControls, shortcutHint{Key: "A", Label: agentLabel})
+	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
+		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
+	}
+	var sections []shortcutSection
+	if len(actions) > 0 {
+		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
+	}
+	if len(flowModeControls) > 0 {
+		sections = append(sections, shortcutSection{Title: "Mode", Hints: flowModeControls})
+	}
+	if len(flowAgentControls) > 0 {
+		sections = append(sections, shortcutSection{Title: "Agent", Hints: flowAgentControls})
+	}
+	sections = append(sections, shortcutSection{Title: "Global", Hints: append(navigation, global...)})
+	return sections
+}
+
 const flowChooseAgentLabel = "choose agent"
 
 func flowAgentShortcut(value string) (string, bool) {
@@ -1315,7 +1327,7 @@ func flowAgentShortcut(value string) (string, bool) {
 }
 
 func shortcutsMuted(sp statusBarParams) bool {
-	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
+	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows || sp.ActiveFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
 }
 
 func flowReasoningEffortShortcutLabel(value string) string {
@@ -1339,11 +1351,42 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
-	if sp.Mode == ModeFlows && !sp.FlowSelected && height <= 9 {
+	if height < 20 && sp.Mode != ModeFlows && !sp.ActiveFlows {
+		sections = prioritizeShortcutInSection(sections, "Global", "A", "q/esc")
+	}
+	if (sp.Mode == ModeFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
 		sections = withoutShortcutKeys(sections, "D", "n", "f5")
 	}
 	if height < 20 {
 		return withoutShortcutKey(sections, "f5")
+	}
+	return sections
+}
+
+func prioritizeShortcutInSection(sections []shortcutSection, title, key, beforeKey string) []shortcutSection {
+	for si, section := range sections {
+		if section.Title != title {
+			continue
+		}
+		keyIndex := -1
+		beforeIndex := -1
+		for i, hint := range section.Hints {
+			if hint.Key == key {
+				keyIndex = i
+			}
+			if hint.Key == beforeKey {
+				beforeIndex = i
+			}
+		}
+		if keyIndex < 0 || beforeIndex < 0 || keyIndex < beforeIndex {
+			return sections
+		}
+		hint := section.Hints[keyIndex]
+		hints := append([]shortcutHint{}, section.Hints[:keyIndex]...)
+		hints = append(hints, section.Hints[keyIndex+1:]...)
+		hints = slices.Insert(hints, beforeIndex, hint)
+		sections[si].Hints = hints
+		return sections
 	}
 	return sections
 }
@@ -1382,7 +1425,7 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 	if sp.Mode == ModeBranches {
 		return renderBranchFooterShortcuts(sp, sections)
 	}
-	if sp.Mode == ModeFlows {
+	if sp.Mode == ModeFlows || sp.ActiveFlows {
 		return renderFlowFooterShortcuts(sp, sections)
 	}
 	return renderGenericFooterShortcuts(sp, sections)
@@ -1446,20 +1489,20 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
 	for _, drop := range [][]string{
 		{},
-		{"f5"},
-		{"f5", "A"},
-		{"f5", "A", "D"},
-		{"f5", "A", "D", "←/→"},
-		{"f5", "A", "D", "←/→", "↑/↓"},
-		{"f5", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "A", "D", "←/→", "↑/↓", "q/esc", "tab"},
+		{"f5", "f3"},
+		{"f5", "f3", "A"},
+		{"f5", "f3", "A", "D"},
+		{"f5", "f3", "A", "D", "←/→"},
+		{"f5", "f3", "A", "D", "←/→", "↑/↓"},
+		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "tab"},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", "tab")))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "tab")))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -1798,6 +1841,13 @@ func modeShortcutTitle(mode Mode) string {
 	default:
 		return "Items"
 	}
+}
+
+func modeShortcutTitleForStatus(sp statusBarParams) string {
+	if sp.ActiveFlows {
+		return "Active flows"
+	}
+	return modeShortcutTitle(sp.Mode)
 }
 
 func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, emptyMessage string, activeTerminalRepoPaths map[string]bool) []string {

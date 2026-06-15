@@ -1207,7 +1207,10 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	previousFlows := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
-	selectedFlowID := m.selectedFlowID()
+	selectedFlowID := ""
+	if record, ok := m.flows.Selected(); ok {
+		selectedFlowID = record.FlowID
+	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
 	m.flows = m.flows.SetItems(msg.Flows)
@@ -1217,8 +1220,9 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 		})
 	}
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
+	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
 	if m.flowFocus != flowFocusTerminal {
@@ -1256,7 +1260,10 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	if flow.FlowID == "" {
 		return m
 	}
-	selectedFlowID := m.selectedFlowID()
+	selectedFlowID := ""
+	if record, ok := m.flows.Selected(); ok {
+		selectedFlowID = record.FlowID
+	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
@@ -1278,6 +1285,7 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 		})
 	}
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
+	m = m.syncActiveFlowsFromCache()
 	return m.clampSelectionsAfterFilter()
 }
 
@@ -1335,10 +1343,20 @@ func (m Model) clearDeletedFlowState(flowID string) Model {
 		return m
 	}
 	if m.expandedFlowID == flowID {
-		m = m.setExpandedFlowID("")
+		m.expandedFlowID = ""
+		m.selectedFlowPhaseID = ""
+		m.flows = m.flows.SetItemHeight(flowItemHeight(""))
 	}
-	if selectedID := m.selectedFlowID(); selectedID == flowID {
-		m = m.clearSelectedFlowPhase()
+	if m.expandedActiveFlowID == flowID {
+		m.expandedActiveFlowID = ""
+		m.selectedActiveFlowPhaseID = ""
+		m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
+	}
+	if record, ok := m.flows.Selected(); ok && record.FlowID == flowID {
+		m.selectedFlowPhaseID = ""
+	}
+	if record, ok := m.activeFlows.Selected(); ok && record.FlowID == flowID {
+		m.selectedActiveFlowPhaseID = ""
 	}
 	return m
 }
@@ -1356,22 +1374,34 @@ func flowDisplayName(title, flowID string) string {
 
 func (m Model) restoreExpandedFlowSelection(flowID, phaseID string) Model {
 	if flowID == "" {
-		return m.setExpandedFlowID("")
+		m.expandedFlowID = ""
+		m.selectedFlowPhaseID = ""
+		m.flows = m.flows.SetItemHeight(flowItemHeight(""))
+		return m
 	}
-	record, ok := m.selectedFlow()
+	record, ok := m.flows.Selected()
 	if !ok || record.FlowID != flowID {
-		return m.setExpandedFlowID("")
+		m.expandedFlowID = ""
+		m.selectedFlowPhaseID = ""
+		m.flows = m.flows.SetItemHeight(flowItemHeight(""))
+		return m
 	}
 	if phaseID != "" {
 		phase, ok := flowRecordPhaseByID(record, phaseID)
 		if !ok {
-			return m.setExpandedFlowID("")
+			m.expandedFlowID = ""
+			m.selectedFlowPhaseID = ""
+			m.flows = m.flows.SetItemHeight(flowItemHeight(""))
+			return m
 		}
 		phaseID = phase.PhaseID
 	}
 	m.expandedFlowID = flowID
 	m.selectedFlowPhaseID = phaseID
 	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
+	if m.activeFlowSurfaceVisible() {
+		return m
+	}
 	return m.reflowFlows()
 }
 
@@ -1445,7 +1475,7 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 				msg.ListRequest == m.activeWorktreeSessionReq &&
 				msg.WorktreePath == m.inlineWorktreeSessionPath
 		}
-		return msg.Mode == m.mode && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
+		return msg.Mode == m.activeContentFetchMode() && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
 	case FetchWorktreeDiff:
 		if !m.activeViewMatches(FetchWorktreeDiff, ui.ModeWorktrees, msg.DiffRequest) {
 			return false
@@ -1587,7 +1617,7 @@ func (m Model) handleCopyPlanPath() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m, nil
 	}
 	flow, ok := m.selectedFlow()
