@@ -1026,7 +1026,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		if len(exitedFlowTerminals) > 0 {
 			var refreshCmd tea.Cmd
-			m, refreshCmd = m.startFlowRefreshFetch()
+			m, refreshCmd = m.startFlowSurfaceRefreshFetch()
 			cmds = append(cmds, refreshCmd)
 		}
 		if m.hasRunningEmbeddedTerminal() {
@@ -1037,7 +1037,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.flowRefreshTickGen || !m.flowSurfaceVisible() {
 			return m, nil
 		}
-		return m.startFlowRefreshFetch()
+		return m.startFlowSurfaceRefreshFetch()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:

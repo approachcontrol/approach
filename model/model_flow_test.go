@@ -36,11 +36,18 @@ func activeFlowResultFromCommand(t *testing.T, cmd tea.Cmd) model.ActiveFlowResu
 		t.Fatal("expected active Flow fetch command")
 	}
 	msg := cmd()
-	result, ok := msg.(model.ActiveFlowResultMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want ActiveFlowResultMsg", msg)
+	if result, ok := msg.(model.ActiveFlowResultMsg); ok {
+		return result
 	}
-	return result
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, subcmd := range batch {
+			if result, ok := subcmd().(model.ActiveFlowResultMsg); ok {
+				return result
+			}
+		}
+	}
+	t.Fatalf("command returned %T, want ActiveFlowResultMsg", msg)
+	return model.ActiveFlowResultMsg{}
 }
 
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
@@ -1894,6 +1901,57 @@ func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved
 		!launches[0].LaunchContext.Embedded ||
 		!launches[0].LaunchContext.FlowLaunchTracked {
 		t.Fatalf("launch context = %#v", launches[0].LaunchContext)
+	}
+}
+
+func TestModel_ActiveFlowAutoCloseRefreshUsesGlobalFetch(t *testing.T) {
+	normalFlow := flowWithPhaseDetails()
+	normalFlow.FlowID = "alpha-flow"
+	normalFlow.Title = "Alpha Flow"
+	activeFlow := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	activeFlow.FlowID = "bravo-flow"
+	activeFlow.RepoPath = "/dev/bravo"
+	activeFlow.Title = "Bravo Flow"
+	sourceTerm := &fakeEmbeddedTerminal{lines: []string{"source output"}, state: "running"}
+	var filters []flowstore.FlowFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			filters = append(filters, filter)
+			return []flowstore.FlowRecord{activeFlow}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return sourceTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{normalFlow})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{activeFlow})
+
+	m, cmd := update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:      "codex",
+		RepoPath:     "/dev/bravo",
+		WorktreePath: "/dev/bravo-worktrees/flow-auto",
+		FlowID:       "bravo-flow",
+		FlowPhaseID:  "plan-review",
+	}})
+	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
+	filters = nil
+	sourceTerm.state = "exited"
+
+	m, cmd = update(m, model.EmbeddedTerminalTickMsgForTest(m))
+	if cmd == nil {
+		t.Fatal("active Flow source terminal auto-close should refresh active flows")
+	}
+	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
+	if len(filters) != 1 || filters[0].RepoPath != "" {
+		t.Fatalf("active Flow auto-close filters = %#v, want one global fetch", filters)
+	}
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "alpha-flow" {
+		t.Fatalf("normal Flows() cache after active Flow auto-close = %#v, want unchanged alpha-flow", got)
 	}
 }
 
@@ -3802,6 +3860,35 @@ func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) 
 	}
 	if strings.Contains(prompt, "hidden stash") {
 		t.Fatalf("active Flow delete should not target hidden stash: %q", prompt)
+	}
+}
+
+func TestModel_ActiveFlowActionFailureShowsCrossRepoErrorAndRefreshesGlobally(t *testing.T) {
+	bravoFlow := flowstore.FlowRecord{
+		FlowID:   "bravo-flow",
+		RepoPath: "/dev/bravo",
+		Title:    "Bravo Flow",
+		Status:   flowstore.StatusPending,
+	}
+	var filters []flowstore.FlowFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			filters = append(filters, filter)
+			return []flowstore.FlowRecord{bravoFlow}, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{bravoFlow})
+
+	m, cmd := update(m, model.ActionFailedMsg{RepoPath: "/dev/bravo", Err: "failed to launch bravo Flow"})
+	if cmd == nil {
+		t.Fatal("active Flow action failure should refresh global active flows")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "failed to launch bravo Flow") {
+		t.Fatalf("active Flow cross-repo action failure status = %q, want error text", got)
+	}
+	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
+	if len(filters) != 1 || filters[0].RepoPath != "" {
+		t.Fatalf("active Flow action failure filters = %#v, want one global fetch", filters)
 	}
 }
 

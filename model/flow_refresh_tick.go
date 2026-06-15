@@ -41,6 +41,13 @@ func (m Model) startFlowSurfaceFetch() (Model, tea.Cmd) {
 	return m.startFetchMode(ui.ModeFlows)
 }
 
+func (m Model) startFlowSurfaceRefreshFetch() (Model, tea.Cmd) {
+	if m.activeFlowSurfaceVisible() {
+		return m.startActiveFlowRefreshFetch()
+	}
+	return m.startFlowRefreshFetch()
+}
+
 func (m Model) startFlowRefreshFetch() (Model, tea.Cmd) {
 	if m.flowRefreshInFlight != 0 {
 		return m, nil

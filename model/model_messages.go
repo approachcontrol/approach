@@ -1151,7 +1151,7 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusOther, msg.Err)
 	}
 	return m

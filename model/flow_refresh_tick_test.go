@@ -40,6 +40,19 @@ func flowResultFromCommand(t *testing.T, cmd tea.Cmd) FlowResultMsg {
 	return result
 }
 
+func activeFlowResultFromRefreshCommand(t *testing.T, cmd tea.Cmd) ActiveFlowResultMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected active Flow command")
+	}
+	msg := cmd()
+	result, ok := msg.(ActiveFlowResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want ActiveFlowResultMsg", msg)
+	}
+	return result
+}
+
 func flowResultFromBatchCommand(t *testing.T, cmd tea.Cmd) FlowResultMsg {
 	t.Helper()
 	if cmd == nil {
@@ -252,6 +265,55 @@ func TestModel_FlowRefreshTickFetchesAndSchedulesNextTick(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected completed refresh fetch to schedule next tick")
+	}
+}
+
+func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t *testing.T) {
+	repos := []scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/bravo", DisplayName: "bravo"},
+	}
+	alphaFlow := flowForRefreshTest("alpha-flow")
+	bravoFlow := flowForRefreshTest("bravo-flow")
+	bravoFlow.RepoPath = "/dev/bravo"
+	var filters []flowstore.FlowFilter
+	m := NewWithOptions(repos, Options{
+		StartupMode: ui.ModeFlows,
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			filters = append(filters, filter)
+			if filter.RepoPath != "" {
+				return []flowstore.FlowRecord{alphaFlow}, nil
+			}
+			return []flowstore.FlowRecord{alphaFlow, bravoFlow}, nil
+		},
+	})
+	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
+	m.activePane = 1
+
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
+	if cmd == nil {
+		t.Fatal("expected active Flow result to schedule refresh tick")
+	}
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "alpha-flow" {
+		t.Fatalf("normal Flows() cache before tick = %#v, want repo-scoped alpha-flow", got)
+	}
+	filters = nil
+
+	m, cmd = updateFlowRefreshTest(m, flowRefreshTickMsg{Generation: m.flowRefreshTickGen})
+	result := activeFlowResultFromRefreshCommand(t, cmd)
+	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
+	}
+	if len(filters) != 1 || filters[0].RepoPath != "" {
+		t.Fatalf("active Flow tick filters = %#v, want one global fetch", filters)
+	}
+	m, _ = updateFlowRefreshTest(m, result)
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "alpha-flow" {
+		t.Fatalf("normal Flows() cache after active Flow tick = %#v, want unchanged alpha-flow", got)
+	}
+	if len(m.activeFlowRecords) != 2 {
+		t.Fatalf("active Flow global cache has %d records, want 2", len(m.activeFlowRecords))
 	}
 }
 
