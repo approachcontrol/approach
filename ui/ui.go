@@ -2530,6 +2530,9 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 
 func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID string, active flowTerminalActivitySet, showRepo bool) []string {
 	if len(record.Phases) == 0 {
+		if showRepo {
+			return []string{truncateToWidth(formatFlowColumns(showRepo, flowPhaseRowPrefix(false, false), "", "", "", "No phases", "", "", "", ""), width)}
+		}
 		return []string{truncateToWidth("      No phases", width)}
 	}
 	rows := make([]string, 0, len(record.Phases))

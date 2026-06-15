@@ -338,6 +338,34 @@ func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T
 	}
 }
 
+func TestRender_ActiveFlowsExpandedNoPhasesKeepsRepoColumnAlignment(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       240,
+		Height:      12,
+		Mode:        ModeSessions,
+		ActiveFlows: true,
+		ActivePane:  1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			Title:    "Expanded active repo flow",
+			Status:   flowstore.StatusInProgress,
+			RepoPath: "/dev/wtui",
+			Branch:   "flow/empty-phases",
+		}},
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	flowRow := lineContaining(view, "flow/empty-phases")
+	noPhasesRow := lineContaining(view, "No phases")
+	requireOrderedColumns(t, flowRow, flowstore.StatusInProgress, "wtui", "flow/empty-phases")
+	if visibleColumn(noPhasesRow, "No phases") <= visibleColumn(flowRow, "flow/empty-phases") {
+		t.Fatalf("no-phases detail should stay aligned after the active-flow branch column, flow=%q noPhases=%q", flowRow, noPhasesRow)
+	}
+}
+
 func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 	flows := []flowstore.FlowRecord{
 		{
@@ -384,6 +412,64 @@ func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 	selectedActiveRow := ansi.Strip(lineContaining(view, "flow/active"))
 	if !strings.HasPrefix(selectedActiveRow, ">● in_progress") {
 		t.Fatalf("selected active flow row prefix = %q, want selection and marker:\n%s", selectedActiveRow, view)
+	}
+}
+
+func TestRender_ActiveFlowsSelectedActiveRowsPreserveSelectionAfterRepoColumn(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	previousDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+		lipgloss.SetHasDarkBackground(previousDarkBackground)
+	})
+
+	flows := []flowstore.FlowRecord{{
+		FlowID:   "flow-1",
+		Title:    "Active repo flow",
+		Status:   flowstore.StatusInProgress,
+		RepoPath: "/dev/wtui",
+		Branch:   "flow/active-repo",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
+		},
+	}}
+	activity := []FlowTerminalActivity{
+		{FlowID: "flow-1", PhaseID: "implementation"},
+	}
+
+	view := strings.Join(renderFlowPane(flows, 0, 0, 240, 6, "", "", activity, true), "\n")
+	flowRow := rawLineContaining(view, "flow/active-repo")
+	if flowRow == "" {
+		t.Fatalf("active flow row missing:\n%s", view)
+	}
+	strippedFlowRow := ansi.Strip(flowRow)
+	if !strings.HasPrefix(strippedFlowRow, ">● in_progress") {
+		t.Fatalf("selected active flow row prefix = %q, want selection and marker:\n%s", strippedFlowRow, view)
+	}
+	requireOrderedColumns(t, strippedFlowRow, flowstore.StatusInProgress, "wtui", "flow/active-repo")
+	if !strings.Contains(flowRow, selectedSegment(flowTerminalStyle, "●")) {
+		t.Fatalf("selected active flow marker should keep semantic marker style:\n%q", flowRow)
+	}
+	if want := selectedStyle.Render(fitSessionColumn("wtui", flowRepoWidth)); !strings.Contains(flowRow, want) {
+		t.Fatalf("selected active flow row should style repo column after marker:\n%q\nmissing %q", flowRow, want)
+	}
+
+	view = strings.Join(renderFlowPane(flows, 0, 0, 240, 6, "flow-1", "implementation", activity, true), "\n")
+	phaseRow := rawLineContaining(view, "Implementation")
+	if phaseRow == "" {
+		t.Fatalf("active phase row missing:\n%s", view)
+	}
+	strippedPhaseRow := ansi.Strip(phaseRow)
+	if !strings.HasPrefix(strippedPhaseRow, "   >● running") {
+		t.Fatalf("selected active phase row prefix = %q, want phase indent, selection, marker:\n%s", strippedPhaseRow, view)
+	}
+	if visibleColumn(strippedPhaseRow, "implementation:running") <= visibleColumn(strippedFlowRow, "flow/active-repo") {
+		t.Fatalf("selected active phase should stay aligned after active-flow repo and branch columns, flow=%q phase=%q", strippedFlowRow, strippedPhaseRow)
+	}
+	if !strings.Contains(phaseRow, selectedSegment(flowTerminalStyle, "●")) {
+		t.Fatalf("selected active phase marker should keep semantic marker style:\n%q", phaseRow)
 	}
 }
 
