@@ -710,7 +710,7 @@ func renderModeHeader(mode Mode, width int) string {
 }
 
 func renderActiveFlowsHeader(width int) string {
-	line := ansi.Truncate(" "+activeModeStyle.Render("F3 Active flows")+statusStyle.Render("  current repo, non-merged"), width, "")
+	line := ansi.Truncate(" "+activeModeStyle.Render("active flows"), width, "")
 	separator := strings.Repeat("─", width)
 	return line + "\n" + separator
 }

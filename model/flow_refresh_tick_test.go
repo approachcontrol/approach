@@ -375,7 +375,7 @@ func TestModel_FlowRefreshTracksRepoChangeRefetchBeforePendingTick(t *testing.T)
 	}
 }
 
-func TestModel_ActiveFlowRefreshRepoChangeSupersedesInFlightFetch(t *testing.T) {
+func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T) {
 	repos := []scanner.Repo{
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/bravo", DisplayName: "bravo"},
@@ -386,30 +386,35 @@ func TestModel_ActiveFlowRefreshRepoChangeSupersedesInFlightFetch(t *testing.T) 
 		},
 	})
 	m.activePane = 1
-	var cmd tea.Cmd
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
-	if cmd == nil {
+	var activeCmd tea.Cmd
+	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	if activeCmd == nil {
 		t.Fatal("expected active Flow surface entry to fetch flows")
 	}
-	alphaRequest := m.flowRefreshInFlight
-	if alphaRequest == 0 {
-		t.Fatal("expected alpha active Flow fetch to be in flight")
+	globalRequest := m.flowRefreshInFlight
+	if globalRequest == 0 {
+		t.Fatal("expected global active Flow fetch to be in flight")
 	}
 	m.activePane = 0
 
+	var cmd tea.Cmd
 	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
-	if cmd == nil {
-		t.Fatal("expected repo change to supersede in-flight active Flow fetch")
+	if cmd != nil {
+		t.Fatalf("repo change returned command %T, want nil local filter", cmd)
 	}
-	if got := m.ListRequest(ui.ModeFlows); got == alphaRequest {
-		t.Fatalf("flows list request = %d, want changed from alpha request %d", got, alphaRequest)
+	if got := m.ListRequest(ui.ModeFlows); got != globalRequest {
+		t.Fatalf("flows list request = %d, want unchanged global request %d", got, globalRequest)
 	}
-	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
-		t.Fatalf("flow refresh in-flight request = %d, want repo-change request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+	if m.flowRefreshInFlight != globalRequest {
+		t.Fatalf("flow refresh in-flight request = %d, want global request %d", m.flowRefreshInFlight, globalRequest)
 	}
-	result := flowResultFromCommand(t, cmd)
-	if result.RepoPath != "/dev/bravo" {
-		t.Fatalf("FlowResultMsg.RepoPath = %q, want /dev/bravo", result.RepoPath)
+	msg := activeCmd()
+	result, ok := msg.(ActiveFlowResultMsg)
+	if !ok {
+		t.Fatalf("active Flow command returned %T, want ActiveFlowResultMsg", msg)
+	}
+	if result.ListRequest != globalRequest {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, globalRequest)
 	}
 }
 
@@ -447,9 +452,13 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
 		t.Fatalf("flow refresh in-flight request = %d, want F3 entry request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
 	}
-	result := flowResultFromCommand(t, cmd)
-	if result.RepoPath != "/dev/bravo" {
-		t.Fatalf("FlowResultMsg.RepoPath = %q, want /dev/bravo", result.RepoPath)
+	msg := cmd()
+	result, ok := msg.(ActiveFlowResultMsg)
+	if !ok {
+		t.Fatalf("active Flow command returned %T, want ActiveFlowResultMsg", msg)
+	}
+	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
 	}
 }
 

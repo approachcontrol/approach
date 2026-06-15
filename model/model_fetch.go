@@ -24,7 +24,7 @@ const visibleRepoFetchFadeStepDuration = 1 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	if m.activeFlowSurfaceVisible() {
-		return m.startFlowsModeFetchWithRefreshTick()
+		return m.startActiveFlowsFetchWithRefreshTick()
 	}
 	return m.startFetchMode(m.mode)
 }
@@ -75,6 +75,9 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 }
 
 func (m Model) fetchForMode() tea.Cmd {
+	if m.activeFlowSurfaceVisible() {
+		return m.fetchActiveFlows(m.currentListRequest(ui.ModeFlows))
+	}
 	mode := m.activeContentFetchMode()
 	return m.fetchMode(mode, m.currentListRequest(mode))
 }
