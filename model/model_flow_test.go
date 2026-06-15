@@ -224,6 +224,10 @@ func TestModel_F3ActiveFlowRightNavigationKeysClampAtFlowSurface(t *testing.T) {
 			if m.Mode() != ui.ModeWorktrees {
 				t.Fatalf("%s from active Flow surface changed underlying mode = %d, want worktrees", tc.name, m.Mode())
 			}
+			view := ansi.Strip(m.View())
+			if !strings.Contains(view, "Active flows") {
+				t.Fatalf("%s from active Flow surface should keep active Flow view visible:\n%s", tc.name, view)
+			}
 			assertListRequestsUnchanged(t, before, m)
 		})
 	}
