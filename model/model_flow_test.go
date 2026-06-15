@@ -262,6 +262,91 @@ func TestModel_F3ActiveFlowTabWithoutTerminalKeepsFlowSurfaceFocused(t *testing.
 	assertListRequestsUnchanged(t, before, m)
 }
 
+func TestModel_F3ActiveFlowTabWithTerminalSwitchesBetweenListAndTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	flowOne := flowWithPhaseDetails()
+	flowTwo := flowWithPhaseDetails()
+	flowTwo.FlowID = "flow-2"
+	flowTwo.Title = "Second active flow"
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := flowOne
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd := update(m, flowLaunchKey())
+	if cmd == nil {
+		t.Fatal("g on active Flow should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("active Flow terminal command mode should not forward unknown command bytes: %#v", fakeTerm.writes)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
+		t.Fatalf("status = %q, want unknown terminal command", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
+		t.Fatalf("ctrl+] in active Flow terminal command mode should send literal ctrl+], writes = %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if len(fakeTerm.writes) != 1 {
+		t.Fatalf("active Flow list focus should not forward j to terminal: %#v", fakeTerm.writes)
+	}
+	if m.FlowSelected() != 0 {
+		t.Fatalf("normal Flow selection = %d, want unchanged while active Flow list moves", m.FlowSelected())
+	}
+	if got := model.ActiveFlowSelectedForTest(m); got != 1 {
+		t.Fatalf("active Flow selection = %d, want list focus to move to second flow", got)
+	}
+}
+
+func TestModel_F3ActiveFlowF2ClearsSelectedPhaseWhenLeavingRightPane(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "plan" {
+		t.Fatalf("selected active Flow phase = %q, want plan before leaving right pane", got)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF2})
+	if cmd != nil {
+		t.Fatalf("F2 from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("F2 from active Flow surface active pane = %d, want left pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("F2 from active Flow surface changed underlying mode = %d, want sessions", m.Mode())
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "" {
+		t.Fatalf("F2 from active Flow surface left selected phase = %q, want cleared", got)
+	}
+}
+
 func TestModel_F3ActiveFlowLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})

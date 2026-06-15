@@ -486,7 +486,7 @@ func (m Model) togglePrimaryPaneFocus() Model {
 	if m.mode == ui.ModePlans {
 		m = m.clearSelectedPlanPhase()
 	}
-	if m.mode == ui.ModeFlows {
+	if m.mode == ui.ModeFlows || m.activeFlowSurfaceVisible() {
 		m = m.clearSelectedFlowPhase()
 	}
 	return m
