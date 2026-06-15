@@ -492,7 +492,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
-		"f2/tab pane",
+		"f2     pane",
 		"q/esc  quit",
 		"f5     refresh",
 	} {
@@ -602,7 +602,7 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	enterIndex := strings.Index(bar, "enter: phases")
 	headlessIndex := strings.Index(bar, "h: headless on")
 	agentIndex := strings.Index(bar, "A: codex")
-	tabIndex := strings.Index(bar, "f2/tab: pane")
+	tabIndex := strings.Index(bar, "f2: pane")
 	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || tabIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}

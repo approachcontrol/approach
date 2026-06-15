@@ -133,7 +133,7 @@ func assertOnlyListRequestChanged(t *testing.T, before map[ui.Mode]uint64, after
 
 // inRightPane switches focus to the right pane.
 func inRightPane(m model.Model) model.Model {
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	return m
 }
 
@@ -446,24 +446,57 @@ func TestModel_QuitKeys(t *testing.T) {
 
 // --- Pane switching ---
 
-func TestModel_TabFromRightPaneSwitchesToLeft(t *testing.T) {
+func TestModel_TabFromRightPaneDoesNotSwitchToLeft(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab}) // left → right
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab}) // right → left
-	if m.ActivePane() != 0 {
-		t.Errorf("expected left pane (0) after second tab, got %d", m.ActivePane())
-	}
-}
+	m = inRightPane(m)
+	before := listRequests(m)
 
-func TestModel_TabTogglesPaneFocus(t *testing.T) {
-	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+
 	if m.ActivePane() != 1 {
 		t.Errorf("expected right pane after tab, got %d", m.ActivePane())
 	}
-	// TAB does not change repo selection
+	if cmd != nil {
+		t.Fatalf("tab from right pane produced cmd %T, want nil", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
+func TestModel_TabFromLeftPaneDoesNotSwitchPanes(t *testing.T) {
+	m := model.New(testRepos())
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	if m.ActivePane() != 0 {
+		t.Errorf("expected left pane after tab, got %d", m.ActivePane())
+	}
 	if m.Selected() != 0 {
 		t.Errorf("expected selected unchanged at 0, got %d", m.Selected())
+	}
+	if cmd != nil {
+		t.Fatalf("tab from left pane produced cmd %T, want nil", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
+func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("expected right pane after enter, got %d", m.ActivePane())
+	}
+	if m.Selected() != 1 {
+		t.Fatalf("selected repo = %d, want unchanged 1", m.Selected())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
+	}
+	if cmd != nil {
+		t.Fatalf("enter from left pane produced cmd %T, want nil", cmd)
 	}
 }
 
@@ -485,17 +518,20 @@ func TestModel_F2FromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *te
 
 func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // left → right
+	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // right → left
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if m.Mode() != 3 {
 		t.Errorf("expected mode unchanged at 3, got %d", m.Mode())
+	}
+	if m.ActivePane() != 1 {
+		t.Errorf("expected active pane unchanged at right pane, got %d", m.ActivePane())
 	}
 }
 
 func TestModel_F2FromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // left → right
+	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})                        // right → left
 
@@ -575,7 +611,7 @@ func TestModel_LeftPaneDownFiresFetchInBranchMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // branches
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // back to left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})                        // back to left pane
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil {
 		t.Error("expected fetch cmd after repo navigation in branches mode, got nil")
@@ -651,7 +687,7 @@ func TestModel_LeftPaneDownResetsRightPaneCursors(t *testing.T) {
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // move branch cursor
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // branchSelected=2
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})  // back to left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})   // back to left pane
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // navigate to bravo
 	if m.BranchSelected() != 0 {
 		t.Errorf("expected branchSelected reset to 0, got %d", m.BranchSelected())
@@ -723,7 +759,7 @@ func TestModel_RightArrowFromLeftPaneInNonEdgeModeIsNoOp(t *testing.T) {
 		{Name: "main"}, {Name: "feature"},
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
@@ -754,7 +790,7 @@ func TestModel_LeftArrowFromLeftPaneAtFlowsIsNoOp(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
@@ -1534,7 +1570,7 @@ func TestModel_PressingCurrentModeKeyNoFetch(t *testing.T) {
 func TestModel_ModeSwitchPreservesSelection(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})                      // select bravo (left pane)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // switch to right pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})                     // switch to right pane
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
 	if m.Selected() != 1 {
 		t.Errorf("expected selection preserved at 1, got %d", m.Selected())
@@ -1939,7 +1975,7 @@ func TestModel_RepoSwitchClearsCommits(t *testing.T) {
 	if len(m.Commits()) != 3 {
 		t.Fatal("expected 3 commits")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab}) // switch to left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2}) // switch to left pane
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if len(m.Commits()) != 0 {
 		t.Errorf("expected commits cleared on repo switch, got %d", len(m.Commits()))
@@ -2107,7 +2143,7 @@ func TestModel_RepoSwitchClearsReflogs(t *testing.T) {
 		t.Fatalf("expected 3 reflogs loaded, got %d", len(m.Reflogs()))
 	}
 	// Switch to left pane and navigate down
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if len(m.Reflogs()) != 0 {
 		t.Errorf("expected reflogs cleared on repo switch, got %d", len(m.Reflogs()))

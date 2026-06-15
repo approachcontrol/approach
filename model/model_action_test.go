@@ -1907,7 +1907,7 @@ func TestModel_DestructivePersistsAcrossRepoSwitch(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 	// Switch to left pane and navigate to a different repo
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if !m.Destructive() {
 		t.Error("expected destructive to persist after repo switch")
@@ -2756,7 +2756,7 @@ func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})  // left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})   // left pane
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
 	m, _ = update(m, model.BranchResultMsg{
 		RepoPath: "/dev/bravo",
@@ -3992,7 +3992,7 @@ func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 		t.Fatalf("initial Sessions() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}

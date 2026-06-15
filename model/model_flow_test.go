@@ -239,12 +239,35 @@ func TestModel_F3ActiveFlowLeftKeyClampsAndPreservesUnderlyingMode(t *testing.T)
 	}
 }
 
+func TestModel_F3ActiveFlowTabWithoutTerminalKeepsFlowSurfaceFocused(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 1 {
+		t.Fatalf("tab from active Flow surface active pane = %d, want right pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("tab from active Flow surface changed underlying mode = %d, want sessions", m.Mode())
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Active flows") {
+		t.Fatalf("tab from active Flow surface should keep active Flow view visible:\n%s", view)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
 func TestModel_F3ActiveFlowLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -3403,7 +3426,7 @@ func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
 
 func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyTab},
+		{Type: tea.KeyF2},
 	} {
 		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -3548,7 +3571,7 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 		t.Fatalf("initial Flows() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}
@@ -8302,7 +8325,7 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("expected flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
@@ -8405,7 +8428,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("expected flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
@@ -8520,7 +8543,7 @@ func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("flow create failure should be tagged with the active create request")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	next, cmd := update(m, staleMsg)
 	if cmd != nil {
