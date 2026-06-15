@@ -407,7 +407,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m = m.togglePrimaryPaneFocus()
-	case "ctrl+j":
+	case "g":
 		if m.mode == ui.ModeFlows {
 			return m.handleLaunchNextFlowPhase()
 		}
@@ -517,7 +517,7 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.activePane = 0
 		m = m.clearSelectedFlowPhase()
-	case "ctrl+j":
+	case "g":
 		return m.handleLaunchNextFlowPhase()
 	case "enter":
 		return m.handleFlowEnter()

@@ -1274,7 +1274,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 		if sp.FlowSelected {
 			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
 			if sp.FlowNextLaunchReady {
-				actions = append(actions, shortcutHint{Key: "ctrl+j", Label: "launch next"})
+				actions = append(actions, shortcutHint{Key: "g", Label: "launch next"})
 			}
 			if sp.FlowPhaseSelected && sp.FlowPhaseResetReadySelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
@@ -1518,12 +1518,12 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	base := footerHintsForKeys(hints, "f2/tab", "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
-	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+j", "d")
-	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+j", "d", "m")
-	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+j", "x", "o", "y", "d", "r", "m")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+j", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+j", "x", "o", "y", "d", "r", "m", "A", "f", "F")
-	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "ctrl+j", "x", "o", "y", "d", "r", "m", "f", "F")
+	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "d")
+	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "d", "m")
+	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "x", "o", "y", "d", "r", "m")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
+	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),

@@ -319,7 +319,7 @@ through `wtui flow`. Each record is stored as
 flows pane (mode `8`), which is the startup default. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row or expanded
 phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
-the linked plan body from the selected Flow. Press `ctrl+j` to launch the first
+the linked plan body from the selected Flow. Press `g` to launch the first
 launchable phase for the selected Flow. Press `y` to copy the selected Flow
 worktree path from either a Flow row or one of its expanded phase rows. Press
 `m` to toggle per-Flow auto mode. When auto mode is on, completed CLI phases
@@ -541,7 +541,7 @@ manually afterward.
 
 ## Agent Session Hooks
 
-Agents launched from wtui with `a`, `N`, Flow `ctrl+j`, or session
+Agents launched from wtui with `a`, `N`, Flow `g`, or session
 resume `r` are wired automatically. wtui passes Claude Code or Codex a
 session-end hook that calls the current wtui binary, and it appends the
 environment metadata listed below so the hook can associate the session with
@@ -632,7 +632,7 @@ tmux reattach command, using the detach handoff order described in
 `[terminal]`. Platforms without `$TERMINAL`, `[terminal].command`, or the macOS
 Terminal AppleScript fallback report the handoff error after detach; the agent
 continues in the detached tmux session. When `tmux` is unavailable, wtui uses
-the direct embedded PTY path and reports detach unavailable. Fresh Flow `ctrl+j`
+the direct embedded PTY path and reports detach unavailable. Fresh Flow `g`
 launches and Flow phase-session resumes run CLI agents inside runtime-only
 embedded PTYs in the flows pane; Flow headless mode chooses
 headless provider commands (`codex exec` / `claude --print`) versus interactive
