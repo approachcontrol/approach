@@ -199,21 +199,33 @@ func TestModel_F3ActiveFlowRefreshPreparesAutoLaunch(t *testing.T) {
 	}
 }
 
-func TestModel_F3ActiveFlowLKeyClampsAtFlowSurface(t *testing.T) {
-	flow := flowWithPhaseDetails()
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+func TestModel_F3ActiveFlowRightNavigationKeysClampAtFlowSurface(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "right arrow", key: tea.KeyMsg{Type: tea.KeyRight}},
+		{name: "l", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flow := flowWithPhaseDetails()
+			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+			before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if cmd != nil {
-		t.Fatalf("l from active Flow surface returned command %T, want nil", cmd)
-	}
-	if m.ActivePane() != 1 {
-		t.Fatalf("l from active Flow surface active pane = %d, want right pane", m.ActivePane())
-	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("l from active Flow surface changed underlying mode = %d, want worktrees", m.Mode())
+			m, cmd := update(m, tc.key)
+			if cmd != nil {
+				t.Fatalf("%s from active Flow surface returned command %T, want nil", tc.name, cmd)
+			}
+			if m.ActivePane() != 1 {
+				t.Fatalf("%s from active Flow surface active pane = %d, want right pane", tc.name, m.ActivePane())
+			}
+			if m.Mode() != ui.ModeWorktrees {
+				t.Fatalf("%s from active Flow surface changed underlying mode = %d, want worktrees", tc.name, m.Mode())
+			}
+			assertListRequestsUnchanged(t, before, m)
+		})
 	}
 }
 
@@ -222,6 +234,7 @@ func TestModel_F3ActiveFlowLeftKeyClampsAndPreservesUnderlyingMode(t *testing.T)
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
 	if cmd != nil {
@@ -237,6 +250,7 @@ func TestModel_F3ActiveFlowLeftKeyClampsAndPreservesUnderlyingMode(t *testing.T)
 	if !strings.Contains(view, "Active flows") {
 		t.Fatalf("left from active Flow surface should keep active Flow view visible:\n%s", view)
 	}
+	assertListRequestsUnchanged(t, before, m)
 }
 
 func TestModel_F3ActiveFlowLeftPaneNumberedKeysAreNoOps(t *testing.T) {
@@ -3419,24 +3433,32 @@ func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 	}
 }
 
-func TestModel_SelectedFlowPhasePreservedWhenRightArrowClampsAtFlows(t *testing.T) {
+func TestModel_SelectedFlowPhaseClearsWhenRightArrowWrapsFromFlows(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	before := m.SelectedFlowPhaseID()
-	if before == "" {
+	if before := m.SelectedFlowPhaseID(); before == "" {
 		t.Fatal("expected selected flow phase before right arrow")
 	}
+	beforeRequests := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if cmd != nil {
-		t.Fatalf("right from flows returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("right from flows returned nil command, want worktrees fetch")
 	}
-	if got := m.SelectedFlowPhaseID(); got != before {
-		t.Fatalf("right from flows selected flow phase = %q, want preserved %q", got, before)
+	if got := m.SelectedFlowPhaseID(); got != "" {
+		t.Fatalf("right from flows selected flow phase = %q, want cleared", got)
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("right from flows mode = %d, want worktrees", m.Mode())
+	}
+	assertOnlyListRequestChanged(t, beforeRequests, m, ui.ModeWorktrees)
+	msgs := runBatchCmd(t, cmd)
+	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
+		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
 	}
 }
 
@@ -3970,7 +3992,7 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_RightNavigationReachesFlowsWithoutChangingExistingModeNumbers(t *testing.T) {
+func TestModel_RightNavigationWrapsFromFlowsWithoutChangingExistingModeNumbers(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
@@ -3985,15 +4007,21 @@ func TestModel_RightNavigationReachesFlowsWithoutChangingExistingModeNumbers(t *
 	if m.Mode() != ui.ModeFlows || cmd == nil {
 		t.Fatalf("key 8 mode=%d cmd=%v, want flows fetch", m.Mode(), cmd)
 	}
+	before := listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("right from flows mode = %d, want still flows", m.Mode())
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("right from flows mode = %d, want worktrees", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
-	if cmd != nil {
-		t.Fatalf("right from flows mode should not fetch, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("right from flows returned nil command, want worktrees fetch")
+	}
+	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
+	msgs := runBatchCmd(t, cmd)
+	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
+		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
 	}
 }
 
