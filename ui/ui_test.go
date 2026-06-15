@@ -142,9 +142,9 @@ func TestStatusBar_StashesModeOmitsIndicatorLegend(t *testing.T) {
 func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	upstreamIdx := strings.Index(bar, "no upstream")
-	tabIdx := strings.Index(bar, "f2/tab: pane")
+	tabIdx := strings.Index(bar, "f2: pane")
 	if upstreamIdx == -1 || tabIdx == -1 {
-		t.Fatalf("expected both 'no upstream' and 'f2/tab: pane' in bar: %q", bar)
+		t.Fatalf("expected both 'no upstream' and 'f2: pane' in bar: %q", bar)
 	}
 	between := bar[upstreamIdx+len("no upstream") : tabIdx]
 	if !strings.Contains(between, "|") {
@@ -154,13 +154,13 @@ func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 
 func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
-	tabIdx := strings.Index(bar, "f2/tab: pane")
+	tabIdx := strings.Index(bar, "f2: pane")
 	tIdx := strings.Index(bar, "t: terminal")
 	if tabIdx == -1 || tIdx == -1 {
 		t.Fatalf("expected both hints in bar: %q", bar)
 	}
 	if tabIdx > tIdx {
-		t.Error("f2/tab: pane should appear before t: terminal")
+		t.Error("f2: pane should appear before t: terminal")
 	}
 	qIdx := strings.Index(bar, "q/esc: quit")
 	if qIdx > tIdx {
@@ -176,7 +176,7 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 		}
 	}
 	// Pane switching and q/esc should still appear.
-	for _, hint := range []string{"f2/tab: pane", "q/esc: quit"} {
+	for _, hint := range []string{"f2: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should appear even when left pane is active", hint)
 		}
@@ -1243,7 +1243,7 @@ func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
 	for _, pair := range [][2]string{
-		{"f2/tab: pane", "q/esc: quit"},
+		{"f2: pane", "q/esc: quit"},
 		{"d: delete", "f: fetch"},
 		{"t: terminal", "c: code"},
 	} {
@@ -1335,10 +1335,10 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "q/esc: quit") {
+	if strings.Contains(footer, "f2: pane") || strings.Contains(footer, "q/esc: quit") {
 		t.Fatalf("wide render footer should not carry shortcut hints, got %q", footer)
 	}
-	if !strings.Contains(shortcutPaneText(view), "f2/tab pane") {
+	if !strings.Contains(shortcutPaneText(view), "f2     pane") {
 		t.Fatal("wide render should still expose global shortcuts in the shortcut pane")
 	}
 }
@@ -1354,8 +1354,8 @@ func TestRender_NarrowLayoutKeepsFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if !strings.Contains(footer, "f2/tab: pane") {
-		t.Fatalf("narrow render should expose f2/tab pane hint, got %q", footer)
+	if !strings.Contains(footer, "f2: pane") {
+		t.Fatalf("narrow render should expose f2 pane hint, got %q", footer)
 	}
 	if strings.Contains(view, "Shortcuts") {
 		t.Fatal("narrow render should not reserve a shortcut pane")
@@ -1386,7 +1386,7 @@ func TestRender_ShortWideLayoutKeepsClippedShortcutPane(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	for _, forbidden := range []string{"f2/tab: pane", "n: new worktree", "F: pull", "c: code"} {
+	for _, forbidden := range []string{"f2: pane", "n: new worktree", "F: pull", "c: code"} {
 		if strings.Contains(footer, forbidden) {
 			t.Fatalf("short wide footer should not carry shortcut hint %q, got %q", forbidden, footer)
 		}
@@ -1464,7 +1464,7 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 	navigate := strings.Index(pane, "Navigate")
 	global := strings.Index(pane, "Global")
 	newWorktree := strings.Index(pane, "new worktree")
-	tabPane := strings.Index(pane, "f2/tab pane")
+	tabPane := strings.Index(pane, "f2     pane")
 	if actions < 0 || navigate < 0 || global < 0 || !(actions < navigate && navigate < global) {
 		t.Fatalf("shortcut pane should order Actions, Navigate, Global, got:\n%s", pane)
 	}
@@ -1729,8 +1729,8 @@ func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 		Mode:       ModeFlows,
 		ActivePane: 0,
 	}, 26, 18))
-	if !strings.Contains(leftPane, "f2/tab") || !strings.Contains(leftPane, "pane") {
-		t.Fatalf("left-pane shortcut pane should include f2/tab pane hint, got:\n%s", leftPane)
+	if !strings.Contains(leftPane, "f2") || !strings.Contains(leftPane, "pane") {
+		t.Fatalf("left-pane shortcut pane should include f2 pane hint, got:\n%s", leftPane)
 	}
 	if strings.Contains(leftPane, "←/→") || strings.Contains(leftPane, "pane/view") {
 		t.Fatalf("left-pane shortcut pane should not include arrow view hint, got:\n%s", leftPane)
@@ -1740,8 +1740,8 @@ func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 		Mode:       ModeFlows,
 		ActivePane: 1,
 	}, 26, 18))
-	if !strings.Contains(rightPane, "f2/tab") || !strings.Contains(rightPane, "pane") {
-		t.Fatalf("right-pane shortcut pane should include f2/tab pane hint, got:\n%s", rightPane)
+	if !strings.Contains(rightPane, "f2") || !strings.Contains(rightPane, "pane") {
+		t.Fatalf("right-pane shortcut pane should include f2 pane hint, got:\n%s", rightPane)
 	}
 	if !strings.Contains(rightPane, "←/→") || !strings.Contains(rightPane, "view") {
 		t.Fatalf("right-pane shortcut pane should include arrow view hint, got:\n%s", rightPane)
@@ -1782,7 +1782,7 @@ func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "no upstream") {
+	if strings.Contains(footer, "f2: pane") || strings.Contains(footer, "no upstream") {
 		t.Fatalf("branch wide footer should not duplicate shortcut or legend hints, got %q", footer)
 	}
 }
@@ -3477,7 +3477,7 @@ func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
 		}
 	}
 	for _, pair := range [][2]string{
-		{"f2/tab: pane", "q/esc: quit"},
+		{"f2: pane", "q/esc: quit"},
 		{"↑/↓ select", "←/→ view"},
 		{"←/→ view", "enter: diff"},
 		{"enter: diff", "d: drop"},
@@ -3861,8 +3861,8 @@ func TestWorktreePane_ScrollOffset(t *testing.T) {
 }
 
 func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T) {
-	bar := ansi.Strip(RenderStatusBar(60, 3, 0, 1, true, false, false))
-	for _, want := range []string{"f2/tab: pane", "q/esc: quit"} {
+	bar := ansi.Strip(RenderStatusBar(52, 3, 0, 1, true, false, false))
+	for _, want := range []string{"f2: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("tight generic footer should keep %q, got %q", want, bar)
 		}
@@ -3876,7 +3876,7 @@ func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T)
 
 func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
 	bar := RenderStatusBar(160, 1, 0, 1, false, false, false)
-	for _, hint := range []string{"f2/tab: pane", "q/esc: quit", "↑/↓ select", "←/→ view"} {
+	for _, hint := range []string{"f2: pane", "q/esc: quit", "↑/↓ select", "←/→ view"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode status bar should contain %q", hint)
 		}
@@ -4334,7 +4334,7 @@ func TestReflogDiffOverlay_NonEmptyDiffShowsContent(t *testing.T) {
 
 func TestStatusBar_ReflogModeHints(t *testing.T) {
 	bar := RenderStatusBar(120, 5, 0, 1, false, false, false)
-	for _, hint := range []string{"enter: diff", "y: copy hash", "f2/tab: pane", "q/esc: quit"} {
+	for _, hint := range []string{"enter: diff", "y: copy hash", "f2: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("reflog status bar should contain %q", hint)
 		}
