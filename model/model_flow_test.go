@@ -15,6 +15,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -41,6 +42,517 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
+	}
+}
+
+func TestModel_F3ShowsActiveFlowsFromCurrentRepoCache(t *testing.T) {
+	active := flowWithPhaseDetails()
+	active.FlowID = "active-flow"
+	active.Title = "Active Flow"
+	merged := flowWithPhaseDetails()
+	merged.FlowID = "merged-flow"
+	merged.Title = "Merged Flow"
+	merged.Status = flowstore.StatusMerged
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{active, merged})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %v, want worktrees before F3", m.Mode())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF3})
+	if cmd == nil {
+		t.Fatal("F3 should start or continue a Flow refresh")
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %v, want preserved worktrees mode", m.Mode())
+	}
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Active flows", "Active Flow", "F3"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("active-flow view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Merged Flow") {
+		t.Fatalf("active-flow view should filter merged flows:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, "worktrees") || strings.Contains(view, "Active Flow") {
+		t.Fatalf("second F3 should restore worktrees pane:\n%s", view)
+	}
+}
+
+func TestModel_F3UsesSeparateActiveFlowSelectionForActions(t *testing.T) {
+	activeOne := flowWithPhaseDetails()
+	activeOne.FlowID = "active-one"
+	activeOne.Title = "Active One"
+	activeTwo := flowWithPhaseDetails()
+	activeTwo.FlowID = "active-two"
+	activeTwo.Title = "Active Two"
+	merged := flowWithPhaseDetails()
+	merged.FlowID = "merged-flow"
+	merged.Title = "Merged Flow"
+	merged.Status = flowstore.StatusMerged
+
+	var launched flowstore.PhaseLaunchUpdate
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launched = update
+			updated := activeTwo
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+	}), []flowstore.FlowRecord{activeOne, merged, activeTwo})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("normal Flow selection = %d, want merged row index 1", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active Two") || strings.Contains(view, "Merged Flow") {
+		t.Fatalf("active-flow surface should select among non-merged rows only:\n%s", view)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 || launches[0].LaunchContext.FlowID != "active-two" {
+		t.Fatalf("launches = %#v, want active-two", launches)
+	}
+	if launched.FlowID != "active-two" || launched.PhaseID != "implementation" {
+		t.Fatalf("launch update = %#v, want active-two implementation", launched)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	view = ansi.Strip(m.View())
+	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 1 || !strings.Contains(view, "Merged Flow") {
+		t.Fatalf("normal Flow mode should retain merged selection after F3 exit; selected=%d view:\n%s", m.FlowSelected(), view)
+	}
+}
+
+func TestModel_F3ActiveFlowRefreshPreparesAutoLaunch(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			launched := current
+			for i := range launched.Phases {
+				if launched.Phases[i].PhaseID == update.PhaseID {
+					launched.Phases[i].Status = flowstore.PhaseRunning
+					launched.Phases[i].LaunchIDs = append(launched.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return launched, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	_, cmd := update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if cmd == nil {
+		t.Fatal("active Flow refresh should return auto-launch command")
+	}
+	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
+	if len(launches) != 1 {
+		t.Fatalf("active Flow refresh returned %d embedded launches, want 1", len(launches))
+	}
+	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].FlowID != "flow-1" || updates[0].PhaseID != "implementation" || updates[0].LaunchID == "" {
+		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
+	}
+	launch := launches[0]
+	if launch.LaunchContext.FlowID != "flow-1" ||
+		launch.LaunchContext.FlowPhaseID != "implementation" ||
+		!launch.LaunchContext.Embedded ||
+		!launch.LaunchContext.Headless ||
+		!launch.LaunchContext.FlowLaunchTracked {
+		t.Fatalf("active Flow launch context = %#v", launch.LaunchContext)
+	}
+}
+
+func TestModel_F3ActiveFlowLKeyNavigatesLikeRightArrow(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if cmd != nil {
+		t.Fatalf("l from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("l from active Flow surface left active pane = %d, want left pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("l from active Flow surface changed underlying mode = %d, want worktrees", m.Mode())
+	}
+}
+
+func TestModel_F3ActiveFlowLeftKeyPreservesUnderlyingMode(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if cmd != nil {
+		t.Fatalf("left from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("left from active Flow surface left active pane = %d, want left pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("left from active Flow surface changed underlying mode = %d, want sessions", m.Mode())
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("left from active Flow surface should keep active Flow view visible:\n%s", view)
+	}
+}
+
+func TestModel_F3ActiveFlowFetchErrorUsesActiveFetchMode(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), nil)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath:    "/dev/alpha",
+		Pane:        "flows",
+		Err:         "failed to load flows: boom",
+		Kind:        model.FetchList,
+		Mode:        ui.ModeFlows,
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "failed to load flows: boom") {
+		t.Fatalf("active Flow surface should show Flow fetch failure in status bar:\n%s", view)
+	}
+	if !strings.Contains(view, "Could not load flows; see status bar") {
+		t.Fatalf("empty active Flow surface should show Flow fetch failure placeholder:\n%s", view)
+	}
+}
+
+func TestModel_F3ActiveFlowSearchAcceptsDigits(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.Title = "Release Flow 123"
+	flow.Branch = "release/123"
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if cmd != nil {
+		t.Fatalf("digit in active Flow search returned command %T, want nil", cmd)
+	}
+	if got := m.ItemSearch(); got != "1" {
+		t.Fatalf("active Flow search query = %q, want 1", got)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") || !strings.Contains(view, "release/123") {
+		t.Fatalf("digit search should keep active Flow surface visible and filtered:\n%s", view)
+	}
+}
+
+func TestModel_F3ActiveFlowPullDoesNotTargetHiddenWorktree(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/visible-flow"
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, model.WorktreeResultMsg{
+		RepoPath: "/dev/alpha",
+		Worktrees: []gitquery.Worktree{{
+			Path:       "/dev/alpha-worktrees/hidden-worktree",
+			BranchName: "hidden",
+		}},
+		ListRequest: m.ListRequest(ui.ModeWorktrees),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd != nil {
+		t.Fatalf("F from active Flow surface returned command %T, want nil to avoid hidden worktree pull", cmd)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("F from active Flow surface should leave active Flow view visible:\n%s", view)
+	}
+}
+
+func TestModel_EnterTogglesActiveFlowPhaseRows(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 18})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("enter on active Flow row returned command %T, want nil", cmd)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Plan Review") || !strings.Contains(view, "Implementation") {
+		t.Fatalf("enter should expand active Flow phase rows:\n%s", view)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("second enter on active Flow row returned command %T, want nil", cmd)
+	}
+	view = ansi.Strip(m.View())
+	if strings.Contains(view, "Plan Review") || strings.Contains(view, "Implementation") {
+		t.Fatalf("second enter should collapse active Flow phase rows:\n%s", view)
+	}
+}
+
+func TestModel_ActiveFlowRefreshPreservesNormalFlowSelection(t *testing.T) {
+	activeOne := flowWithPhaseDetails()
+	activeOne.FlowID = "active-one"
+	activeOne.Title = "Active One"
+	activeTwo := flowWithPhaseDetails()
+	activeTwo.FlowID = "active-two"
+	activeTwo.Title = "Active Two"
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{activeOne, activeTwo})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("normal Flow selection = %d, want active-two", got)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{activeOne, activeTwo},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	if got := m.FlowSelected(); got != 1 {
+		t.Fatalf("normal Flow selection after active refresh = %d, want preserved active-two", got)
+	}
+}
+
+func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	var started actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:     "codex",
+		SessionStateRoot: "/state/wtui",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	flow := flowWithPhaseDetails()
+	flow.WorktreePath = "/dev/alpha-worktrees/active-resume"
+	flow.Phases = []flowstore.FlowPhase{{
+		PhaseID: "review-loop",
+		Title:   "Review loop",
+		Status:  flowstore.PhaseCompleted,
+		Sessions: []flowstore.Session{
+			{Provider: "codex", SessionID: "codex-review", Status: "ended", StartedAt: time.Date(2026, 6, 7, 11, 0, 0, 0, time.UTC)},
+		},
+	}}
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow phase resume command")
+	}
+	if started.ResumeSessionID != "codex-review" ||
+		started.FlowID != "flow-1" ||
+		started.FlowPhaseID != "review-loop" ||
+		started.WorktreePath != "/dev/alpha-worktrees/active-resume" ||
+		!started.Embedded ||
+		started.Headless ||
+		!started.FlowLaunchTracked {
+		t.Fatalf("unexpected active Flow phase resume context: %#v", started)
+	}
+	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || !launchUpdate.Resume {
+		t.Fatalf("launch update = %#v, want tracked resume for review-loop", launchUpdate)
+	}
+}
+
+func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) {
+	var started actions.AgentLaunchContext
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	m, _ = update(m, launchMsg)
+	if started.FlowID != "flow-1" || started.FlowPhaseID != "implementation" || started.Headless {
+		t.Fatalf("unexpected active Flow launch context: %#v", started)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) == 0 || fakeTerm.writes[len(fakeTerm.writes)-1] != "z" {
+		t.Fatalf("interactive active Flow launch should focus terminal input and forward z: %#v", fakeTerm.writes)
+	}
+}
+
+func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command")
+	}
+	launchMsg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned non-launch message")
+	}
+	m, _ = update(m, launchMsg)
+	writeCount := len(fakeTerm.writes)
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	if cmd != nil {
+		t.Fatalf("F3 in focused active Flow terminal returned command %T, want nil", cmd)
+	}
+	if len(fakeTerm.writes) != writeCount+1 || fakeTerm.writes[len(fakeTerm.writes)-1] != "\x1bOR" {
+		t.Fatalf("focused active Flow terminal F3 writes = %#v, want F3 escape sequence", fakeTerm.writes)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("F3 in focused active Flow terminal should not toggle active Flow surface:\n%s", view)
+	}
+}
+
+func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
+	var flowTerm *fakeEmbeddedTerminal
+	flow := flowWithPhaseDetails()
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updated := flow
+			for i := range updated.Phases {
+				if updated.Phases[i].PhaseID == update.PhaseID {
+					updated.Phases[i].Status = flowstore.PhaseRunning
+					updated.Phases[i].LaunchIDs = append(updated.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return updated, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			flowTerm = &fakeEmbeddedTerminal{state: "running"}
+			return flowTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session"},
+	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "flow/with-phases") || strings.Contains(view, "codex-session-1") {
+		t.Fatalf("active flows should visually override sessions mode:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow launch command over Sessions")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	m, _ = update(m, launchMsg)
+	if flowTerm == nil {
+		t.Fatal("expected active Flow launch to start a flow embedded terminal")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(flowTerm.writes) == 0 || flowTerm.writes[len(flowTerm.writes)-1] != "z" {
+		t.Fatalf("active Flow input over Sessions should go to flow terminal: %#v", flowTerm.writes)
 	}
 }
 
@@ -3072,6 +3584,65 @@ func TestModel_FlowDeleteRequiresDestructiveMode(t *testing.T) {
 	}
 }
 
+func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Delete visible Flow",
+		Status:   flowstore.StatusPending,
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{
+		RepoPath: "/dev/alpha",
+		Stashes: []gitquery.Stash{{
+			Index:   0,
+			Date:    "2026-06-14 12:00:00 -0400",
+			Message: "hidden stash",
+		}},
+		ListRequest: m.ListRequest(ui.ModeStashes),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd != nil {
+		t.Fatalf("opening active Flow delete confirm returned command %T, want nil", cmd)
+	}
+	prompt := m.ConfirmPrompt()
+	if !strings.Contains(prompt, "Delete Flow Delete visible Flow (flow-1)") {
+		t.Fatalf("active Flow delete prompt = %q, want visible Flow delete confirmation", prompt)
+	}
+	if strings.Contains(prompt, "hidden stash") {
+		t.Fatalf("active Flow delete should not target hidden stash: %q", prompt)
+	}
+}
+
+func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{})
+	m = flowsInRightPane(t, m, nil)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, model.StashResultMsg{
+		RepoPath: "/dev/alpha",
+		Stashes: []gitquery.Stash{{
+			Index:   0,
+			Date:    "2026-06-14 12:00:00 -0400",
+			Message: "hidden stash",
+		}},
+		ListRequest: m.ListRequest(ui.ModeStashes),
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd != nil {
+		t.Fatalf("d with no visible active Flow returned command %T, want nil", cmd)
+	}
+	if prompt := m.ConfirmPrompt(); prompt != "" {
+		t.Fatalf("d with no visible active Flow opened hidden-pane confirmation %q", prompt)
+	}
+}
+
 func TestModel_FlowDeleteCancelDoesNotCallDeleteAdapter(t *testing.T) {
 	deleted := false
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -5495,6 +6066,79 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 	}
 	if m.FlowSelected() != 1 {
 		t.Fatalf("flow selection = %d, want list focus to move to second flow", m.FlowSelected())
+	}
+}
+
+func TestModel_F2SwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		flowWithPhaseDetails(),
+		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusInProgress},
+	})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatal("g should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	if m.ActivePane() != 0 {
+		t.Fatalf("f2 with inactive Flow terminal activePane = %d, want left pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("inactive Flow terminal should not receive f2 writes: %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("returning from f2 should keep Flow list focus, not terminal focus: %#v", fakeTerm.writes)
+	}
+	if got := m.SelectedFlowPhaseID(); got != "plan" {
+		t.Fatalf("selected Flow phase = %q, want list focus to move to first phase", got)
+	}
+}
+
+func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatal("g should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("terminal-owned f2 activePane = %d, want right pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1bOQ" {
+		t.Fatalf("terminal input f2 writes = %#v, want F2 escape sequence", fakeTerm.writes)
 	}
 }
 

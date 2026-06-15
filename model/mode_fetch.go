@@ -144,7 +144,7 @@ func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
 		m = desc.beforeStart(m)
 	}
 	cmd := m.fetchList(desc, request)
-	if desc.mode == ui.ModeFlows && m.mode == ui.ModeFlows {
+	if desc.mode == ui.ModeFlows && m.flowSurfaceVisible() {
 		m.flowRefreshTickGen++
 		m.flowRefreshInFlight = 0
 		if cmd != nil {

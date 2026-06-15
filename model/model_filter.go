@@ -116,6 +116,9 @@ func (m Model) activeSearchQuery() string {
 }
 
 func (m Model) activeItemPaneQuery() string {
+	if m.activeFlowSurfaceVisible() {
+		return m.activeFlows.Query()
+	}
 	switch m.mode {
 	case ui.ModeWorktrees:
 		return m.worktrees.Query()
@@ -142,6 +145,12 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	if m.activePane == 0 {
 		m.repos = m.repos.SetQuery(query)
 		return m.reflowRepos()
+	}
+
+	if m.activeFlowSurfaceVisible() {
+		m.activeFlows = m.activeFlows.SetQuery(query)
+		m = m.setExpandedFlowID("")
+		return m
 	}
 
 	m.worktrees = m.worktrees.SetQueryPreserveIndex(query)
@@ -193,7 +202,11 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowSessions()
 	m = m.reflowPlans()
 	m = m.reflowFlows()
+	m = m.reflowActiveFlows()
 	if m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
+		m = m.syncActiveFlowTerminalToSelectedFlow()
+	}
+	if m.activeFlowSurfaceVisible() && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m

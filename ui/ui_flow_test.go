@@ -492,7 +492,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
-		"tab    pane",
+		"f2/tab pane",
 		"q/esc  quit",
 		"f5     refresh",
 	} {
@@ -602,7 +602,7 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	enterIndex := strings.Index(bar, "enter: phases")
 	headlessIndex := strings.Index(bar, "h: headless on")
 	agentIndex := strings.Index(bar, "A: codex")
-	tabIndex := strings.Index(bar, "tab: pane")
+	tabIndex := strings.Index(bar, "f2/tab: pane")
 	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || tabIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}
@@ -1076,6 +1076,69 @@ func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 	}
 	if strings.Contains(text, "l          sessions") || strings.Contains(text, "ctrl+] commands") {
 		t.Fatalf("Flow terminal shortcut pane should not show sessions or muted command hints:\n%s", text)
+	}
+}
+
+func TestRender_ActiveFlowsOverSessionsUsesFlowTerminalPrefixShortcuts(t *testing.T) {
+	pane := renderShortcutPane(statusBarParams{
+		Mode:                   ModeSessions,
+		ActiveFlows:            true,
+		ActivePane:             1,
+		EmbeddedTerminalActive: true,
+		EmbeddedTerminalPrefix: true,
+	}, 34, 12)
+	text := ansi.Strip(pane)
+	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("active Flow terminal shortcut pane missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "l      sessions") {
+		t.Fatalf("active Flow terminal shortcut pane should not show session prefix command:\n%s", text)
+	}
+}
+
+func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       180,
+		Height:      18,
+		Mode:        ModeSessions,
+		ActiveFlows: true,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Active Flow",
+			Status:       flowstore.StatusInProgress,
+			WorktreePath: "/dev/wtui-worktrees/active-flow",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+				Order:   1,
+			}},
+		}},
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number:   1,
+			Provider: "codex",
+			Identity: "hidden-session-terminal",
+			State:    "running",
+			Active:   true,
+		}},
+		ActivePane:          1,
+		FlowSelected:        0,
+		FlowNextLaunchReady: true,
+		FlowHeadless:        true,
+	})
+
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"Actions", "g      launch next", "Mode", "h      headless on"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("active Flow shortcut pane missing %q:\n%s", want, pane)
+		}
+	}
+	if strings.Contains(pane, "ctrl+] commands") || strings.Contains(pane, "Terminal") {
+		t.Fatalf("active Flow shortcut pane should ignore hidden session terminal:\n%s", pane)
 	}
 }
 

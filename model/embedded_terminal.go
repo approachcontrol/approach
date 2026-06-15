@@ -242,7 +242,7 @@ func (m Model) activeTerminalRepoPaths() map[string]bool {
 }
 
 func (m Model) syncActiveFlowTerminalToSelectedFlow() Model {
-	if m.mode != ui.ModeFlows {
+	if !m.flowSurfaceVisible() {
 		return m
 	}
 	flowID := m.selectedFlowID()
@@ -625,11 +625,11 @@ func (m Model) cycleEmbeddedTerminalForScope(scope embeddedTerminalScope, direct
 }
 
 func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	if m.mode == ui.ModeSessions && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
-		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeSession)
-	}
-	if m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeFlow)
+	}
+	if m.mode == ui.ModeSessions && !m.activeFlowSurfaceVisible() && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
+		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeSession)
 	}
 	return m, nil, false
 }
@@ -880,7 +880,7 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 	prefixScope, prefixActive := m.embeddedTerminalPrefixScope()
 	activeID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeSession)
 	activeFlowID := m.activeEmbeddedTerminalIDForScope(embeddedTerminalScopeFlow)
-	flowTerminalFocused := m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal
+	flowTerminalFocused := m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal
 	next := m.embeddedTerminals[:0]
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID != id {
@@ -947,7 +947,7 @@ func (m Model) embeddedTerminalPrefixScope() (embeddedTerminalScope, bool) {
 	if m.mode == ui.ModeSessions && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
 		return embeddedTerminalScopeSession, true
 	}
-	if m.mode == ui.ModeFlows && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 		return embeddedTerminalScopeFlow, true
 	}
 	return "", false

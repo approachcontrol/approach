@@ -24,6 +24,13 @@ import (
 
 const listRequestSlots = int(ui.ModeFlows) + 1
 
+type contentSurface int
+
+const (
+	surfaceModeContent contentSurface = iota
+	surfaceActiveFlows
+)
+
 // Model is the bubbletea application model.
 type Model struct {
 	repos                      pane.Pane[scanner.Repo]
@@ -39,10 +46,14 @@ type Model struct {
 	sessions                   pane.Pane[sessions.SessionRecord]
 	plans                      pane.Pane[planstore.PlanRecord]
 	flows                      pane.Pane[flowstore.FlowRecord]
+	activeFlows                pane.Pane[flowstore.FlowRecord]
 	expandedPlanID             string
 	expandedFlowID             string
+	expandedActiveFlowID       string
 	selectedPlanPhaseID        string
 	selectedFlowPhaseID        string
+	selectedActiveFlowPhaseID  string
+	contentSurface             contentSurface
 	flowHeadless               bool
 	modal                      modal.Modal
 	diffRequestSeq             uint64
@@ -381,6 +392,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessions:                 newSessionPane(),
 		plans:                    newPlanPane(),
 		flows:                    newFlowPane(),
+		activeFlows:              newFlowPane(),
 		flowHeadless:             true,
 		flowRefreshTickGen:       1,
 		mode:                     startupMode(opts.StartupMode),
@@ -616,6 +628,9 @@ func (m Model) View() string {
 	sessions, sessionSelected, sessionScroll := m.sessions.View()
 	plans, planSelected, planScroll := m.plans.View()
 	flows, flowSelected, flowScroll := m.flows.View()
+	if m.activeFlowSurfaceVisible() {
+		flows, flowSelected, flowScroll = m.activeFlows.View()
+	}
 	flowAutoModeSelected := false
 	if flowSelected >= 0 && flowSelected < len(flows) {
 		flowAutoModeSelected = flows[flowSelected].AutoMode
@@ -640,6 +655,7 @@ func (m Model) View() string {
 		Width:                       m.width,
 		Height:                      m.height,
 		Mode:                        m.mode,
+		ActiveFlows:                 m.activeFlowSurfaceVisible(),
 		Branches:                    rows,
 		Stashes:                     stashes,
 		BranchSelected:              branchSelected,
@@ -702,9 +718,9 @@ func (m Model) View() string {
 		FlowTerminalActivity:        m.flowTerminalActivity(),
 		FlowTerminalFocused:         m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
 		ExpandedPlanID:              m.expandedPlanID,
-		ExpandedFlowID:              m.expandedFlowID,
+		ExpandedFlowID:              m.currentExpandedFlowID(),
 		SelectedPlanPhaseID:         m.selectedPlanPhaseID,
-		SelectedFlowPhaseID:         m.selectedFlowPhaseID,
+		SelectedFlowPhaseID:         m.currentSelectedFlowPhaseID(),
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowAgentLabel:              m.flowAgentShortcutLabel(),
@@ -754,15 +770,24 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	}
 	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
+		if m.activeFlowSurfaceVisible() {
+			return "No flow results for " + m.activeItemPaneQuery()
+		}
 		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
 	}
-	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == m.mode {
-		return "Could not load " + modeDataName(m.mode) + "; see status bar"
+	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == m.activeContentFetchMode() {
+		return "Could not load " + modeDataName(m.activeContentFetchMode()) + "; see status bar"
+	}
+	if m.activeFlowSurfaceVisible() {
+		return "No active flows"
 	}
 	return modeEmptyMessage(m.mode)
 }
 
 func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows int) (int, int) {
+	if m.activeFlowSurfaceVisible() {
+		return m.activeFlows.ItemCount(), filteredFlows
+	}
 	switch m.mode {
 	case ui.ModeWorktrees:
 		return m.worktrees.ItemCount(), filteredWorktrees
@@ -1008,7 +1033,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, batchNonNil(cmds...)
 	case flowRefreshTickMsg:
-		if msg.Generation != m.flowRefreshTickGen || m.mode != ui.ModeFlows {
+		if msg.Generation != m.flowRefreshTickGen || !m.flowSurfaceVisible() {
 			return m, nil
 		}
 		return m.startFlowRefreshFetch()
@@ -1157,7 +1182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
-		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
+		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
@@ -1170,7 +1195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
 		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
-		if msg.LaunchContext.FlowID != "" && next.mode == ui.ModeFlows {
+		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
@@ -1194,7 +1219,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if resultErr != "" {
 			m, resultErr = m.markFlowLaunchNeedsAttention(msg.LaunchContext, resultErr)
 			m = m.setStatus(statusOther, resultErr)
-			if msg.LaunchContext.FlowID != "" && m.mode == ui.ModeFlows {
+			if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
 				return m.startFetchMode(ui.ModeFlows)
 			}
 		} else if msg.Detached {
@@ -1210,7 +1235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
 		next := m.handleActionFailed(msg)
-		if next.mode == ui.ModeFlows && next.isCurrentRepo(msg.RepoPath) {
+		if next.flowSurfaceVisible() && next.isCurrentRepo(msg.RepoPath) {
 			return next.startFetchMode(ui.ModeFlows)
 		}
 		return next, nil
@@ -1280,6 +1305,9 @@ func (m Model) selectedFlow() (flowstore.FlowRecord, bool) {
 	if _, ok := m.currentRepoPath(); !ok {
 		return flowstore.FlowRecord{}, false
 	}
+	if m.activeFlowSurfaceVisible() {
+		return m.activeFlows.Selected()
+	}
 	return m.flows.Selected()
 }
 
@@ -1327,18 +1355,22 @@ func (m Model) selectedPlanPhaseIndex() (int, bool) {
 
 func (m Model) selectedFlowPhase() (flowstore.FlowPhase, bool) {
 	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
+	expandedFlowID := m.currentExpandedFlowID()
+	selectedPhaseID := m.currentSelectedFlowPhaseID()
+	if !ok || record.FlowID == "" || record.FlowID != expandedFlowID || selectedPhaseID == "" {
 		return flowstore.FlowPhase{}, false
 	}
-	return flowRecordPhaseByID(record, m.selectedFlowPhaseID)
+	return flowRecordPhaseByID(record, selectedPhaseID)
 }
 
 func (m Model) selectedFlowPhaseIndex() (int, bool) {
 	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" || record.FlowID != m.expandedFlowID || m.selectedFlowPhaseID == "" {
+	expandedFlowID := m.currentExpandedFlowID()
+	selectedPhaseID := m.currentSelectedFlowPhaseID()
+	if !ok || record.FlowID == "" || record.FlowID != expandedFlowID || selectedPhaseID == "" {
 		return 0, false
 	}
-	index, _, ok := flowRecordPhaseIndexByID(record, m.selectedFlowPhaseID)
+	index, _, ok := flowRecordPhaseIndexByID(record, selectedPhaseID)
 	return index, ok
 }
 
@@ -1424,6 +1456,10 @@ func (m Model) clearSelectedPlanPhase() Model {
 }
 
 func (m Model) clearSelectedFlowPhase() Model {
+	if m.activeFlowSurfaceVisible() {
+		m.selectedActiveFlowPhaseID = ""
+		return m
+	}
 	m.selectedFlowPhaseID = ""
 	return m
 }
@@ -1440,6 +1476,12 @@ func (m Model) setExpandedPlanID(planID string) Model {
 }
 
 func (m Model) setExpandedFlowID(flowID string) Model {
+	if m.activeFlowSurfaceVisible() {
+		m.expandedActiveFlowID = flowID
+		m.selectedActiveFlowPhaseID = ""
+		m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(flowID))
+		return m.reflowActiveFlows()
+	}
 	m.expandedFlowID = flowID
 	m.selectedFlowPhaseID = ""
 	m.flows = m.flows.SetItemHeight(flowItemHeight(flowID))
@@ -1475,24 +1517,25 @@ func (m Model) canScrollExpandedPlan(delta, viewHeight int) bool {
 }
 
 func (m Model) canScrollExpandedFlow(delta, viewHeight int) bool {
-	if m.expandedFlowID == "" || m.selectedFlowID() != m.expandedFlowID {
+	expandedFlowID := m.currentExpandedFlowID()
+	if expandedFlowID == "" || m.selectedFlowID() != expandedFlowID {
 		return false
 	}
 	if viewHeight <= 0 {
 		viewHeight = 1
 	}
-	flows := m.filteredFlows()
-	selected := m.FlowSelected()
+	flows := m.currentFilteredFlows()
+	selected := m.currentFlowSelectedIndex()
 	if selected < 0 || selected >= len(flows) {
 		return false
 	}
 
 	line := 0
 	for i := 0; i < selected; i++ {
-		line += flowVisualHeight(flows[i], m.expandedFlowID)
+		line += flowVisualHeight(flows[i], expandedFlowID)
 	}
-	height := flowVisualHeight(flows[selected], m.expandedFlowID)
-	scroll := m.FlowScroll()
+	height := flowVisualHeight(flows[selected], expandedFlowID)
+	scroll := m.currentFlowScroll()
 	if delta > 0 {
 		return line+height > scroll+viewHeight
 	}
@@ -1532,19 +1575,20 @@ func (m Model) reflowExpandedPlan() Model {
 }
 
 func (m Model) reflowExpandedFlow() Model {
-	flows := m.filteredFlows()
-	selected := m.FlowSelected()
+	flows := m.currentFilteredFlows()
+	selected := m.currentFlowSelectedIndex()
 	if selected < 0 || selected >= len(flows) {
 		return m
 	}
 
 	viewHeight := m.flowContentHeight()
+	expandedFlowID := m.currentExpandedFlowID()
 	line := 0
 	for i := 0; i < selected; i++ {
-		line += flowVisualHeight(flows[i], m.expandedFlowID)
+		line += flowVisualHeight(flows[i], expandedFlowID)
 	}
-	height := flowVisualHeight(flows[selected], m.expandedFlowID)
-	scroll := m.FlowScroll()
+	height := flowVisualHeight(flows[selected], expandedFlowID)
+	scroll := m.currentFlowScroll()
 	target := scroll
 	if scroll > line {
 		target = line
@@ -1555,7 +1599,7 @@ func (m Model) reflowExpandedFlow() Model {
 		target = line
 	}
 	if target != scroll {
-		m.flows = m.flows.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+		m = m.setCurrentFlowPane(m.currentFlowPane().ScrollBy(target-scroll, viewHeight, m.contentWidth()))
 	}
 	return m
 }
@@ -1600,7 +1644,8 @@ func (m Model) moveSelectedPlanPhase(delta int) (Model, bool) {
 }
 
 func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
-	if m.mode != ui.ModeFlows || m.expandedFlowID == "" || m.selectedFlowID() != m.expandedFlowID {
+	expandedFlowID := m.currentExpandedFlowID()
+	if !m.flowSurfaceVisible() || expandedFlowID == "" || m.selectedFlowID() != expandedFlowID {
 		return m, false
 	}
 	record, ok := m.selectedFlow()
@@ -1612,7 +1657,7 @@ func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
 	index, hasPhase := m.selectedFlowPhaseIndex()
 	if !hasPhase {
 		if delta > 0 {
-			m.selectedFlowPhaseID = phases[0].PhaseID
+			m = m.setCurrentSelectedFlowPhaseID(phases[0].PhaseID)
 			return m.ensureSelectedFlowPhaseVisible(), true
 		}
 		return m, false
@@ -1624,11 +1669,11 @@ func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
 		return m.reflowExpandedFlow(), true
 	}
 	if nextIndex >= len(phases) {
-		if m.flows.Len() <= 1 {
+		if m.currentFlowPane().Len() <= 1 {
 			return m.ensureSelectedFlowPhaseVisible(), true
 		}
 		before := m.selectedFlowID()
-		m.flows = m.flows.Move(delta, m.contentHeightForMode(), m.contentWidth())
+		m = m.setCurrentFlowPane(m.currentFlowPane().Move(delta, m.contentHeightForMode(), m.contentWidth()))
 		if after := m.selectedFlowID(); before != "" && after != before {
 			m = m.clearSelectedFlowPhase()
 			m = m.setExpandedFlowID("")
@@ -1636,7 +1681,7 @@ func (m Model) moveSelectedFlowPhase(delta int) (Model, bool) {
 		}
 		return m, true
 	}
-	m.selectedFlowPhaseID = phases[nextIndex].PhaseID
+	m = m.setCurrentSelectedFlowPhaseID(phases[nextIndex].PhaseID)
 	return m.ensureSelectedFlowPhaseVisible(), true
 }
 
@@ -1682,7 +1727,7 @@ func (m Model) ensureSelectedFlowPhaseVisible() Model {
 	if viewHeight <= 0 {
 		viewHeight = 1
 	}
-	scroll := m.FlowScroll()
+	scroll := m.currentFlowScroll()
 	target := scroll
 	if line < target {
 		target = line
@@ -1691,7 +1736,7 @@ func (m Model) ensureSelectedFlowPhaseVisible() Model {
 		target = line - viewHeight + 1
 	}
 	if target != scroll {
-		m.flows = m.flows.ScrollBy(target-scroll, viewHeight, m.contentWidth())
+		m = m.setCurrentFlowPane(m.currentFlowPane().ScrollBy(target-scroll, viewHeight, m.contentWidth()))
 	}
 	return m
 }
@@ -1710,14 +1755,15 @@ func (m Model) selectedPlanVisualLine() (int, bool) {
 }
 
 func (m Model) selectedFlowVisualLine() (int, bool) {
-	flows := m.filteredFlows()
-	selected := m.FlowSelected()
+	flows := m.currentFilteredFlows()
+	selected := m.currentFlowSelectedIndex()
 	if selected < 0 || selected >= len(flows) {
 		return 0, false
 	}
+	expandedFlowID := m.currentExpandedFlowID()
 	line := 0
 	for i := 0; i < selected; i++ {
-		line += flowVisualHeight(flows[i], m.expandedFlowID)
+		line += flowVisualHeight(flows[i], expandedFlowID)
 	}
 	return line, true
 }
@@ -1785,6 +1831,9 @@ func (m Model) reflowPlans() Model {
 
 func (m Model) reflowFlows() Model {
 	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
+	if m.activeFlowSurfaceVisible() {
+		return m
+	}
 	if m.selectedFlowPhaseID != "" {
 		return m.ensureSelectedFlowPhaseVisible()
 	}
