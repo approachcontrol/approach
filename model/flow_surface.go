@@ -69,7 +69,7 @@ func (m Model) visibleActiveFlowRecords() []flowstore.FlowRecord {
 		}
 		records := make([]flowstore.FlowRecord, 0, len(m.activeFlowRecords))
 		for _, record := range m.activeFlowRecords {
-			if record.RepoPath == repoPath {
+			if sameRepoPath(record.RepoPath, repoPath) {
 				records = append(records, record)
 			}
 		}

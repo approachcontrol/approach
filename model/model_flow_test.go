@@ -176,6 +176,27 @@ func TestModel_F3GlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *testing.T)
 	}
 }
 
+func TestModel_F3LeftPaneFilterCleansRepoPath(t *testing.T) {
+	alpha := flowWithPhaseDetails()
+	alpha.FlowID = "alpha-flow"
+	alpha.Title = "Alpha Flow"
+	bravo := flowWithPhaseDetails()
+	bravo.FlowID = "bravo-flow"
+	bravo.RepoPath = "/dev/bravo/"
+	bravo.Title = "Bravo Flow"
+
+	m := inRightPane(model.New(testRepos()))
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{alpha, bravo})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 24})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Bravo Flow") || strings.Contains(view, "Alpha Flow") {
+		t.Fatalf("left-pane active-flow filter should clean repo paths:\n%s", view)
+	}
+}
+
 func TestModel_F3GlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
