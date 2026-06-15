@@ -22,6 +22,14 @@ func ActiveFlowCreateForTest(m Model) uint64 {
 	return m.activeFlowCreate
 }
 
+func ActiveFlowSelectedForTest(m Model) int {
+	return m.activeFlows.SelectedIndex()
+}
+
+func SelectedActiveFlowPhaseIDForTest(m Model) string {
+	return m.selectedActiveFlowPhaseID
+}
+
 func FlowHeadlessForTest(m Model) bool {
 	return m.flowHeadless
 }

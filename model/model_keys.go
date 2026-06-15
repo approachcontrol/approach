@@ -249,12 +249,13 @@ func (m Model) setSearchActive(active bool) Model {
 
 func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
-	case "tab":
-		m = m.togglePrimaryPaneFocus()
 	case "enter":
 		if m.activeFlowSurfaceVisible() {
 			m = m.exitActiveFlowsSurface()
 			return m.startFetchForMode()
+		}
+		if len(m.filteredRepos()) > 0 {
+			m.activePane = 1
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
@@ -411,7 +412,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			m.terminalPrefixActive = true
 			return m, nil
 		}
-		m = m.togglePrimaryPaneFocus()
 	case "g":
 		if m.mode == ui.ModeFlows {
 			return m.handleLaunchNextFlowPhase()
@@ -495,12 +495,13 @@ func (m Model) togglePrimaryPaneFocus() Model {
 	}
 	m.activePane = 0
 	if m.activeFlowSurfaceVisible() {
+		m = m.clearSelectedFlowPhase()
 		return m.syncActiveFlowsFromCache()
 	}
 	if m.mode == ui.ModePlans {
 		m = m.clearSelectedPlanPhase()
 	}
-	if m.mode == ui.ModeFlows {
+	if m.mode == ui.ModeFlows || m.activeFlowSurfaceVisible() {
 		m = m.clearSelectedFlowPhase()
 	}
 	return m
@@ -524,9 +525,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 			m.terminalPrefixActive = true
 			return m, nil
 		}
-		m.activePane = 0
-		m = m.clearSelectedFlowPhase()
-		m = m.syncActiveFlowsFromCache()
 	case "g":
 		return m.handleLaunchNextFlowPhase()
 	case "enter":
