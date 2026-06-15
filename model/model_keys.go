@@ -544,25 +544,33 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	if m.activePane == 0 {
 		return m, nil
 	}
-
-	if direction > 0 {
-		if m.activeFlowSurfaceVisible() || m.mode == ui.ModeFlows {
-			return m, nil
-		}
-		m.mode++
-		m = m.resetModeCursors()
-		if m.mode == ui.ModeFlows {
-			return m.startFlowsModeFetchWithRefreshTick()
-		}
-		return m.startFetchForMode()
-	}
-
-	if m.mode == ui.ModeWorktrees {
+	if m.activeFlowSurfaceVisible() {
 		return m, nil
 	}
-	m.mode--
+
+	nextMode := modeAfterHorizontalNavigation(m.mode, direction)
+	if nextMode == m.mode {
+		return m, nil
+	}
+	m.mode = nextMode
 	m = m.resetModeCursors()
+	if m.mode == ui.ModeFlows {
+		return m.startFlowsModeFetchWithRefreshTick()
+	}
 	return m.startFetchForMode()
+}
+
+func modeAfterHorizontalNavigation(current ui.Mode, direction int) ui.Mode {
+	if direction > 0 {
+		if current == ui.ModeFlows {
+			return ui.ModeWorktrees
+		}
+		return current + 1
+	}
+	if current == ui.ModeWorktrees {
+		return ui.ModeFlows
+	}
+	return current - 1
 }
 
 // --- Cursor navigation ---
