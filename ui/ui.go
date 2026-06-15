@@ -1074,7 +1074,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		{Key: "←/→", Label: "pane/view", Inline: true},
 	}
 	global := []shortcutHint{
-		{Key: "tab", Label: "pane"},
+		{Key: "f2/tab", Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
 		{Key: "f5", Label: "refresh"},
 		{Key: "f3", Label: "active flows"},
@@ -1444,7 +1444,7 @@ func transientStatusStyle(fadeStep int) lipgloss.Style {
 
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, "tab", "q/esc")
+	base := footerHintsForKeys(hints, "f2/tab", "q/esc")
 	agent := footerHintsForKeys(hints, "A")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
@@ -1495,14 +1495,14 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 		{"f5", "f3", "A", "D", "←/→"},
 		{"f5", "f3", "A", "D", "←/→", "↑/↓"},
 		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "tab"},
+		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "f2/tab"},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "tab")))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "f2/tab")))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -1515,7 +1515,7 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 		return full
 	}
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, "tab", "q/esc")
+	base := footerHintsForKeys(hints, "f2/tab", "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "ctrl+j", "d")
@@ -1553,14 +1553,14 @@ func renderBranchFooterShortcuts(sp statusBarParams, sections []shortcutSection)
 	legend, rest := splitLegendSection(sections)
 	rest = branchFooterSectionOrder(rest)
 	hints := flattenShortcutHints(rest)
-	base := footerHintsForKeys(hints, "tab", "q/esc")
+	base := footerHintsForKeys(hints, "f2/tab", "q/esc")
 	nav := footerHintsForKeys(hints, "↑/↓", "←/→")
 	actions := footerHintsForKeys(hints, "D", "n", "enter", "d", "f", "F", "t", "c", "a")
 
 	full := append(append(append([]string{}, base...), actions...), nav...)
 	baseActions := append(append([]string{}, base...), actions...)
 	baseNav := append(append([]string{}, base...), nav...)
-	baseArrow := footerHintsForKeys(hints, "tab", "q/esc", "←/→")
+	baseArrow := footerHintsForKeys(hints, "f2/tab", "q/esc", "←/→")
 
 	for _, parts := range [][]string{full, baseActions} {
 		if candidate, ok := branchFooterCandidateWithLegend(sp.Width, legend, parts); ok {

@@ -10,6 +10,7 @@ import (
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/ui"
 )
@@ -466,6 +467,22 @@ func TestModel_TabTogglesPaneFocus(t *testing.T) {
 	}
 }
 
+func TestModel_F2FromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *testing.T) {
+	m := model.New(testRepos())
+	m = selectBravo(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("expected right pane after f2, got %d", m.ActivePane())
+	}
+	if m.Selected() != 1 {
+		t.Fatalf("selected repo = %d, want unchanged 1", m.Selected())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
+	}
+}
+
 func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // left → right
@@ -473,6 +490,74 @@ func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // right → left
 	if m.Mode() != 3 {
 		t.Errorf("expected mode unchanged at 3, got %d", m.Mode())
+	}
+}
+
+func TestModel_F2FromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})                       // left → right
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})                        // right → left
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("expected left pane after f2, got %d", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeStashes {
+		t.Fatalf("mode = %d, want unchanged stashes", m.Mode())
+	}
+}
+
+func TestModel_F2FromPlansPaneClearsSelectedPhase(t *testing.T) {
+	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
+		PlanID:   "plan-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Persist plans",
+		Status:   "draft",
+		Phases:   []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.SelectedPlanPhaseID(); got != "p1" {
+		t.Fatalf("selected plan phase = %q, want p1 before f2", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("expected left pane after f2, got %d", m.ActivePane())
+	}
+	if got := m.SelectedPlanPhaseID(); got != "" {
+		t.Fatalf("selected plan phase = %q, want cleared", got)
+	}
+	if m.Mode() != ui.ModePlans {
+		t.Fatalf("mode = %d, want unchanged plans", m.Mode())
+	}
+}
+
+func TestModel_F2FromFlowsPaneClearsSelectedPhase(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("expected left pane after f2, got %d", m.ActivePane())
+	}
+	if got := m.SelectedFlowPhaseID(); got != "" {
+		t.Fatalf("selected flow phase = %q, want cleared", got)
+	}
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %d, want unchanged flows", m.Mode())
+	}
+}
+
+func TestModel_F2DoesNotSwitchPanesWhileSearchIsActive(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("active pane = %d, want left pane while search handles f2", m.ActivePane())
 	}
 }
 
@@ -806,7 +891,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 	}
 }
 
-func TestModel_ModalSuppressesHorizontalArrowNavigation(t *testing.T) {
+func TestModel_ModalSuppressesPaneNavigationKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
@@ -817,7 +902,7 @@ func TestModel_ModalSuppressesHorizontalArrowNavigation(t *testing.T) {
 		t.Fatalf("Overlay() = %d, want worktree input", m.Overlay())
 	}
 
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyRight}} {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyLeft}, {Type: tea.KeyRight}, {Type: tea.KeyF2}} {
 		before := listRequests(m)
 		m2, cmd := update(m, key)
 		if cmd != nil {

@@ -104,6 +104,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startGlobalRefresh()
 	}
 
+	if key == "f2" {
+		m = m.togglePrimaryPaneFocus()
+		return m, nil
+	}
+
 	if m.activePane == 0 {
 		return m.handleLeftPaneKey(key)
 	}
@@ -251,7 +256,7 @@ func (m Model) setSearchActive(active bool) Model {
 func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "tab":
-		m.activePane = 1
+		m = m.togglePrimaryPaneFocus()
 	case "left":
 		return m.handleHorizontalNavigation(-1)
 	case "right":
@@ -401,13 +406,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			m.terminalPrefixActive = true
 			return m, nil
 		}
-		m.activePane = 0
-		if m.mode == ui.ModePlans {
-			m = m.clearSelectedPlanPhase()
-		}
-		if m.mode == ui.ModeFlows {
-			m = m.clearSelectedFlowPhase()
-		}
+		m = m.togglePrimaryPaneFocus()
 	case "ctrl+j":
 		if m.mode == ui.ModeFlows {
 			return m.handleLaunchNextFlowPhase()
@@ -479,6 +478,21 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
+}
+
+func (m Model) togglePrimaryPaneFocus() Model {
+	if m.activePane == 0 {
+		m.activePane = 1
+		return m
+	}
+	m.activePane = 0
+	if m.mode == ui.ModePlans {
+		m = m.clearSelectedPlanPhase()
+	}
+	if m.mode == ui.ModeFlows {
+		m = m.clearSelectedFlowPhase()
+	}
+	return m
 }
 
 func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
