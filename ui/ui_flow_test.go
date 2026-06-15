@@ -47,6 +47,10 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	if strings.Contains(view, "Review loop") {
 		t.Fatalf("flow phase detail rows should be collapsed by default:\n%s", view)
 	}
+	header := lineContaining(view, "Status")
+	if strings.Contains(header, "Repo") {
+		t.Fatalf("normal flows header should not include active-flows Repo column:\n%s", header)
+	}
 }
 
 func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
@@ -79,6 +83,31 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	if !strings.Contains(pane, "f3") || !strings.Contains(pane, "active flows") {
 		t.Fatalf("active-flow shortcut pane should keep f3 active flows hint:\n%s", pane)
 	}
+}
+
+func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       220,
+		Height:      12,
+		Mode:        ModeSessions,
+		ActiveFlows: true,
+		ActivePane:  1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			Title:    "Active repo flow",
+			Status:   flowstore.StatusInProgress,
+			RepoPath: "/dev/wtui",
+			Branch:   "flow/active-repo",
+		}},
+		FlowSelected: 0,
+	})
+
+	header := lineContaining(view, "Status")
+	row := lineContaining(view, "flow/active-repo")
+	requireOrderedColumns(t, header, "Status", "Repo", "Branch")
+	requireOrderedColumns(t, row, flowstore.StatusInProgress, "wtui", "flow/active-repo")
 }
 
 func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
@@ -130,6 +159,42 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	}
 	if strings.Contains(view, "terminal line 1") || strings.Contains(view, "terminal line 2") {
 		t.Fatalf("split Flow terminal should window old lines after border/header rows:\n%s", view)
+	}
+}
+
+func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       240,
+		Height:      14,
+		Mode:        ModeSessions,
+		ActiveFlows: true,
+		ActivePane:  1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			Title:    "Split active repo flow",
+			Status:   flowstore.StatusInProgress,
+			RepoPath: "/dev/wtui",
+			Branch:   "flow/split-repo",
+		}},
+		FlowSelected: 0,
+		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number:   1,
+			Provider: "codex",
+			Identity: "implementation",
+			State:    "running",
+			Active:   true,
+		}},
+		FlowEmbeddedTerminalLines: []string{"terminal line"},
+	})
+
+	header := lineContaining(view, "Status")
+	row := lineContaining(view, "flow/split-repo")
+	requireOrderedColumns(t, header, "Status", "Repo", "Branch")
+	requireOrderedColumns(t, row, flowstore.StatusInProgress, "wtui", "flow/split-repo")
+	if !strings.Contains(view, "terminal line") {
+		t.Fatalf("active-flow split pane should still render terminal content:\n%s", view)
 	}
 }
 
@@ -197,7 +262,7 @@ func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 		Identity: "implementation",
 		State:    "running",
 		Active:   true,
-	}}, terminalLines, false, true))
+	}}, terminalLines, false, true, false))
 
 	if listHeight != 4 || terminalHeight != 6 {
 		t.Fatalf("split heights = %d/%d, want 4/6", listHeight, terminalHeight)
@@ -235,6 +300,44 @@ func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 	}
 }
 
+func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       240,
+		Height:      12,
+		Mode:        ModeSessions,
+		ActiveFlows: true,
+		ActivePane:  1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:   "flow-1",
+			Title:    "Expanded active repo flow",
+			Status:   flowstore.StatusInProgress,
+			RepoPath: "/dev/wtui",
+			Branch:   "flow/expanded",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+				Order:   1,
+			}},
+		}},
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "implementation",
+	})
+
+	flowRow := lineContaining(view, "flow/expanded")
+	phaseRow := lineContaining(view, "implementation:ready")
+	requireOrderedColumns(t, flowRow, flowstore.StatusInProgress, "wtui", "flow/expanded")
+	if repoColumn := visibleColumn(flowRow, "wtui"); repoColumn >= visibleColumn(phaseRow, "implementation:ready") {
+		t.Fatalf("phase detail should render after the empty repo and branch cells, flow=%q phase=%q", flowRow, phaseRow)
+	}
+	if visibleColumn(phaseRow, "implementation:ready") <= visibleColumn(flowRow, "flow/expanded") {
+		t.Fatalf("phase detail should stay aligned after the branch column, flow=%q phase=%q", flowRow, phaseRow)
+	}
+}
+
 func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 	flows := []flowstore.FlowRecord{
 		{
@@ -258,7 +361,7 @@ func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 	}
 	view := strings.Join(renderFlowPane(flows, 1, 0, 200, 5, "", "", []FlowTerminalActivity{
 		{FlowID: "flow-1", PhaseID: "implementation"},
-	}), "\n")
+	}, false), "\n")
 
 	activeRow := ansi.Strip(lineContaining(view, "flow/active"))
 	inactiveRow := ansi.Strip(lineContaining(view, "flow/inactive"))
@@ -277,7 +380,7 @@ func TestRender_FlowsModeMarksActiveTerminalFlowRows(t *testing.T) {
 
 	view = strings.Join(renderFlowPane(flows, 0, 0, 200, 5, "", "", []FlowTerminalActivity{
 		{FlowID: "flow-1", PhaseID: "implementation"},
-	}), "\n")
+	}, false), "\n")
 	selectedActiveRow := ansi.Strip(lineContaining(view, "flow/active"))
 	if !strings.HasPrefix(selectedActiveRow, ">● in_progress") {
 		t.Fatalf("selected active flow row prefix = %q, want selection and marker:\n%s", selectedActiveRow, view)
@@ -290,6 +393,24 @@ func visibleColumn(line, needle string) int {
 		return -1
 	}
 	return lipgloss.Width(line[:index])
+}
+
+func requireOrderedColumns(t *testing.T, line string, columns ...string) {
+	t.Helper()
+	if line == "" {
+		t.Fatalf("missing line for ordered columns %v", columns)
+	}
+	previous := -1
+	for _, column := range columns {
+		current := visibleColumn(line, column)
+		if current < 0 {
+			t.Fatalf("line missing column %q: %q", column, line)
+		}
+		if current <= previous {
+			t.Fatalf("line columns out of order %v: %q", columns, line)
+		}
+		previous = current
+	}
 }
 
 func lineWithPrefix(view, prefix string) string {
@@ -334,7 +455,7 @@ func TestRender_FlowsModeSelectedActiveRowsPreserveSelectionAfterMarker(t *testi
 		{FlowID: "flow-1", PhaseID: "implementation"},
 	}
 
-	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "", "", activity), "\n")
+	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "", "", activity, false), "\n")
 
 	flowRow := rawLineContaining(view, "flow/active")
 	if flowRow == "" {
@@ -347,7 +468,7 @@ func TestRender_FlowsModeSelectedActiveRowsPreserveSelectionAfterMarker(t *testi
 		t.Fatalf("selected active flow row should restore selection style after marker:\n%q\nmissing %q", flowRow, want)
 	}
 
-	view = strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "flow-1", "implementation", activity), "\n")
+	view = strings.Join(renderFlowPane(flows, 0, 0, 220, 6, "flow-1", "implementation", activity, false), "\n")
 	phaseRow := rawLineContaining(view, "Implementation")
 	if phaseRow == "" {
 		t.Fatalf("active phase row missing:\n%s", view)
@@ -385,7 +506,7 @@ func TestRender_FlowsModeMarksActiveTerminalExpandedPhaseRows(t *testing.T) {
 	view := strings.Join(renderFlowPane(flows, 0, 0, 220, 8, "flow-1", "implementation", []FlowTerminalActivity{
 		{FlowID: "flow-1", PhaseID: "Implementation"},
 		{FlowID: "flow-2", PhaseID: "review-loop"},
-	}), "\n")
+	}, false), "\n")
 
 	flowRow := ansi.Strip(lineContaining(view, "flow/active"))
 	activePhaseRow := ansi.Strip(lineContaining(view, "Implementation"))
@@ -425,7 +546,7 @@ func TestRender_FlowsModeSplitPaneMarksActiveTerminalRows(t *testing.T) {
 		Identity: "misleading-label",
 		State:    "running",
 		Active:   true,
-	}}, []string{"terminal line"}, false, false)
+	}}, []string{"terminal line"}, false, false, false)
 	view := strings.Join(lines, "\n")
 
 	flowRow := ansi.Strip(lineContaining(view, "flow/split-active"))

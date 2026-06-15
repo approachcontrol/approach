@@ -596,9 +596,9 @@ func renderApplication(p RenderParams) string {
 	var rightLines []string
 	switch {
 	case flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused)
+		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused, p.ActiveFlows)
 	case flowSurfaceActive && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.ActiveFlows)
 	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
 		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
 	case p.Mode == ModeBranches && len(p.Branches) > 0:
@@ -2437,6 +2437,7 @@ func planUpdatedLabel(record planstore.PlanRecord) string {
 
 const (
 	flowStatusWidth  = 15
+	flowRepoWidth    = 16
 	flowBranchWidth  = 20
 	flowPhaseWidth   = 34
 	flowPlanWidth    = 12
@@ -2444,14 +2445,14 @@ const (
 	flowUpdatedWidth = 10
 )
 
-func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused bool) []string {
+func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused, showRepo bool) []string {
 	if height <= 0 {
 		return nil
 	}
 	listHeight, terminalHeight := FlowSplitPanelHeights(height)
 	lines := make([]string, 0, height)
 	if len(records) > 0 {
-		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity)...)
+		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity, showRepo)...)
 	} else {
 		lines = append(lines, renderPlaceholderPane(width, listHeight, "No flows")...)
 	}
@@ -2459,11 +2460,11 @@ func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width
 	return scrollAndPad(lines, 0, height)
 }
 
-func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity) []string {
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, showRepo bool) []string {
 	if height <= 0 {
 		return nil
 	}
-	header := truncateToWidth(statusStyle.Render(formatFlowColumns("   ", "Status", "Branch", "Phase", "Plan", "PR", "Updated", "Title")), width)
+	header := truncateToWidth(statusStyle.Render(formatFlowColumns(showRepo, "   ", "Status", "Repo", "Branch", "Phase", "Plan", "PR", "Updated", "Title")), width)
 	rowHeight := height - TableHeaderRows
 	if rowHeight <= 0 {
 		return []string{header}
@@ -2476,6 +2477,10 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		plan := flowPlanLabel(record)
 		pr := flowPRLabel(record)
 		updated := flowUpdatedLabel(record)
+		repo := ""
+		if showRepo {
+			repo = flowRepoLabel(record)
+		}
 		branch := record.Branch
 		if branch == "" {
 			if record.WorktreePath != "" {
@@ -2486,14 +2491,16 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		}
 		rowSelected := i == selected && selectedPhaseID == ""
 		statusCell := statusStyle.Render(fitSessionColumn(record.Status, flowStatusWidth))
+		repoCell := statusStyle.Render(fitSessionColumn(repo, flowRepoWidth))
 		branchCell := branchStyle.Render(fitSessionColumn(branch, flowBranchWidth))
 		phaseCell := diffHdrStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
 		planCell := statusStyle.Render(fitSessionColumn(plan, flowPlanWidth))
 		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
 		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
 		titleCell := stashMsgStyle.Render(record.Title)
-		line := formatFlowColumns(flowRowPrefix(false, active.hasFlow(record.FlowID)),
+		line := formatFlowColumns(showRepo, flowRowPrefix(false, active.hasFlow(record.FlowID)),
 			statusCell,
+			repoCell,
 			branchCell,
 			phaseCell,
 			planCell,
@@ -2502,8 +2509,9 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 			titleCell,
 		)
 		if rowSelected {
-			line = renderSelectedFlowColumns(selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
+			line = renderSelectedFlowColumns(showRepo, selectedFlowRowPrefix(active.hasFlow(record.FlowID)),
 				record.Status,
+				repo,
 				branch,
 				phase,
 				plan,
@@ -2514,13 +2522,13 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		}
 		rows = append(rows, truncateToWidth(line, width))
 		if record.FlowID == expandedFlowID {
-			rows = append(rows, renderFlowPhaseRows(record, width, selectedPhaseID, active)...)
+			rows = append(rows, renderFlowPhaseRows(record, width, selectedPhaseID, active, showRepo)...)
 		}
 	}
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID string, active flowTerminalActivitySet) []string {
+func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID string, active flowTerminalActivitySet, showRepo bool) []string {
 	if len(record.Phases) == 0 {
 		return []string{truncateToWidth("      No phases", width)}
 	}
@@ -2536,8 +2544,9 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 			title += "  " + sessionSummary
 		}
 		rowActive := active.hasPhase(record.FlowID, phase.PhaseID)
-		line := formatFlowColumns(flowPhaseRowPrefix(false, rowActive),
+		line := formatFlowColumns(showRepo, flowPhaseRowPrefix(false, rowActive),
 			statusStyle.Render(fitSessionColumn(phase.Status, flowStatusWidth)),
+			"",
 			"",
 			diffHdrStyle.Render(fitSessionColumn(phase.PhaseID+":"+state, flowPhaseWidth)),
 			"",
@@ -2546,8 +2555,9 @@ func renderFlowPhaseRows(record flowstore.FlowRecord, width int, selectedPhaseID
 			stashMsgStyle.Render(title),
 		)
 		if phase.PhaseID == selectedPhaseID {
-			line = renderSelectedFlowColumns(selectedFlowPhaseRowPrefix(rowActive),
+			line = renderSelectedFlowColumns(showRepo, selectedFlowPhaseRowPrefix(rowActive),
 				phase.Status,
+				"",
 				"",
 				phase.PhaseID+":"+state,
 				"",
@@ -2629,7 +2639,20 @@ func selectedFlowRowPrefix(active bool) string {
 	return selectedStyle.Render(">  ")
 }
 
-func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string) string {
+func formatFlowColumns(showRepo bool, prefix, status, repo, branch, phase, plan, pr, updated, title string) string {
+	if showRepo {
+		return fmt.Sprintf("%s%s  %s  %s  %s  %s  %s  %s  %s",
+			prefix,
+			fitSessionColumn(status, flowStatusWidth),
+			fitSessionColumn(repo, flowRepoWidth),
+			fitSessionColumn(branch, flowBranchWidth),
+			fitSessionColumn(phase, flowPhaseWidth),
+			fitSessionColumn(plan, flowPlanWidth),
+			fitSessionColumn(pr, flowPRWidth),
+			fitSessionColumn(updated, flowUpdatedWidth),
+			title,
+		)
+	}
 	return fmt.Sprintf("%s%s  %s  %s  %s  %s  %s  %s",
 		prefix,
 		fitSessionColumn(status, flowStatusWidth),
@@ -2642,10 +2665,14 @@ func formatFlowColumns(prefix, status, branch, phase, plan, pr, updated, title s
 	)
 }
 
-func renderSelectedFlowColumns(prefix, status, branch, phase, plan, pr, updated, title string, width int) string {
+func renderSelectedFlowColumns(showRepo bool, prefix, status, repo, branch, phase, plan, pr, updated, title string, width int) string {
 	line := prefix
 	line += selectedStyle.Render(fitSessionColumn(status, flowStatusWidth))
 	line += selectedStyle.Render("  ")
+	if showRepo {
+		line += selectedStyle.Render(fitSessionColumn(repo, flowRepoWidth))
+		line += selectedStyle.Render("  ")
+	}
 	line += selectedStyle.Render(fitSessionColumn(branch, flowBranchWidth))
 	line += selectedStyle.Render("  ")
 	line += selectedStyle.Render(fitSessionColumn(phase, flowPhaseWidth))
@@ -2658,6 +2685,14 @@ func renderSelectedFlowColumns(prefix, status, branch, phase, plan, pr, updated,
 	line += selectedStyle.Render("  ")
 	line += selectedStyle.Render(title)
 	return renderSelectedRow(line, width)
+}
+
+func flowRepoLabel(record flowstore.FlowRecord) string {
+	repoPath := strings.TrimSpace(record.RepoPath)
+	if repoPath == "" {
+		return ""
+	}
+	return filepath.Base(filepath.Clean(repoPath))
 }
 
 func flowPhaseProgress(record flowstore.FlowRecord) string {
