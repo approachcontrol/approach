@@ -76,6 +76,7 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
+| `F3` | Toggle active Flows for the current repo in the middle pane, filtered to non-merged Flow records |
 | `←`/`→`/`l` | Cycle through modes; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
@@ -346,7 +347,15 @@ triggers a Flow refresh so completions recorded after the last refresh are
 picked up promptly. Skipped, blocked, needs-attention, failed-launch, or
 missing-PR-metadata states do not auto-launch. Automation stops before Merge:
 if Autoreview completes and Merge becomes ready, wtui keeps auto mode on and
-requires the existing manual Merge launch. Flow headless mode is on by default:
+requires the existing manual Merge launch.
+
+Press `F3` from any middle-pane view to keep the current numbered mode selected
+while showing active Flows for the selected repo. This active view is scoped to
+the current repo and hides merged Flow records; normal Flow actions, phase
+launches, attached-session resumes, auto-mode toggles, and embedded Flow
+terminals work from the visible active Flow rows.
+
+Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
 terminal inside the flows pane. Press `h` to choose the CLI command mode:
 headless runs `codex exec` or `claude --print`, while
