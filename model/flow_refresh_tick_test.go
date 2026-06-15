@@ -186,6 +186,15 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 			},
 			key: tea.KeyMsg{Type: tea.KeyRight},
 		},
+		{
+			name: "left-arrow-wrap",
+			setup: func(m Model) Model {
+				m.activePane = 1
+				m.mode = ui.ModeWorktrees
+				return m
+			},
+			key: tea.KeyMsg{Type: tea.KeyLeft},
+		},
 	}
 
 	for _, tc := range tests {
