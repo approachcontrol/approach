@@ -40,6 +40,19 @@ func flowResultFromCommand(t *testing.T, cmd tea.Cmd) FlowResultMsg {
 	return result
 }
 
+func activeFlowResultFromRefreshCommand(t *testing.T, cmd tea.Cmd) ActiveFlowResultMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected active Flow command")
+	}
+	msg := cmd()
+	result, ok := msg.(ActiveFlowResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want ActiveFlowResultMsg", msg)
+	}
+	return result
+}
+
 func flowResultFromBatchCommand(t *testing.T, cmd tea.Cmd) FlowResultMsg {
 	t.Helper()
 	if cmd == nil {
@@ -264,6 +277,55 @@ func TestModel_FlowRefreshTickFetchesAndSchedulesNextTick(t *testing.T) {
 	}
 }
 
+func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t *testing.T) {
+	repos := []scanner.Repo{
+		{Path: "/dev/alpha", DisplayName: "alpha"},
+		{Path: "/dev/bravo", DisplayName: "bravo"},
+	}
+	alphaFlow := flowForRefreshTest("alpha-flow")
+	bravoFlow := flowForRefreshTest("bravo-flow")
+	bravoFlow.RepoPath = "/dev/bravo"
+	var filters []flowstore.FlowFilter
+	m := NewWithOptions(repos, Options{
+		StartupMode: ui.ModeFlows,
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			filters = append(filters, filter)
+			if filter.RepoPath != "" {
+				return []flowstore.FlowRecord{alphaFlow}, nil
+			}
+			return []flowstore.FlowRecord{alphaFlow, bravoFlow}, nil
+		},
+	})
+	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
+	m.activePane = 1
+
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
+	if cmd == nil {
+		t.Fatal("expected active Flow result to schedule refresh tick")
+	}
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "alpha-flow" {
+		t.Fatalf("normal Flows() cache before tick = %#v, want repo-scoped alpha-flow", got)
+	}
+	filters = nil
+
+	m, cmd = updateFlowRefreshTest(m, flowRefreshTickMsg{Generation: m.flowRefreshTickGen})
+	result := activeFlowResultFromRefreshCommand(t, cmd)
+	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
+	}
+	if len(filters) != 1 || filters[0].RepoPath != "" {
+		t.Fatalf("active Flow tick filters = %#v, want one global fetch", filters)
+	}
+	m, _ = updateFlowRefreshTest(m, result)
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "alpha-flow" {
+		t.Fatalf("normal Flows() cache after active Flow tick = %#v, want unchanged alpha-flow", got)
+	}
+	if len(m.activeFlowRecords) != 2 {
+		t.Fatalf("active Flow global cache has %d records, want 2", len(m.activeFlowRecords))
+	}
+}
+
 func TestModel_FlowRefreshTickDoesNotOverlapInFlightFetch(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
 		StartupMode: ui.ModeFlows,
@@ -384,7 +446,7 @@ func TestModel_FlowRefreshTracksRepoChangeRefetchBeforePendingTick(t *testing.T)
 	}
 }
 
-func TestModel_ActiveFlowRefreshRepoChangeSupersedesInFlightFetch(t *testing.T) {
+func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T) {
 	repos := []scanner.Repo{
 		{Path: "/dev/alpha", DisplayName: "alpha"},
 		{Path: "/dev/bravo", DisplayName: "bravo"},
@@ -395,30 +457,35 @@ func TestModel_ActiveFlowRefreshRepoChangeSupersedesInFlightFetch(t *testing.T) 
 		},
 	})
 	m.activePane = 1
-	var cmd tea.Cmd
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
-	if cmd == nil {
+	var activeCmd tea.Cmd
+	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	if activeCmd == nil {
 		t.Fatal("expected active Flow surface entry to fetch flows")
 	}
-	alphaRequest := m.flowRefreshInFlight
-	if alphaRequest == 0 {
-		t.Fatal("expected alpha active Flow fetch to be in flight")
+	globalRequest := m.flowRefreshInFlight
+	if globalRequest == 0 {
+		t.Fatal("expected global active Flow fetch to be in flight")
 	}
 	m.activePane = 0
 
+	var cmd tea.Cmd
 	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
-	if cmd == nil {
-		t.Fatal("expected repo change to supersede in-flight active Flow fetch")
+	if cmd != nil {
+		t.Fatalf("repo change returned command %T, want nil local filter", cmd)
 	}
-	if got := m.ListRequest(ui.ModeFlows); got == alphaRequest {
-		t.Fatalf("flows list request = %d, want changed from alpha request %d", got, alphaRequest)
+	if got := m.ListRequest(ui.ModeFlows); got != globalRequest {
+		t.Fatalf("flows list request = %d, want unchanged global request %d", got, globalRequest)
 	}
-	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
-		t.Fatalf("flow refresh in-flight request = %d, want repo-change request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+	if m.flowRefreshInFlight != globalRequest {
+		t.Fatalf("flow refresh in-flight request = %d, want global request %d", m.flowRefreshInFlight, globalRequest)
 	}
-	result := flowResultFromCommand(t, cmd)
-	if result.RepoPath != "/dev/bravo" {
-		t.Fatalf("FlowResultMsg.RepoPath = %q, want /dev/bravo", result.RepoPath)
+	msg := activeCmd()
+	result, ok := msg.(ActiveFlowResultMsg)
+	if !ok {
+		t.Fatalf("active Flow command returned %T, want ActiveFlowResultMsg", msg)
+	}
+	if result.ListRequest != globalRequest {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, globalRequest)
 	}
 }
 
@@ -456,9 +523,13 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
 		t.Fatalf("flow refresh in-flight request = %d, want F3 entry request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
 	}
-	result := flowResultFromCommand(t, cmd)
-	if result.RepoPath != "/dev/bravo" {
-		t.Fatalf("FlowResultMsg.RepoPath = %q, want /dev/bravo", result.RepoPath)
+	msg := cmd()
+	result, ok := msg.(ActiveFlowResultMsg)
+	if !ok {
+		t.Fatalf("active Flow command returned %T, want ActiveFlowResultMsg", msg)
+	}
+	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
 	}
 }
 

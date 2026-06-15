@@ -154,12 +154,41 @@ func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) startFetchActiveFlows() (Model, tea.Cmd) {
+	m, request := m.nextListFetchRequest(ui.ModeFlows)
+	cmd := m.fetchActiveFlows(request)
+	if m.flowSurfaceVisible() {
+		m.flowRefreshTickGen++
+		m.flowRefreshInFlight = 0
+		if cmd != nil {
+			m.flowRefreshInFlight = request
+		}
+	}
+	return m, cmd
+}
+
 func (m Model) fetchMode(mode ui.Mode, request uint64) tea.Cmd {
 	desc, ok := listFetchDescriptorForMode(mode)
 	if !ok {
 		return nil
 	}
 	return m.fetchList(desc, request)
+}
+
+func (m Model) fetchActiveFlows(request uint64) tea.Cmd {
+	return func() tea.Msg {
+		records, err := m.listFlows(flowstore.FlowFilter{})
+		if err != nil {
+			return FetchErrorMsg{
+				Pane:        "active-flows",
+				Err:         fmt.Sprintf("failed to load active flows: %v", err),
+				Kind:        FetchList,
+				Mode:        ui.ModeFlows,
+				ListRequest: request,
+			}
+		}
+		return ActiveFlowResultMsg{Flows: records, ListRequest: request}
+	}
 }
 
 func (m Model) fetchList(desc listFetchDescriptor, request uint64) tea.Cmd {

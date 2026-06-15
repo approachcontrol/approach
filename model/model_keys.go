@@ -82,10 +82,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activePane == 0 {
 			newRepoPath, ok := m.currentRepoPath()
 			if oldRepoPath != newRepoPath {
-				m = m.resetRightPaneCursors()
-				if ok {
-					return m.startFetchForMode()
-				}
+				return m.handleRepoSelectionChanged(ok)
 			}
 		}
 		return m, nil
@@ -234,10 +231,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.activePane == 0 {
 		newRepoPath, ok := m.currentRepoPath()
 		if oldRepoPath != newRepoPath {
-			m = m.resetRightPaneCursors()
-			if ok {
-				return m.startFetchForMode()
-			}
+			return m.handleRepoSelectionChanged(ok)
 		}
 	}
 	return m, nil
@@ -256,6 +250,10 @@ func (m Model) setSearchActive(active bool) Model {
 func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
+		if m.activeFlowSurfaceVisible() {
+			m = m.exitActiveFlowsSurface()
+			return m.startFetchForMode()
+		}
 		if len(m.filteredRepos()) > 0 {
 			m.activePane = 1
 		}
@@ -263,15 +261,13 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
 			m.pendingRepoSelection = ""
-			m = m.resetRightPaneCursors()
-			return m.startFetchForMode()
+			return m.handleRepoSelectionChanged(true)
 		}
 	case "down", "j":
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(1, m.repoContentHeight(), ui.LeftPaneWidth-2)
 			m.pendingRepoSelection = ""
-			m = m.resetRightPaneCursors()
-			return m.startFetchForMode()
+			return m.handleRepoSelectionChanged(true)
 		}
 	case "f":
 		return m.startFetchVisibleRepos()
@@ -279,6 +275,18 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleNewRepo()
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
+	}
+	return m, nil
+}
+
+func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
+	if m.activeFlowSurfaceVisible() {
+		m = m.syncActiveFlowsFromCache()
+		return m, nil
+	}
+	m = m.resetRightPaneCursors()
+	if repoSelected {
+		return m.startFetchForMode()
 	}
 	return m, nil
 }
@@ -480,9 +488,16 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 func (m Model) togglePrimaryPaneFocus() Model {
 	if m.activePane == 0 {
 		m.activePane = 1
+		if m.activeFlowSurfaceVisible() {
+			return m.syncActiveFlowsFromCache()
+		}
 		return m
 	}
 	m.activePane = 0
+	if m.activeFlowSurfaceVisible() {
+		m = m.clearSelectedFlowPhase()
+		return m.syncActiveFlowsFromCache()
+	}
 	if m.mode == ui.ModePlans {
 		m = m.clearSelectedPlanPhase()
 	}
@@ -1171,7 +1186,7 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 	}
 	m = m.setStatus(statusOther, errText)
 	if m.flowSurfaceVisible() {
-		return m.startFetchMode(ui.ModeFlows)
+		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
 }
@@ -1514,7 +1529,7 @@ func flowEmbeddedTerminalSlotMatchesPhaseLaunch(slot embeddedTerminalSlot, flowI
 }
 
 func (m Model) handleFlowPhaseResetConfirmed(msg flowPhaseResetConfirmedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	if m.hasRunningFlowEmbeddedTerminalForPhase(msg.FlowID, msg.PhaseID) {
@@ -1918,7 +1933,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
 		next = next.setStatus(statusOther, errText)
 		if next.flowSurfaceVisible() {
-			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, fetchCmd
 		}
 		return next, nil
@@ -1929,7 +1944,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 		next, launchCmd = next.startEmbeddedTerminalTick()
 	}
 	if next.flowSurfaceVisible() {
-		next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+		next, fetchCmd := next.startFlowSurfaceFetch()
 		return next, tea.Batch(fetchCmd, launchCmd)
 	}
 	return next, launchCmd
@@ -2223,8 +2238,11 @@ func (m Model) confirmFlowDelete() (tea.Model, tea.Cmd) {
 	if !ok || record.FlowID == "" {
 		return m, nil
 	}
-	repoPath, ok := m.currentRepoPath()
-	if !ok {
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
 		return m, nil
 	}
 	flowID := record.FlowID

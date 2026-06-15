@@ -28,7 +28,7 @@ func (m Model) enterActiveFlowsSurface() (Model, tea.Cmd) {
 	m.flowFocus = flowFocusList
 	m.terminalPrefixActive = false
 	m = m.syncActiveFlowsFromCache()
-	return m.startFlowsModeFetchWithRefreshTick()
+	return m.startActiveFlowsFetchWithRefreshTick()
 }
 
 func (m Model) exitActiveFlowsSurface() Model {
@@ -51,7 +51,7 @@ func (m Model) syncActiveFlowsFromCache() Model {
 	selectedFlowID := m.selectedActiveFlowID()
 	expandedFlowID := m.expandedActiveFlowID
 	selectedPhaseID := m.selectedActiveFlowPhaseID
-	m.activeFlows = m.activeFlows.SetItems(activeFlowRecords(m.flows.Items()))
+	m.activeFlows = m.activeFlows.SetItems(activeFlowRecords(m.visibleActiveFlowRecords()))
 	if selectedFlowID != "" {
 		m.activeFlows = m.activeFlows.SelectFunc(func(record flowstore.FlowRecord) bool {
 			return record.FlowID == selectedFlowID
@@ -59,6 +59,23 @@ func (m Model) syncActiveFlowsFromCache() Model {
 	}
 	m = m.restoreActiveExpandedFlowSelection(expandedFlowID, selectedPhaseID)
 	return m.reflowActiveFlows()
+}
+
+func (m Model) visibleActiveFlowRecords() []flowstore.FlowRecord {
+	if m.activeFlowSurfaceVisible() && m.activePane == 0 {
+		repoPath, ok := m.currentRepoPath()
+		if !ok {
+			return nil
+		}
+		records := make([]flowstore.FlowRecord, 0, len(m.activeFlowRecords))
+		for _, record := range m.activeFlowRecords {
+			if sameRepoPath(record.RepoPath, repoPath) {
+				records = append(records, record)
+			}
+		}
+		return records
+	}
+	return m.activeFlowRecords
 }
 
 func activeFlowRecords(records []flowstore.FlowRecord) []flowstore.FlowRecord {

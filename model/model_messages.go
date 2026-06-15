@@ -262,6 +262,11 @@ type FlowResultMsg struct {
 	ListRequest uint64
 }
 
+type ActiveFlowResultMsg struct {
+	Flows       []flowstore.FlowRecord
+	ListRequest uint64
+}
+
 type FlowAutoModeSetMsg struct {
 	RepoPath string
 	FlowID   string
@@ -508,6 +513,13 @@ func (m Model) acceptListResult(repoPath string, mode ui.Mode, request uint64) (
 		return m, false
 	}
 	return m.clearFetchListStatus(mode), true
+}
+
+func (m Model) acceptActiveFlowResult(request uint64) (Model, bool) {
+	if !m.activeFlowSurfaceVisible() || !m.isCurrentListRequest(ui.ModeFlows, request) {
+		return m, false
+	}
+	return m.clearFetchListStatus(ui.ModeFlows), true
 }
 
 func (m Model) clearAnyStatus() Model {
@@ -1122,6 +1134,12 @@ func (m Model) handleForceDeleteFailed(msg ForceDeleteFailedMsg) Model {
 }
 
 func (m Model) handleFetchError(msg FetchErrorMsg) Model {
+	if m.activeFlowSurfaceVisible() && msg.Kind == FetchList && msg.Mode == ui.ModeFlows && msg.Pane == "active-flows" {
+		if next, ok := m.acceptActiveFlowResult(msg.ListRequest); ok {
+			return next.setFetchStatus(msg)
+		}
+		return m
+	}
 	if !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
@@ -1133,7 +1151,7 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
-	if m.isCurrentRepo(msg.RepoPath) {
+	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusOther, msg.Err)
 	}
 	return m
@@ -1238,15 +1256,38 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	return m, batchNonNil(cmds...)
 }
 
+func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) {
+	var ok bool
+	m, ok = m.acceptActiveFlowResult(msg.ListRequest)
+	if !ok {
+		return m, nil
+	}
+	previousFlows := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
+	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
+	m = m.syncActiveFlowsFromCache()
+	m = m.clampSelectionsAfterFilter()
+	if m.flowFocus != flowFocusTerminal {
+		m = m.syncActiveFlowTerminalToSelectedFlow()
+	}
+	var cmds []tea.Cmd
+	var autoCmd tea.Cmd
+	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
+	cmds = append(cmds, autoCmd)
+	var deferredCmd tea.Cmd
+	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches()
+	cmds = append(cmds, deferredCmd)
+	return m, batchNonNil(cmds...)
+}
+
 func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) || msg.FlowID == "" {
+	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
 		return m
 	}
 	return m.replaceFlowRecord(msg.Flow)
 }
 
 func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -1267,38 +1308,54 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
-	replaced := false
+	replacedFlows := false
 	for i := range items {
 		if items[i].FlowID == flow.FlowID {
 			items[i] = flow
-			replaced = true
+			replacedFlows = true
 			break
 		}
 	}
-	if !replaced {
-		return m
+	if replacedFlows {
+		m.flows = m.flows.SetItems(items)
 	}
-	m.flows = m.flows.SetItems(items)
-	if selectedFlowID != "" {
+	if replacedFlows && selectedFlowID != "" {
 		m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool {
 			return record.FlowID == selectedFlowID
 		})
 	}
-	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
+	if replacedFlows {
+		m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
+	}
+	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
+	replacedActive := false
+	for i := range activeRecords {
+		if activeRecords[i].FlowID == flow.FlowID {
+			activeRecords[i] = flow
+			replacedActive = true
+			break
+		}
+	}
+	if replacedActive {
+		m.activeFlowRecords = activeRecords
+	}
+	if !replacedFlows && !replacedActive {
+		return m
+	}
 	m = m.syncActiveFlowsFromCache()
 	return m.clampSelectionsAfterFilter()
 }
 
 func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	m = m.clearDeletedFlowState(msg.FlowID)
-	return m.startFetchMode(ui.ModeFlows)
+	return m.startFlowSurfaceFetch()
 }
 
 func (m Model) handleFlowPhaseReset(msg flowPhaseResetMsg) (tea.Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	phaseID := strings.TrimSpace(msg.PhaseID)
@@ -1306,11 +1363,11 @@ func (m Model) handleFlowPhaseReset(msg flowPhaseResetMsg) (tea.Model, tea.Cmd) 
 		phaseID = "phase"
 	}
 	m = m.setStatus(statusOther, fmt.Sprintf("Reset Flow phase %s to ready", phaseID))
-	return m.startFetchMode(ui.ModeFlows)
+	return m.startFlowSurfaceFetch()
 }
 
 func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	errText := strings.TrimSpace(msg.Err)
@@ -1322,13 +1379,13 @@ func (m Model) handleFlowPhaseResetFailed(msg flowPhaseResetFailedMsg) (tea.Mode
 }
 
 func (m Model) handleFlowDeleteFailed(msg FlowDeleteFailedMsg) (tea.Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
 		return m, nil
 	}
 	if msg.NotFound {
 		m = m.clearDeletedFlowState(msg.FlowID)
 		m = m.setStatus(statusOther, fmt.Sprintf("Flow already deleted: %s", flowDisplayName(msg.Title, msg.FlowID)))
-		return m.startFetchMode(ui.ModeFlows)
+		return m.startFlowSurfaceFetch()
 	}
 	errText := msg.Err
 	if strings.TrimSpace(errText) == "" {

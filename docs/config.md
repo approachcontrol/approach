@@ -329,10 +329,12 @@ refresh so newly persisted completion state is discovered without waiting for
 unrelated UI activity. Auto mode still skips non-completed outcomes and stops
 before Merge.
 Press `F3` from any middle-pane view to keep the current numbered mode selected
-while showing active Flows for the selected repo. This active view is current
-repo scoped, hides merged Flow records, and supports the same Flow actions,
-phase launches, attached-session resumes, auto-mode toggles, and embedded Flow
-terminal management as the flows pane.
+while showing active Flows across all repos. This active view hides merged Flow
+records; moving focus to the left repo pane temporarily filters the visible
+active rows to the selected repo, and returning focus to the middle pane restores
+the global list. It supports the same Flow actions, phase launches,
+attached-session resumes, auto-mode toggles, and embedded Flow terminal
+management as the flows pane.
 Headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs

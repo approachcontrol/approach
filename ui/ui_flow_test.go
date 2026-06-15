@@ -49,6 +49,38 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
+	header := ansi.Strip(renderActiveFlowsHeader(80))
+	if !strings.Contains(header, "active flows") {
+		t.Fatalf("active-flow header missing lowercase title:\n%s", header)
+	}
+	for _, notWant := range []string{"F3", "Active flows", "current repo"} {
+		if strings.Contains(header, notWant) {
+			t.Fatalf("active-flow header should not contain %q:\n%s", notWant, header)
+		}
+	}
+
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       180,
+		Height:      24,
+		Mode:        ModeSessions,
+		ActiveFlows: true,
+		ActivePane:  1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Active flow",
+			Status: flowstore.StatusPending,
+		}},
+		FlowSelected: 0,
+	})
+	pane := shortcutPaneText(ansi.Strip(view))
+	if !strings.Contains(pane, "f3") || !strings.Contains(pane, "active flows") {
+		t.Fatalf("active-flow shortcut pane should keep f3 active flows hint:\n%s", pane)
+	}
+}
+
 func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

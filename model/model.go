@@ -46,6 +46,7 @@ type Model struct {
 	sessions                   pane.Pane[sessions.SessionRecord]
 	plans                      pane.Pane[planstore.PlanRecord]
 	flows                      pane.Pane[flowstore.FlowRecord]
+	activeFlowRecords          []flowstore.FlowRecord
 	activeFlows                pane.Pane[flowstore.FlowRecord]
 	expandedPlanID             string
 	expandedFlowID             string
@@ -1025,7 +1026,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		if len(exitedFlowTerminals) > 0 {
 			var refreshCmd tea.Cmd
-			m, refreshCmd = m.startFlowRefreshFetch()
+			m, refreshCmd = m.startFlowSurfaceRefreshFetch()
 			cmds = append(cmds, refreshCmd)
 		}
 		if m.hasRunningEmbeddedTerminal() {
@@ -1036,7 +1037,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.flowRefreshTickGen || !m.flowSurfaceVisible() {
 			return m, nil
 		}
-		return m.startFlowRefreshFetch()
+		return m.startFlowSurfaceRefreshFetch()
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -1113,6 +1114,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, autoLaunchCmd := m.handleFlowResult(msg)
 		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
+	case ActiveFlowResultMsg:
+		next, autoLaunchCmd := m.handleActiveFlowResult(msg)
+		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
+		return next, batchNonNil(refreshCmd, autoLaunchCmd)
 	case FlowAutoModeSetMsg:
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:
@@ -1183,7 +1188,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.clearFlowCreateRequest(msg.Request)
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
-			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
@@ -1196,7 +1201,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
-			next, fetchCmd := next.startFetchMode(ui.ModeFlows)
+			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
@@ -1220,7 +1225,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m, resultErr = m.markFlowLaunchNeedsAttention(msg.LaunchContext, resultErr)
 			m = m.setStatus(statusOther, resultErr)
 			if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
-				return m.startFetchMode(ui.ModeFlows)
+				return m.startFlowSurfaceFetch()
 			}
 		} else if msg.Detached {
 			m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
@@ -1235,8 +1240,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
 		next := m.handleActionFailed(msg)
-		if next.flowSurfaceVisible() && next.isCurrentRepo(msg.RepoPath) {
-			return next.startFetchMode(ui.ModeFlows)
+		if next.flowSurfaceVisible() && (next.activeFlowSurfaceVisible() || next.isCurrentRepo(msg.RepoPath)) {
+			return next.startFlowSurfaceFetch()
 		}
 		return next, nil
 	}
@@ -1404,7 +1409,7 @@ func (m Model) selectedFlowPhaseResettable() bool {
 }
 
 func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
-	for _, record := range m.flows.Items() {
+	for _, record := range m.flowLookupRecords() {
 		if record.FlowID != flowID {
 			continue
 		}
@@ -1417,12 +1422,19 @@ func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flow
 }
 
 func (m Model) flowByID(flowID string) (flowstore.FlowRecord, bool) {
-	for _, record := range m.flows.Items() {
+	for _, record := range m.flowLookupRecords() {
 		if record.FlowID == flowID {
 			return record, true
 		}
 	}
 	return flowstore.FlowRecord{}, false
+}
+
+func (m Model) flowLookupRecords() []flowstore.FlowRecord {
+	if m.activeFlowSurfaceVisible() {
+		return m.activeFlowRecords
+	}
+	return m.flows.Items()
 }
 
 func flowRecordPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
