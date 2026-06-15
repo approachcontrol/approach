@@ -1137,6 +1137,9 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 			t.Fatalf("active Flow shortcut pane missing %q:\n%s", want, pane)
 		}
 	}
+	if strings.Contains(pane, "←/→") {
+		t.Fatalf("active Flow shortcut pane should not advertise clamped arrow navigation:\n%s", pane)
+	}
 	if strings.Contains(pane, "ctrl+] commands") || strings.Contains(pane, "Terminal") {
 		t.Fatalf("active Flow shortcut pane should ignore hidden session terminal:\n%s", pane)
 	}

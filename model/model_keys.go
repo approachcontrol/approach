@@ -53,7 +53,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "f3" {
 		return m.toggleActiveFlowsSurface()
 	}
-	if !m.searchActive && m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
+	if !m.searchActive && m.activePane == 1 && m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd
@@ -257,10 +257,6 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "tab":
 		m = m.togglePrimaryPaneFocus()
-	case "left":
-		return m.handleHorizontalNavigation(-1)
-	case "right":
-		return m.handleHorizontalNavigation(1)
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
 			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
@@ -502,8 +498,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		return m.handleCursorDown()
 	case "left":
-		m.activePane = 0
-		m = m.clearSelectedFlowPhase()
 		return m, nil
 	case "right", "l":
 		return m.handleHorizontalNavigation(1)
@@ -548,34 +542,11 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.activePane == 0 {
-		m.activePane = 1
-		if m.activeFlowSurfaceVisible() {
-			return m, nil
-		}
-		targetMode := ui.ModeWorktrees
-		if direction < 0 {
-			targetMode = ui.ModeFlows
-		}
-		if m.mode != targetMode {
-			m.mode = targetMode
-			m = m.resetModeCursors()
-			if m.mode == ui.ModeFlows {
-				return m.startFlowsModeFetchWithRefreshTick()
-			}
-			return m.startFetchForMode()
-		}
 		return m, nil
 	}
 
 	if direction > 0 {
-		if m.activeFlowSurfaceVisible() {
-			m.activePane = 0
-			m = m.clearSelectedFlowPhase()
-			return m, nil
-		}
-		if m.mode == ui.ModeFlows {
-			m.activePane = 0
-			m = m.clearSelectedFlowPhase()
+		if m.activeFlowSurfaceVisible() || m.mode == ui.ModeFlows {
 			return m, nil
 		}
 		m.mode++
@@ -587,7 +558,6 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == ui.ModeWorktrees {
-		m.activePane = 0
 		return m, nil
 	}
 	m.mode--
