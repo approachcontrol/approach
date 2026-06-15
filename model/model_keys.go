@@ -53,7 +53,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "f3" {
 		return m.toggleActiveFlowsSurface()
 	}
-	if !m.searchActive && m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
+	if !m.searchActive && m.activePane == 1 && m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd

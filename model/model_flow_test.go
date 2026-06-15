@@ -239,6 +239,30 @@ func TestModel_F3ActiveFlowLeftKeyClampsAndPreservesUnderlyingMode(t *testing.T)
 	}
 }
 
+func TestModel_F3ActiveFlowLeftPaneNumberedKeysAreNoOps(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if cmd != nil {
+		t.Fatalf("left-pane numbered key on active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("left-pane numbered key activePane = %d, want left pane", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("left-pane numbered key changed underlying mode = %d, want sessions", m.Mode())
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Active flows") {
+		t.Fatalf("left-pane numbered key should keep active Flow view visible:\n%s", view)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
 func TestModel_F3ActiveFlowFetchErrorUsesActiveFetchMode(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), nil)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})

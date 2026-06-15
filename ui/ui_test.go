@@ -3890,6 +3890,20 @@ func TestStatusBar_HidesArrowViewHintWhenLeftPaneActive(t *testing.T) {
 	}
 }
 
+func TestStatusBar_HidesArrowViewHintForActiveFlows(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        120,
+		Mode:         ModeSessions,
+		ActiveFlows:  true,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+	})
+	if strings.Contains(bar, "←/→") || strings.Contains(bar, "pane/view") {
+		t.Fatalf("active Flow status bar should not advertise arrow view navigation, got %q", bar)
+	}
+}
+
 func TestStatusBar_BranchesModeShowsArrowViewHint(t *testing.T) {
 	bar := RenderStatusBar(120, ModeBranches, OverlayNone, 1, false, false, false)
 	if !strings.Contains(bar, "←/→ view") {

@@ -1072,7 +1072,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	navigation := []shortcutHint{
 		{Key: "↑/↓", Label: "select", Inline: true},
 	}
-	if sp.ActivePane == 1 {
+	if sp.ActivePane == 1 && !sp.ActiveFlows {
 		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 	}
 	global := []shortcutHint{

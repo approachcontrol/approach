@@ -77,8 +77,8 @@ filter matches, or a load failure with details in the status bar.
 | `/` | Fuzzy filter the current item list |
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
 | `F3` | Toggle active Flows for the current repo in the middle pane, filtered to non-merged Flow records |
-| `←`/`→`/`l` | Cycle through modes; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
-| `h` | Cycle to the previous mode outside flows view; toggle Flow headless/interactive command mode in flows view |
+| `←`/`→`/`l` | Switch views in the right pane, clamping at worktrees and flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
+| `h` | Switch to the previous view outside flows view; toggle Flow headless/interactive command mode in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
@@ -108,7 +108,8 @@ filter matches, or a load failure with details in the status bar.
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
 switch between worktrees, branches, stashes, history, reflog, sessions, plans,
-and flows.
+and flows. Arrow-key view switching clamps at worktrees and flows; use
+`tab`/`f2` to switch pane focus.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
