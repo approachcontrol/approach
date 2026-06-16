@@ -593,12 +593,13 @@ func renderApplication(p RenderParams) string {
 		selectedFlowPhaseID = ""
 	}
 
+	repoDisplayNames := repoDisplayNamesByPath(p.Repos)
 	var rightLines []string
 	switch {
 	case flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused, p.ActiveFlows)
+		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused, p.ActiveFlows, repoDisplayNames)
 	case flowSurfaceActive && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.ActiveFlows)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.ActiveFlows, repoDisplayNames)
 	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
 		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
 	case p.Mode == ModeBranches && len(p.Branches) > 0:
@@ -2445,14 +2446,14 @@ const (
 	flowUpdatedWidth = 10
 )
 
-func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused, showRepo bool) []string {
+func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused, showRepo bool, repoDisplayNames map[string]string) []string {
 	if height <= 0 {
 		return nil
 	}
 	listHeight, terminalHeight := FlowSplitPanelHeights(height)
 	lines := make([]string, 0, height)
 	if len(records) > 0 {
-		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity, showRepo)...)
+		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity, showRepo, repoDisplayNames)...)
 	} else {
 		lines = append(lines, renderPlaceholderPane(width, listHeight, "No flows")...)
 	}
@@ -2460,7 +2461,7 @@ func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width
 	return scrollAndPad(lines, 0, height)
 }
 
-func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, showRepo bool) []string {
+func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, showRepo bool, repoDisplayNames map[string]string) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -2479,7 +2480,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		updated := flowUpdatedLabel(record)
 		repo := ""
 		if showRepo {
-			repo = flowRepoLabel(record)
+			repo = flowRepoLabel(record, repoDisplayNames)
 		}
 		branch := record.Branch
 		if branch == "" {
@@ -2690,12 +2691,32 @@ func renderSelectedFlowColumns(showRepo bool, prefix, status, repo, branch, phas
 	return renderSelectedRow(line, width)
 }
 
-func flowRepoLabel(record flowstore.FlowRecord) string {
+func repoDisplayNamesByPath(repos []scanner.Repo) map[string]string {
+	if len(repos) == 0 {
+		return nil
+	}
+	displayNames := make(map[string]string, len(repos))
+	for _, repo := range repos {
+		path := strings.TrimSpace(repo.Path)
+		name := strings.TrimSpace(repo.DisplayName)
+		if path == "" || name == "" {
+			continue
+		}
+		displayNames[filepath.Clean(path)] = name
+	}
+	return displayNames
+}
+
+func flowRepoLabel(record flowstore.FlowRecord, repoDisplayNames map[string]string) string {
 	repoPath := strings.TrimSpace(record.RepoPath)
 	if repoPath == "" {
 		return ""
 	}
-	return filepath.Base(filepath.Clean(repoPath))
+	cleanRepoPath := filepath.Clean(repoPath)
+	if name := repoDisplayNames[cleanRepoPath]; name != "" {
+		return name
+	}
+	return filepath.Base(cleanRepoPath)
 }
 
 func flowPhaseProgress(record flowstore.FlowRecord) string {
