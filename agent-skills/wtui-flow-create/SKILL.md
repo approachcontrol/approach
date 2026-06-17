@@ -44,10 +44,88 @@ checkout. Required values:
   seed the Flow.
 - `WTUI_REPO_PATH`: absolute repository path.
 
-Use `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and `WTUI_COMMIT` when known. If
-`WTUI_REPO_PATH` is missing, relative, or unclear, ask the user instead of
-creating a malformed Flow. If git metadata cannot be recovered, create the Flow
-with the known required values and report which optional fields were omitted.
+A normal repo-backed Flow must ship with worktree metadata. The next section
+creates a dedicated branch and git worktree and populates `WTUI_WORKTREE_PATH`,
+`WTUI_BRANCH`, `WTUI_BASE_REF`, and `WTUI_COMMIT` so the new Flow is
+implementation-ready without manual repair. Worktree metadata is not optional
+for normal repo-backed creation.
+
+`WTUI_BASE_REF` defaults to `origin/main`. Set it only when the user explicitly
+asks to base the Flow on a different ref. If `WTUI_REPO_PATH` is missing,
+relative, or unclear, ask the user instead of creating a malformed Flow.
+
+Skip worktree creation only in two cases:
+
+- The user explicitly asks for a metadata-only Flow (set `WTUI_FLOW_METADATA_ONLY=1`).
+- The user provides an existing worktree to reuse (set `WTUI_WORKTREE_PATH`,
+  and ideally `WTUI_BRANCH`/`WTUI_COMMIT`).
+
+## Create Or Reuse A Worktree
+
+For a normal repo-backed Flow, fetch the base ref and create a dedicated branch
+and worktree before running `wtui flow create`. This mirrors wtui's own
+`flow/<slug>` branch at `<repo>-worktrees/flow-<slug>` convention. If worktree
+creation fails, stop and report the command error instead of creating a partial
+Flow.
+
+```bash
+# Default base ref is origin/main unless the user explicitly provides another.
+WTUI_BASE_REF="${WTUI_BASE_REF:-origin/main}"
+
+if [ -n "${WTUI_FLOW_METADATA_ONLY:-}" ]; then
+  echo "Metadata-only Flow requested; skipping worktree creation." >&2
+elif [ -n "${WTUI_WORKTREE_PATH:-}" ]; then
+  echo "Reusing existing worktree ${WTUI_WORKTREE_PATH:-}." >&2
+else
+  case "${WTUI_REPO_PATH:-}" in
+    /*) ;;
+    *)
+      echo "Worktree creation requires an absolute WTUI_REPO_PATH; ask the user for the repository path." >&2
+      exit 1
+      ;;
+  esac
+
+  # Fetch the requested base ref so the worktree starts from current upstream state.
+  case "$WTUI_BASE_REF" in
+    */*)
+      BASE_REMOTE="${WTUI_BASE_REF%%/*}"
+      BASE_BRANCH="${WTUI_BASE_REF#*/}"
+      ;;
+    *)
+      BASE_REMOTE="origin"
+      BASE_BRANCH="$WTUI_BASE_REF"
+      ;;
+  esac
+  if ! git -C "${WTUI_REPO_PATH:-}" fetch "$BASE_REMOTE" "$BASE_BRANCH"; then
+    echo "git fetch $BASE_REMOTE $BASE_BRANCH failed; report the command error and do not create a partial Flow." >&2
+    exit 1
+  fi
+
+  # Allocate a unique flow branch/worktree pair, bumping the suffix on collision.
+  SLUG=$(printf '%s' "${FLOW_TITLE:-flow}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//')
+  SLUG="${SLUG:-flow}"
+  WORKTREES_DIR="$(dirname "${WTUI_REPO_PATH:-}")/$(basename "${WTUI_REPO_PATH:-}")-worktrees"
+  WTUI_BRANCH="flow/$SLUG"
+  WTUI_WORKTREE_PATH="$WORKTREES_DIR/flow-$SLUG"
+  for i in $(seq 2 999); do
+    if ! git -C "${WTUI_REPO_PATH:-}" show-ref --verify --quiet "refs/heads/$WTUI_BRANCH" && [ ! -e "$WTUI_WORKTREE_PATH" ]; then
+      break
+    fi
+    WTUI_BRANCH="flow/$SLUG-$i"
+    WTUI_WORKTREE_PATH="$WORKTREES_DIR/flow-$SLUG-$i"
+  done
+
+  mkdir -p "$WORKTREES_DIR"
+  if ! git -C "${WTUI_REPO_PATH:-}" worktree add -b "$WTUI_BRANCH" "$WTUI_WORKTREE_PATH" "$WTUI_BASE_REF"; then
+    echo "git worktree add failed; report the command error and do not create a partial Flow." >&2
+    exit 1
+  fi
+  if ! WTUI_COMMIT=$(git -C "$WTUI_WORKTREE_PATH" rev-parse HEAD); then
+    echo "git rev-parse HEAD failed in the new worktree; report the command error and do not create a partial Flow." >&2
+    exit 1
+  fi
+fi
+```
 
 ## Create And Verify The Flow
 
@@ -79,6 +157,7 @@ if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
     --repo-path "${WTUI_REPO_PATH:-}" \
     --worktree-path "${WTUI_WORKTREE_PATH:-}" \
     --branch "${WTUI_BRANCH:-}" \
+    --base-ref "${WTUI_BASE_REF:-}" \
     --commit "${WTUI_COMMIT:-}" \
     --json \
     "${FLOW_STATE_ARGS[@]}"); then
@@ -92,6 +171,7 @@ else
     --repo-path "${WTUI_REPO_PATH:-}" \
     --worktree-path "${WTUI_WORKTREE_PATH:-}" \
     --branch "${WTUI_BRANCH:-}" \
+    --base-ref "${WTUI_BASE_REF:-}" \
     --commit "${WTUI_COMMIT:-}" \
     --json \
     "${FLOW_STATE_ARGS[@]}"); then
@@ -112,6 +192,25 @@ fi
 If any command in this section fails, report the command error and stop. Do not
 say a Flow was created unless `wtui flow create` succeeded and `wtui flow read
 --flow-id "$FLOW_ID"` verified it.
+
+For a repo-backed Flow, also confirm the readback carries the worktree metadata
+so you do not report an implementation-ready Flow that still needs manual
+repair. Skip this check only for an explicit metadata-only Flow.
+
+```bash
+if [ -z "${WTUI_FLOW_METADATA_ONLY:-}" ]; then
+  if ! wtui flow read --flow-id "${FLOW_ID:-}" "${FLOW_STATE_ARGS[@]}" \
+    | python3 -c 'import json, sys
+record = json.load(sys.stdin)
+missing = [field for field in ("worktree_path", "branch", "base_ref", "commit") if not record.get(field)]
+if missing:
+    sys.stderr.write("flow read missing metadata: " + ", ".join(missing) + "\n")
+    sys.exit(1)'; then
+    echo "Flow ${FLOW_ID:-} is missing worktree metadata (worktree_path, branch, base_ref, commit); report this instead of claiming an implementation-ready Flow." >&2
+    exit 1
+  fi
+fi
+```
 
 ## Import An Existing Plan
 
