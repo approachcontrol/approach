@@ -94,6 +94,11 @@ standard graph; hand-authored records without one keep their stored statuses
 until a phase-affecting mutation touches them. Agents never need to know which
 phase becomes ready next; they only report their own phase.
 
+The standard graph order is `plan -> plan-review -> implementation ->
+review-loop-1 -> review-loop-2 -> pr-creation -> merge`. `review-loop-1` is
+the first implementation review loop. `review-loop-2` is the second-level local
+worktree autoreview.
+
 Walking phases in order, a `pending` phase becomes `ready` once every
 predecessor satisfies its downstream gate:
 
@@ -103,13 +108,13 @@ predecessor satisfies its downstream gate:
   Implementation `pending`. The high-level Plan Review wrappers fill the
   unambiguous outcomes when omitted: `complete` uses `approved`,
   `needs-attention` uses `changes_requested`, and `block` uses `blocked`.
-- **Autoreview**: the high-level wrappers fill the unambiguous outcomes when
-  omitted: `complete` uses `passed`, `needs-attention` uses
+- **review-loop-2**: the high-level wrappers fill the unambiguous outcomes
+  when omitted: `complete` uses `passed`, `needs-attention` uses
   `needs_attention`, and `block` uses `blocked`.
 - **PR Creation**: `completed` *and* structured PR metadata recorded via
   `wtui flow pr set` (provider, positive number, valid URL, head/base
-  branches). Completion alone does not unlock Autoreview; a skipped PR
-  Creation never unlocks it.
+  branches). Completion alone does not unlock Merge; a skipped PR Creation
+  never unlocks it.
 - **Implementation children**: every child phase under Implementation must be
   `completed` or `skipped` with notes before phases after Implementation can
   become ready.
@@ -161,7 +166,7 @@ The flows pane renders the persisted status, or the phase outcome when one is
 recorded (for example `plan-review:approved`). Recovery labels for partial
 states (`recover-worktree`, `await-session`, `session-mismatch`,
 `missing-session-id`, `missing-pr`) are layered on top, rendered prefixed
-with the phase ID like any phase state (for example `autoreview:missing-pr`),
+with the phase ID like any phase state (for example `merge:missing-pr`),
 and are display-only; they never change persisted phase status. See
 `docs/config.md` for the pane behavior.
 

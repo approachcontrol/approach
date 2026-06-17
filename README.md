@@ -353,8 +353,8 @@ normally and auto-closes before launching the next phase; that exit also
 triggers a Flow refresh so completions recorded after the last refresh are
 picked up promptly. Skipped, blocked, needs-attention, failed-launch, or
 missing-PR-metadata states do not auto-launch. Automation stops before Merge:
-if Autoreview completes and Merge becomes ready, wtui keeps auto mode on and
-requires the existing manual Merge launch.
+if PR Creation completes with structured PR metadata and Merge becomes ready,
+wtui keeps auto mode on and requires the existing manual Merge launch.
 
 Press `F3` from any middle-pane view to keep the current numbered mode selected
 while showing active Flows across all repos. This active view hides merged Flow
@@ -396,8 +396,8 @@ mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
 and `ctrl+]` returns to command mode. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state
 and notes instead of launching. When PR Creation is complete but structured PR
-metadata is missing, Autoreview remains pending and the Flow row shows
-`autoreview:missing-pr`.
+metadata is missing, Merge remains pending and the Flow row shows
+`merge:missing-pr`.
 Expanded phase rows group child implementation phases directly under
 Implementation.
 
@@ -407,7 +407,7 @@ shows `recover-worktree`, a running phase with a recorded launch but no attached
 session yet shows `await-session`, a phase with an attached session whose
 launch ID does not match the phase's launch attempts shows `session-mismatch`,
 and an attached session that lacks a provider session ID shows
-`missing-session-id`. A pending Autoreview phase whose PR Creation predecessor
+`missing-session-id`. A pending Merge phase whose PR Creation predecessor
 completed without structured PR metadata shows `missing-pr`.
 
 When an expanded phase row shows `await-session`, and no running or starting
@@ -439,7 +439,7 @@ wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 # print JSON with the updated phase and the next actionable phase state. For
 # Plan Review, complete defaults to approved, needs-attention defaults to
 # changes_requested, and block defaults to blocked unless --outcome is supplied.
-# Autoreview defaults are passed, needs_attention, and blocked.
+# review-loop-2 defaults are passed, needs_attention, and blocked.
 wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
 wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review \
   --notes "Revise the rollout section"
@@ -489,31 +489,32 @@ marks the Flow phase `needs_attention` and reports the persistence error.
 Repeating `completed` for an already-completed Flow phase preserves that
 completed state even if the linked-plan sync later fails.
 
-Child implementation phases gate downstream readiness in phase order: review
-loop and PR creation remain pending until required implementation children are
-completed or explicitly skipped with notes. Flow phase launch prompts stay
-minimal: Plan Review and Implementation point to the saved plan artifact, while
-Review Loop and PR Creation include only the worktree, branch, and start commit
-metadata needed to inspect the changes. Built-in prompts tell Plan to produce
-only a plan, Plan Review to use the review-loop skill with max 6 loops,
-Implementation to use the `commit` skill, Review Loop to use the review-loop
-workflow with goal `review-and-revise` and `commit` when revisions are made,
-PR Creation to use the `ship` skill, and Autoreview to use `ship` when fixes
-require commits or pushes without embedding phase-restart recipes. All Flow
-phase launch prompts also end with:
+Child implementation phases gate downstream readiness in phase order:
+review-loop-1, review-loop-2, and PR creation remain pending until required
+implementation children are completed or explicitly skipped with notes. Flow
+phase launch prompts stay minimal: Plan Review and Implementation point to the
+saved plan artifact, while review-loop-1, review-loop-2, and PR Creation
+include only the worktree, branch, and start commit metadata needed to inspect
+the changes. Built-in prompts tell Plan to produce only a plan, Plan Review to
+use the review-loop skill with max 6 loops, Implementation to use the `commit`
+skill, review-loop-1 to use the review-loop workflow with goal
+`review-and-revise` and `commit` when revisions are made, review-loop-2 to run
+a second-level local worktree autoreview and use `commit` when revisions are
+made, and PR Creation to use the `ship` skill. All Flow phase launch prompts
+also end with:
 `After completing this phase goal, mark this Flow phase done with wtui-flow.`
 Use `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if notes are omitted, wtui records a standard rerun note.
 
-For example, after addressing Autoreview findings:
+For example, after addressing review-loop-2 findings:
 
 ```bash
-wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+wtui flow phase restart --flow-id "$FLOW_ID" --phase-id review-loop-2
 ```
 
-Autoreview is ready only after PR Creation is complete and
-`wtui flow pr set` has recorded provider, PR number, URL, head branch, and base
-branch metadata. Merge stays an explicit phase:
+PR Creation is ready only after review-loop-2 is complete. Merge is ready only
+after PR Creation is complete and `wtui flow pr set` has recorded provider, PR
+number, URL, head branch, and base branch metadata. Merge stays an explicit phase:
 agents must record both the Merge phase update and structured merge metadata
 through `wtui flow merge set`; `--status merged` requires existing PR metadata,
 a merge commit, and an RFC3339 merge timestamp. If merge is blocked, record a

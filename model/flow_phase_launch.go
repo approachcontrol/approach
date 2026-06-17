@@ -504,10 +504,13 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 	if phase.Status == flowstore.PhaseReady {
 		return true
 	}
-	return artifacts.NormalizePhaseID(phase.PhaseID) == "autoreview" &&
+	return flowPhaseUsesAutoreviewRecovery(phase.PhaseID) &&
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
-		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
+}
+
+func flowPhaseUsesAutoreviewRecovery(phaseID string) bool {
+	return canonicalFlowPromptPhaseID(phaseID) == "autoreview"
 }
 
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
@@ -524,18 +527,4 @@ func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
 		detail += ": " + phase.Summary
 	}
 	return detail
-}
-
-func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
-	if flowstore.HasPRTarget(record.PR) {
-		return false
-	}
-	prCreation, hasPRCreation := flowPhaseByID(record, "pr-creation")
-	autoreview, hasAutoreview := flowPhaseByID(record, "autoreview")
-	if !hasPRCreation || !hasAutoreview || prCreation.Status != flowstore.PhaseCompleted {
-		return false
-	}
-	return autoreview.Status == flowstore.PhasePending ||
-		autoreview.Status == flowstore.PhaseNeedsAttention ||
-		autoreview.Status == flowstore.PhaseBlocked
 }

@@ -25,7 +25,7 @@ type FlowPromptTemplates struct {
 }
 
 func (templates FlowPromptTemplates) templateForPhase(phaseID string) string {
-	switch artifacts.NormalizePhaseID(phaseID) {
+	switch canonicalFlowPromptPhaseID(phaseID) {
 	case "plan":
 		return templates.Plan
 	case "plan-review":
@@ -42,6 +42,17 @@ func (templates FlowPromptTemplates) templateForPhase(phaseID string) string {
 		return templates.Merge
 	default:
 		return templates.Generic
+	}
+}
+
+func canonicalFlowPromptPhaseID(phaseID string) string {
+	switch normalized := artifacts.NormalizePhaseID(phaseID); normalized {
+	case "review-loop-1":
+		return "review-loop"
+	case "review-loop-2":
+		return "autoreview"
+	default:
+		return normalized
 	}
 }
 
@@ -109,7 +120,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
 	var prompt string
-	switch artifacts.NormalizePhaseID(phase.PhaseID) {
+	switch canonicalFlowPromptPhaseID(phase.PhaseID) {
 	case "plan-review":
 		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case "implementation":
@@ -129,7 +140,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 }
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
-	switch artifacts.NormalizePhaseID(phaseID) {
+	switch canonicalFlowPromptPhaseID(phaseID) {
 	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
 		return false
 	default:
@@ -192,17 +203,10 @@ func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.Fl
 func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n")
-	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
+	b.WriteString("Review the local worktree changes.\n")
+	b.WriteString("Use the commit skill when local revisions are made.\n")
 	b.WriteString("Use the wtui-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
 	writeFlowChangeMetadata(&b, record)
-	if flowstore.HasPRTarget(record.PR) {
-		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
-		if record.PR.Status != "" {
-			fmt.Fprintf(&b, "\n- Status: %s", record.PR.Status)
-		}
-	} else {
-		b.WriteString("\nPR target: missing. Do not run Autoreview until `wtui flow pr set` records provider, number, URL, head, and base.\n")
-	}
 	return b.String()
 }
 

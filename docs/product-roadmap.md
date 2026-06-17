@@ -55,7 +55,7 @@ are already implemented and should be treated as the baseline product:
   filtering, linked-plan body opening, expanded-phase session resume, and
   recoverable partial-state labels for missing worktree metadata, pending
   session attachment, launch/session mismatch, missing provider session IDs,
-  and missing Autoreview PR metadata.
+  and missing Merge PR metadata.
 - Cross-platform hash copy for history and reflog entries.
 - GoReleaser release configuration, GitHub release workflow, release snapshot
   CI job, version metadata, and Homebrew cask publishing.
