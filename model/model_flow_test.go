@@ -7829,6 +7829,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithLocalWorktreePrompt(t *testing.T)
 	}
 	for _, unwanted := range []string{
 		"saved plan body",
+		"not the pull request",
 		"pr target",
 		"github #115",
 		"https://github.com/brian-bell/wtui/pull/115",
@@ -7913,6 +7914,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
+		"not the pull request",
 		"pr target",
 		"github #115",
 		"head: flow/pr",

@@ -203,7 +203,7 @@ func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.Fl
 func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n")
-	b.WriteString("Review the local worktree changes, not the pull request.\n")
+	b.WriteString("Review the local worktree changes.\n")
 	b.WriteString("Use the commit skill when local revisions are made.\n")
 	b.WriteString("Use the wtui-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
 	writeFlowChangeMetadata(&b, record)
