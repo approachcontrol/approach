@@ -71,7 +71,7 @@ plan = "Produce a plan only for: {instructions}"
 implementation = "Implement {plan_path} in {worktree_path}, then use the commit skill before completing."
 review_loop = "Use review-loop for {branch}; use commit if revisions are made."
 pr_creation = "Use ship for {branch}; record PR metadata for flow {flow_id}."
-autoreview = "Autoreview {pr_url}; use ship when fixes require commits or pushes."
+autoreview = "Autoreview local worktree {worktree_path}; use commit if revisions are made."
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
@@ -476,12 +476,12 @@ inspect the changes. Built-in prompts tell Plan to produce only a plan,
 Plan Review to use the review-loop skill with max 6 loops, Implementation to
 use the `commit` skill, Review Loop to use the review-loop workflow with goal
 `review-and-revise` and `commit` when revisions are made, PR Creation to use
-the `ship` skill, and Autoreview to use `ship` when fixes require commits or
-pushes. All Flow phase launch prompts also end with:
+the `ship` skill, and Autoreview to review the local worktree and use `commit`
+when revisions are made. All Flow phase launch prompts also end with:
 `After completing this phase goal, mark this Flow phase done with wtui-flow.`
-Autoreview launch prompts include the PR target metadata but leave detailed
-completion, needs-attention, blocked, and restart mechanics to the high-level
-Flow phase commands.
+Autoreview launch prompts include worktree, branch, and start commit metadata
+but leave detailed completion, needs-attention, blocked, and restart mechanics
+to the high-level Flow phase commands.
 Override `[flow_prompts]` keys to customize those phase templates; wtui still
 appends the common phase-done instruction to custom templates.
 

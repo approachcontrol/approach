@@ -203,17 +203,10 @@ func flowMinimalArtifactPrompt(instruction, planPath string, record flowstore.Fl
 func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n")
-	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
+	b.WriteString("Review the local worktree changes, not the pull request.\n")
+	b.WriteString("Use the commit skill when local revisions are made.\n")
 	b.WriteString("Use the wtui-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
 	writeFlowChangeMetadata(&b, record)
-	if flowstore.HasPRTarget(record.PR) {
-		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
-		if record.PR.Status != "" {
-			fmt.Fprintf(&b, "\n- Status: %s", record.PR.Status)
-		}
-	} else {
-		b.WriteString("\nPR target: missing. Do not run Autoreview until `wtui flow pr set` records provider, number, URL, head, and base.\n")
-	}
 	return b.String()
 }
 
