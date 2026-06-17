@@ -25,7 +25,7 @@ type FlowPromptTemplates struct {
 }
 
 func (templates FlowPromptTemplates) templateForPhase(phaseID string) string {
-	switch artifacts.NormalizePhaseID(phaseID) {
+	switch canonicalFlowPromptPhaseID(phaseID) {
 	case "plan":
 		return templates.Plan
 	case "plan-review":
@@ -42,6 +42,17 @@ func (templates FlowPromptTemplates) templateForPhase(phaseID string) string {
 		return templates.Merge
 	default:
 		return templates.Generic
+	}
+}
+
+func canonicalFlowPromptPhaseID(phaseID string) string {
+	switch normalized := artifacts.NormalizePhaseID(phaseID); normalized {
+	case "review-loop-1":
+		return "review-loop"
+	case "review-loop-2":
+		return "autoreview"
+	default:
+		return normalized
 	}
 }
 
@@ -109,7 +120,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
 	var prompt string
-	switch artifacts.NormalizePhaseID(phase.PhaseID) {
+	switch canonicalFlowPromptPhaseID(phase.PhaseID) {
 	case "plan-review":
 		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case "implementation":
@@ -129,7 +140,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 }
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
-	switch artifacts.NormalizePhaseID(phaseID) {
+	switch canonicalFlowPromptPhaseID(phaseID) {
 	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
 		return false
 	default:

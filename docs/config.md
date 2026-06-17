@@ -222,6 +222,9 @@ ends with that exact standalone instruction.
 | `merge` | string | Template for Merge. |
 | `generic` | string | Template for non-standard Flow phase IDs. |
 
+`review-loop-1` uses the Review Loop prompt/template. `review-loop-2` uses the
+Autoreview prompt/template.
+
 Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,
 `{plan_body}`, `{repo_path}`, `{worktree_path}`, `{branch}`, `{commit}`,
