@@ -528,17 +528,3 @@ func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
 	}
 	return detail
 }
-
-func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
-	if flowstore.HasPRTarget(record.PR) {
-		return false
-	}
-	prCreation, hasPRCreation := flowPhaseByID(record, "pr-creation")
-	autoreview, hasAutoreview := flowPhaseByID(record, "autoreview")
-	if !hasPRCreation || !hasAutoreview || prCreation.Status != flowstore.PhaseCompleted {
-		return false
-	}
-	return autoreview.Status == flowstore.PhasePending ||
-		autoreview.Status == flowstore.PhaseNeedsAttention ||
-		autoreview.Status == flowstore.PhaseBlocked
-}

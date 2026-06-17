@@ -977,7 +977,7 @@ func TestRunFlowPhaseActionsDefaultReviewLoop2Outcomes(t *testing.T) {
 	}{
 		{name: "complete", command: "complete", wantStatus: flowstore.PhaseCompleted, wantOutcome: "passed"},
 		{name: "needs attention", command: "needs-attention", notes: "Follow-up concern remains.", wantStatus: flowstore.PhaseNeedsAttention, wantOutcome: "needs_attention"},
-		{name: "block", command: "block", notes: "Autoreview cannot inspect the PR.", wantStatus: flowstore.PhaseBlocked, wantOutcome: flowstore.OutcomeBlocked},
+		{name: "block", command: "block", notes: "Autoreview could not complete.", wantStatus: flowstore.PhaseBlocked, wantOutcome: flowstore.OutcomeBlocked},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			branch := "flow/review-loop-2-" + strings.ReplaceAll(tc.name, " ", "-")
