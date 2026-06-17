@@ -520,7 +520,7 @@ func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
 	}
 }
 
-func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
+func TestRunFlowPRSetPrintsJSONRecordAndUngatesMerge(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
 	created := mustRunFlow(t, []string{
@@ -532,7 +532,7 @@ func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
 		"--json",
 		"--state-root", root,
 	})
-	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation"} {
 		outcome := ""
 		if phaseID == "plan-review" {
 			outcome = flowstore.OutcomeApproved
@@ -568,8 +568,8 @@ func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
 		updated.PR.Status != "open" {
 		t.Fatalf("PR metadata = %#v", updated.PR)
 	}
-	if got := phaseByID(updated, "autoreview").Status; got != flowstore.PhaseReady {
-		t.Fatalf("autoreview status = %q, want ready", got)
+	if got := phaseByID(updated, "merge").Status; got != flowstore.PhaseReady {
+		t.Fatalf("merge status = %q, want ready", got)
 	}
 }
 
@@ -627,7 +627,7 @@ func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
 		"--json",
 		"--state-root", root,
 	})
-	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation"} {
 		outcome := ""
 		if phaseID == "plan-review" {
 			outcome = flowstore.OutcomeApproved
@@ -645,7 +645,7 @@ func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
 		"--status", "open",
 		"--state-root", root,
 	})
-	mustSetFlowPhase(t, root, created.FlowID, "autoreview", flowstore.PhaseCompleted, "passed", "", "")
+	mustSetFlowPhase(t, root, created.FlowID, "review-loop-2", flowstore.PhaseCompleted, "passed", "", "")
 	mustSetFlowPhase(t, root, created.FlowID, "merge", flowstore.PhaseCompleted, "merged", "", "")
 
 	var stdout bytes.Buffer
@@ -817,8 +817,8 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 			if phaseByID(updated, "implementation").Status != tc.status {
 				t.Fatalf("implementation phase = %#v", phaseByID(updated, "implementation"))
 			}
-			if phaseByID(updated, "review-loop").Status != tc.wantReviewStatus {
-				t.Fatalf("review-loop status = %q, want %q", phaseByID(updated, "review-loop").Status, tc.wantReviewStatus)
+			if phaseByID(updated, "review-loop-1").Status != tc.wantReviewStatus {
+				t.Fatalf("review-loop-1 status = %q, want %q", phaseByID(updated, "review-loop-1").Status, tc.wantReviewStatus)
 			}
 		})
 	}
@@ -966,7 +966,7 @@ func TestRunFlowPhaseActionsDefaultPlanReviewOutcomes(t *testing.T) {
 	}
 }
 
-func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
+func TestRunFlowPhaseActionsDefaultReviewLoop2Outcomes(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {
 		name        string
@@ -980,13 +980,13 @@ func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
 		{name: "block", command: "block", notes: "Autoreview cannot inspect the PR.", wantStatus: flowstore.PhaseBlocked, wantOutcome: flowstore.OutcomeBlocked},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			branch := "flow/autoreview-" + strings.ReplaceAll(tc.name, " ", "-")
-			created := mustRunFlowReadyForAutoreview(t, root, tc.name, branch)
+			branch := "flow/review-loop-2-" + strings.ReplaceAll(tc.name, " ", "-")
+			created := mustRunFlowReadyForReviewLoop2(t, root, tc.name, branch)
 
 			args := []string{
 				"wtui", "flow", "phase", tc.command,
 				"--flow-id", created.FlowID,
-				"--phase-id", "autoreview",
+				"--phase-id", "review-loop-2",
 				"--state-root", root,
 			}
 			if tc.notes != "" {
@@ -1002,9 +1002,9 @@ func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 				t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
 			}
-			autoreview := result.UpdatedPhase
-			if autoreview.Status != tc.wantStatus || autoreview.Outcome != tc.wantOutcome {
-				t.Fatalf("autoreview = %#v, want status %q outcome %q", autoreview, tc.wantStatus, tc.wantOutcome)
+			review := result.UpdatedPhase
+			if review.Status != tc.wantStatus || review.Outcome != tc.wantOutcome {
+				t.Fatalf("review-loop-2 = %#v, want status %q outcome %q", review, tc.wantStatus, tc.wantOutcome)
 			}
 		})
 	}
@@ -1033,14 +1033,14 @@ func TestRunFlowPhaseRestartRerunsAttentionAndBlockedPhases(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			branch := "flow/restart-" + strings.ReplaceAll(tc.name, " ", "-")
-			created := mustRunFlowReadyForAutoreview(t, root, tc.name, branch)
-			mustSetFlowPhase(t, root, created.FlowID, "autoreview", tc.startStatus, tc.startOutcome, tc.startNotes, "")
+			created := mustRunFlowReadyForReviewLoop2(t, root, tc.name, branch)
+			mustSetFlowPhase(t, root, created.FlowID, "review-loop-2", tc.startStatus, tc.startOutcome, tc.startNotes, "")
 
 			var stdout bytes.Buffer
 			err := run([]string{
 				"wtui", "flow", "phase", "restart",
 				"--flow-id", created.FlowID,
-				"--phase-id", "autoreview",
+				"--phase-id", "review-loop-2",
 				"--state-root", root,
 			}, noScanDeps(t, runDeps{stdout: &stdout}))
 			if err != nil {
@@ -1051,12 +1051,12 @@ func TestRunFlowPhaseRestartRerunsAttentionAndBlockedPhases(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 				t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
 			}
-			autoreview := result.UpdatedPhase
-			if autoreview.Status != flowstore.PhaseRunning || autoreview.Outcome != "" {
-				t.Fatalf("autoreview = %#v, want running with cleared outcome", autoreview)
+			review := result.UpdatedPhase
+			if review.Status != flowstore.PhaseRunning || review.Outcome != "" {
+				t.Fatalf("review-loop-2 = %#v, want running with cleared outcome", review)
 			}
-			if !strings.Contains(autoreview.Notes, "Rerunning Autoreview after addressing prior findings.") {
-				t.Fatalf("autoreview notes = %q, want default rerun note", autoreview.Notes)
+			if !strings.Contains(review.Notes, "Rerunning Review Loop 2 after addressing prior findings.") {
+				t.Fatalf("review-loop-2 notes = %q, want default rerun note", review.Notes)
 			}
 		})
 	}
@@ -1086,23 +1086,23 @@ func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
 		{
 			name: "ready",
 			prepare: func(t *testing.T) flowstore.FlowRecord {
-				return mustRunFlowReadyForAutoreview(t, root, "ready restart", "flow/restart-ready")
+				return mustRunFlowReadyForReviewLoop2(t, root, "ready restart", "flow/restart-ready")
 			},
 			wantCurrent: "ready",
 		},
 		{
 			name: "completed",
 			prepare: func(t *testing.T) flowstore.FlowRecord {
-				record := mustRunFlowReadyForAutoreview(t, root, "completed restart", "flow/restart-completed")
-				return mustSetFlowPhase(t, root, record.FlowID, "autoreview", flowstore.PhaseCompleted, "passed", "", "")
+				record := mustRunFlowReadyForReviewLoop2(t, root, "completed restart", "flow/restart-completed")
+				return mustSetFlowPhase(t, root, record.FlowID, "review-loop-2", flowstore.PhaseCompleted, "passed", "", "")
 			},
 			wantCurrent: "completed",
 		},
 		{
 			name: "skipped",
 			prepare: func(t *testing.T) flowstore.FlowRecord {
-				record := mustRunFlowReadyForAutoreview(t, root, "skipped restart", "flow/restart-skipped")
-				return mustSetFlowPhase(t, root, record.FlowID, "autoreview", flowstore.PhaseSkipped, "", "", "Autoreview intentionally skipped.")
+				record := mustRunFlowReadyForReviewLoop2(t, root, "skipped restart", "flow/restart-skipped")
+				return mustSetFlowPhase(t, root, record.FlowID, "review-loop-2", flowstore.PhaseSkipped, "", "", "Review loop 2 intentionally skipped.")
 			},
 			wantCurrent: "skipped",
 		},
@@ -1112,7 +1112,7 @@ func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
 			err := run([]string{
 				"wtui", "flow", "phase", "restart",
 				"--flow-id", record.FlowID,
-				"--phase-id", "autoreview",
+				"--phase-id", "review-loop-2",
 				"--state-root", root,
 			}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 			if err == nil {
@@ -1120,7 +1120,7 @@ func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
 			}
 			for _, want := range []string{
 				"flow phase restart requires current status needs_attention or blocked",
-				"autoreview is " + tc.wantCurrent,
+				"review-loop-2 is " + tc.wantCurrent,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("restart error = %q, want %q", err.Error(), want)
@@ -1509,7 +1509,7 @@ func mustRunFlow(t *testing.T, args []string) flowstore.FlowRecord {
 	return record
 }
 
-func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flowstore.FlowRecord {
+func mustRunFlowReadyForReviewLoop2(t *testing.T, root, title, branch string) flowstore.FlowRecord {
 	t.Helper()
 	created := mustRunFlow(t, []string{
 		"wtui", "flow", "create",
@@ -1520,13 +1520,27 @@ func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flo
 		"--json",
 		"--state-root", root,
 	})
-	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop-1"} {
 		outcome := ""
 		if phaseID == "plan-review" {
 			outcome = flowstore.OutcomeApproved
 		}
 		mustSetFlowPhase(t, root, created.FlowID, phaseID, flowstore.PhaseCompleted, outcome, "", "")
 	}
+	return created
+}
+
+func mustRunFlowReadyForPRCreation(t *testing.T, root, title, branch string) flowstore.FlowRecord {
+	t.Helper()
+	created := mustRunFlowReadyForReviewLoop2(t, root, title, branch)
+	mustSetFlowPhase(t, root, created.FlowID, "review-loop-2", flowstore.PhaseCompleted, "passed", "", "")
+	return created
+}
+
+func mustRunFlowReadyForMerge(t *testing.T, root, title, branch string) flowstore.FlowRecord {
+	t.Helper()
+	created := mustRunFlowReadyForPRCreation(t, root, title, branch)
+	mustSetFlowPhase(t, root, created.FlowID, "pr-creation", flowstore.PhaseCompleted, "", "", "")
 	return mustRunFlow(t, []string{
 		"wtui", "flow", "pr", "set",
 		"--flow-id", created.FlowID,

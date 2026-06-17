@@ -1770,7 +1770,7 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 	}
 }
 
-func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
+func TestRender_FlowsModeShowsMergeMissingPRMetadata(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
@@ -1786,16 +1786,17 @@ func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
-				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+				{PhaseID: "review-loop-1", Title: "Review loop 1", Status: flowstore.PhaseCompleted},
+				{PhaseID: "review-loop-2", Title: "Review loop 2", Status: flowstore.PhaseCompleted},
 				{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
-				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
+				{PhaseID: "merge", Title: "Merge", Status: flowstore.PhasePending},
 			},
 		}},
 		ActivePane:   1,
 		FlowSelected: 0,
 	})
 
-	for _, want := range []string{"autoreview:missing-pr", "missing", "Needs PR metadata"} {
+	for _, want := range []string{"merge:missing-pr", "missing", "Needs PR metadata"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing PR metadata view missing %q:\n%s", want, view)
 		}
@@ -1907,7 +1908,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
 			{PhaseID: "pr-creation", Title: "PR Creation", Status: flowstore.PhaseCompleted, Order: 2},
-			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending, Order: 3},
+			{PhaseID: "merge", Title: "Merge", Status: flowstore.PhasePending, Order: 3},
 		},
 	}
 	view := Render(RenderParams{
@@ -1922,7 +1923,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		ExpandedFlowID: flow.FlowID,
 	})
 
-	for _, want := range []string{"autoreview:missing-pr", "plan:completed"} {
+	for _, want := range []string{"merge:missing-pr", "plan:completed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("recovery precedence view missing %q:\n%s", want, view)
 		}
@@ -1943,8 +1944,8 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		FlowSelected:   0,
 		ExpandedFlowID: flow.FlowID,
 	})
-	if !strings.Contains(view, "autoreview:completed") || strings.Contains(view, "autoreview:missing-pr") {
-		t.Fatalf("completed autoreview history should not be overwritten by missing PR recovery:\n%s", view)
+	if !strings.Contains(view, "merge:completed") || strings.Contains(view, "merge:missing-pr") {
+		t.Fatalf("completed merge history should not be overwritten by missing PR recovery:\n%s", view)
 	}
 }
 

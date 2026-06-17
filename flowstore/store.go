@@ -1278,7 +1278,7 @@ func PhasePredecessorsSatisfied(record FlowRecord, phaseID string) bool {
 }
 
 // HasPRTarget reports whether PR metadata contains enough target context for
-// downstream Autoreview work.
+// downstream merge work.
 func HasPRTarget(pr PullRequest) bool {
 	if strings.ToLower(strings.TrimSpace(pr.Provider)) != "github" ||
 		pr.Number <= 0 ||
@@ -1508,9 +1508,9 @@ func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
 		{"plan", "Plan", "plan"},
 		{"plan-review", "Plan Review", "plan_review"},
 		{"implementation", "Implementation", "implementation"},
-		{"review-loop", "Review loop", "review_loop"},
+		{"review-loop-1", "Review loop 1", "review_loop"},
+		{"review-loop-2", "Review loop 2", "autoreview"},
 		{"pr-creation", "PR creation", "pr_creation"},
-		{"autoreview", "Autoreview", "autoreview"},
 		{"merge", "Merge", "merge"},
 	}
 	phases := make([]FlowPhase, 0, len(specs))

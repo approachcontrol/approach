@@ -60,6 +60,7 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 	if record.Phases[0].PhaseID != "plan" || record.Phases[0].Status != flowstore.PhaseReady {
 		t.Fatalf("first phase = %#v, want ready plan", record.Phases[0])
 	}
+	assertPhaseOrder(t, record, []string{"plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation", "merge"})
 	for _, phase := range record.Phases[1:] {
 		if phase.Status != flowstore.PhasePending {
 			t.Fatalf("phase %q status = %q, want pending", phase.PhaseID, phase.Status)
@@ -452,15 +453,15 @@ func TestStoreSetPhaseDoesNotAddMissingLinkedPlanPhase(t *testing.T) {
 
 	completed, err := store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "review-loop",
+		PhaseID: "review-loop-1",
 		Status:  flowstore.PhaseCompleted,
 		Summary: "Review loop passed.",
 	})
 	if err != nil {
-		t.Fatalf("SetPhase(review-loop completed) error = %v", err)
+		t.Fatalf("SetPhase(review-loop-1 completed) error = %v", err)
 	}
-	if got := phaseByID(t, completed, "review-loop").Status; got != flowstore.PhaseCompleted {
-		t.Fatalf("flow review-loop status = %q, want completed", got)
+	if got := phaseByID(t, completed, "review-loop-1").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("flow review-loop-1 status = %q, want completed", got)
 	}
 
 	plans, err := planStore.List(planstore.PlanFilter{RepoPath: repoPath})
@@ -470,8 +471,8 @@ func TestStoreSetPhaseDoesNotAddMissingLinkedPlanPhase(t *testing.T) {
 	if len(plans) != 1 {
 		t.Fatalf("plan List() returned %d records, want 1: %#v", len(plans), plans)
 	}
-	if _, ok := maybePlanPhaseByID(plans[0], "review-loop"); ok {
-		t.Fatalf("linked plan unexpectedly gained review-loop phase: %#v", plans[0].Phases)
+	if _, ok := maybePlanPhaseByID(plans[0], "review-loop-1"); ok {
+		t.Fatalf("linked plan unexpectedly gained review-loop-1 phase: %#v", plans[0].Phases)
 	}
 }
 
@@ -1189,7 +1190,7 @@ func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -1204,7 +1205,7 @@ func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
 	}
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Status:  flowstore.PhaseNeedsAttention,
 		Outcome: "needs_attention",
 		Notes:   "Follow-up findings remain.",
@@ -1215,7 +1216,7 @@ func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
 
 	_, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Status:  flowstore.PhaseCompleted,
 		Outcome: "passed",
 	})
@@ -1233,19 +1234,19 @@ func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
 
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Status:  flowstore.PhaseRunning,
 		Notes:   "Rerunning autoreview after addressing prior findings.",
 	})
 	if err != nil {
 		t.Fatalf("SetPhase(needs_attention -> running) error = %v", err)
 	}
-	if got := phaseByID(t, record, "autoreview").Status; got != flowstore.PhaseRunning {
+	if got := phaseByID(t, record, "review-loop-2").Status; got != flowstore.PhaseRunning {
 		t.Fatalf("autoreview status = %q, want running", got)
 	}
 	_, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Status:  flowstore.PhaseCompleted,
 		Outcome: "passed",
 		Summary: "Autoreview passed after rerun.",
@@ -1270,7 +1271,7 @@ func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -1285,16 +1286,16 @@ func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
 
 	_, err = store.RestartPhase(flowstore.PhaseRestartUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Notes:   "Rerunning Autoreview after addressing prior findings.",
 	})
-	if err == nil || !strings.Contains(err.Error(), "autoreview is ready") {
+	if err == nil || !strings.Contains(err.Error(), "review-loop-2 is ready") {
 		t.Fatalf("RestartPhase(ready) error = %v, want ready rejection", err)
 	}
 
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Status:  flowstore.PhaseNeedsAttention,
 		Outcome: "needs_attention",
 		Notes:   "Follow-up concern remains.",
@@ -1304,13 +1305,13 @@ func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
 	}
 	record, err = store.RestartPhase(flowstore.PhaseRestartUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Notes:   "Rerunning Autoreview after addressing prior findings.",
 	})
 	if err != nil {
 		t.Fatalf("RestartPhase(needs_attention) error = %v", err)
 	}
-	phase := phaseByID(t, record, "autoreview")
+	phase := phaseByID(t, record, "review-loop-2")
 	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" {
 		t.Fatalf("autoreview after restart = %#v, want running with cleared outcome", phase)
 	}
@@ -1331,7 +1332,7 @@ func TestStoreRestartPhaseClearsBlockedMergeMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -1343,7 +1344,6 @@ func TestStoreRestartPhaseClearsBlockedMergeMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetPR() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "autoreview")
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
 		PhaseID: "merge",
@@ -1399,7 +1399,7 @@ func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -1414,7 +1414,7 @@ func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
 	}
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "autoreview",
+		PhaseID: "review-loop-2",
 		Status:  flowstore.PhaseNeedsAttention,
 		Outcome: "needs_attention",
 		Notes:   "Follow-up findings remain.",
@@ -1425,14 +1425,14 @@ func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
 
 	relaunched, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   record.FlowID,
-		PhaseID:  "autoreview",
+		PhaseID:  "review-loop-2",
 		LaunchID: "launch-autoreview-2",
 	})
 	if err != nil {
 		t.Fatalf("AddPhaseLaunchID(autoreview) error = %v", err)
 	}
 
-	phase := phaseByID(t, relaunched, "autoreview")
+	phase := phaseByID(t, relaunched, "review-loop-2")
 	if phase.Status != flowstore.PhaseRunning || phase.Outcome != "" {
 		t.Fatalf("autoreview after relaunch = %#v, want running with cleared outcome", phase)
 	}
@@ -1462,36 +1462,36 @@ func TestStoreAddPhaseLaunchIDResumePreservesCompletedPhase(t *testing.T) {
 	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation")
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "review-loop",
+		PhaseID: "review-loop-1",
 		Status:  flowstore.PhaseCompleted,
 		Outcome: flowstore.OutcomeApproved,
 	})
 	if err != nil {
-		t.Fatalf("SetPhase(review-loop completed) error = %v", err)
+		t.Fatalf("SetPhase(review-loop-1 completed) error = %v", err)
 	}
-	if got := phaseByID(t, record, "pr-creation").Status; got != flowstore.PhaseReady {
-		t.Fatalf("pr-creation status before resume = %q, want ready", got)
+	if got := phaseByID(t, record, "review-loop-2").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop-2 status before resume = %q, want ready", got)
 	}
 
 	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   record.FlowID,
-		PhaseID:  "review-loop",
+		PhaseID:  "review-loop-1",
 		LaunchID: "launch-resume-1",
 		Resume:   true,
 	})
 	if err != nil {
-		t.Fatalf("AddPhaseLaunchID(review-loop resume) error = %v", err)
+		t.Fatalf("AddPhaseLaunchID(review-loop-1 resume) error = %v", err)
 	}
 
-	phase := phaseByID(t, resumed, "review-loop")
+	phase := phaseByID(t, resumed, "review-loop-1")
 	if phase.Status != flowstore.PhaseCompleted || phase.Outcome != flowstore.OutcomeApproved {
-		t.Fatalf("review-loop after resume = %#v, want completed with approved outcome", phase)
+		t.Fatalf("review-loop-1 after resume = %#v, want completed with approved outcome", phase)
 	}
 	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-resume-1" {
 		t.Fatalf("launch ids = %#v", phase.LaunchIDs)
 	}
-	if got := phaseByID(t, resumed, "pr-creation").Status; got != flowstore.PhaseReady {
-		t.Fatalf("pr-creation status after resume = %q, want ready", got)
+	if got := phaseByID(t, resumed, "review-loop-2").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop-2 status after resume = %q, want ready", got)
 	}
 }
 
@@ -1513,27 +1513,27 @@ func TestStoreAddPhaseLaunchIDResumePreservesSkippedPhase(t *testing.T) {
 	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation")
 	record, err = store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "review-loop",
+		PhaseID: "review-loop-1",
 		Status:  flowstore.PhaseSkipped,
 		Notes:   "Review covered during implementation.",
 	})
 	if err != nil {
-		t.Fatalf("SetPhase(review-loop skipped) error = %v", err)
+		t.Fatalf("SetPhase(review-loop-1 skipped) error = %v", err)
 	}
 
 	resumed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   record.FlowID,
-		PhaseID:  "review-loop",
+		PhaseID:  "review-loop-1",
 		LaunchID: "launch-resume-1",
 		Resume:   true,
 	})
 	if err != nil {
-		t.Fatalf("AddPhaseLaunchID(review-loop resume) error = %v", err)
+		t.Fatalf("AddPhaseLaunchID(review-loop-1 resume) error = %v", err)
 	}
 
-	phase := phaseByID(t, resumed, "review-loop")
+	phase := phaseByID(t, resumed, "review-loop-1")
 	if phase.Status != flowstore.PhaseSkipped || phase.Notes != "Review covered during implementation." {
-		t.Fatalf("review-loop after resume = %#v, want skipped with original notes", phase)
+		t.Fatalf("review-loop-1 after resume = %#v, want skipped with original notes", phase)
 	}
 	if len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "launch-resume-1" {
 		t.Fatalf("launch ids = %#v", phase.LaunchIDs)
@@ -2532,7 +2532,7 @@ func TestStoreSetPhaseChildPhasesGateDownstreamReadiness(t *testing.T) {
 	}
 }
 
-func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
+func TestStoreSetPRPersistsMetadataAndUngatesMerge(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 	if err != nil {
@@ -2547,7 +2547,7 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation"} {
 		update := flowstore.PhaseUpdate{
 			FlowID:  record.FlowID,
 			PhaseID: phaseID,
@@ -2561,8 +2561,8 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 			t.Fatalf("SetPhase(%s completed) error = %v", phaseID, err)
 		}
 	}
-	if got := phaseByID(t, record, "autoreview").Status; got != flowstore.PhasePending {
-		t.Fatalf("autoreview status before PR metadata = %q, want pending", got)
+	if got := phaseByID(t, record, "merge").Status; got != flowstore.PhasePending {
+		t.Fatalf("merge status before PR metadata = %q, want pending", got)
 	}
 
 	updated, err := store.SetPR(flowstore.PRUpdate{
@@ -2586,12 +2586,12 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 		updated.PR.Status != "open" {
 		t.Fatalf("PR metadata = %#v", updated.PR)
 	}
-	if got := phaseByID(t, updated, "autoreview").Status; got != flowstore.PhaseReady {
-		t.Fatalf("autoreview status after PR metadata = %q, want ready", got)
+	if got := phaseByID(t, updated, "merge").Status; got != flowstore.PhaseReady {
+		t.Fatalf("merge status after PR metadata = %q, want ready", got)
 	}
 }
 
-func TestStoreSetPhaseSkippedPRCreationDoesNotUngateAutoreview(t *testing.T) {
+func TestStoreSetPhaseSkippedPRCreationDoesNotUngateMerge(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 	if err != nil {
@@ -2599,14 +2599,14 @@ func TestStoreSetPhaseSkippedPRCreationDoesNotUngateAutoreview(t *testing.T) {
 	}
 	record, err := store.Create(flowstore.FlowRecord{
 		Title:        "Skipped PR gate",
-		Instructions: "pr creation cannot be skipped into autoreview",
+		Instructions: "pr creation cannot be skipped into merge",
 		RepoPath:     filepath.Join(root, "repo"),
 		Branch:       "flow/skipped-pr",
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2")
 
 	updated, err := store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
@@ -2618,8 +2618,8 @@ func TestStoreSetPhaseSkippedPRCreationDoesNotUngateAutoreview(t *testing.T) {
 		t.Fatalf("SetPhase(pr-creation skipped) error = %v", err)
 	}
 
-	if got := phaseByID(t, updated, "autoreview").Status; got != flowstore.PhasePending {
-		t.Fatalf("autoreview status = %q, want pending without PR metadata", got)
+	if got := phaseByID(t, updated, "merge").Status; got != flowstore.PhasePending {
+		t.Fatalf("merge status = %q, want pending without PR metadata", got)
 	}
 }
 
@@ -2745,7 +2745,7 @@ func TestStoreSetMergePersistsMergedMetadataAndCompletesFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -2758,7 +2758,7 @@ func TestStoreSetMergePersistsMergedMetadataAndCompletesFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetPR() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "autoreview", "merge")
+	mustCompleteFlowPhases(t, store, &record, "merge")
 
 	updated, err := store.SetMerge(flowstore.MergeUpdate{
 		FlowID:   record.FlowID,
@@ -2880,7 +2880,7 @@ func TestStoreSetMergeValidatesMergedMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}
-			mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+			mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation")
 			if tc.withPR {
 				record, err = store.SetPR(flowstore.PRUpdate{
 					FlowID:     record.FlowID,
@@ -2898,7 +2898,7 @@ func TestStoreSetMergeValidatesMergedMetadata(t *testing.T) {
 			if tc.blockPhase {
 				record, err = store.SetPhase(flowstore.PhaseUpdate{
 					FlowID:  record.FlowID,
-					PhaseID: "autoreview",
+					PhaseID: "review-loop-2",
 					Status:  flowstore.PhaseCompleted,
 					Outcome: "passed",
 				})
@@ -3001,7 +3001,7 @@ func TestStoreSetPhaseReopeningMergeClearsTerminalMergeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}
-			mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+			mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation")
 			record, err = store.SetPR(flowstore.PRUpdate{
 				FlowID:     record.FlowID,
 				Provider:   "github",
@@ -3016,7 +3016,7 @@ func TestStoreSetPhaseReopeningMergeClearsTerminalMergeMetadata(t *testing.T) {
 			}
 			record, err = store.SetPhase(flowstore.PhaseUpdate{
 				FlowID:  record.FlowID,
-				PhaseID: "autoreview",
+				PhaseID: "review-loop-2",
 				Status:  flowstore.PhaseCompleted,
 				Outcome: "passed",
 			})
@@ -3076,7 +3076,7 @@ func TestStoreAddPhaseLaunchIDReopeningMergeClearsTerminalMergeMetadata(t *testi
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -3089,7 +3089,7 @@ func TestStoreAddPhaseLaunchIDReopeningMergeClearsTerminalMergeMetadata(t *testi
 	if err != nil {
 		t.Fatalf("SetPR() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "autoreview", "merge")
+	mustCompleteFlowPhases(t, store, &record, "merge")
 	record, err = store.SetMerge(flowstore.MergeUpdate{
 		FlowID:   record.FlowID,
 		Status:   flowstore.MergeMerged,
@@ -3131,7 +3131,7 @@ func TestStoreAddPhaseLaunchIDResumePreservesTerminalMergeMetadata(t *testing.T)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop", "pr-creation")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review", "implementation", "review-loop-1", "review-loop-2", "pr-creation")
 	record, err = store.SetPR(flowstore.PRUpdate{
 		FlowID:     record.FlowID,
 		Provider:   "github",
@@ -3144,7 +3144,7 @@ func TestStoreAddPhaseLaunchIDResumePreservesTerminalMergeMetadata(t *testing.T)
 	if err != nil {
 		t.Fatalf("SetPR() error = %v", err)
 	}
-	mustCompleteFlowPhases(t, store, &record, "autoreview", "merge")
+	mustCompleteFlowPhases(t, store, &record, "merge")
 	mergedAt := time.Date(2026, 6, 12, 11, 12, 13, 0, time.UTC)
 	record, err = store.SetMerge(flowstore.MergeUpdate{
 		FlowID:   record.FlowID,
@@ -3196,6 +3196,7 @@ func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(
 		time.Date(2026, 6, 7, 12, 0, 6, 0, time.UTC),
 		time.Date(2026, 6, 7, 12, 0, 7, 0, time.UTC),
 		time.Date(2026, 6, 7, 12, 0, 8, 0, time.UTC),
+		time.Date(2026, 6, 7, 12, 0, 9, 0, time.UTC),
 	}
 	i := 0
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
@@ -3229,8 +3230,8 @@ func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(
 	if err != nil {
 		t.Fatalf("SetPhase(implementation completed) error = %v", err)
 	}
-	if got := phaseByID(t, record, "review-loop").Status; got != flowstore.PhaseReady {
-		t.Fatalf("review-loop before child = %q, want ready", got)
+	if got := phaseByID(t, record, "review-loop-1").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop-1 before child = %q, want ready", got)
 	}
 
 	added, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
@@ -3253,8 +3254,8 @@ func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(
 		child.UpdatedAt != times[5] {
 		t.Fatalf("child phase = %#v", child)
 	}
-	if got := phaseByID(t, added, "review-loop").Status; got != flowstore.PhasePending {
-		t.Fatalf("review-loop after child add = %q, want pending", got)
+	if got := phaseByID(t, added, "review-loop-1").Status; got != flowstore.PhasePending {
+		t.Fatalf("review-loop-1 after child add = %q, want pending", got)
 	}
 	if got := phaseByID(t, added, "pr-creation").Status; got != flowstore.PhasePending {
 		t.Fatalf("pr-creation after child add = %q, want pending", got)
@@ -3286,25 +3287,38 @@ func TestStoreAddChildImplementationPhasePersistsIdempotentlyAndGatesDownstream(
 	if err != nil {
 		t.Fatalf("SetPhase(child completed) error = %v", err)
 	}
-	if got := phaseByID(t, completed, "review-loop").Status; got != flowstore.PhaseReady {
-		t.Fatalf("review-loop after child completion = %q, want ready", got)
+	if got := phaseByID(t, completed, "review-loop-1").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop-1 after child completion = %q, want ready", got)
 	}
 	if got := phaseByID(t, completed, "pr-creation").Status; got != flowstore.PhasePending {
-		t.Fatalf("pr-creation after child completion = %q, want pending until review-loop is done", got)
+		t.Fatalf("pr-creation after child completion = %q, want pending until both review loops are done", got)
 	}
 
 	reviewed, err := store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  record.FlowID,
-		PhaseID: "review-loop",
+		PhaseID: "review-loop-1",
 		Status:  flowstore.PhaseCompleted,
 		Outcome: "completed",
 		Summary: "Review loop passed.",
 	})
 	if err != nil {
-		t.Fatalf("SetPhase(review-loop completed) error = %v", err)
+		t.Fatalf("SetPhase(review-loop-1 completed) error = %v", err)
+	}
+	if got := phaseByID(t, reviewed, "review-loop-2").Status; got != flowstore.PhaseReady {
+		t.Fatalf("review-loop-2 after review-loop-1 completion = %q, want ready", got)
+	}
+	reviewed, err = store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "review-loop-2",
+		Status:  flowstore.PhaseCompleted,
+		Outcome: "passed",
+		Summary: "Second review passed.",
+	})
+	if err != nil {
+		t.Fatalf("SetPhase(review-loop-2 completed) error = %v", err)
 	}
 	if got := phaseByID(t, reviewed, "pr-creation").Status; got != flowstore.PhaseReady {
-		t.Fatalf("pr-creation after review-loop completion = %q, want ready", got)
+		t.Fatalf("pr-creation after review-loop-2 completion = %q, want ready", got)
 	}
 }
 
@@ -3344,7 +3358,7 @@ func TestStoreAddChildImplementationPhaseOrdersAndUpdatesExistingChildren(t *tes
 		t.Fatalf("AddChildPhase(cli) error = %v", err)
 	}
 
-	assertPhaseOrder(t, record, []string{"implementation", "implementation-cli", "implementation-api", "review-loop"})
+	assertPhaseOrder(t, record, []string{"implementation", "implementation-cli", "implementation-api", "review-loop-1"})
 
 	updated, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
 		FlowID:        record.FlowID,
@@ -3356,7 +3370,7 @@ func TestStoreAddChildImplementationPhaseOrdersAndUpdatesExistingChildren(t *tes
 	if err != nil {
 		t.Fatalf("AddChildPhase(update api) error = %v", err)
 	}
-	assertPhaseOrder(t, updated, []string{"implementation", "implementation-api", "implementation-cli", "review-loop"})
+	assertPhaseOrder(t, updated, []string{"implementation", "implementation-api", "implementation-cli", "review-loop-1"})
 	if child := phaseByID(t, updated, "implementation-api"); child.Title != "API and store integration" || child.Order != 5 {
 		t.Fatalf("updated child = %#v", child)
 	}

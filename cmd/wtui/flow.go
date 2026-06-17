@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/internal/artifacts"
 )
 
 // runFlow handles `wtui flow ...` subcommands. It may load config to resolve
@@ -73,7 +74,7 @@ Examples:
   wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
   wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
   wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --notes "Revise scope"
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id review-loop-2
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
   wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
@@ -345,7 +346,7 @@ Examples:
   wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
   wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
   wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id review-loop-2
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
   wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
 
@@ -508,7 +509,8 @@ func defaultFlowPhaseActionOutcome(phaseID string, spec flowPhaseActionSpec) str
 	switch phaseID {
 	case "plan-review":
 		return spec.defaultOutcome
-	case "autoreview":
+	}
+	if flowPhaseIDUsesAutoreviewOutcomes(phaseID) {
 		switch spec.status {
 		case flowstore.PhaseCompleted:
 			return "passed"
@@ -519,6 +521,15 @@ func defaultFlowPhaseActionOutcome(phaseID string, spec flowPhaseActionSpec) str
 		}
 	}
 	return ""
+}
+
+func flowPhaseIDUsesAutoreviewOutcomes(phaseID string) bool {
+	switch artifacts.NormalizePhaseID(phaseID) {
+	case "autoreview", "review-loop-2":
+		return true
+	default:
+		return false
+	}
 }
 
 func runFlowPhaseRestart(args []string, deps runDeps) error {
@@ -667,7 +678,7 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id review-loop-2
   wtui flow phase restart --flow-id "$FLOW_ID" --phase-id implementation --notes "Rerunning after fixing review findings."
 `)
 }

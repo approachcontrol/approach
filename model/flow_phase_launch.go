@@ -504,10 +504,13 @@ func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) 
 	if phase.Status == flowstore.PhaseReady {
 		return true
 	}
-	return artifacts.NormalizePhaseID(phase.PhaseID) == "autoreview" &&
+	return flowPhaseUsesAutoreviewRecovery(phase.PhaseID) &&
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
-		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
+}
+
+func flowPhaseUsesAutoreviewRecovery(phaseID string) bool {
+	return canonicalFlowPromptPhaseID(phaseID) == "autoreview"
 }
 
 func flowPhaseStatusDetail(phase flowstore.FlowPhase) string {
