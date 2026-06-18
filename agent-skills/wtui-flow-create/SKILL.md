@@ -57,8 +57,10 @@ relative, or unclear, ask the user instead of creating a malformed Flow.
 Skip worktree creation only in two cases:
 
 - The user explicitly asks for a metadata-only Flow (set `WTUI_FLOW_METADATA_ONLY=1`).
-- The user provides an existing worktree to reuse (set `WTUI_WORKTREE_PATH`,
-  and ideally `WTUI_BRANCH`/`WTUI_COMMIT`).
+- The user provides an existing worktree to reuse (set `WTUI_WORKTREE_PATH`).
+  `WTUI_BRANCH` and `WTUI_COMMIT` are derived from that worktree when unset, and
+  `WTUI_BASE_REF` still defaults to `origin/main`, so the reuse path also ships
+  complete metadata.
 
 ## Create Or Reuse A Worktree
 
@@ -76,6 +78,20 @@ if [ -n "${WTUI_FLOW_METADATA_ONLY:-}" ]; then
   echo "Metadata-only Flow requested; skipping worktree creation." >&2
 elif [ -n "${WTUI_WORKTREE_PATH:-}" ]; then
   echo "Reusing existing worktree ${WTUI_WORKTREE_PATH:-}." >&2
+  # Derive any unset branch/commit from the reused worktree so the readback
+  # gate below still finds complete metadata.
+  if [ -z "${WTUI_BRANCH:-}" ]; then
+    if ! WTUI_BRANCH=$(git -C "${WTUI_WORKTREE_PATH:-}" rev-parse --abbrev-ref HEAD); then
+      echo "git rev-parse --abbrev-ref HEAD failed in ${WTUI_WORKTREE_PATH:-}; report the command error and do not create a partial Flow." >&2
+      exit 1
+    fi
+  fi
+  if [ -z "${WTUI_COMMIT:-}" ]; then
+    if ! WTUI_COMMIT=$(git -C "${WTUI_WORKTREE_PATH:-}" rev-parse HEAD); then
+      echo "git rev-parse HEAD failed in ${WTUI_WORKTREE_PATH:-}; report the command error and do not create a partial Flow." >&2
+      exit 1
+    fi
+  fi
 else
   case "${WTUI_REPO_PATH:-}" in
     /*) ;;
