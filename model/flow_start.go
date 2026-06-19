@@ -11,7 +11,7 @@ import (
 const flowPlanPhaseID = "plan"
 
 // FlowStartRequest contains the user operation inputs needed to create a Flow
-// and prepare the initial plan-phase agent launch.
+// and optionally prepare the initial plan-phase agent launch.
 type FlowStartRequest struct {
 	RepoPath         string
 	Title            string

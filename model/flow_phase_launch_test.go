@@ -155,8 +155,16 @@ func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
 		!ctx.FlowLaunchTracked {
 		t.Fatalf("launch result = route %d context %#v", result.Route, ctx)
 	}
-	if !strings.Contains(ctx.InitialPrompt, "Write the initial plan later") {
-		t.Fatalf("prompt missing saved instructions: %q", ctx.InitialPrompt)
+	for _, want := range []string{
+		"Use the wtui-flow skill for this launch.",
+		"Write the initial plan later",
+		"Produce a plan only; do not start coding in this phase.",
+		"wtui plan save",
+		"wtui flow plan set",
+	} {
+		if !strings.Contains(ctx.InitialPrompt, want) {
+			t.Fatalf("prompt missing %q: %q", want, ctx.InitialPrompt)
+		}
 	}
 }
 

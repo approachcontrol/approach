@@ -110,6 +110,8 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 	}
 	var prompt string
 	switch artifacts.NormalizePhaseID(phase.PhaseID) {
+	case "plan":
+		prompt = flowPlanPrompt(record, templates)
 	case "plan-review":
 		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case "implementation":
@@ -130,7 +132,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 
 func flowPhasePromptNeedsPlanBody(phaseID string) bool {
 	switch artifacts.NormalizePhaseID(phaseID) {
-	case "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
+	case "plan", "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
 		return false
 	default:
 		return true
