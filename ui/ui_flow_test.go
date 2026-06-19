@@ -677,6 +677,29 @@ func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
 	}
 }
 
+func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                    240,
+		Mode:                     ModeFlows,
+		ActiveFlows:              true,
+		ActivePane:               1,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowWorktreePathSelected: true,
+		FlowPlanLinked:           true,
+		FlowHeadless:             true,
+		FlowNextLaunchReady:      true,
+	})
+	if strings.Contains(bar, "n: new flow") {
+		t.Fatalf("active Flow status bar should not expose new flow, got %q", bar)
+	}
+	for _, want := range []string{"enter: phases", "g: launch next", "h: headless on", "o: open", "y: copy path"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("active Flow status bar missing %q, got %q", want, bar)
+		}
+	}
+}
+
 func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
