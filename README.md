@@ -350,7 +350,8 @@ attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
 existing app thread without extra launch tracking. Press `m` on a Flow row or
 expanded phase row to toggle per-Flow auto mode, which is on by default for new
-Flows and persisted on that Flow record. When auto mode is on, a successful
+Flows and persisted on that Flow record. Flows created before this field existed
+remain manual until auto mode is toggled on. When auto mode is on, a successful
 completed phase transition launches the next ready non-merge phase in that same
 Flow through the same launch path as pressing `g`. For CLI phases running in an
 embedded Flow terminal, wtui waits until the completed phase's terminal exits

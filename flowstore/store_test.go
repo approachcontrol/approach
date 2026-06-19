@@ -133,6 +133,54 @@ func TestStoreCreateDefaultsAutoModeOnEvenWhenCallerPassesFalse(t *testing.T) {
 	}
 }
 
+func TestStoreSetAutoModeDisablesNewlyCreatedFlow(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Manual Follow Up",
+		Instructions: "Let the user opt out after creation.",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if !record.AutoMode {
+		t.Fatal("Create().AutoMode = false, want new flow to start with auto mode enabled")
+	}
+
+	updated, err := store.SetAutoMode(flowstore.AutoModeUpdate{
+		FlowID:  record.FlowID,
+		Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("SetAutoMode(false) error = %v", err)
+	}
+	if updated.AutoMode {
+		t.Fatalf("SetAutoMode(false).AutoMode = true: %#v", updated)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.AutoMode {
+		t.Fatalf("Read().AutoMode = true after disable: %#v", read)
+	}
+
+	records, err := store.List(flowstore.FlowFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].AutoMode {
+		t.Fatalf("List() = %#v, want one disabled flow", records)
+	}
+}
+
 func TestStoreReadPreservesLegacyOmittedAutoModeAsDisabled(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
