@@ -143,9 +143,9 @@ func TestStatusBar_StashesModeOmitsIndicatorLegend(t *testing.T) {
 func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	upstreamIdx := strings.Index(bar, "no upstream")
-	paneIdx := strings.Index(bar, "f2: pane")
+	paneIdx := strings.Index(bar, "bksp: pane")
 	if upstreamIdx == -1 || paneIdx == -1 {
-		t.Fatalf("expected both 'no upstream' and 'f2: pane' in bar: %q", bar)
+		t.Fatalf("expected both 'no upstream' and 'bksp: pane' in bar: %q", bar)
 	}
 	between := bar[upstreamIdx+len("no upstream") : paneIdx]
 	if !strings.Contains(between, "|") {
@@ -155,13 +155,13 @@ func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 
 func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
-	paneIdx := strings.Index(bar, "f2: pane")
+	paneIdx := strings.Index(bar, "bksp: pane")
 	tIdx := strings.Index(bar, "t: terminal")
 	if paneIdx == -1 || tIdx == -1 {
 		t.Fatalf("expected both hints in bar: %q", bar)
 	}
 	if paneIdx > tIdx {
-		t.Error("f2: pane should appear before t: terminal")
+		t.Error("bksp: pane should appear before t: terminal")
 	}
 	qIdx := strings.Index(bar, "q/esc: quit")
 	if qIdx > tIdx {
@@ -1317,7 +1317,7 @@ func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
 	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
 	for _, pair := range [][2]string{
-		{"f2: pane", "q/esc: quit"},
+		{"bksp: pane", "q/esc: quit"},
 		{"d: delete", "f: fetch"},
 		{"t: terminal", "c: code"},
 	} {
@@ -1412,8 +1412,8 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "q/esc: quit") {
 		t.Fatalf("wide render footer should not carry shortcut hints, got %q", footer)
 	}
-	if !strings.Contains(shortcutPaneText(view), "f2     pane") {
-		t.Fatal("wide render should still expose global shortcuts in the shortcut pane")
+	if !strings.Contains(shortcutPaneText(view), "bksp   pane") {
+		t.Fatal("wide right-pane render should expose backspace pane shortcut")
 	}
 }
 
@@ -1433,6 +1433,28 @@ func TestRender_NarrowLayoutKeepsFooterHints(t *testing.T) {
 	}
 	if strings.Contains(view, "Shortcuts") {
 		t.Fatal("narrow render should not reserve a shortcut pane")
+	}
+}
+
+func TestRender_NarrowRightPaneLayoutKeepsBackspaceAndQuitFooterHints(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      80,
+		Height:     18,
+		Mode:       ModeBranches,
+		ActivePane: 1,
+	})
+
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	for _, want := range []string{"bksp: pane", "q/esc: quit"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("narrow right-pane footer should expose %q, got %q", want, footer)
+		}
+	}
+	if strings.Contains(footer, "⌫") {
+		t.Fatalf("narrow right-pane footer should use bksp label, got %q", footer)
 	}
 }
 
@@ -1538,11 +1560,11 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 	navigate := strings.Index(pane, "Navigate")
 	global := strings.Index(pane, "Global")
 	newWorktree := strings.Index(pane, "new worktree")
-	paneHint := strings.Index(pane, "f2     pane")
+	globalHint := strings.Index(pane, "A      set agent")
 	if actions < 0 || navigate < 0 || global < 0 || !(actions < navigate && navigate < global) {
 		t.Fatalf("shortcut pane should order Actions, Navigate, Global, got:\n%s", pane)
 	}
-	if newWorktree < 0 || paneHint < 0 || newWorktree > paneHint {
+	if newWorktree < 0 || globalHint < 0 || newWorktree > globalHint {
 		t.Fatalf("shortcut pane should show contextual actions before global hints, got:\n%s", pane)
 	}
 }
@@ -1814,8 +1836,8 @@ func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 		Mode:       ModeFlows,
 		ActivePane: 1,
 	}, 26, 18))
-	if !strings.Contains(rightPane, "f2") || !strings.Contains(rightPane, "pane") {
-		t.Fatalf("right-pane shortcut pane should include f2 pane hint, got:\n%s", rightPane)
+	if !strings.Contains(rightPane, "bksp") || !strings.Contains(rightPane, "pane") {
+		t.Fatalf("right-pane shortcut pane should include bksp pane hint, got:\n%s", rightPane)
 	}
 	if !strings.Contains(rightPane, "←/→") || !strings.Contains(rightPane, "view") {
 		t.Fatalf("right-pane shortcut pane should include arrow view hint, got:\n%s", rightPane)
@@ -3551,7 +3573,7 @@ func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
 		}
 	}
 	for _, pair := range [][2]string{
-		{"f2: pane", "q/esc: quit"},
+		{"bksp: pane", "q/esc: quit"},
 		{"↑/↓ select", "←/→ view"},
 		{"←/→ view", "enter: diff"},
 		{"enter: diff", "d: drop"},
@@ -3936,7 +3958,7 @@ func TestWorktreePane_ScrollOffset(t *testing.T) {
 
 func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T) {
 	bar := ansi.Strip(RenderStatusBar(52, 3, 0, 1, true, false, false))
-	for _, want := range []string{"f2: pane", "q/esc: quit"} {
+	for _, want := range []string{"bksp: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("tight generic footer should keep %q, got %q", want, bar)
 		}
@@ -3950,7 +3972,7 @@ func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T)
 
 func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
 	bar := RenderStatusBar(160, 1, 0, 1, false, false, false)
-	for _, hint := range []string{"f2: pane", "q/esc: quit", "↑/↓ select", "←/→ view"} {
+	for _, hint := range []string{"bksp: pane", "q/esc: quit", "↑/↓ select", "←/→ view"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode status bar should contain %q", hint)
 		}
@@ -3976,8 +3998,23 @@ func TestStatusBar_HidesArrowViewHintForActiveFlows(t *testing.T) {
 	if strings.Contains(bar, "←/→") || strings.Contains(bar, "pane/view") {
 		t.Fatalf("active Flow status bar should not advertise arrow view navigation, got %q", bar)
 	}
-	if !strings.Contains(bar, "⌫ pane") {
+	if !strings.Contains(bar, "bksp: pane") {
 		t.Fatalf("active Flow status bar should advertise backspace pane navigation, got %q", bar)
+	}
+}
+
+func TestStatusBar_RightPaneShowsBackspacePaneHint(t *testing.T) {
+	bar := RenderStatusBar(120, ModeBranches, OverlayNone, 1, false, false, false)
+	for _, want := range []string{"bksp: pane", "q/esc: quit"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("right-pane status bar should advertise %q, got %q", want, bar)
+		}
+	}
+	if strings.Contains(bar, "f2: pane") {
+		t.Fatalf("right-pane status bar should not duplicate f2 pane hint, got %q", bar)
+	}
+	if strings.Contains(bar, "⌫") {
+		t.Fatalf("right-pane status bar should use bksp label, got %q", bar)
 	}
 }
 
@@ -4411,7 +4448,7 @@ func TestReflogDiffOverlay_NonEmptyDiffShowsContent(t *testing.T) {
 
 func TestStatusBar_ReflogModeHints(t *testing.T) {
 	bar := RenderStatusBar(120, 5, 0, 1, false, false, false)
-	for _, hint := range []string{"enter: diff", "y: copy hash", "f2: pane", "q/esc: quit"} {
+	for _, hint := range []string{"enter: diff", "y: copy hash", "bksp: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("reflog status bar should contain %q", hint)
 		}
