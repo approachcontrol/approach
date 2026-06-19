@@ -2958,6 +2958,54 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterLeavingFlowsMode(t *testing.T) {
 	}
 }
 
+func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{current}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
+	request := m.ListRequest(ui.ModeFlows)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	if cmd == nil {
+		t.Fatal("switching to active flows returned nil command, want active flows fetch")
+	}
+
+	m, cmd = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{current},
+		ListRequest: request,
+	})
+	if cmd != nil {
+		t.Fatalf("accepted FlowResultMsg in active flows mode returned command %T, want nil", cmd)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("launch updates = %#v, want none after switching to active flows mode", updates)
+	}
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("Mode() = %d, want active flows", m.Mode())
+	}
+	if got := m.Flows(); len(got) != 1 || phaseByID(got[0], "implementation").Status != flowstore.PhaseReady {
+		t.Fatalf("Flows() = %#v, want accepted refresh without auto launch", got)
+	}
+}
+
 func TestModel_StartsInFlowsModeAndFetchesSelectedRepoFlows(t *testing.T) {
 	var gotFilter flowstore.FlowFilter
 	want := []flowstore.FlowRecord{

@@ -26,6 +26,7 @@ func TestModel_F5RefreshesReposAndCurrentFetchBackedMode(t *testing.T) {
 		ui.ModeSessions,
 		ui.ModePlans,
 		ui.ModeFlows,
+		ui.ModeActiveFlows,
 	}
 
 	for _, mode := range modes {

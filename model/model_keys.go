@@ -51,14 +51,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 
+	m = m.clearAnyStatus()
+
 	if !m.searchActive && m.activePane == 1 && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd
 		}
 	}
-
-	m = m.clearAnyStatus()
 
 	if m.searchActive {
 		return m.handleSearchKey(msg)

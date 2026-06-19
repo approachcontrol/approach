@@ -23,31 +23,6 @@ func (m Model) activeContentFetchMode() ui.Mode {
 	return m.mode
 }
 
-func (m Model) enterActiveFlowsSurface() (Model, tea.Cmd) {
-	m.mode = ui.ModeActiveFlows
-	m.contentSurface = surfaceModeContent
-	m.flowFocus = flowFocusList
-	m.terminalPrefixActive = false
-	m = m.syncActiveFlowsFromCache()
-	return m.startActiveFlowsFetchWithRefreshTick()
-}
-
-func (m Model) exitActiveFlowsSurface() Model {
-	m.contentSurface = surfaceModeContent
-	if m.flowFocus == flowFocusTerminal {
-		m.flowFocus = flowFocusList
-		m.terminalPrefixActive = false
-	}
-	return m
-}
-
-func (m Model) toggleActiveFlowsSurface() (Model, tea.Cmd) {
-	if m.activeFlowSurfaceVisible() {
-		return m.exitActiveFlowsSurface(), nil
-	}
-	return m.enterActiveFlowsSurface()
-}
-
 func (m Model) syncActiveFlowsFromCache() Model {
 	selectedFlowID := m.selectedActiveFlowID()
 	expandedFlowID := m.expandedActiveFlowID

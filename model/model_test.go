@@ -1675,6 +1675,20 @@ func TestModel_RightCyclesThroughAllViewsAndWrapsToWorktrees(t *testing.T) {
 	}
 }
 
+func TestModel_NumberedModeSwitchClearsStatus(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, _ = update(m, model.ActionFailedMsg{RepoPath: "/dev/alpha", Err: "operation failed"})
+	if got := m.TransientError(); got != "operation failed" {
+		t.Fatalf("TransientError() = %q, want operation failed", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if got := m.TransientError(); got != "" {
+		t.Fatalf("numbered mode switch left status %q, want cleared", got)
+	}
+}
+
 func TestModel_LeftCyclesBackThroughAllViewsAndWrapsToFlows(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)

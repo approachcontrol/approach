@@ -24,13 +24,6 @@ import (
 
 const listRequestSlots = int(ui.ModeActiveFlows) + 1
 
-type contentSurface int
-
-const (
-	surfaceModeContent contentSurface = iota
-	surfaceActiveFlows
-)
-
 // Model is the bubbletea application model.
 type Model struct {
 	repos                      pane.Pane[scanner.Repo]
@@ -54,7 +47,6 @@ type Model struct {
 	selectedPlanPhaseID        string
 	selectedFlowPhaseID        string
 	selectedActiveFlowPhaseID  string
-	contentSurface             contentSurface
 	flowHeadless               bool
 	modal                      modal.Modal
 	diffRequestSeq             uint64

@@ -1266,7 +1266,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if !m.flowSurfaceVisible() {
+	if m.mode != ui.ModeFlows {
 		return m, nil
 	}
 	if m.flowFocus != flowFocusTerminal {
