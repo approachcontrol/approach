@@ -359,10 +359,11 @@ inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `claude` in the same embedded Flow terminal. Headless-off Flow launches prefill
 the phase prompt without submitting it, then focus the Flow terminal in input
 mode so you can review or edit it before pressing enter. Headless launches keep
-focus on the Flow list. Creating a new Flow has its own default-off Headless
-checkbox for the initial Plan launch; that checkbox does not change the
-selected-phase `h` setting. Press `E` to choose the configured CLI agent's
-reasoning effort for future launches; the shortcut pane shows the current value. Manual phase
+focus on the Flow list. Creating a new Flow has its own default-on Headless
+checkbox for the initial Plan launch; uncheck it for an interactive initial
+Plan launch. That checkbox does not change the selected-phase `h` setting.
+Press `E` to choose the configured CLI agent's reasoning effort for future
+launches; the shortcut pane shows the current value. Manual phase
 launches, auto-launched phases, and new Flow Plan launches all use the
 configured agent and that agent's configured effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses

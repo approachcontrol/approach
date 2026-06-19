@@ -8289,8 +8289,8 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 			t.Fatalf("field %d = %#v, want %#v", i, field, wantField)
 		}
 		if field.Kind == ui.FormCheckbox {
-			if field.Checked {
-				t.Fatalf("field %d initial checked = true, want false", i)
+			if !field.Checked {
+				t.Fatalf("field %d initial checked = false, want true", i)
 			}
 			continue
 		}
@@ -8406,7 +8406,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				started.LaunchID != "launch-1" ||
 				started.ReasoningEffort != wantEffort ||
 				!started.Embedded ||
-				started.Headless ||
+				!started.Headless ||
 				!started.FlowLaunchTracked {
 				t.Fatalf("embedded launch context = %#v", started)
 			}
@@ -8594,7 +8594,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-	m, cmd := submitNewFlowPrompts(t, m, "Interactive Plan", "Write the plan", "main")
+	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -9332,13 +9332,13 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 
 func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, baseRef string) (model.Model, tea.Cmd) {
 	t.Helper()
-	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, false)
+	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, true)
 }
 
 func submitNewFlowPromptsWithOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless bool) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = openNewFlowForm(t, m, title, instructions, baseRef)
-	if headless {
+	if !headless {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
 	}
