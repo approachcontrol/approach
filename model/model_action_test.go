@@ -22,6 +22,7 @@ import (
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/model/modal"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -1907,7 +1908,7 @@ func TestModel_DestructivePersistsAcrossRepoSwitch(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 	// Switch to left pane and navigate to a different repo
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if !m.Destructive() {
 		t.Error("expected destructive to persist after repo switch")
@@ -2756,7 +2757,7 @@ func TestModel_BranchCreatedPendingSelectionClearsOnRepoSwitch(t *testing.T) {
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})   // left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
 	m, _ = update(m, model.BranchResultMsg{
 		RepoPath: "/dev/bravo",
@@ -3528,6 +3529,233 @@ func TestModel_ShiftVDoesNotReplaceExistingModal(t *testing.T) {
 	}
 }
 
+func TestModel_F2OpensPromptTemplatePicker(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PlanPromptTemplate: "custom plan prompt",
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Plan: "custom flow plan",
+		},
+	})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF2})
+
+	if cmd != nil {
+		t.Fatalf("F2 returned cmd %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want select", m.Overlay())
+	}
+	view := m.View()
+	for _, want := range []string{
+		"Prompt templates",
+		"Plan launch",
+		"Flow plan",
+		"Plan review",
+		"custom",
+		"default",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected prompt picker to contain %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
+	var savedSection, savedKey, savedValue string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PlanPromptTemplate: "  custom plan\n",
+		SavePromptTemplate: func(section, key, value string) error {
+			savedSection = section
+			savedKey = key
+			savedValue = value
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected prompt template edit request")
+	}
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlayWorktreeInput {
+		t.Fatalf("overlay = %v, want input editor", m.Overlay())
+	}
+	if got := m.WorktreeInput(); got != "  custom plan\n" {
+		t.Fatalf("editor initial input = %q, want raw template", got)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save prompt template command")
+	}
+	m, _ = update(m, cmd())
+
+	if savedSection != "agent" || savedKey != "plan_prompt" || savedValue != "  custom plan\n" {
+		t.Fatalf("saved template = %q/%q %q, want agent/plan_prompt raw value", savedSection, savedKey, savedValue)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want picker reopened", m.Overlay())
+	}
+	if !strings.Contains(m.View(), "Plan launch") || !strings.Contains(m.View(), "custom") {
+		t.Fatalf("expected refreshed picker with custom status:\n%s", m.View())
+	}
+}
+
+func TestModel_PromptTemplateEditUsesTallEditor(t *testing.T) {
+	template := strings.Join([]string{
+		"line 01",
+		"line 02",
+		"line 03",
+		"line 04",
+		"line 05",
+		"line 06",
+		"line 07",
+		"line 08",
+		"line 09",
+		"line 10",
+		"line 11",
+		"line 12",
+	}, "\n")
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PlanPromptTemplate: template,
+	})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected prompt template edit request")
+	}
+	m, _ = update(m, cmd())
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"line 01", "line 12█"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("prompt template editor should show %q with tall editor:\n%s", want, view)
+		}
+	}
+}
+
+func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:       "codex",
+		PlanPromptTemplate: "old {title}",
+		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+		SavePromptTemplate: func(string, string, string) error { return errors.New("read-only config") },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected prompt template edit request")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("new {title}")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save prompt template command")
+	}
+	m, _ = update(m, cmd())
+
+	view := m.View()
+	if !strings.Contains(view, "read-only config") {
+		t.Fatalf("expected save failure status in view:\n%s", view)
+	}
+	if !strings.Contains(view, "Plan launch      custom") {
+		t.Fatalf("expected failed save to keep old custom picker status:\n%s", view)
+	}
+	if strings.Contains(view, "Plan launch      default") {
+		t.Fatalf("failed save should not mark existing custom template as default:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{
+		RepoPath: "/dev/alpha",
+		Plans: []planstore.PlanRecord{{
+			PlanID:   "plan-1",
+			Title:    "Implement plans",
+			Status:   "approved",
+			RepoPath: "/dev/alpha",
+		}},
+		ListRequest: m.ListRequest(ui.ModePlans),
+	})
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	if got, want := m.WorktreeInput(), "old Implement plans"; got != want {
+		t.Fatalf("launch prompt after failed save = %q, want %q", got, want)
+	}
+}
+
+func TestModel_PromptTemplateResetClearsCustomValueAndReopensPicker(t *testing.T) {
+	var resetSection, resetKey string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Plan: "custom flow plan",
+		},
+		ResetPromptTemplate: func(section, key string) error {
+			resetSection = section
+			resetKey = key
+			return nil
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected reset prompt template command")
+	}
+	m, _ = update(m, cmd())
+
+	if resetSection != "flow_prompts" || resetKey != "plan" {
+		t.Fatalf("reset template = %q/%q, want flow_prompts/plan", resetSection, resetKey)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("overlay = %v, want picker reopened", m.Overlay())
+	}
+	view := m.View()
+	if strings.Contains(view, "Flow plan        custom") {
+		t.Fatalf("expected Flow plan reset to default:\n%s", view)
+	}
+	if !strings.Contains(view, "Flow plan") || !strings.Contains(view, "default") {
+		t.Fatalf("expected refreshed picker with default status:\n%s", view)
+	}
+}
+
+func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testing.T) {
+	m := model.New(testRepos())
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+
+	if m.Overlay() != ui.OverlayPlanText {
+		t.Fatalf("overlay = %v, want text preview", m.Overlay())
+	}
+	preview := m.OverlayText()
+	for _, want := range []string{"Implement the saved wtui plan", "{title}", "{plan_id}", "{plan_path}"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("expected plan prompt preview to contain %q:\n%s", want, preview)
+		}
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+
+	preview = m.OverlayText()
+	for _, want := range []string{"Use the wtui-flow skill", "{instructions}", "After completing this phase goal"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("expected Flow plan preview to contain %q:\n%s", want, preview)
+		}
+	}
+}
+
 func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
 	choices := model.ViewChoices()
 	if len(choices) != 9 {
@@ -4151,7 +4379,7 @@ func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 		t.Fatalf("initial Sessions() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}

@@ -480,16 +480,18 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 	command, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
-			RepoPath:         repoPath,
-			Title:            title,
-			Instructions:     instructions,
-			BaseRef:          baseRef,
-			AgentCommand:     command,
-			ReasoningEffort:  reasoningEffort,
-			SessionStateRoot: m.sessionStateRoot,
-			PlanPhaseID:      flowPlanPhaseID,
-			PlanPhaseTitle:   "Plan",
-			PlanPhaseStatus:  flowstore.PhaseRunning,
+			RepoPath:                    repoPath,
+			Title:                       title,
+			Instructions:                instructions,
+			BaseRef:                     baseRef,
+			AgentCommand:                command,
+			ReasoningEffort:             reasoningEffort,
+			SessionStateRoot:            m.sessionStateRoot,
+			FlowPromptTemplates:         m.flowPromptTemplates,
+			FlowPromptTemplatesProvided: true,
+			PlanPhaseID:                 flowPlanPhaseID,
+			PlanPhaseTitle:              "Plan",
+			PlanPhaseStatus:             flowstore.PhaseRunning,
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}

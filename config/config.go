@@ -343,6 +343,58 @@ func SaveDefaultView(view int, options ...Option) error {
 	return saveDefaultViewTo(path, view, options...)
 }
 
+// SavePromptTemplate persists a configurable prompt template to wtui's default
+// config file. plan_prompt is stored under [agent]; Flow phase prompt keys are
+// stored under [flow_prompts].
+func SavePromptTemplate(section, key, value string, options ...Option) error {
+	section, key, err := normalizePromptTemplateTarget(section, key)
+	if err != nil {
+		return err
+	}
+
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return savePromptTemplateTo(path, section, key, value, options...)
+}
+
+// ResetPromptTemplate removes a configurable prompt template override from
+// wtui's default config file. Missing assignments are treated as already reset.
+func ResetPromptTemplate(section, key string, options ...Option) error {
+	section, key, err := normalizePromptTemplateTarget(section, key)
+	if err != nil {
+		return err
+	}
+
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return resetPromptTemplateTo(path, section, key, options...)
+}
+
+func normalizePromptTemplateTarget(section, key string) (string, string, error) {
+	section = strings.TrimSpace(section)
+	key = strings.TrimSpace(key)
+	switch key {
+	case "plan_prompt":
+		if section != "" && section != "agent" {
+			return "", "", fmt.Errorf("prompt template %s belongs to [agent]", key)
+		}
+		return "agent", key, nil
+	case "plan", "plan_review", "implementation", "review_loop", "pr_creation", "autoreview", "merge", "generic":
+		if section != "" && section != "flow_prompts" {
+			return "", "", fmt.Errorf("prompt template %s belongs to [flow_prompts]", key)
+		}
+		return "flow_prompts", key, nil
+	default:
+		return "", "", fmt.Errorf("unsupported prompt template key %q", key)
+	}
+}
+
 func writableDefaultPath(opts loadOptions) (string, error) {
 	paths, err := defaultPaths(opts)
 	if err != nil {
@@ -378,6 +430,35 @@ func saveDefaultViewTo(path string, view int, options ...Option) error {
 	return saveAgentConfigTo(path, options, func(data []byte) []byte {
 		return patchSectionAssignment(data, "ui", "default_view", fmt.Sprintf("default_view = %d\n", view))
 	})
+}
+
+func savePromptTemplateTo(path, section, key, value string, options ...Option) error {
+	return saveAgentConfigTo(path, options, func(data []byte) []byte {
+		return patchSectionAssignment(data, section, key, fmt.Sprintf("%s = %s\n", key, escapeTOMLString(value)))
+	})
+}
+
+func resetPromptTemplateTo(path, section, key string, options ...Option) error {
+	opts := defaultOptions(options...)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read config %s: %w", path, err)
+	}
+	if _, err := parseConfigData(path, data, opts); err != nil {
+		return err
+	}
+
+	patched := removeSectionAssignment(data, section, key)
+	if bytes.Equal(patched, data) {
+		return nil
+	}
+	if err := os.WriteFile(path, patched, 0o644); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
 }
 
 func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte) error {
@@ -417,7 +498,8 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 	lines := strings.SplitAfter(string(data), "\n")
 	inSection := false
 	sectionHeader := -1
-	for i, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -433,8 +515,17 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 			continue
 		}
 		if inSection && isSectionAssignment(line, key) {
+			end := sectionAssignmentEnd(lines, i)
 			lines[i] = replaceSectionAssignment(line, assignmentLine)
+			if end > i+1 {
+				lines = append(lines[:i+1], lines[end:]...)
+			}
 			return []byte(strings.Join(lines, ""))
+		}
+		if inSection {
+			if end := sectionAssignmentEnd(lines, i); end > i+1 {
+				i = end - 1
+			}
 		}
 	}
 
@@ -450,6 +541,40 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 		text += "\n"
 	}
 	return []byte(text + "[" + section + "]\n" + assignmentLine)
+}
+
+func removeSectionAssignment(data []byte, section, key string) []byte {
+	if len(data) == 0 {
+		return data
+	}
+
+	lines := strings.SplitAfter(string(data), "\n")
+	inSection := false
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if header, ok := tableHeaderName(trimmed); ok {
+			if inSection {
+				return data
+			}
+			inSection = header == section
+			continue
+		}
+		if inSection && isSectionAssignment(line, key) {
+			end := sectionAssignmentEnd(lines, i)
+			lines = append(lines[:i], lines[end:]...)
+			return []byte(strings.Join(lines, ""))
+		}
+		if inSection {
+			if end := sectionAssignmentEnd(lines, i); end > i+1 {
+				i = end - 1
+			}
+		}
+	}
+	return data
 }
 
 func tableHeaderName(line string) (string, bool) {
@@ -501,12 +626,79 @@ func replaceSectionAssignment(line, assignmentLine string) string {
 	return indent + strings.TrimSuffix(assignmentLine, "\n") + ending
 }
 
+func sectionAssignmentEnd(lines []string, start int) int {
+	if start < 0 || start >= len(lines) {
+		return start + 1
+	}
+	line := strings.TrimRight(lines[start], "\r\n")
+	eq := strings.Index(line, "=")
+	if eq == -1 {
+		return start + 1
+	}
+	value := strings.TrimSpace(line[eq+1:])
+	delim, ok := multilineStringDelimiter(value)
+	if !ok {
+		return start + 1
+	}
+	if strings.Contains(value[len(delim):], delim) {
+		return start + 1
+	}
+	for i := start + 1; i < len(lines); i++ {
+		if strings.Contains(lines[i], delim) {
+			return i + 1
+		}
+	}
+	return len(lines)
+}
+
+func multilineStringDelimiter(value string) (string, bool) {
+	switch {
+	case strings.HasPrefix(value, `"""`):
+		return `"""`, true
+	case strings.HasPrefix(value, `'''`):
+		return `'''`, true
+	default:
+		return "", false
+	}
+}
+
 func agentCommandLine(command string) string {
 	return fmt.Sprintf("command = %q\n", command)
 }
 
 func agentReasoningEffortLine(key, effort string) string {
 	return fmt.Sprintf("%s = %q\n", key, effort)
+}
+
+func escapeTOMLString(value string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func insertLine(lines []string, index int, line string) []string {

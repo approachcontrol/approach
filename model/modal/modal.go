@@ -117,6 +117,8 @@ type Modal struct {
 	action       func() tea.Cmd
 	input        string
 	inputMode    InputMode
+	inputRaw     bool
+	inputHeight  int
 	inputCursor  int
 	inputColumn  int
 	inputErr     string
@@ -146,6 +148,7 @@ type View struct {
 	Force        bool
 	Input        string
 	InputMode    InputMode
+	InputHeight  int
 	InputCursor  int
 	InputErr     string
 	SelectItems  []SelectItem
@@ -197,6 +200,20 @@ func OpenMultiLineInput(prompt, placeholder, initial string, validate func(strin
 		validate:    validate,
 		submit:      submit,
 	}
+}
+
+func OpenRawMultiLineInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
+	m := OpenMultiLineInput(prompt, placeholder, initial, validate, submit)
+	m.inputRaw = true
+	return m
+}
+
+func (m Modal) WithInputHeight(height int) Modal {
+	if height < 0 {
+		height = 0
+	}
+	m.inputHeight = height
+	return m
 }
 
 func OpenSelect(prompt string, items []SelectItem, selectedIndex int, submit func(string) tea.Cmd) Modal {
@@ -294,6 +311,7 @@ func (m Modal) View() View {
 		Force:        m.force,
 		Input:        m.input,
 		InputMode:    m.inputMode,
+		InputHeight:  m.inputHeight,
 		InputCursor:  clampInputCursor(m.input, m.inputCursor),
 		InputErr:     m.inputErr,
 		SelectItems:  append([]SelectItem(nil), m.selectItems...),
@@ -401,7 +419,10 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		}
 		return m, Consumed, nil
 	case "enter":
-		input := strings.TrimSpace(m.input)
+		input := m.input
+		if !m.inputRaw {
+			input = strings.TrimSpace(input)
+		}
 		if m.validate != nil {
 			if err := m.validate(input); err != nil {
 				m.inputErr = err.Error()

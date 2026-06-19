@@ -177,7 +177,7 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 		}
 	}
 	// Pane switching and q/esc should still appear.
-	for _, hint := range []string{"f2/tab: pane", "q/esc: quit"} {
+	for _, hint := range []string{"tab: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should appear even when left pane is active", hint)
 		}
@@ -1172,7 +1172,7 @@ func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:         0,
 		Width:            140,
-		Height:           18,
+		Height:           28,
 		Mode:             ModeWorktrees,
 		ActivePane:       1,
 		DefaultViewLabel: "8 flows",
@@ -1180,7 +1180,7 @@ func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		WorktreeSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "V      default 8 flows") {
+	if !strings.Contains(pane, "V      default view") {
 		t.Fatalf("shortcut pane should advertise default view setting:\n%s", pane)
 	}
 }
@@ -1190,7 +1190,7 @@ func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:         0,
 		Width:            160,
-		Height:           18,
+		Height:           28,
 		Mode:             ModeFlows,
 		ActivePane:       1,
 		DefaultViewLabel: "2 branches",
@@ -1198,8 +1198,10 @@ func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		FlowSelected:     0,
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "V      default 2 branches") {
-		t.Fatalf("flow shortcut pane should advertise default view setting:\n%s", pane)
+	global := strings.Index(pane, "Global")
+	defaultView := strings.Index(pane, "V      default view")
+	if global < 0 || defaultView < 0 || defaultView < global {
+		t.Fatalf("flow shortcut pane should advertise default view setting in Global section:\n%s", pane)
 	}
 }
 
@@ -1409,7 +1411,7 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "q/esc: quit") {
+	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "q/esc: quit") {
 		t.Fatalf("wide render footer should not carry shortcut hints, got %q", footer)
 	}
 	if !strings.Contains(shortcutPaneText(view), "bksp   pane") {
@@ -1428,8 +1430,8 @@ func TestRender_NarrowLayoutKeepsFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if !strings.Contains(footer, "f2/tab: pane") {
-		t.Fatalf("narrow render should expose f2 pane hint, got %q", footer)
+	if !strings.Contains(footer, "tab: pane") {
+		t.Fatalf("narrow render should expose tab pane hint, got %q", footer)
 	}
 	if strings.Contains(view, "Shortcuts") {
 		t.Fatal("narrow render should not reserve a shortcut pane")
@@ -1482,7 +1484,7 @@ func TestRender_ShortWideLayoutKeepsClippedShortcutPane(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	for _, forbidden := range []string{"f2/tab: pane", "n: new worktree", "F: pull", "c: code"} {
+	for _, forbidden := range []string{"tab: pane", "n: new worktree", "F: pull", "c: code"} {
 		if strings.Contains(footer, forbidden) {
 			t.Fatalf("short wide footer should not carry shortcut hint %q, got %q", forbidden, footer)
 		}
@@ -1619,6 +1621,15 @@ func TestRender_ShortcutPaneShowsGlobalRefreshShortcut(t *testing.T) {
 	pane := shortcutPaneText(renderShortcutPane(statusBarParams{Mode: ModeWorktrees}, 26, 20))
 	if !strings.Contains(pane, "f5     refresh") {
 		t.Fatalf("shortcut pane should expose refresh shortcut, got:\n%s", pane)
+	}
+}
+
+func TestRender_ShortcutPaneShowsPromptTemplatesInGlobalSection(t *testing.T) {
+	pane := shortcutPaneText(renderShortcutPane(statusBarParams{Mode: ModeWorktrees}, 26, 20))
+	global := strings.Index(pane, "Global")
+	promptTemplates := strings.Index(pane, "f2     edit prompts")
+	if global < 0 || promptTemplates < 0 || promptTemplates < global {
+		t.Fatalf("shortcut pane should expose prompt templates in Global section, got:\n%s", pane)
 	}
 }
 
@@ -1825,8 +1836,8 @@ func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 		Mode:       ModeFlows,
 		ActivePane: 0,
 	}, 26, 18))
-	if !strings.Contains(leftPane, "f2") || !strings.Contains(leftPane, "pane") {
-		t.Fatalf("left-pane shortcut pane should include f2 pane hint, got:\n%s", leftPane)
+	if !strings.Contains(leftPane, "tab") || !strings.Contains(leftPane, "pane") {
+		t.Fatalf("left-pane shortcut pane should include tab pane hint, got:\n%s", leftPane)
 	}
 	if strings.Contains(leftPane, "←/→") || strings.Contains(leftPane, "pane/view") {
 		t.Fatalf("left-pane shortcut pane should not include arrow view hint, got:\n%s", leftPane)
@@ -1878,7 +1889,7 @@ func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "no upstream") {
+	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "no upstream") {
 		t.Fatalf("branch wide footer should not duplicate shortcut or legend hints, got %q", footer)
 	}
 }
@@ -3073,6 +3084,57 @@ func TestRender_InputDialogOverflowKeepsCursorVisible(t *testing.T) {
 	}
 }
 
+func TestRender_InputDialogConfiguredHeightShowsMoreText(t *testing.T) {
+	value := strings.Join([]string{
+		"line 01",
+		"line 02",
+		"line 03",
+		"line 04",
+		"line 05",
+		"line 06",
+		"line 07",
+		"line 08",
+		"line 09",
+		"line 10",
+		"line 11",
+		"line 12",
+	}, "\n")
+
+	defaultView := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       72,
+		Height:      22,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Edit Plan launch",
+		InputValue:  value,
+		InputCursor: len([]rune(value)),
+		InputMode:   InputMultiLine,
+	})
+	tallView := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       72,
+		Height:      22,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Edit Plan launch",
+		InputValue:  value,
+		InputCursor: len([]rune(value)),
+		InputMode:   InputMultiLine,
+		InputHeight: 16,
+	})
+
+	if strings.Contains(ansi.Strip(defaultView), "line 01") {
+		t.Fatalf("default input height unexpectedly shows the first line:\n%s", ansi.Strip(defaultView))
+	}
+	strippedTall := ansi.Strip(tallView)
+	for _, want := range []string{"line 01", "line 12█"} {
+		if !strings.Contains(strippedTall, want) {
+			t.Fatalf("configured input height should show %q:\n%s", want, strippedTall)
+		}
+	}
+}
+
 func TestRender_InputDialogTinyHeightKeepsCursorVisible(t *testing.T) {
 	value := strings.Join([]string{
 		"line one",
@@ -3196,6 +3258,29 @@ func TestRender_SelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 	}
 }
 
+func TestRender_PromptTemplateSelectShowsPromptSpecificFooter(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          90,
+		Height:         16,
+		Mode:           ModeWorktrees,
+		Overlay:        OverlaySelect,
+		SelectPrompt:   "Prompt templates",
+		SelectItems:    []SelectItem{{Label: "Plan launch     default", Value: "agent.plan_prompt"}},
+		SelectSelected: 0,
+	})
+
+	stripped := ansi.Strip(view)
+	for _, want := range []string{"enter: edit", "r: reset", "v: preview", "esc: cancel"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("prompt template select footer should contain %q:\n%s", want, stripped)
+		}
+	}
+	if strings.Contains(stripped, "enter: confirm") {
+		t.Fatalf("prompt template select footer should not use generic confirm copy:\n%s", stripped)
+	}
+}
+
 func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
@@ -3229,6 +3314,14 @@ func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 	}
 	if !strings.Contains(stripped, "up/down select") || strings.Contains(stripped, "bksp") {
 		t.Fatalf("select overlay status bar should use select hints only:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "enter: confirm") {
+		t.Fatalf("generic select overlay should keep confirm footer copy:\n%s", stripped)
+	}
+	for _, notWant := range []string{"enter: edit", "r: reset", "v: preview"} {
+		if strings.Contains(stripped, notWant) {
+			t.Fatalf("generic select overlay should not show prompt-template hint %q:\n%s", notWant, stripped)
+		}
 	}
 }
 
@@ -4010,7 +4103,7 @@ func TestStatusBar_RightPaneShowsBackspacePaneHint(t *testing.T) {
 		}
 	}
 	if strings.Contains(bar, "f2: pane") {
-		t.Fatalf("right-pane status bar should not duplicate f2 pane hint, got %q", bar)
+		t.Fatalf("right-pane status bar should not duplicate tab pane hint, got %q", bar)
 	}
 	if strings.Contains(bar, "⌫") {
 		t.Fatalf("right-pane status bar should use bksp label, got %q", bar)

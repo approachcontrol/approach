@@ -60,6 +60,7 @@ const FlowBaseRefPrompt = "New flow base ref"
 const LaunchInstructionsPrompt = "Launch instructions"
 const WorktreeMovePrompt = "Move worktree to"
 const PRWorktreePrompt = "PR worktree"
+const PromptTemplateSelectPrompt = "Prompt templates"
 const WorktreeInputPlaceholder = "branch, tag, or new branch name"
 const FlowTitleInputPlaceholder = "flow title"
 const FlowInstructionsInputPlaceholder = "task instructions"
@@ -142,7 +143,7 @@ const ShortcutPaneWidth = 28
 const (
 	shortcutKeyColumnWidth = 6
 	shortcutOverflowMarker = "..."
-	paneShortcutKey        = "f2/tab"
+	paneShortcutKey        = "tab"
 	paneBackShortcutKey    = "bksp"
 )
 
@@ -238,6 +239,7 @@ type RenderParams struct {
 	InputValue                  string
 	InputError                  string
 	InputMode                   InputMode
+	InputHeight                 int
 	InputCursor                 int
 	WorktreeInputPrompt         string
 	WorktreeInputPlaceholder    string
@@ -762,6 +764,7 @@ type statusBarParams struct {
 	InputMode                   InputMode
 	FormHasMultiline            bool
 	WorktreeInputPrompt         string
+	SelectPrompt                string
 	ActivePane                  int
 	Destructive                 bool
 	RepoSelected                bool
@@ -893,6 +896,9 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		}
 		return renderStatusText(width, "  enter: submit  esc: cancel  bksp/del: edit  left/right: move")
 	case overlay == OverlaySelect:
+		if sp.SelectPrompt == PromptTemplateSelectPrompt {
+			return renderStatusText(width, "  up/down select  enter: edit  r: reset  v: preview  esc: cancel")
+		}
 		return renderStatusText(width, "  up/down select  enter: confirm  esc: cancel")
 	case overlay == OverlayForm:
 		if sp.FormHasMultiline {
@@ -1087,15 +1093,14 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	global := []shortcutHint{
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
+		{Key: "f2", Label: "edit prompts"},
 		{Key: "f5", Label: "refresh"},
 	}
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
-	if !flowSurfaceActive {
-		if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
-			global = slices.Insert(global, len(global)-1, shortcutHint{Key: "V", Label: label})
-		}
+	if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
+		global = slices.Insert(global, len(global)-1, shortcutHint{Key: "V", Label: label})
 	}
 
 	var actions []shortcutHint
@@ -1319,9 +1324,6 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
 		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
 	}
-	if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
-		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "V", Label: label})
-	}
 	var sections []shortcutSection
 	if len(actions) > 0 {
 		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
@@ -1360,7 +1362,7 @@ func defaultViewShortcutLabel(value string) string {
 	if value == "" {
 		return ""
 	}
-	return "default " + value
+	return "default view"
 }
 
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {
@@ -1528,19 +1530,20 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 	for _, drop := range [][]string{
 		{},
 		{"f5"},
-		{"f5", "A"},
-		{"f5", "A", "D"},
-		{"f5", "A", "D", "←/→"},
-		{"f5", "A", "D", "←/→", "↑/↓"},
-		{"f5", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
+		{"f5", "f2"},
+		{"f5", "f2", "A"},
+		{"f5", "f2", "A", "D"},
+		{"f5", "f2", "A", "D", "←/→"},
+		{"f5", "f2", "A", "D", "←/→", "↑/↓"},
+		{"f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -3094,6 +3097,7 @@ func renderSelectOverlayStatusBar(p RenderParams) string {
 		Width:                  p.Width,
 		Mode:                   p.Mode,
 		Overlay:                p.Overlay,
+		SelectPrompt:           p.SelectPrompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
 		TransientError:         p.TransientError,
@@ -3360,6 +3364,7 @@ func renderOverlay(p RenderParams) string {
 		InputMode:              inputParams.mode,
 		FormHasMultiline:       formHasMultilineField(p.Form),
 		WorktreeInputPrompt:    inputParams.prompt,
+		SelectPrompt:           p.SelectPrompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
 		TransientError:         p.TransientError,
@@ -3646,6 +3651,7 @@ type inputRenderParams struct {
 	value       string
 	errText     string
 	mode        InputMode
+	height      int
 	cursor      int
 }
 
@@ -3663,6 +3669,7 @@ func inputRenderParamsFrom(p RenderParams) inputRenderParams {
 			value:       p.InputValue,
 			errText:     p.InputError,
 			mode:        p.InputMode,
+			height:      p.InputHeight,
 			cursor:      p.InputCursor,
 		}
 	}
@@ -3676,6 +3683,7 @@ func inputRenderParamsFrom(p RenderParams) inputRenderParams {
 		value:       p.WorktreeInput,
 		errText:     p.WorktreeInputErr,
 		mode:        p.InputMode,
+		height:      p.InputHeight,
 		cursor:      cursor,
 	}
 }
@@ -3709,7 +3717,7 @@ func renderInputDialog(params inputRenderParams, width, height int) []string {
 
 	bodyLines := inputDialogBodyLines(params, contentWidth)
 	cursorLine := lineIndexContainingCursor(bodyLines)
-	maxInputLines := maxInputDialogLines(height, params.errText, contentWidth)
+	maxInputLines := maxInputDialogLines(height, params.errText, contentWidth, params.height)
 	bodyLines = compactInputDialogLines(bodyLines, maxInputLines, cursorLine)
 
 	content := make([]string, 0, len(bodyLines)+3)
@@ -3898,8 +3906,11 @@ func lineIndexContainingCursor(lines []string) int {
 	return -1
 }
 
-func maxInputDialogLines(height int, errText string, contentWidth int) int {
+func maxInputDialogLines(height int, errText string, contentWidth int, configuredLines int) int {
 	maxLines := launchInstructionsMaxLines
+	if configuredLines > 0 {
+		maxLines = configuredLines
+	}
 	available := height - 2
 	if errText != "" {
 		available -= 1 + len(wrapPlainText(errText, contentWidth))

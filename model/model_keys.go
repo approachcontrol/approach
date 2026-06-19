@@ -23,6 +23,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	if m.modal.IsOpen() {
+		if next, cmd, handled := m.handlePromptTemplateModalKey(msg); handled {
+			return next, cmd
+		}
 		var cmd tea.Cmd
 		view := m.modal.View()
 		var outcome modal.Outcome
@@ -104,8 +107,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "f2" {
-		m = m.togglePrimaryPaneFocus()
-		return m, nil
+		return m.handlePromptTemplates()
 	}
 
 	if key == "tab" && m.activePane == 0 {
@@ -1889,7 +1891,7 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 		ctx.PlanPhaseID = phase.PhaseID
 		ctx.PlanPhaseTitle = phase.Title
 		ctx.PlanPhaseStatus = phase.Status
-		ctx.InitialPrompt = implementationPromptForPhase(plan, planPath, phase)
+		ctx.InitialPrompt = m.implementationPromptForPhase(plan, planPath, repoPath, launchPath, phase)
 	}
 	return ctx, true, m
 }
@@ -1902,8 +1904,19 @@ func validatePlanLaunchInput(input string) error {
 }
 
 func (m Model) implementationPrompt(plan planstore.PlanRecord, planPath, repoPath, worktreePath string) string {
+	return m.renderPlanPromptTemplate(plan, planPath, repoPath, worktreePath, planstore.PlanPhase{}, false)
+}
+
+func (m Model) implementationPromptForPhase(plan planstore.PlanRecord, planPath, repoPath, worktreePath string, phase planstore.PlanPhase) string {
+	return m.renderPlanPromptTemplate(plan, planPath, repoPath, worktreePath, phase, true)
+}
+
+func (m Model) renderPlanPromptTemplate(plan planstore.PlanRecord, planPath, repoPath, worktreePath string, phase planstore.PlanPhase, phaseSelected bool) string {
 	template := m.planPromptTemplate
 	if strings.TrimSpace(template) == "" {
+		if phaseSelected {
+			return defaultImplementationPromptForPhase(plan, planPath, phase)
+		}
 		return defaultImplementationPrompt(plan, planPath)
 	}
 	title := plan.Title
@@ -1917,6 +1930,26 @@ func (m Model) implementationPrompt(plan planstore.PlanRecord, planPath, repoPat
 		"{repo_path}", repoPath,
 		"{worktree_path}", worktreePath,
 	)
+	if phaseSelected {
+		phaseTitle := phase.Title
+		if phaseTitle == "" {
+			phaseTitle = "(untitled)"
+		}
+		phaseStatus := phase.Status
+		if phaseStatus == "" {
+			phaseStatus = "(unknown)"
+		}
+		replacer = strings.NewReplacer(
+			"{title}", title,
+			"{plan_id}", plan.PlanID,
+			"{plan_path}", planPath,
+			"{repo_path}", repoPath,
+			"{worktree_path}", worktreePath,
+			"{phase_id}", phase.PhaseID,
+			"{phase_title}", phaseTitle,
+			"{phase_status}", phaseStatus,
+		)
+	}
 	return replacer.Replace(template)
 }
 
@@ -1928,7 +1961,7 @@ func defaultImplementationPrompt(plan planstore.PlanRecord, planPath string) str
 	return fmt.Sprintf("Implement the saved wtui plan %q (ID: %s) at %s. Read the plan file, then begin implementation.", title, plan.PlanID, planPath)
 }
 
-func implementationPromptForPhase(plan planstore.PlanRecord, planPath string, phase planstore.PlanPhase) string {
+func defaultImplementationPromptForPhase(plan planstore.PlanRecord, planPath string, phase planstore.PlanPhase) string {
 	title := plan.Title
 	if title == "" {
 		title = "(untitled)"

@@ -157,7 +157,7 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 	result := activeFlowResultFromCommand(t, cmd)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("switching active flows to repo pane returned command %T, want nil", cmd)
 	}
@@ -175,7 +175,7 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 		t.Fatalf("active Flow filters = %#v, want one global fetch", filters)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	view = ansi.Strip(m.View())
 	if !strings.Contains(view, "Alpha Flow") || !strings.Contains(view, "Bravo Flow") {
 		t.Fatalf("returning focus to content pane should restore global active flows:\n%s", view)
@@ -194,7 +194,7 @@ func TestModel_ActiveFlowsLeftPaneFilterCleansRepoPath(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{alpha, bravo})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 24})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 	view := ansi.Strip(m.View())
@@ -217,7 +217,7 @@ func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 		t.Fatal("expected active Flow fetch command")
 	}
 	msg := cmd()
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, repoMoveCmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if repoMoveCmd != nil {
 		t.Fatalf("repo movement in active flows returned command %T, want nil", repoMoveCmd)
@@ -252,7 +252,7 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].FlowID != "bravo-flow" {
 		t.Fatalf("left-pane active flows = %#v, want repo-filtered bravo", got)
@@ -562,7 +562,7 @@ func TestModel_ActiveFlowsTabWithTerminalSwitchesBetweenListAndTerminal(t *testi
 	}
 }
 
-func TestModel_ActiveFlowsF2ClearsSelectedPhaseWhenLeavingRightPane(t *testing.T) {
+func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
@@ -574,18 +574,18 @@ func TestModel_ActiveFlowsF2ClearsSelectedPhaseWhenLeavingRightPane(t *testing.T
 		t.Fatalf("selected active Flow phase = %q, want plan before leaving right pane", got)
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
-		t.Fatalf("F2 from active Flow surface returned command %T, want nil", cmd)
+		t.Fatalf("Backspace from active Flow surface returned command %T, want nil", cmd)
 	}
 	if m.ActivePane() != 0 {
-		t.Fatalf("F2 from active Flow surface active pane = %d, want left pane", m.ActivePane())
+		t.Fatalf("Backspace from active Flow surface active pane = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("F2 from active Flow surface mode = %d, want active flows", m.Mode())
+		t.Fatalf("Backspace from active Flow surface mode = %d, want active flows", m.Mode())
 	}
 	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "" {
-		t.Fatalf("F2 from active Flow surface left selected phase = %q, want cleared", got)
+		t.Fatalf("Backspace from active Flow surface left selected phase = %q, want cleared", got)
 	}
 }
 
@@ -594,7 +594,7 @@ func TestModel_ActiveFlowsLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -3850,7 +3850,7 @@ func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
 
 func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyF2},
+		{Type: tea.KeyBackspace},
 	} {
 		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -4000,7 +4000,7 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 		t.Fatalf("initial Flows() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}
@@ -6712,7 +6712,7 @@ func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	}
 }
 
-func TestModel_F2SwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
+func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -6735,18 +6735,18 @@ func TestModel_F2SwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if m.ActivePane() != 0 {
-		t.Fatalf("f2 with inactive Flow terminal activePane = %d, want left pane", m.ActivePane())
+		t.Fatalf("backspace with inactive Flow terminal activePane = %d, want left pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 0 {
-		t.Fatalf("inactive Flow terminal should not receive f2 writes: %#v", fakeTerm.writes)
+		t.Fatalf("inactive Flow terminal should not receive backspace writes: %#v", fakeTerm.writes)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	if len(fakeTerm.writes) != 0 {
-		t.Fatalf("returning from f2 should keep Flow list focus, not terminal focus: %#v", fakeTerm.writes)
+		t.Fatalf("returning from backspace should keep Flow list focus, not terminal focus: %#v", fakeTerm.writes)
 	}
 	if got := m.SelectedFlowPhaseID(); got != "plan" {
 		t.Fatalf("selected Flow phase = %q, want list focus to move to first phase", got)
@@ -8993,7 +8993,7 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("expected flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
@@ -9096,7 +9096,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("expected flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
@@ -9161,7 +9161,7 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("expected parked Flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if created, ok := staleMsg.(model.FlowCreatedMsg); !ok || created.Request == 0 {
@@ -9300,7 +9300,7 @@ func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("flow create failure should be tagged with the active create request")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	next, cmd := update(m, staleMsg)
 	if cmd != nil {

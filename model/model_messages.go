@@ -143,6 +143,34 @@ type VisibleRepoFetchStatusExpiredMsg struct {
 	Text    string
 }
 
+type promptTemplateEditRequestedMsg struct {
+	Value string
+}
+
+type PromptTemplateSavedMsg struct {
+	Section string
+	Key     string
+	Value   string
+}
+
+type PromptTemplateSaveFailedMsg struct {
+	Section string
+	Key     string
+	Value   string
+	Err     string
+}
+
+type PromptTemplateResetMsg struct {
+	Section string
+	Key     string
+}
+
+type PromptTemplateResetFailedMsg struct {
+	Section string
+	Key     string
+	Err     string
+}
+
 type RepoRefreshResultMsg struct {
 	Request uint64
 	Repos   []scanner.Repo

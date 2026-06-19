@@ -890,6 +890,298 @@ func TestSaveDefaultView_RejectsInvalidValueWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestSavePromptTemplate_RoundTripsEscapedMultilineTemplates(t *testing.T) {
+	xdg := t.TempDir()
+	home := t.TempDir()
+	value := "Line 1\nLine 2 with \"quotes\" and \\ slash\tend\x01"
+
+	err := config.SavePromptTemplate("flow_prompts", "plan", value,
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return home, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SavePromptTemplate returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `[flow_prompts]`) || !strings.Contains(text, `plan = "Line 1\nLine 2 with \"quotes\" and \\ slash\tend\u0001"`) {
+		t.Fatalf("expected escaped single-line flow prompt, got:\n%s", text)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.FlowPrompts.Plan != value {
+		t.Fatalf("saved flow prompt = %q, want %q", cfg.FlowPrompts.Plan, value)
+	}
+}
+
+func TestSavePromptTemplate_ReplacesExistingMultilineStringAssignment(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[flow_prompts]\nplan = \"\"\"old line 1\nold line 2\"\"\"\nimplementation = \"keep implementation\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SavePromptTemplate("flow_prompts", "plan", "new prompt",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SavePromptTemplate returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "old line") || strings.Contains(text, `"""`) {
+		t.Fatalf("expected old multiline prompt assignment fully replaced, got:\n%s", text)
+	}
+	if !strings.Contains(text, `plan = "new prompt"`) || !strings.Contains(text, `implementation = "keep implementation"`) {
+		t.Fatalf("expected new prompt and sibling assignment preserved, got:\n%s", text)
+	}
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.FlowPrompts.Plan != "new prompt" || cfg.FlowPrompts.Implementation != "keep implementation" {
+		t.Fatalf("loaded flow prompts = %#v", cfg.FlowPrompts)
+	}
+}
+
+func TestSavePromptTemplate_SkipsOtherMultilineStringBodiesBeforeTarget(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[flow_prompts]\nplan = \"\"\"\nDocument an example:\nimplementation = \"not the real assignment\"\n\"\"\"\nimplementation = \"old implementation\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SavePromptTemplate("flow_prompts", "implementation", "new implementation",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SavePromptTemplate returned error: %v", err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if !strings.Contains(cfg.FlowPrompts.Plan, `implementation = "not the real assignment"`) {
+		t.Fatalf("plan prompt body was not preserved: %q", cfg.FlowPrompts.Plan)
+	}
+	if cfg.FlowPrompts.Implementation != "new implementation" {
+		t.Fatalf("implementation prompt = %q, want new implementation", cfg.FlowPrompts.Implementation)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `implementation = "not the real assignment"`) ||
+		!strings.Contains(text, `implementation = "new implementation"`) ||
+		strings.Contains(text, `implementation = "old implementation"`) {
+		t.Fatalf("expected multiline body preserved and real assignment replaced, got:\n%s", text)
+	}
+}
+
+func TestResetPromptTemplate_RemovesOnlySelectedAssignment(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "# keep me\n[agent]\nplan_prompt = \"custom plan\"\ncommand = \"codex\"\n\n[flow_prompts]\nplan = \"custom flow\"\nimplementation = \"keep implementation\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.ResetPromptTemplate("flow_prompts", "plan",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("ResetPromptTemplate returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"# keep me", `plan_prompt = "custom plan"`, `command = "codex"`, `implementation = "keep implementation"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected reset config to contain %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `plan = "custom flow"`) {
+		t.Fatalf("expected flow plan prompt removed, got:\n%s", text)
+	}
+}
+
+func TestResetPromptTemplate_RemovesExistingMultilineStringAssignment(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[flow_prompts]\nplan = '''old line 1\nold line 2'''\nimplementation = \"keep implementation\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.ResetPromptTemplate("flow_prompts", "plan",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("ResetPromptTemplate returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "old line") || strings.Contains(text, `'''`) || strings.Contains(text, "plan =") {
+		t.Fatalf("expected old multiline prompt assignment fully removed, got:\n%s", text)
+	}
+	if !strings.Contains(text, `implementation = "keep implementation"`) {
+		t.Fatalf("expected sibling assignment preserved, got:\n%s", text)
+	}
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.FlowPrompts.Plan != "" || cfg.FlowPrompts.Implementation != "keep implementation" {
+		t.Fatalf("loaded flow prompts = %#v", cfg.FlowPrompts)
+	}
+}
+
+func TestResetPromptTemplate_SkipsOtherMultilineStringBodiesBeforeTarget(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[flow_prompts]\nplan = '''\nDocument an example:\nimplementation = \"not the real assignment\"\n'''\nimplementation = \"old implementation\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.ResetPromptTemplate("flow_prompts", "implementation",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("ResetPromptTemplate returned error: %v", err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if !strings.Contains(cfg.FlowPrompts.Plan, `implementation = "not the real assignment"`) {
+		t.Fatalf("plan prompt body was not preserved: %q", cfg.FlowPrompts.Plan)
+	}
+	if cfg.FlowPrompts.Implementation != "" {
+		t.Fatalf("implementation prompt = %q, want reset default", cfg.FlowPrompts.Implementation)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `implementation = "not the real assignment"`) ||
+		strings.Contains(text, `implementation = "old implementation"`) {
+		t.Fatalf("expected multiline body preserved and real assignment removed, got:\n%s", text)
+	}
+}
+
+func TestResetPromptTemplate_MissingConfigDoesNotCreateFile(t *testing.T) {
+	xdg := t.TempDir()
+	home := t.TempDir()
+
+	err := config.ResetPromptTemplate("agent", "plan_prompt",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return home, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("ResetPromptTemplate returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("reset missing config should not create %s, stat err=%v", path, err)
+	}
+}
+
 func TestSaveAgentCommand_UpdatesExistingFallbackConfig(t *testing.T) {
 	xdg := t.TempDir()
 	home := t.TempDir()
