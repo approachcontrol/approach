@@ -221,26 +221,10 @@ func isNumberedModeKey(key string) bool {
 }
 
 func modeForNumberedKey(key string) (ui.Mode, bool) {
-	switch key {
-	case "1":
-		return ui.ModeWorktrees, true
-	case "2":
-		return ui.ModeBranches, true
-	case "3":
-		return ui.ModeStashes, true
-	case "4":
-		return ui.ModeHistory, true
-	case "5":
-		return ui.ModeReflog, true
-	case "6":
-		return ui.ModeSessions, true
-	case "7":
-		return ui.ModePlans, true
-	case "8":
-		return ui.ModeFlows, true
-	default:
+	if len(key) != 1 {
 		return ui.ModeWorktrees, false
 	}
+	return ModeForViewNumber(int(key[0] - '0'))
 }
 
 func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {

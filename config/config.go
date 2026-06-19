@@ -21,6 +21,7 @@ type Config struct {
 	Terminal    TerminalConfig   `toml:"terminal"`
 	Provider    ProviderConfig   `toml:"provider"`
 	Launch      LaunchConfig     `toml:"launch"`
+	UI          UIConfig         `toml:"ui"`
 	Agent       AgentConfig      `toml:"agent"`
 	FlowPrompts FlowPromptConfig `toml:"flow_prompts"`
 	Sessions    SessionsConfig   `toml:"sessions"`
@@ -51,6 +52,11 @@ type ProviderConfig struct {
 // LaunchConfig is parsed now so launch behavior can be wired in later.
 type LaunchConfig struct {
 	PreferMultiplexer bool `toml:"prefer_multiplexer"`
+}
+
+// UIConfig stores user-interface preferences.
+type UIConfig struct {
+	DefaultView *int `toml:"default_view"`
 }
 
 // AgentConfig stores the user's preferred interactive coding agent.
@@ -177,6 +183,12 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		cfg.Scan.Root = root
 	}
 
+	if cfg.UI.DefaultView != nil {
+		if err := validateDefaultView(*cfg.UI.DefaultView); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+
 	if cfg.Agent.Command != "" {
 		cfg.Agent.Command = agent.Normalize(cfg.Agent.Command)
 		if err := agent.Validate(cfg.Agent.Command); err != nil {
@@ -216,6 +228,13 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 
 func defaultConfig() Config {
 	return Config{}
+}
+
+func validateDefaultView(view int) error {
+	if view < 1 || view > 8 {
+		return fmt.Errorf("ui.default_view must be between 1 and 8")
+	}
+	return nil
 }
 
 func normalizeBootstrapConfig(path string, cfg *BootstrapConfig, opts loadOptions) error {
@@ -309,6 +328,21 @@ func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
 	return saveAgentReasoningEffortTo(path, command, effort, options...)
 }
 
+// SaveDefaultView persists the startup default view number to wtui's default
+// config file, creating the config directory when needed.
+func SaveDefaultView(view int, options ...Option) error {
+	if err := validateDefaultView(view); err != nil {
+		return err
+	}
+
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return saveDefaultViewTo(path, view, options...)
+}
+
 func writableDefaultPath(opts loadOptions) (string, error) {
 	paths, err := defaultPaths(opts)
 	if err != nil {
@@ -340,6 +374,12 @@ func saveAgentReasoningEffortTo(path, command, effort string, options ...Option)
 	})
 }
 
+func saveDefaultViewTo(path string, view int, options ...Option) error {
+	return saveAgentConfigTo(path, options, func(data []byte) []byte {
+		return patchSectionAssignment(data, "ui", "default_view", fmt.Sprintf("default_view = %d\n", view))
+	})
+}
+
 func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte) error {
 	opts := defaultOptions(options...)
 	data, err := os.ReadFile(path)
@@ -362,44 +402,45 @@ func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte)
 }
 
 func patchAgentCommand(data []byte, command string) []byte {
-	return patchAgentAssignment(data, "command", agentCommandLine(command))
+	return patchSectionAssignment(data, "agent", "command", agentCommandLine(command))
 }
 
 func patchAgentReasoningEffort(data []byte, key, effort string) []byte {
-	return patchAgentAssignment(data, key, agentReasoningEffortLine(key, effort))
+	return patchSectionAssignment(data, "agent", key, agentReasoningEffortLine(key, effort))
 }
 
-func patchAgentAssignment(data []byte, key, assignmentLine string) []byte {
+func patchSectionAssignment(data []byte, section, key, assignmentLine string) []byte {
 	if len(data) == 0 {
-		return []byte("[agent]\n" + assignmentLine)
+		return []byte("[" + section + "]\n" + assignmentLine)
 	}
 
 	lines := strings.SplitAfter(string(data), "\n")
-	inAgent := false
-	agentHeader := -1
+	inSection := false
+	sectionHeader := -1
+	sectionHeaderLine := "[" + section + "]"
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		if isTableHeader(trimmed) {
-			if inAgent {
+			if inSection {
 				return []byte(strings.Join(insertLine(lines, i, assignmentLine), ""))
 			}
-			inAgent = trimmed == "[agent]"
-			if inAgent {
-				agentHeader = i
+			inSection = trimmed == sectionHeaderLine
+			if inSection {
+				sectionHeader = i
 			}
 			continue
 		}
-		if inAgent && isAgentAssignment(line, key) {
-			lines[i] = replaceAgentAssignment(line, assignmentLine)
+		if inSection && isSectionAssignment(line, key) {
+			lines[i] = replaceSectionAssignment(line, assignmentLine)
 			return []byte(strings.Join(lines, ""))
 		}
 	}
 
-	if inAgent {
-		return []byte(strings.Join(insertLine(lines, agentHeader+1, assignmentLine), ""))
+	if inSection {
+		return []byte(strings.Join(insertLine(lines, sectionHeader+1, assignmentLine), ""))
 	}
 
 	text := string(data)
@@ -409,14 +450,14 @@ func patchAgentAssignment(data []byte, key, assignmentLine string) []byte {
 	if strings.TrimSpace(text) != "" && !strings.HasSuffix(text, "\n\n") {
 		text += "\n"
 	}
-	return []byte(text + "[agent]\n" + assignmentLine)
+	return []byte(text + "[" + section + "]\n" + assignmentLine)
 }
 
 func isTableHeader(line string) bool {
 	return strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]")
 }
 
-func isAgentAssignment(line, key string) bool {
+func isSectionAssignment(line, key string) bool {
 	eq := strings.Index(line, "=")
 	if eq == -1 {
 		return false
@@ -424,7 +465,7 @@ func isAgentAssignment(line, key string) bool {
 	return strings.TrimSpace(line[:eq]) == key
 }
 
-func replaceAgentAssignment(line, assignmentLine string) string {
+func replaceSectionAssignment(line, assignmentLine string) string {
 	body := strings.TrimRight(line, "\r\n")
 	ending := line[len(body):]
 	indent := body[:len(body)-len(strings.TrimLeft(body, " \t"))]

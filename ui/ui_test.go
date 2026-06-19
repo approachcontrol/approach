@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
@@ -1163,6 +1164,79 @@ func TestRender_BranchesModeShowsAgentHintOnlyWhenTargetAvailable(t *testing.T) 
 	view = Render(params)
 	if !strings.Contains(shortcutPaneText(view), "a      agent") {
 		t.Fatalf("checked-out branch should show agent hint, got %q", view)
+	}
+}
+
+func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:         0,
+		Width:            140,
+		Height:           18,
+		Mode:             ModeWorktrees,
+		ActivePane:       1,
+		DefaultViewLabel: "8 flows",
+		Worktrees:        []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
+		WorktreeSelected: 0,
+	})
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "V      default 8 flows") {
+		t.Fatalf("shortcut pane should advertise default view setting:\n%s", pane)
+	}
+}
+
+func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:         0,
+		Width:            160,
+		Height:           18,
+		Mode:             ModeFlows,
+		ActivePane:       1,
+		DefaultViewLabel: "2 branches",
+		Flows:            []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/a", Status: flowstore.StatusInProgress}},
+		FlowSelected:     0,
+	})
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "V      default 2 branches") {
+		t.Fatalf("flow shortcut pane should advertise default view setting:\n%s", pane)
+	}
+}
+
+func TestRender_DefaultViewFooterHintFitsNarrowWidth(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:         0,
+		Width:            80,
+		Height:           10,
+		Mode:             ModeWorktrees,
+		ActivePane:       1,
+		DefaultViewLabel: "8 flows",
+		Worktrees:        []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
+		WorktreeSelected: 0,
+	})
+	lines := strings.Split(ansi.Strip(view), "\n")
+	status := lines[len(lines)-1]
+	if strings.Contains(status, "\n") {
+		t.Fatalf("status footer should stay on one line, got %q", status)
+	}
+	if got := lipgloss.Width(status); got > 80 {
+		t.Fatalf("status footer width = %d, want <= 80: %q", got, status)
+	}
+}
+
+func TestRender_TerminalFocusedShortcutPaneOmitsDefaultViewSetting(t *testing.T) {
+	pane := shortcutPaneText(renderShortcutPane(statusBarParams{
+		Mode:                   ModeFlows,
+		ActivePane:             1,
+		EmbeddedTerminalActive: true,
+		DefaultViewLabel:       "8 flows",
+	}, 26, 12))
+	if strings.Contains(pane, "default 8 flows") || strings.Contains(pane, "V      ") {
+		t.Fatalf("terminal-focused shortcuts should not advertise default-view key:\n%s", pane)
+	}
+	if !strings.Contains(pane, "ctrl+] commands") {
+		t.Fatalf("terminal-focused shortcuts should advertise terminal command prefix:\n%s", pane)
 	}
 }
 

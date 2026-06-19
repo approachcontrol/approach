@@ -66,6 +66,7 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
+| `V` | Choose and persist the startup default view (`1` through `8`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -92,6 +93,7 @@ filter matches, or a load failure with details in the status bar.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or toggle auto mode for the selected Flow (flows view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
+| `V` | Choose and persist the startup default view (`1` through `8`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
@@ -113,7 +115,9 @@ filter matches, or a load failure with details in the status bar.
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
 switch between worktrees, branches, stashes, history, reflog, sessions, plans,
-and flows. Arrow-key view switching clamps at worktrees and flows. Press
+and flows. Arrow-key view switching clamps at worktrees and flows. Press `V` to
+choose which numbered view wtui opens on future launches; leaving it unset keeps
+the built-in startup default of Flows. Press
 `enter` from the repo pane to focus the content pane, or `f2` to switch pane
 focus explicitly.
 
@@ -136,8 +140,9 @@ again retries only the GitHub/origin setup against that existing local path.
 ### Worktrees view (mode 1)
 
 Shows all worktree checkouts for the selected repo. The main (root) worktree
-always appears first with a blue `[root]` annotation. wtui now starts in Flow
-mode by default, but worktrees remain mode `1` and keep the same numeric access.
+always appears first with a blue `[root]` annotation. wtui starts in Flow mode
+by default unless `[ui].default_view` is set, but worktrees remain mode `1` and
+keep the same numeric access.
 
 Each row shows the branch name (or `(detached)` for detached HEAD), status indicators, and the worktree path:
 
@@ -566,6 +571,9 @@ codex_reasoning_effort = "high"
 claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
+[ui]
+default_view = 8
+
 [flow_prompts]
 implementation = "Implement {plan_path} from {worktree_path}, then use the commit skill before completing."
 pr_creation = "Use the ship skill for {branch}, then record PR metadata for flow {flow_id}."
@@ -588,7 +596,9 @@ for compatibility. The same root is resolved to an absolute path when used as
 the parent directory for left-pane repo creation.
 `[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
 configure provider-specific effort for new CLI agent launches; empty or
-`default` keeps provider defaults. `[agent].plan_prompt` customizes the
+`default` keeps provider defaults. `[ui].default_view` accepts `1` through `8`
+and controls the startup view; omitting it keeps the built-in Flows default.
+`[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while
 `[flow_prompts]` customizes Flow phase launch templates. wtui appends
 `After completing this phase goal, mark this Flow phase done with wtui-flow.`

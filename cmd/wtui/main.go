@@ -317,11 +317,17 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {
 	launchOpts := actions.LaunchOptions{TerminalCommand: cfg.Terminal.Command}
+	startupMode := ui.ModeFlows
+	if cfg.UI.DefaultView != nil {
+		if mode, ok := model.ModeForViewNumber(*cfg.UI.DefaultView); ok {
+			startupMode = mode
+		}
+	}
 	return model.Options{
 		AgentCommand:          cfg.Agent.Command,
 		CodexReasoningEffort:  cfg.Agent.CodexReasoningEffort,
 		ClaudeReasoningEffort: cfg.Agent.ClaudeReasoningEffort,
-		StartupMode:           ui.ModeFlows,
+		StartupMode:           startupMode,
 		PlanPromptTemplate:    cfg.Agent.PlanPrompt,
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Plan:           cfg.FlowPrompts.Plan,
@@ -362,6 +368,13 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		},
 		SaveAgentReasoningEffort: func(command, effort string) error {
 			return config.SaveAgentReasoningEffort(command, effort)
+		},
+		SaveDefaultView: func(mode ui.Mode) error {
+			number, ok := model.ViewNumber(mode)
+			if !ok {
+				return fmt.Errorf("unsupported default view %d", mode)
+			}
+			return config.SaveDefaultView(number)
 		},
 	}
 }
