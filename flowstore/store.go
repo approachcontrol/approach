@@ -292,6 +292,8 @@ func DefaultRoot() (string, error) {
 }
 
 // Create writes a new flow record with the default Flow phase graph.
+// New records always start with auto mode enabled; callers that need manual
+// mode should create the Flow, then opt out with SetAutoMode(false).
 func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, fmt.Errorf("flow title is required")
@@ -329,6 +331,7 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 	record.SchemaVersion = schemaVersion
 	record.CreatedAt = defaultTime(record.CreatedAt, now)
 	record.UpdatedAt = defaultTime(record.UpdatedAt, now)
+	record.AutoMode = true
 	if len(record.Phases) == 0 {
 		record.Phases = defaultPhases(record.CreatedAt, record.UpdatedAt)
 	}

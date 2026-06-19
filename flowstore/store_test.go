@@ -51,6 +51,9 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 	if record.SchemaVersion != 1 {
 		t.Fatalf("SchemaVersion = %d, want 1", record.SchemaVersion)
 	}
+	if !record.AutoMode {
+		t.Fatal("AutoMode = false, want new flows to default to auto mode enabled")
+	}
 	if record.CreatedAt != now || record.UpdatedAt != now {
 		t.Fatalf("timestamps = %s/%s, want %s", record.CreatedAt, record.UpdatedAt, now)
 	}
@@ -77,7 +80,8 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 		read.WorktreePath != filepath.Join(root, "repo-worktrees", "flow-add-flow-mode") ||
 		read.Branch != "flow/add-flow-mode" ||
 		read.BaseRef != "main" ||
-		read.Commit != "abc123" {
+		read.Commit != "abc123" ||
+		!read.AutoMode {
 		t.Fatalf("record did not round-trip: %#v", read)
 	}
 
@@ -104,6 +108,142 @@ func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
 	}
 	if dirInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("flow dir mode = %o, want 0700", dirInfo.Mode().Perm())
+	}
+}
+
+func TestStoreCreateDefaultsAutoModeOnEvenWhenCallerPassesFalse(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Default Automation",
+		Instructions: "Start the pipeline.",
+		RepoPath:     filepath.Join(root, "repo"),
+		AutoMode:     false,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if !record.AutoMode {
+		t.Fatal("AutoMode = false, want Create to default every new flow to auto mode enabled")
+	}
+}
+
+func TestStoreSetAutoModeDisablesNewlyCreatedFlow(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Manual Follow Up",
+		Instructions: "Let the user opt out after creation.",
+		RepoPath:     repoPath,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if !record.AutoMode {
+		t.Fatal("Create().AutoMode = false, want new flow to start with auto mode enabled")
+	}
+
+	updated, err := store.SetAutoMode(flowstore.AutoModeUpdate{
+		FlowID:  record.FlowID,
+		Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("SetAutoMode(false) error = %v", err)
+	}
+	if updated.AutoMode {
+		t.Fatalf("SetAutoMode(false).AutoMode = true: %#v", updated)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.AutoMode {
+		t.Fatalf("Read().AutoMode = true after disable: %#v", read)
+	}
+
+	records, err := store.List(flowstore.FlowFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].AutoMode {
+		t.Fatalf("List() = %#v, want one disabled flow", records)
+	}
+}
+
+func TestStoreReadPreservesLegacyOmittedAutoModeAsDisabled(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	flowID := "20260607T120000Z-legacy-flow"
+	meta := filepath.Join(root, "flows", flowID, "meta.json")
+	if err := os.MkdirAll(filepath.Dir(meta), 0o700); err != nil {
+		t.Fatalf("create legacy flow dir: %v", err)
+	}
+	legacy := map[string]any{
+		"schema_version": 1,
+		"flow_id":        flowID,
+		"title":          "Legacy Flow",
+		"instructions":   "Existing automation preference should stay off.",
+		"status":         flowstore.StatusPending,
+		"repo_path":      repoPath,
+		"merge": map[string]any{
+			"status": flowstore.MergePending,
+		},
+		"phases": []map[string]any{
+			{
+				"phase_id":   "plan",
+				"title":      "Plan",
+				"kind":       "plan",
+				"status":     flowstore.PhaseReady,
+				"order":      1,
+				"created_at": now.Format(time.RFC3339Nano),
+				"updated_at": now.Format(time.RFC3339Nano),
+			},
+		},
+		"created_at": now.Format(time.RFC3339Nano),
+		"updated_at": now.Format(time.RFC3339Nano),
+	}
+	data, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal legacy record: %v", err)
+	}
+	if err := os.WriteFile(meta, data, 0o600); err != nil {
+		t.Fatalf("write legacy meta.json: %v", err)
+	}
+
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.AutoMode {
+		t.Fatalf("Read().AutoMode = true for legacy omitted field: %#v", read)
+	}
+
+	records, err := store.List(flowstore.FlowFilter{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].AutoMode {
+		t.Fatalf("List() = %#v, want one legacy flow with auto mode disabled", records)
 	}
 }
 
