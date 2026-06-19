@@ -329,6 +329,7 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 	record.SchemaVersion = schemaVersion
 	record.CreatedAt = defaultTime(record.CreatedAt, now)
 	record.UpdatedAt = defaultTime(record.UpdatedAt, now)
+	record.AutoMode = true
 	if len(record.Phases) == 0 {
 		record.Phases = defaultPhases(record.CreatedAt, record.UpdatedAt)
 	}

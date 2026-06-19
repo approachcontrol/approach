@@ -348,6 +348,7 @@ func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 		record.Branch != "flow/add-flow-mode" ||
 		record.BaseRef != "main" ||
 		record.Status != flowstore.StatusPending ||
+		!record.AutoMode ||
 		len(record.Phases) != 7 {
 		t.Fatalf("unexpected flow record: %#v", record)
 	}

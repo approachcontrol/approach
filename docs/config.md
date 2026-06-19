@@ -322,12 +322,13 @@ phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
 launchable phase for the selected Flow. Press `y` to copy the selected Flow
 worktree path from either a Flow row or one of its expanded phase rows. Press
-`m` to toggle per-Flow auto mode. When auto mode is on, completed CLI phases
-running in an embedded Flow terminal advance only after the completed phase's
-terminal exits normally and auto-closes; terminal exit also triggers a Flow
-refresh so newly persisted completion state is discovered without waiting for
-unrelated UI activity. Auto mode still skips non-completed outcomes and stops
-before Merge.
+`m` to toggle per-Flow auto mode. New Flow records start with auto mode on, and
+the toggle is persisted on each Flow. When auto mode is on, completed CLI
+phases running in an embedded Flow terminal advance only after the completed
+phase's terminal exits normally and auto-closes; terminal exit also triggers a
+Flow refresh so newly persisted completion state is discovered without waiting
+for unrelated UI activity. Auto mode still skips non-completed outcomes and
+stops before Merge.
 Press `F3` from any middle-pane view to keep the current numbered mode selected
 while showing active Flows across all repos. This active view hides merged Flow
 records; moving focus to the left repo pane temporarily filters the visible
