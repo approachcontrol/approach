@@ -621,33 +621,43 @@ func TestModel_F2FromPlansPaneClearsSelectedPhase(t *testing.T) {
 	}
 }
 
-func TestModel_BackspaceFromPlansPaneClearsSelectedPhase(t *testing.T) {
-	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
-		PlanID:   "plan-1",
-		RepoPath: "/dev/alpha",
-		Title:    "Persist plans",
-		Status:   "draft",
-		Phases:   []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}},
-	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := m.SelectedPlanPhaseID(); got != "p1" {
-		t.Fatalf("selected plan phase = %q, want p1 before backspace", got)
-	}
+func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
+				PlanID:   "plan-1",
+				RepoPath: "/dev/alpha",
+				Title:    "Persist plans",
+				Status:   "draft",
+				Phases:   []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}},
+			}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+			if got := m.SelectedPlanPhaseID(); got != "p1" {
+				t.Fatalf("selected plan phase = %q, want p1 before %s", got, tt.name)
+			}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+			m, cmd := update(m, tt.key)
 
-	if m.ActivePane() != 0 {
-		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
-	}
-	if got := m.SelectedPlanPhaseID(); got != "" {
-		t.Fatalf("selected plan phase = %q, want cleared", got)
-	}
-	if m.Mode() != ui.ModePlans {
-		t.Fatalf("mode = %d, want unchanged plans", m.Mode())
-	}
-	if cmd != nil {
-		t.Fatalf("backspace from plans pane returned cmd %T, want nil", cmd)
+			if m.ActivePane() != 0 {
+				t.Fatalf("expected left pane after %s, got %d", tt.name, m.ActivePane())
+			}
+			if got := m.SelectedPlanPhaseID(); got != "" {
+				t.Fatalf("selected plan phase = %q, want cleared", got)
+			}
+			if m.Mode() != ui.ModePlans {
+				t.Fatalf("mode = %d, want unchanged plans", m.Mode())
+			}
+			if cmd != nil {
+				t.Fatalf("%s from plans pane returned cmd %T, want nil", tt.name, cmd)
+			}
+		})
 	}
 }
 
@@ -723,25 +733,35 @@ func TestModel_BackKeysEditRightPaneSearchInsteadOfSwitchingPanes(t *testing.T) 
 	}
 }
 
-func TestModel_BackspaceEditsModalInputInsteadOfSwitchingPanes(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	if cmd != nil {
-		t.Fatalf("opening worktree input produced cmd %T, want nil", cmd)
-	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f', 'e', 'a', 't'}})
+func TestModel_BackKeysEditModalInputInsteadOfSwitchingPanes(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model.New(testRepos())
+			m = inRightPane(m)
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+			if cmd != nil {
+				t.Fatalf("opening worktree input produced cmd %T, want nil", cmd)
+			}
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f', 'e', 'a', 't'}})
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+			m, cmd = update(m, tt.key)
 
-	if cmd != nil {
-		t.Fatalf("modal backspace returned cmd %T, want nil", cmd)
-	}
-	if m.ActivePane() != 1 {
-		t.Fatalf("active pane = %d, want right pane while modal owns backspace", m.ActivePane())
-	}
-	if got := m.WorktreeInput(); got != "fea" {
-		t.Fatalf("worktree input = %q, want edited value", got)
+			if cmd != nil {
+				t.Fatalf("modal %s returned cmd %T, want nil", tt.name, cmd)
+			}
+			if m.ActivePane() != 1 {
+				t.Fatalf("active pane = %d, want right pane while modal owns %s", m.ActivePane(), tt.name)
+			}
+			if got := m.WorktreeInput(); got != "fea" {
+				t.Fatalf("worktree input = %q, want edited value", got)
+			}
+		})
 	}
 }
 
