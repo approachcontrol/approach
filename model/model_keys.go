@@ -23,6 +23,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	if m.modal.IsOpen() {
+		if next, cmd, handled := m.handlePromptTemplateModalKey(msg); handled {
+			return next, cmd
+		}
 		var cmd tea.Cmd
 		view := m.modal.View()
 		var outcome modal.Outcome
@@ -104,8 +107,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "f2" {
-		m = m.togglePrimaryPaneFocus()
-		return m, nil
+		return m.handlePromptTemplates()
 	}
 
 	if key == "tab" && m.activePane == 0 {

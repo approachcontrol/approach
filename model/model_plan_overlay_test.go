@@ -449,7 +449,7 @@ func TestModel_CollapsingExpandedPlanResumesPlanMovement(t *testing.T) {
 	}
 }
 
-func TestModel_F2AwayFromPlansAndBackKeepsSelectedPhaseCleared(t *testing.T) {
+func TestModel_BackspaceAwayFromPlansAndTabBackKeepsSelectedPhaseCleared(t *testing.T) {
 	m := model.New(testRepos())
 	m = plansInRightPane(t, m, []planstore.PlanRecord{
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Plan 1", Status: "draft",
@@ -462,9 +462,9 @@ func TestModel_F2AwayFromPlansAndBackKeepsSelectedPhaseCleared(t *testing.T) {
 		t.Fatalf("selected phase = %q, want p1", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if got := m.ActivePane(); got != 0 {
-		t.Fatalf("F2 should move focus to repo pane, got active pane %d", got)
+		t.Fatalf("backspace should move focus to repo pane, got active pane %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
 		t.Fatalf("selected phase should clear when focus leaves plans pane, got %q", got)
@@ -473,9 +473,9 @@ func TestModel_F2AwayFromPlansAndBackKeepsSelectedPhaseCleared(t *testing.T) {
 		t.Fatalf("leaving plans should preserve phase expansion:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if got := m.ActivePane(); got != 1 {
-		t.Fatalf("F2 should return focus to plans pane, got active pane %d", got)
+		t.Fatalf("tab should return focus to plans pane, got active pane %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
 		t.Fatalf("selected phase should not restore when focus returns, got %q", got)

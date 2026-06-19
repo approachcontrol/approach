@@ -72,7 +72,7 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 		t.Fatalf("initial Plans() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}
@@ -640,7 +640,7 @@ func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
 	m, _ = update(m, model.PlanResultMsg{Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved"},

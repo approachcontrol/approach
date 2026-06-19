@@ -13,16 +13,17 @@ const flowPlanPhaseID = "plan"
 // FlowStartRequest contains the user operation inputs needed to create a Flow
 // and optionally prepare the initial plan-phase agent launch.
 type FlowStartRequest struct {
-	RepoPath         string
-	Title            string
-	Instructions     string
-	BaseRef          string
-	AgentCommand     string
-	ReasoningEffort  string
-	SessionStateRoot string
-	PlanPhaseID      string
-	PlanPhaseTitle   string
-	PlanPhaseStatus  string
+	RepoPath            string
+	Title               string
+	Instructions        string
+	BaseRef             string
+	AgentCommand        string
+	ReasoningEffort     string
+	SessionStateRoot    string
+	FlowPromptTemplates FlowPromptTemplates
+	PlanPhaseID         string
+	PlanPhaseTitle      string
+	PlanPhaseStatus     string
 }
 
 // FlowStartResult is the prepared or launch-ready result of creating a new Flow.
@@ -162,9 +163,16 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		PlanPhaseStatus:  phaseStatus,
 		FlowID:           flow.FlowID,
 		FlowPhaseID:      phaseID,
-		InitialPrompt:    flowPlanPrompt(flowStartPromptRecord(flow, req, worktree, commit), s.flowPromptTemplates),
+		InitialPrompt:    flowPlanPrompt(flowStartPromptRecord(flow, req, worktree, commit), s.promptTemplatesForRequest(req)),
 	}
 	return result, nil
+}
+
+func (s FlowStarter) promptTemplatesForRequest(req FlowStartRequest) FlowPromptTemplates {
+	if req.FlowPromptTemplates != (FlowPromptTemplates{}) {
+		return req.FlowPromptTemplates
+	}
+	return s.flowPromptTemplates
 }
 
 func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) {

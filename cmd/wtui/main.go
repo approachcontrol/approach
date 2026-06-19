@@ -376,6 +376,12 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 			}
 			return config.SaveDefaultView(number)
 		},
+		SavePromptTemplate: func(section, key, value string) error {
+			return config.SavePromptTemplate(section, key, value)
+		},
+		ResetPromptTemplate: func(section, key string) error {
+			return config.ResetPromptTemplate(section, key)
+		},
 	}
 }
 

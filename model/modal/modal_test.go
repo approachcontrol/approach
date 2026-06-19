@@ -457,6 +457,27 @@ func TestMultiLineInputSubmitTrimsOuterWhitespaceOnly(t *testing.T) {
 	}
 }
 
+func TestRawMultiLineInputSubmitPreservesOuterWhitespace(t *testing.T) {
+	var submitted string
+	m := modal.OpenRawMultiLineInput("Template", "prompt template", "  first\n\nsecond  \n", nil, func(input string) tea.Cmd {
+		submitted = input
+		return nil
+	})
+
+	_, out, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if out != modal.Accepted {
+		t.Fatalf("outcome = %v, want Accepted", out)
+	}
+	if cmd == nil {
+		t.Fatal("expected deferred submit command")
+	}
+	cmd()
+	if submitted != "  first\n\nsecond  \n" {
+		t.Fatalf("submitted = %q, want raw input preserved", submitted)
+	}
+}
+
 func TestSelectSnapshotsPromptItemsAndInitialSelection(t *testing.T) {
 	items := []modal.SelectItem{
 		{Label: "Codex", Value: "codex"},

@@ -509,22 +509,6 @@ func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t 
 	}
 }
 
-func TestModel_F2FromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *testing.T) {
-	m := model.New(testRepos())
-	m = selectBravo(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
-
-	if m.ActivePane() != 1 {
-		t.Fatalf("expected right pane after f2, got %d", m.ActivePane())
-	}
-	if m.Selected() != 1 {
-		t.Fatalf("selected repo = %d, want unchanged 1", m.Selected())
-	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
-	}
-}
-
 func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -538,14 +522,14 @@ func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	}
 }
 
-func TestModel_F2FromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
+func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})                        // right → left
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // right to left
 
 	if m.ActivePane() != 0 {
-		t.Fatalf("expected left pane after f2, got %d", m.ActivePane())
+		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeStashes {
 		t.Fatalf("mode = %d, want unchanged stashes", m.Mode())
@@ -599,7 +583,7 @@ func TestModel_BackspaceFromRightPaneSwitchesToLeftAcrossModes(t *testing.T) {
 	}
 }
 
-func TestModel_F2FromPlansPaneClearsSelectedPhase(t *testing.T) {
+func TestModel_BackspaceFromPlansPaneClearsSelectedPhase(t *testing.T) {
 	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
 		PlanID:   "plan-1",
 		RepoPath: "/dev/alpha",
@@ -610,13 +594,13 @@ func TestModel_F2FromPlansPaneClearsSelectedPhase(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if got := m.SelectedPlanPhaseID(); got != "p1" {
-		t.Fatalf("selected plan phase = %q, want p1 before f2", got)
+		t.Fatalf("selected plan phase = %q, want p1 before backspace", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 
 	if m.ActivePane() != 0 {
-		t.Fatalf("expected left pane after f2, got %d", m.ActivePane())
+		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
 		t.Fatalf("selected plan phase = %q, want cleared", got)
@@ -666,14 +650,14 @@ func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
 	}
 }
 
-func TestModel_F2FromFlowsPaneClearsSelectedPhase(t *testing.T) {
+func TestModel_BackspaceFromFlowsPaneClearsSelectedPhase(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 
 	if m.ActivePane() != 0 {
-		t.Fatalf("expected left pane after f2, got %d", m.ActivePane())
+		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
 	}
 	if got := m.SelectedFlowPhaseID(); got != "" {
 		t.Fatalf("selected flow phase = %q, want cleared", got)
@@ -688,7 +672,7 @@ func TestModel_TabFromLeftPaneReturnsToActiveFlowsWithoutChangingMode(t *testing
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -784,7 +768,7 @@ func TestModel_LeftPaneDownFiresFetchInBranchMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // branches
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})                        // back to left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // back to left pane
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil {
 		t.Error("expected fetch cmd after repo navigation in branches mode, got nil")
@@ -860,7 +844,7 @@ func TestModel_LeftPaneDownResetsRightPaneCursors(t *testing.T) {
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // move branch cursor
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // branchSelected=2
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})   // back to left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // navigate to bravo
 	if m.BranchSelected() != 0 {
 		t.Errorf("expected branchSelected reset to 0, got %d", m.BranchSelected())
@@ -932,7 +916,7 @@ func TestModel_RightArrowFromLeftPaneInNonEdgeModeIsNoOp(t *testing.T) {
 		{Name: "main"}, {Name: "feature"},
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
@@ -963,7 +947,7 @@ func TestModel_LeftArrowFromLeftPaneAtFlowsIsNoOp(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
@@ -2177,7 +2161,7 @@ func TestModel_RepoSwitchClearsCommits(t *testing.T) {
 	if len(m.Commits()) != 3 {
 		t.Fatal("expected 3 commits")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2}) // switch to left pane
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if len(m.Commits()) != 0 {
 		t.Errorf("expected commits cleared on repo switch, got %d", len(m.Commits()))
@@ -2345,7 +2329,7 @@ func TestModel_RepoSwitchClearsReflogs(t *testing.T) {
 		t.Fatalf("expected 3 reflogs loaded, got %d", len(m.Reflogs()))
 	}
 	// Switch to left pane and navigate down
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if len(m.Reflogs()) != 0 {
 		t.Errorf("expected reflogs cleared on repo switch, got %d", len(m.Reflogs()))

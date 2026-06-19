@@ -142,7 +142,7 @@ const ShortcutPaneWidth = 28
 const (
 	shortcutKeyColumnWidth = 6
 	shortcutOverflowMarker = "..."
-	paneShortcutKey        = "f2/tab"
+	paneShortcutKey        = "tab"
 	paneBackShortcutKey    = "bksp"
 )
 

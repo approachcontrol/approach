@@ -117,6 +117,7 @@ type Modal struct {
 	action       func() tea.Cmd
 	input        string
 	inputMode    InputMode
+	inputRaw     bool
 	inputCursor  int
 	inputColumn  int
 	inputErr     string
@@ -197,6 +198,12 @@ func OpenMultiLineInput(prompt, placeholder, initial string, validate func(strin
 		validate:    validate,
 		submit:      submit,
 	}
+}
+
+func OpenRawMultiLineInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
+	m := OpenMultiLineInput(prompt, placeholder, initial, validate, submit)
+	m.inputRaw = true
+	return m
 }
 
 func OpenSelect(prompt string, items []SelectItem, selectedIndex int, submit func(string) tea.Cmd) Modal {
@@ -401,7 +408,10 @@ func (m Modal) updateInput(msg tea.KeyMsg) (Modal, Outcome, tea.Cmd) {
 		}
 		return m, Consumed, nil
 	case "enter":
-		input := strings.TrimSpace(m.input)
+		input := m.input
+		if !m.inputRaw {
+			input = strings.TrimSpace(input)
+		}
 		if m.validate != nil {
 			if err := m.validate(input); err != nil {
 				m.inputErr = err.Error()

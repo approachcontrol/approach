@@ -281,6 +281,52 @@ func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanUsesRequestTimePromptTemplate(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-live"
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/live", Branch: "flow/live"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				Instructions: "Build live",
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				Commit:       update.Commit,
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		ResolveCommit: func(string) string { return "abc123" },
+		NewLaunchID:   func() string { return "launch-live" },
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Plan: "old template {flow_id}",
+		},
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/dev/alpha",
+		Title:        "Live",
+		Instructions: "Build live",
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Plan: "new template {flow_id}",
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartPlan returned error: %v", err)
+	}
+
+	want := appendFlowDoneInstructionForTest("new template flow-live")
+	if result.LaunchContext.InitialPrompt != want {
+		t.Fatalf("plan prompt = %q, want %q", result.LaunchContext.InitialPrompt, want)
+	}
+}
+
 func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 	var gotCtx actions.BootstrapContext
 	var gotHook actions.BootstrapHook

@@ -177,7 +177,7 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 		}
 	}
 	// Pane switching and q/esc should still appear.
-	for _, hint := range []string{"f2/tab: pane", "q/esc: quit"} {
+	for _, hint := range []string{"tab: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should appear even when left pane is active", hint)
 		}
@@ -1409,7 +1409,7 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "q/esc: quit") {
+	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "q/esc: quit") {
 		t.Fatalf("wide render footer should not carry shortcut hints, got %q", footer)
 	}
 	if !strings.Contains(shortcutPaneText(view), "bksp   pane") {
@@ -1428,8 +1428,8 @@ func TestRender_NarrowLayoutKeepsFooterHints(t *testing.T) {
 
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if !strings.Contains(footer, "f2/tab: pane") {
-		t.Fatalf("narrow render should expose f2 pane hint, got %q", footer)
+	if !strings.Contains(footer, "tab: pane") {
+		t.Fatalf("narrow render should expose tab pane hint, got %q", footer)
 	}
 	if strings.Contains(view, "Shortcuts") {
 		t.Fatal("narrow render should not reserve a shortcut pane")
@@ -1482,7 +1482,7 @@ func TestRender_ShortWideLayoutKeepsClippedShortcutPane(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	for _, forbidden := range []string{"f2/tab: pane", "n: new worktree", "F: pull", "c: code"} {
+	for _, forbidden := range []string{"tab: pane", "n: new worktree", "F: pull", "c: code"} {
 		if strings.Contains(footer, forbidden) {
 			t.Fatalf("short wide footer should not carry shortcut hint %q, got %q", forbidden, footer)
 		}
@@ -1825,8 +1825,8 @@ func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 		Mode:       ModeFlows,
 		ActivePane: 0,
 	}, 26, 18))
-	if !strings.Contains(leftPane, "f2") || !strings.Contains(leftPane, "pane") {
-		t.Fatalf("left-pane shortcut pane should include f2 pane hint, got:\n%s", leftPane)
+	if !strings.Contains(leftPane, "tab") || !strings.Contains(leftPane, "pane") {
+		t.Fatalf("left-pane shortcut pane should include tab pane hint, got:\n%s", leftPane)
 	}
 	if strings.Contains(leftPane, "←/→") || strings.Contains(leftPane, "pane/view") {
 		t.Fatalf("left-pane shortcut pane should not include arrow view hint, got:\n%s", leftPane)
@@ -1878,7 +1878,7 @@ func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
 	}
 	lines := strings.Split(view, "\n")
 	footer := lines[len(lines)-1]
-	if strings.Contains(footer, "f2/tab: pane") || strings.Contains(footer, "no upstream") {
+	if strings.Contains(footer, "tab: pane") || strings.Contains(footer, "no upstream") {
 		t.Fatalf("branch wide footer should not duplicate shortcut or legend hints, got %q", footer)
 	}
 }
@@ -4010,7 +4010,7 @@ func TestStatusBar_RightPaneShowsBackspacePaneHint(t *testing.T) {
 		}
 	}
 	if strings.Contains(bar, "f2: pane") {
-		t.Fatalf("right-pane status bar should not duplicate f2 pane hint, got %q", bar)
+		t.Fatalf("right-pane status bar should not duplicate tab pane hint, got %q", bar)
 	}
 	if strings.Contains(bar, "⌫") {
 		t.Fatalf("right-pane status bar should use bksp label, got %q", bar)

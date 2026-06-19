@@ -109,6 +109,8 @@ type Model struct {
 	saveAgent                  func(string) error
 	saveAgentReasoningEffort   func(string, string) error
 	saveDefaultView            func(ui.Mode) error
+	savePromptTemplate         func(string, string, string) error
+	resetPromptTemplate        func(string, string) error
 	launchTerminal             func(string) (actions.TerminalLaunchSpec, error)
 	launchDetachedTerminal     func(string, string) (actions.TerminalLaunchSpec, error)
 	launchAgent                func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
@@ -192,6 +194,8 @@ type Options struct {
 	SaveAgentCommand         func(string) error
 	SaveAgentReasoningEffort func(string, string) error
 	SaveDefaultView          func(ui.Mode) error
+	SavePromptTemplate       func(section, key, value string) error
+	ResetPromptTemplate      func(section, key string) error
 	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
 	LaunchDetachedTerminal   func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error)
 	LaunchAgent              func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
@@ -220,6 +224,14 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveDefaultView := opts.SaveDefaultView
 	if saveDefaultView == nil {
 		saveDefaultView = func(ui.Mode) error { return nil }
+	}
+	savePromptTemplate := opts.SavePromptTemplate
+	if savePromptTemplate == nil {
+		savePromptTemplate = func(string, string, string) error { return nil }
+	}
+	resetPromptTemplate := opts.ResetPromptTemplate
+	if resetPromptTemplate == nil {
+		resetPromptTemplate = func(string, string) error { return nil }
 	}
 	fetchRepo := opts.FetchRepo
 	if fetchRepo == nil {
@@ -435,6 +447,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		saveAgent:                saveAgent,
 		saveAgentReasoningEffort: saveAgentReasoningEffort,
 		saveDefaultView:          saveDefaultView,
+		savePromptTemplate:       savePromptTemplate,
+		resetPromptTemplate:      resetPromptTemplate,
 		launchTerminal:           launchTerminal,
 		launchDetachedTerminal:   launchDetachedTerminal,
 		launchAgent:              launchAgent,
@@ -1210,6 +1224,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDefaultViewSet(msg), nil
 	case DefaultViewSetFailedMsg:
 		return m.handleDefaultViewSetFailed(msg), nil
+	case promptTemplateEditRequestedMsg:
+		return m.handlePromptTemplateEditRequested(msg), nil
+	case PromptTemplateSavedMsg:
+		return m.handlePromptTemplateSaved(msg), nil
+	case PromptTemplateSaveFailedMsg:
+		return m.handlePromptTemplateSaveFailed(msg), nil
+	case PromptTemplateResetMsg:
+		return m.handlePromptTemplateReset(msg), nil
+	case PromptTemplateResetFailedMsg:
+		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			return m, nil

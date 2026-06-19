@@ -46,10 +46,9 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 ### Keys
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
-or `tab` on a selected repo to focus the content pane, and press `f2` to switch
-pane focus explicitly. Left-pane shortcut hints show `f2/tab` for pane focus
-because `tab` is the left-to-content shortcut; right-pane hints show `bksp`
-for returning to the repo pane. When a Flow embedded terminal is open, `tab`
+or `tab` on a selected repo to focus the content pane; from the content pane,
+`bksp` returns focus to the repo pane. Press `f2` to open the prompt-template
+editor for plan and Flow launch prompts. When a Flow embedded terminal is open, `tab`
 switches focus between the Flow list and that terminal while the right pane
 remains active.
 The active pane is highlighted with a blue border.
@@ -74,7 +73,8 @@ filter matches, or a load failure with details in the status bar.
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
 | `enter` | Switch focus to right pane |
-| `f2`/`tab` | Switch pane focus |
+| `tab` | Switch focus to right pane |
+| `f2` | Edit prompt templates |
 | `q`/`esc` | Quit |
 
 **Right pane (content)**
@@ -112,7 +112,8 @@ filter matches, or a load failure with details in the status bar.
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
-| `f2`/`bksp` | Switch focus to left pane |
+| `bksp` | Switch focus to left pane |
+| `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the active mode. Press `1`–`9` or use arrow keys to
@@ -120,9 +121,10 @@ switch between worktrees, branches, stashes, history, reflog, sessions, plans,
 flows, and active flows. Horizontal view switching wraps between worktrees and
 active flows. Press `V` to choose which numbered view wtui opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
-`enter` or `tab` from the repo pane to focus the content pane, or `f2` to switch
-pane focus explicitly. In the content pane, `bksp` switches focus back to the
-left repo pane.
+`enter` or `tab` from the repo pane to focus the content pane. In the content
+pane, `bksp` switches focus back to the left repo pane. Press `f2` from normal
+TUI views to edit the `[agent].plan_prompt` and `[flow_prompts]` templates;
+Flow terminal input focus passes F2 through to the embedded agent.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
