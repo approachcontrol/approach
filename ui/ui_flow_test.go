@@ -83,6 +83,9 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	if !strings.Contains(pane, "f3") || !strings.Contains(pane, "active flows") {
 		t.Fatalf("active-flow shortcut pane should keep f3 active flows hint:\n%s", pane)
 	}
+	if !strings.Contains(pane, "⌫      pane") {
+		t.Fatalf("active-flow shortcut pane should expose backspace pane hint:\n%s", pane)
+	}
 }
 
 func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
@@ -745,7 +748,8 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
-		"f2     pane",
+		"⌫      pane",
+		"f2/tab pane",
 		"q/esc  quit",
 		"f5     refresh",
 	} {
@@ -855,11 +859,12 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	enterIndex := strings.Index(bar, "enter: phases")
 	headlessIndex := strings.Index(bar, "h: headless on")
 	agentIndex := strings.Index(bar, "A: codex")
-	tabIndex := strings.Index(bar, "f2: pane")
-	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || tabIndex < 0 {
+	backspaceIndex := strings.Index(bar, "⌫ pane")
+	tabIndex := strings.Index(bar, "f2/tab: pane")
+	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || backspaceIndex < 0 || tabIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}
-	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < tabIndex) {
+	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < backspaceIndex && backspaceIndex < tabIndex) {
 		t.Fatalf("full Flow footer should order Actions, Mode, Agent, Global, got %q", bar)
 	}
 }

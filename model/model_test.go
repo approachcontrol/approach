@@ -462,17 +462,21 @@ func TestModel_TabFromRightPaneDoesNotSwitchToLeft(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 }
 
-func TestModel_TabFromLeftPaneDoesNotSwitchPanes(t *testing.T) {
+func TestModel_TabFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *testing.T) {
 	m := model.New(testRepos())
+	m = selectBravo(m)
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if m.ActivePane() != 0 {
-		t.Errorf("expected left pane after tab, got %d", m.ActivePane())
+	if m.ActivePane() != 1 {
+		t.Errorf("expected right pane after tab, got %d", m.ActivePane())
 	}
-	if m.Selected() != 0 {
-		t.Errorf("expected selected unchanged at 0, got %d", m.Selected())
+	if m.Selected() != 1 {
+		t.Errorf("expected selected unchanged at 1, got %d", m.Selected())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
 	}
 	if cmd != nil {
 		t.Fatalf("tab from left pane produced cmd %T, want nil", cmd)
@@ -585,6 +589,28 @@ func TestModel_F2FromFlowsPaneClearsSelectedPhase(t *testing.T) {
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %d, want unchanged flows", m.Mode())
 	}
+}
+
+func TestModel_TabFromLeftPaneReturnsToActiveFlowsWithoutChangingMode(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("active pane = %d, want right pane after tab", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode = %d, want unchanged underlying worktrees mode", m.Mode())
+	}
+	if cmd != nil {
+		t.Fatalf("tab from left pane with active flows returned cmd %T, want nil", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
 }
 
 func TestModel_F2DoesNotSwitchPanesWhileSearchIsActive(t *testing.T) {
