@@ -333,6 +333,15 @@ type AgentReasoningEffortSetFailedMsg struct {
 	Err     string
 }
 
+type DefaultViewSetMsg struct {
+	Mode ui.Mode
+}
+
+type DefaultViewSetFailedMsg struct {
+	Mode ui.Mode
+	Err  string
+}
+
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
@@ -955,6 +964,23 @@ func (m Model) handleAgentReasoningEffortSetFailed(msg AgentReasoningEffortSetFa
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to persist reasoning effort"
+	}
+	m = m.setStatus(statusOther, errText)
+	return m
+}
+
+func (m Model) handleDefaultViewSet(msg DefaultViewSetMsg) Model {
+	m.defaultView = msg.Mode
+	m = m.clearStatus(statusOther)
+	return m
+}
+
+func (m Model) handleDefaultViewSetFailed(msg DefaultViewSetFailedMsg) Model {
+	// Keep the selection usable for this session even when persistence fails.
+	m.defaultView = msg.Mode
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to persist default view"
 	}
 	m = m.setStatus(statusOther, errText)
 	return m

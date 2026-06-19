@@ -6668,7 +6668,7 @@ func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	}
 }
 
-func TestModel_FlowEffortKeyDoesNotOpenPickerWhileFlowTerminalFocused(t *testing.T) {
+func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -6715,6 +6715,14 @@ func TestModel_FlowEffortKeyDoesNotOpenPickerWhileFlowTerminalFocused(t *testing
 	}
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "E" {
 		t.Fatalf("terminal input-mode E writes = %#v, want E", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("terminal input-mode V opened overlay %d", m.Overlay())
+	}
+	if len(fakeTerm.writes) != 2 || fakeTerm.writes[1] != "V" {
+		t.Fatalf("terminal input-mode V writes = %#v, want E then V", fakeTerm.writes)
 	}
 }
 

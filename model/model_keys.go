@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -95,6 +96,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key == "A" {
 		return m.handleSetAgent()
+	}
+
+	if key == "V" {
+		return m.handleSetDefaultView()
 	}
 
 	if key == "f5" {
@@ -1013,6 +1018,61 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 			return AgentReasoningEffortSetFailedMsg{Command: command, Effort: effort, Err: err.Error()}
 		}
 		return AgentReasoningEffortSetMsg{Command: command, Effort: effort}
+	}
+}
+
+func (m Model) handleSetDefaultView() (tea.Model, tea.Cmd) {
+	m.modal = modal.OpenSelectWithLayout(
+		"Choose default view",
+		defaultViewSelectItems(),
+		selectedDefaultViewIndex(m.defaultView),
+		modal.Layout{Width: 28, Height: len(viewChoices) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return func() tea.Msg {
+					return DefaultViewSetFailedMsg{Mode: m.defaultView, Err: "Unsupported default view"}
+				}
+			}
+			mode, ok := ModeForViewNumber(number)
+			if !ok {
+				return func() tea.Msg {
+					return DefaultViewSetFailedMsg{Mode: m.defaultView, Err: "Unsupported default view"}
+				}
+			}
+			return m.setDefaultView(mode)
+		},
+	)
+	return m, nil
+}
+
+func defaultViewSelectItems() []modal.SelectItem {
+	choices := ViewChoices()
+	items := make([]modal.SelectItem, 0, len(choices))
+	for _, choice := range choices {
+		items = append(items, modal.SelectItem{
+			Label: fmt.Sprintf("%d %s", choice.Number, choice.Label),
+			Value: strconv.Itoa(choice.Number),
+		})
+	}
+	return items
+}
+
+func selectedDefaultViewIndex(mode ui.Mode) int {
+	for i, choice := range viewChoices {
+		if choice.Mode == mode {
+			return i
+		}
+	}
+	return len(viewChoices) - 1
+}
+
+func (m Model) setDefaultView(mode ui.Mode) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.saveDefaultView(mode); err != nil {
+			return DefaultViewSetFailedMsg{Mode: mode, Err: err.Error()}
+		}
+		return DefaultViewSetMsg{Mode: mode}
 	}
 }
 

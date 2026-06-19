@@ -26,6 +26,7 @@ exist:
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
 | Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
+| Startup default view | none | `[ui].default_view` | flows view (`8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
@@ -59,6 +60,9 @@ name = "github"
 
 [launch]
 prefer_multiplexer = true
+
+[ui]
+default_view = 8
 
 [agent]
 command = "codex"
@@ -112,6 +116,18 @@ keeps the local repository and allows retrying only the GitHub/origin setup.
 Repo names must be one path segment: they cannot be empty, `.`, `..`, start
 with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
 worktree directories).
+
+### `[ui]`
+
+Stores user-interface preferences.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, and `8` flows. Omitted keeps the built-in Flows startup default. |
+
+Press `V` in wtui to choose and persist this value from a picker. The picker
+changes future launches only; use `1` through `8`, arrows, `h`, or `l` to switch
+the current view.
 
 ### `[editor]`
 
@@ -316,7 +332,8 @@ Flow records are task-centric workflow records created by the TUI or explicitly
 through `wtui flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
-flows pane (mode `8`), which is the startup default. The pane shows linked plan
+flows pane (mode `8`), which is the startup default unless `[ui].default_view`
+is set. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row or expanded
 phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
