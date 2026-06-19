@@ -143,6 +143,7 @@ const (
 	shortcutKeyColumnWidth = 6
 	shortcutOverflowMarker = "..."
 	paneShortcutKey        = "f2/tab"
+	paneBackShortcutKey    = "bksp"
 )
 
 const (
@@ -1083,9 +1084,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if sp.ActivePane == 1 {
 		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 	}
-	if flowSurfaceActive && sp.ActivePane == 1 && !sp.EmbeddedTerminalActive {
-		navigation = append(navigation, shortcutHint{Key: "⌫", Label: "pane", Inline: true})
-	}
 	global := []shortcutHint{
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
@@ -1382,8 +1380,9 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
 	if height < 20 && sp.Mode != ModeFlows && sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
-		sections = prioritizeShortcutInSection(sections, "Global", "V", "f2")
-		sections = prioritizeShortcutInSection(sections, "Global", "A", "q/esc")
+		paneKey := paneShortcutKeyForStatus(sp)
+		sections = prioritizeShortcutInSection(sections, "Global", "V", paneKey)
+		sections = prioritizeShortcutInSection(sections, "Global", "A", paneKey)
 	}
 	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
 		sections = withoutShortcutKeys(sections, "D", "n", "f5")
@@ -1466,7 +1465,7 @@ func paneShortcutKeyForStatus(sp statusBarParams) string {
 	if sp.ActivePane == 0 {
 		return paneShortcutKey
 	}
-	return "f2"
+	return paneBackShortcutKey
 }
 
 func transientStatusStyle(fadeStep int) lipgloss.Style {
@@ -1554,11 +1553,15 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 		return full
 	}
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "⌫", "q/esc")
+	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
+	compactBase := footerHintsForKeys(hints, paneBackShortcutKey, "q/esc")
+	tinyBase := footerHintsForKeys(hints, "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "d")
+	coreActionsWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "d")
 	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "d", "m")
+	coreActionsWithAutoWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "d", "m")
 	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "x", "o", "y", "d", "r", "m")
 	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
 	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
@@ -1571,14 +1574,21 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 		appendParts(base, upDown, arrow, actionsWithoutAgentAndEffort),
 		appendParts(base, arrow, actionsWithoutAgentAndEffort),
 		appendParts(base, arrow, selectedActionsWithAuto),
-		appendParts(arrow, selectedActionsWithAuto),
+		appendParts(compactBase, selectedActionsWithAuto),
 		appendParts(base, arrow, coreActionsWithAuto),
 		appendParts(base, arrow, coreActions),
+		appendParts(compactBase, coreActionsWithAuto),
+		appendParts(compactBase, coreActions),
+		appendParts(compactBase, coreActionsWithAutoWithoutSafety),
+		appendParts(compactBase, coreActionsWithoutSafety),
+		appendParts(arrow, selectedActionsWithAuto),
 		appendParts(arrow, coreActionsWithAuto),
 		appendParts(arrow, coreActions),
 		appendParts(coreActionsWithAuto),
 		appendParts(coreActions),
 		base,
+		compactBase,
+		tinyBase,
 	} {
 		if candidate, ok := footerCandidate(sp.Width, parts); ok {
 			return candidate

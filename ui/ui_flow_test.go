@@ -86,7 +86,7 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	if !strings.Contains(pane, "Active flows") {
 		t.Fatalf("active-flow shortcut pane should identify Active flows:\n%s", pane)
 	}
-	if !strings.Contains(pane, "⌫      pane") {
+	if !strings.Contains(pane, "bksp   pane") {
 		t.Fatalf("active-flow shortcut pane should expose backspace pane hint:\n%s", pane)
 	}
 }
@@ -774,8 +774,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
-		"⌫      pane",
-		"f2     pane",
+		"bksp   pane",
 		"q/esc  quit",
 		"f5     refresh",
 	} {
@@ -941,13 +940,15 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	enterIndex := strings.Index(bar, "enter: phases")
 	headlessIndex := strings.Index(bar, "h: headless on")
 	agentIndex := strings.Index(bar, "A: codex")
-	backspaceIndex := strings.Index(bar, "⌫ pane")
-	paneIndex := strings.Index(bar, "f2: pane")
-	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || backspaceIndex < 0 || paneIndex < 0 {
+	backspaceIndex := strings.Index(bar, "bksp: pane")
+	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || backspaceIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}
-	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < backspaceIndex && backspaceIndex < paneIndex) {
+	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < backspaceIndex) {
 		t.Fatalf("full Flow footer should order Actions, Mode, Agent, Global, got %q", bar)
+	}
+	if strings.Contains(bar, "f2: pane") {
+		t.Fatalf("full Flow footer should not duplicate f2 pane hint, got %q", bar)
 	}
 }
 
@@ -1271,7 +1272,7 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 		FlowHeadless:        true,
 		FlowNextLaunchReady: true,
 	})
-	for _, want := range []string{"h: headless on", "enter: phases", "g: launch next"} {
+	for _, want := range []string{"h: headless on", "enter: phases", "g: launch next", "bksp: pane"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("narrow Flow footer missing %q: %q", want, bar)
 		}
@@ -1280,6 +1281,24 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("narrow Flow footer should not include %q: %q", notWant, bar)
 		}
+	}
+}
+
+func TestStatusBar_FlowsModeTinyFooterKeepsQuitOverBackspace(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:               18,
+		Mode:                ModeFlows,
+		ActivePane:          1,
+		RepoSelected:        true,
+		FlowSelected:        true,
+		FlowHeadless:        true,
+		FlowNextLaunchReady: true,
+	})
+	if !strings.Contains(bar, "q/esc: quit") {
+		t.Fatalf("tiny Flow footer should keep quit hint, got %q", bar)
+	}
+	if strings.Contains(bar, "bksp") {
+		t.Fatalf("tiny Flow footer should drop backspace before quit, got %q", bar)
 	}
 }
 

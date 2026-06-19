@@ -48,10 +48,10 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 The UI has two panes: repos on the left, content on the right. Press `enter`
 or `tab` on a selected repo to focus the content pane, and press `f2` to switch
 pane focus explicitly. Left-pane shortcut hints show `f2/tab` for pane focus
-because `tab` is the left-to-content shortcut; right-pane hints show `f2` unless
-Flow list-specific navigation is available. When a Flow embedded terminal is
-open, `tab` switches focus between the Flow list and that terminal while the
-right pane remains active.
+because `tab` is the left-to-content shortcut; right-pane hints show `bksp`
+for returning to the repo pane. When a Flow embedded terminal is open, `tab`
+switches focus between the Flow list and that terminal while the right pane
+remains active.
 The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
@@ -112,8 +112,7 @@ filter matches, or a load failure with details in the status bar.
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
-| `f2` | Switch focus to left pane |
-| `⌫` | Switch focus to left pane from the Flow list |
+| `f2`/`bksp` | Switch focus to left pane |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the active mode. Press `1`–`9` or use arrow keys to
@@ -122,8 +121,8 @@ flows, and active flows. Horizontal view switching wraps between worktrees and
 active flows. Press `V` to choose which numbered view wtui opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
 `enter` or `tab` from the repo pane to focus the content pane, or `f2` to switch
-pane focus explicitly. In the Flow list, `⌫` switches focus back to the left
-repo pane.
+pane focus explicitly. In the content pane, `bksp` switches focus back to the
+left repo pane.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
