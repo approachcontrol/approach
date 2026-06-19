@@ -60,6 +60,7 @@ const FlowBaseRefPrompt = "New flow base ref"
 const LaunchInstructionsPrompt = "Launch instructions"
 const WorktreeMovePrompt = "Move worktree to"
 const PRWorktreePrompt = "PR worktree"
+const PromptTemplateSelectPrompt = "Prompt templates"
 const WorktreeInputPlaceholder = "branch, tag, or new branch name"
 const FlowTitleInputPlaceholder = "flow title"
 const FlowInstructionsInputPlaceholder = "task instructions"
@@ -762,6 +763,7 @@ type statusBarParams struct {
 	InputMode                   InputMode
 	FormHasMultiline            bool
 	WorktreeInputPrompt         string
+	SelectPrompt                string
 	ActivePane                  int
 	Destructive                 bool
 	RepoSelected                bool
@@ -893,6 +895,9 @@ func renderStatusBarWithState(sp statusBarParams) string {
 		}
 		return renderStatusText(width, "  enter: submit  esc: cancel  bksp/del: edit  left/right: move")
 	case overlay == OverlaySelect:
+		if sp.SelectPrompt == PromptTemplateSelectPrompt {
+			return renderStatusText(width, "  up/down select  enter: edit  r: reset  v: preview  esc: cancel")
+		}
 		return renderStatusText(width, "  up/down select  enter: confirm  esc: cancel")
 	case overlay == OverlayForm:
 		if sp.FormHasMultiline {
@@ -3094,6 +3099,7 @@ func renderSelectOverlayStatusBar(p RenderParams) string {
 		Width:                  p.Width,
 		Mode:                   p.Mode,
 		Overlay:                p.Overlay,
+		SelectPrompt:           p.SelectPrompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
 		TransientError:         p.TransientError,
@@ -3360,6 +3366,7 @@ func renderOverlay(p RenderParams) string {
 		InputMode:              inputParams.mode,
 		FormHasMultiline:       formHasMultilineField(p.Form),
 		WorktreeInputPrompt:    inputParams.prompt,
+		SelectPrompt:           p.SelectPrompt,
 		ActivePane:             p.ActivePane,
 		Destructive:            p.Destructive,
 		TransientError:         p.TransientError,

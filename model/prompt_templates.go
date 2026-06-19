@@ -9,9 +9,8 @@ import (
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/planstore"
+	"github.com/brian-bell/wtui/ui"
 )
-
-const promptTemplatePickerPrompt = "Prompt templates"
 
 type promptTemplateTarget struct {
 	Section string
@@ -37,7 +36,7 @@ func (m Model) handlePromptTemplates() (tea.Model, tea.Cmd) {
 
 func (m Model) openPromptTemplatePicker(selected int) Model {
 	m.modal = modal.OpenSelectWithLayout(
-		promptTemplatePickerPrompt,
+		ui.PromptTemplateSelectPrompt,
 		m.promptTemplateSelectItems(),
 		selected,
 		modal.Layout{Width: 42, Height: len(promptTemplateTargets) + 3, Placement: modal.PlacementCenter},
@@ -50,7 +49,7 @@ func (m Model) openPromptTemplatePicker(selected int) Model {
 
 func (m Model) handlePromptTemplateModalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	view := m.modal.View()
-	if view.Kind != modal.Select || view.Prompt != promptTemplatePickerPrompt {
+	if view.Kind != modal.Select || view.Prompt != ui.PromptTemplateSelectPrompt {
 		return m, nil, false
 	}
 	switch msg.String() {
@@ -130,7 +129,6 @@ func (m Model) handlePromptTemplateSaved(msg PromptTemplateSavedMsg) Model {
 func (m Model) handlePromptTemplateSaveFailed(msg PromptTemplateSaveFailedMsg) Model {
 	target, ok := promptTemplateTargetBySectionKey(msg.Section, msg.Key)
 	if ok {
-		m = m.withPromptTemplateValue(target, msg.Value)
 		m = m.openPromptTemplatePicker(promptTemplateTargetIndex(target))
 	}
 	errText := msg.Err

@@ -22,6 +22,7 @@ import (
 	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
 	"github.com/brian-bell/wtui/model/modal"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
 	"github.com/brian-bell/wtui/ui"
@@ -3598,6 +3599,61 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "Plan launch") || !strings.Contains(m.View(), "custom") {
 		t.Fatalf("expected refreshed picker with custom status:\n%s", m.View())
+	}
+}
+
+func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:       "codex",
+		PlanPromptTemplate: "old {title}",
+		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+		SavePromptTemplate: func(string, string, string) error { return errors.New("read-only config") },
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected prompt template edit request")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("new {title}")})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save prompt template command")
+	}
+	m, _ = update(m, cmd())
+
+	view := m.View()
+	if !strings.Contains(view, "read-only config") {
+		t.Fatalf("expected save failure status in view:\n%s", view)
+	}
+	if !strings.Contains(view, "Plan launch      custom") {
+		t.Fatalf("expected failed save to keep old custom picker status:\n%s", view)
+	}
+	if strings.Contains(view, "Plan launch      default") {
+		t.Fatalf("failed save should not mark existing custom template as default:\n%s", view)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, model.PlanResultMsg{
+		RepoPath: "/dev/alpha",
+		Plans: []planstore.PlanRecord{{
+			PlanID:   "plan-1",
+			Title:    "Implement plans",
+			Status:   "approved",
+			RepoPath: "/dev/alpha",
+		}},
+		ListRequest: m.ListRequest(ui.ModePlans),
+	})
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	if got, want := m.WorktreeInput(), "old Implement plans"; got != want {
+		t.Fatalf("launch prompt after failed save = %q, want %q", got, want)
 	}
 }
 

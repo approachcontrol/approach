@@ -243,6 +243,57 @@ func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 	}
 }
 
+func TestModel_PlanPromptTemplateAppliesToSelectedPlanPhase(t *testing.T) {
+	var got actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:       "codex",
+		PlanPromptTemplate: "Do phase {phase_id}: {phase_title} ({phase_status}) for {title} from {plan_path} in {repo_path} at {worktree_path}; keep {unknown}",
+		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			got = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+		},
+	})
+	m = plansInRightPane(t, m, []planstore.PlanRecord{{
+		PlanID:       "plan-1",
+		Title:        "Implement plans",
+		Status:       "approved",
+		RepoPath:     "/dev/plan-repo",
+		WorktreePath: "/dev/plan-worktree",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "p1", Title: "Store tracer bullet", Status: "completed", Order: 1},
+			{PhaseID: "p2", Title: "CLI subcommands", Status: "pending", Order: 2},
+		},
+	}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
+	}
+	want := "Do phase p2: CLI subcommands (pending) for Implement plans from /state/plans/plan-1/plan.md in /dev/plan-repo at /dev/plan-worktree; keep {unknown}"
+	if m.WorktreeInput() != want {
+		t.Fatalf("phase launch instructions = %q, want %q", m.WorktreeInput(), want)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+	_, launchCmd := update(m, cmd())
+	if launchCmd == nil {
+		t.Fatal("expected agent launch command")
+	}
+	if got.InitialPrompt != want {
+		t.Fatalf("submitted phase launch prompt = %q, want %q", got.InitialPrompt, want)
+	}
+	if got.PlanPhaseID != "p2" || got.PlanPhaseTitle != "CLI subcommands" || got.PlanPhaseStatus != "pending" {
+		t.Fatalf("unexpected phase launch context: %#v", got)
+	}
+}
+
 func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:       "codex",

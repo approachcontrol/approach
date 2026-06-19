@@ -3196,6 +3196,29 @@ func TestRender_SelectDialogShowsPromptItemsAndSelection(t *testing.T) {
 	}
 }
 
+func TestRender_PromptTemplateSelectShowsPromptSpecificFooter(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:          90,
+		Height:         16,
+		Mode:           ModeWorktrees,
+		Overlay:        OverlaySelect,
+		SelectPrompt:   "Prompt templates",
+		SelectItems:    []SelectItem{{Label: "Plan launch     default", Value: "agent.plan_prompt"}},
+		SelectSelected: 0,
+	})
+
+	stripped := ansi.Strip(view)
+	for _, want := range []string{"enter: edit", "r: reset", "v: preview", "esc: cancel"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("prompt template select footer should contain %q:\n%s", want, stripped)
+		}
+	}
+	if strings.Contains(stripped, "enter: confirm") {
+		t.Fatalf("prompt template select footer should not use generic confirm copy:\n%s", stripped)
+	}
+}
+
 func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
@@ -3229,6 +3252,14 @@ func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 	}
 	if !strings.Contains(stripped, "up/down select") || strings.Contains(stripped, "bksp") {
 		t.Fatalf("select overlay status bar should use select hints only:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "enter: confirm") {
+		t.Fatalf("generic select overlay should keep confirm footer copy:\n%s", stripped)
+	}
+	for _, notWant := range []string{"enter: edit", "r: reset", "v: preview"} {
+		if strings.Contains(stripped, notWant) {
+			t.Fatalf("generic select overlay should not show prompt-template hint %q:\n%s", notWant, stripped)
+		}
 	}
 }
 
