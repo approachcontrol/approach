@@ -1280,7 +1280,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	var flowModeControls []shortcutHint
 	var flowAgentControls []shortcutHint
 	if sp.ActivePane == 1 && sp.RepoSelected {
-		actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+		if !sp.ActiveFlows {
+			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+		}
 		headlessLabel := "headless off"
 		headlessSuccessSuffix := ""
 		if sp.FlowHeadless {

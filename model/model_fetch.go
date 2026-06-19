@@ -492,9 +492,25 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			PlanPhaseStatus:  flowstore.PhaseRunning,
 		})
 		if err != nil {
-			return FlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error()}
+			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
 		}
 		return flowPlanLaunchMessage(result.LaunchContext, headless)
+	}
+}
+
+func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.createFlow(FlowStartRequest{
+			RepoPath:     repoPath,
+			Title:        title,
+			Instructions: instructions,
+			BaseRef:      baseRef,
+			PlanPhaseID:  flowPlanPhaseID,
+		})
+		if err != nil {
+			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
+		}
+		return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title}
 	}
 }
 

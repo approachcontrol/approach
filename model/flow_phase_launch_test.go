@@ -98,6 +98,76 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	}
 }
 
+func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
+	phase := flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-parked",
+		Title:        "Parked Flow",
+		Instructions: "Write the initial plan later",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-parked",
+		Branch:       "flow/parked",
+		BaseRef:      "main",
+		Commit:       "abc123",
+		Phases:       []flowstore.FlowPhase{phase},
+	}
+	persistedPhase := phase
+	persistedPhase.Status = flowstore.PhaseRunning
+	persistedPhase.LaunchIDs = []string{"launch-parked"}
+	var updates []flowstore.PhaseLaunchUpdate
+	launcher := model.FlowPhaseLauncher{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return flowstore.FlowRecord{FlowID: record.FlowID, Phases: []flowstore.FlowPhase{persistedPhase}}, nil
+		},
+		NewLaunchID:      func() string { return "launch-parked" },
+		SessionStateRoot: "/state/wtui/sessions/v1",
+		AgentCommand:     "codex",
+		ReasoningEffort:  "high",
+	}
+
+	prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{Record: record, Phase: phase, Headless: true})
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	result, err := launcher.Prepare(prepared)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("launch updates = %#v, want one", updates)
+	}
+	if update := updates[0]; update.FlowID != "flow-parked" || update.PhaseID != "plan" || update.LaunchID != "launch-parked" || update.AutoLaunch {
+		t.Fatalf("launch update = %#v", update)
+	}
+	ctx := result.Context
+	if result.Route != model.FlowPhaseLaunchEmbedded ||
+		ctx.LaunchID != "launch-parked" ||
+		ctx.RepoPath != record.RepoPath ||
+		ctx.WorktreePath != record.WorktreePath ||
+		ctx.Branch != record.Branch ||
+		ctx.Commit != record.Commit ||
+		ctx.FlowID != record.FlowID ||
+		ctx.FlowPhaseID != "plan" ||
+		!ctx.Embedded ||
+		!ctx.Headless ||
+		!ctx.FlowLaunchTracked {
+		t.Fatalf("launch result = route %d context %#v", result.Route, ctx)
+	}
+	for _, want := range []string{
+		"Use the wtui-flow skill for this launch.",
+		"Write the initial plan later",
+		"Produce a plan only; do not start coding in this phase.",
+		"wtui plan save",
+		"wtui flow plan set",
+	} {
+		if !strings.Contains(ctx.InitialPrompt, want) {
+			t.Fatalf("prompt missing %q: %q", want, ctx.InitialPrompt)
+		}
+	}
+}
+
 func TestFlowPhaseLauncherStandardTemplateDoesNotReadPlanBody(t *testing.T) {
 	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
 	record := flowstore.FlowRecord{

@@ -434,6 +434,39 @@ func TestModel_ActiveFlowsLeftNavigationMovesToFlows(t *testing.T) {
 	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
 }
 
+func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("StartFlowPlan should not be called from active flows")
+			return model.FlowStartResult{}, nil
+		},
+	}), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if cmd != nil {
+		t.Fatalf("n from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("n from active Flow surface opened overlay %d, want none", m.Overlay())
+	}
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("n from active Flow surface mode = %d, want active flows", m.Mode())
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("n from active Flow surface should keep active Flow view visible:\n%s", view)
+	}
+	if strings.Contains(view, "New flow") || strings.Contains(view, ui.FlowTitleInputPlaceholder) {
+		t.Fatalf("n from active Flow surface should not open new Flow form:\n%s", view)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
 func TestModel_ActiveFlowsTabWithoutTerminalKeepsFlowSurfaceFocused(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
@@ -8319,19 +8352,21 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	if form.FocusIndex != 0 {
 		t.Fatalf("focus index = %d, want title field", form.FocusIndex)
 	}
-	if len(form.Fields) != 4 {
-		t.Fatalf("fields = %#v, want title, instructions, base ref, headless", form.Fields)
+	if len(form.Fields) != 5 {
+		t.Fatalf("fields = %#v, want title, instructions, base ref, headless, plan now", form.Fields)
 	}
 	want := []struct {
 		id          string
 		kind        ui.FormFieldKind
 		label       string
 		placeholder string
+		checked     bool
 	}{
 		{id: "title", kind: ui.FormText, label: "Title", placeholder: ui.FlowTitleInputPlaceholder},
 		{id: "instructions", kind: ui.FormMultilineText, label: "Instructions", placeholder: ui.FlowInstructionsInputPlaceholder},
 		{id: "base-ref", kind: ui.FormText, label: "Base ref", placeholder: ui.FlowBaseRefInputPlaceholder},
-		{id: "headless", kind: ui.FormCheckbox, label: "Headless"},
+		{id: "headless", kind: ui.FormCheckbox, label: "Headless", checked: true},
+		{id: "plan-now", kind: ui.FormCheckbox, label: "Plan Now", checked: true},
 	}
 	for i, wantField := range want {
 		field := form.Fields[i]
@@ -8339,8 +8374,8 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 			t.Fatalf("field %d = %#v, want %#v", i, field, wantField)
 		}
 		if field.Kind == ui.FormCheckbox {
-			if field.Checked {
-				t.Fatalf("field %d initial checked = true, want false", i)
+			if field.Checked != wantField.checked {
+				t.Fatalf("field %d initial checked = %v, want %v", i, field.Checked, wantField.checked)
 			}
 			continue
 		}
@@ -8456,7 +8491,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				started.LaunchID != "launch-1" ||
 				started.ReasoningEffort != wantEffort ||
 				!started.Embedded ||
-				started.Headless ||
+				!started.Headless ||
 				!started.FlowLaunchTracked {
 				t.Fatalf("embedded launch context = %#v", started)
 			}
@@ -8478,6 +8513,85 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				t.Fatalf("flow terminal view missing agent output:\n%s", view)
 			}
 		})
+	}
+}
+
+func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
+	var createRequest model.FlowStartRequest
+	embeddedCalls := 0
+	externalCalls := 0
+	listed := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			createRequest = req
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{
+				FlowID:       "flow-parked",
+				Title:        req.Title,
+				Instructions: req.Instructions,
+				RepoPath:     req.RepoPath,
+				WorktreePath: "/dev/alpha-worktrees/flow-parked",
+				Branch:       "flow/parked",
+				Commit:       "abc123",
+				Phases:       []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}},
+			}}, nil
+		},
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("Plan Now off should not start the plan phase")
+			return model.FlowStartResult{}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			externalCalls++
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			embeddedCalls++
+			return &fakeEmbeddedTerminal{}, nil
+		},
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listed = true
+			if filter.RepoPath != "/dev/alpha" {
+				t.Fatalf("flow filter = %#v", filter)
+			}
+			return []flowstore.FlowRecord{{FlowID: "flow-parked", RepoPath: filter.RepoPath, Title: "Parked Flow"}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", true, false)
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	msg := cmd()
+	created, ok := msg.(model.FlowCreatedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowCreatedMsg", msg)
+	}
+	if created.Request == 0 {
+		t.Fatal("created message should be tagged with active create request")
+	}
+	m, cmd = update(m, created)
+	if cmd == nil {
+		t.Fatal("expected flow refresh command after parked Flow creation")
+	}
+	_ = cmd()
+
+	if createRequest.RepoPath != "/dev/alpha" ||
+		createRequest.Title != "Parked Flow" ||
+		createRequest.Instructions != "Plan later" ||
+		createRequest.BaseRef != "main" ||
+		createRequest.AgentCommand != "" ||
+		createRequest.PlanPhaseStatus != "" {
+		t.Fatalf("create request = %#v", createRequest)
+	}
+	if embeddedCalls != 0 || externalCalls != 0 {
+		t.Fatalf("Plan Now off should not launch; embedded=%d external=%d", embeddedCalls, externalCalls)
+	}
+	if got := model.ActiveFlowCreateForTest(m); got != 0 {
+		t.Fatalf("active create request = %d, want cleared", got)
+	}
+	if !listed {
+		t.Fatal("expected Flow surface refresh")
 	}
 }
 
@@ -8644,7 +8758,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-	m, cmd := submitNewFlowPrompts(t, m, "Interactive Plan", "Write the plan", "main")
+	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -8659,6 +8773,9 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	}
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
+	}
+	if !model.FlowHeadlessForTest(m) {
+		t.Fatal("unchecked create-form headless option should not mutate flows-mode headless toggle")
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
@@ -8980,7 +9097,55 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowWarnsWhenNoAgentConfigured(t *testing.T) {
+func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
+	listCalls := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			if req.RepoPath != "/dev/alpha" {
+				t.Fatalf("CreateFlow repo = %q, want /dev/alpha", req.RepoPath)
+			}
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			listCalls++
+			return nil, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("stale parked Flow creation should not launch an external agent")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			t.Fatal("stale parked Flow creation should not start an embedded terminal")
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, createCmd := submitNewFlowPromptsWithCreateOptions(t, m, "Stale Parked", "Plan later", "main", false, false)
+	if createCmd == nil {
+		t.Fatal("expected parked Flow creation command")
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	staleMsg := createCmd()
+	if created, ok := staleMsg.(model.FlowCreatedMsg); !ok || created.Request == 0 {
+		t.Fatalf("creation command returned %#v, want tagged FlowCreatedMsg", staleMsg)
+	}
+	next, cmd := update(m, staleMsg)
+	if cmd != nil {
+		t.Fatalf("stale parked create returned command %T, want nil", cmd)
+	}
+	if got := model.ActiveFlowCreateForTest(next); got == 0 {
+		t.Fatal("stale parked create should leave current create request untouched")
+	}
+	if listCalls != 0 {
+		t.Fatalf("list calls = %d, want stale result ignored", listCalls)
+	}
+}
+
+func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
@@ -8990,11 +9155,52 @@ func TestModel_NewFlowWarnsWhenNoAgentConfigured(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no command, got %T", cmd)
 	}
-	if m.Overlay() != ui.OverlayNone {
-		t.Fatalf("overlay = %d, want none", m.Overlay())
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("overlay = %d, want form", m.Overlay())
+	}
+
+	m = fillNewFlowForm(t, m, "Needs Agent", "Plan now", "main")
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("submit without agent returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayForm {
+		t.Fatalf("overlay after validation = %d, want form", m.Overlay())
 	}
 	if !strings.Contains(m.View(), "Press A to choose") {
-		t.Fatalf("expected missing-agent warning in view:\n%s", m.View())
+		t.Fatalf("expected missing-agent guidance in form:\n%s", m.View())
+	}
+}
+
+func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
+	var createRequest model.FlowStartRequest
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			createRequest = req
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
+		},
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("Plan Now off should not validate or start an agent")
+			return model.FlowStartResult{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "No Agent Parked", "Plan later", "main", false, false)
+	if cmd == nil {
+		t.Fatal("expected parked Flow creation command")
+	}
+	msg := cmd()
+	created, ok := msg.(model.FlowCreatedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowCreatedMsg", msg)
+	}
+	if created.FlowID != "flow-parked" {
+		t.Fatalf("created FlowID = %q, want flow-parked", created.FlowID)
+	}
+	if createRequest.AgentCommand != "" || createRequest.ReasoningEffort != "" {
+		t.Fatalf("create request should not include agent settings: %#v", createRequest)
 	}
 }
 
@@ -9382,14 +9588,23 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 
 func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, baseRef string) (model.Model, tea.Cmd) {
 	t.Helper()
-	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, false)
+	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, true)
 }
 
 func submitNewFlowPromptsWithOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless bool) (model.Model, tea.Cmd) {
 	t.Helper()
+	return submitNewFlowPromptsWithCreateOptions(t, m, title, instructions, baseRef, headless, true)
+}
+
+func submitNewFlowPromptsWithCreateOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless, planNow bool) (model.Model, tea.Cmd) {
+	t.Helper()
 	m = openNewFlowForm(t, m, title, instructions, baseRef)
-	if headless {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !headless {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !planNow {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
 	}
 	return update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -9401,6 +9616,11 @@ func openNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef s
 	if m.Overlay() != ui.OverlayForm {
 		t.Fatalf("overlay = %d, want new Flow form", m.Overlay())
 	}
+	return fillNewFlowForm(t, m, title, instructions, baseRef)
+}
+
+func fillNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef string) model.Model {
+	t.Helper()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(title)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	lines := strings.Split(instructions, "\n")

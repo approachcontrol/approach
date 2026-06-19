@@ -150,6 +150,87 @@ func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	}
 }
 
+func TestFlowStarterPrepareFlowCreatesLaunchableFlowWithoutLaunchID(t *testing.T) {
+	var calls []string
+	var created flowstore.FlowRecord
+	var startUpdate flowstore.StartMetadataUpdate
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			calls = append(calls, "create-flow")
+			created = record
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			calls = append(calls, "create-worktree")
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-parked", Branch: "flow/parked"}, nil
+		},
+		ResolveCommit: func(path string) string {
+			calls = append(calls, "resolve-commit")
+			return "abc123"
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "set-start")
+			startUpdate = update
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				Title:        "Parked Flow",
+				Instructions: "Plan later",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				BaseRef:      update.BaseRef,
+				Commit:       update.Commit,
+				Phases:       []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}},
+			}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("PrepareFlow should not allocate a launch ID")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	result, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath:     "/dev/alpha",
+		Title:        "Parked Flow",
+		Instructions: "Plan later",
+		BaseRef:      "main",
+	})
+	if err != nil {
+		t.Fatalf("PrepareFlow returned error: %v", err)
+	}
+
+	if strings.Join(calls, ",") != "create-flow,create-worktree,resolve-commit,set-start" {
+		t.Fatalf("call order = %#v", calls)
+	}
+	if created.Title != "Parked Flow" || created.Instructions != "Plan later" || created.RepoPath != "/dev/alpha" || created.BaseRef != "main" {
+		t.Fatalf("created record = %#v", created)
+	}
+	if startUpdate.FlowID != "flow-1" ||
+		startUpdate.WorktreePath != "/dev/alpha-worktrees/flow-parked" ||
+		startUpdate.Branch != "flow/parked" ||
+		startUpdate.BaseRef != "main" ||
+		startUpdate.Commit != "abc123" {
+		t.Fatalf("start update = %#v", startUpdate)
+	}
+	if result.Flow.FlowID != "flow-1" ||
+		result.Flow.WorktreePath != "/dev/alpha-worktrees/flow-parked" ||
+		result.Flow.Branch != "flow/parked" ||
+		result.Flow.Commit != "abc123" ||
+		result.LaunchID != "" ||
+		result.LaunchContext.FlowID != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(result.Flow.Phases) != 1 ||
+		result.Flow.Phases[0].PhaseID != "plan" ||
+		result.Flow.Phases[0].Status != flowstore.PhaseReady ||
+		len(result.Flow.Phases[0].LaunchIDs) != 0 {
+		t.Fatalf("plan phase = %#v", result.Flow.Phases)
+	}
+}
+
 func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {

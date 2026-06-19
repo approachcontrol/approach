@@ -339,12 +339,14 @@ phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
 launchable phase for the selected Flow. Press `y` to copy the selected Flow
 worktree path from either a Flow row or one of its expanded phase rows. Press
-`m` to toggle per-Flow auto mode. When auto mode is on, completed CLI phases
-running in an embedded Flow terminal advance only after the completed phase's
-terminal exits normally and auto-closes; terminal exit also triggers a Flow
-refresh so newly persisted completion state is discovered without waiting for
-unrelated UI activity. Auto mode still skips non-completed outcomes and stops
-before Merge.
+`m` to toggle per-Flow auto mode. New Flow records start with auto mode on, and
+the toggle is persisted on each Flow. Flows created before this field existed
+remain manual until auto mode is toggled on. When auto mode is on, completed
+CLI phases running in an embedded Flow terminal advance only after the completed
+phase's terminal exits normally and auto-closes; terminal exit also triggers a
+Flow refresh so newly persisted completion state is discovered without waiting
+for unrelated UI activity. Auto mode still skips non-completed outcomes and
+stops before Merge; Merge still requires a manual launch.
 The active flows pane (mode `9`) shows active Flows across all repos and hides
 merged Flow records. Moving focus to the left repo pane temporarily filters the
 visible active rows to the selected repo, and returning focus to the middle pane
@@ -358,10 +360,11 @@ inside the flows pane. Press `h` to choose the CLI command mode: headless runs
 `claude` in the same embedded Flow terminal. Headless-off Flow launches prefill
 the phase prompt without submitting it, then focus the Flow terminal in input
 mode so you can review or edit it before pressing enter. Headless launches keep
-focus on the Flow list. Creating a new Flow has its own default-off Headless
-checkbox for the initial Plan launch; that checkbox does not change the
-selected-phase `h` setting. Press `E` to choose the configured CLI agent's
-reasoning effort for future launches; the shortcut pane shows the current value. Manual phase
+focus on the Flow list. Creating a new Flow has its own default-on Headless
+checkbox for the initial Plan launch; uncheck it for an interactive initial
+Plan launch. That checkbox does not change the selected-phase `h` setting.
+Press `E` to choose the configured CLI agent's reasoning effort for future
+launches; the shortcut pane shows the current value. Manual phase
 launches, auto-launched phases, and new Flow Plan launches all use the
 configured agent and that agent's configured effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses

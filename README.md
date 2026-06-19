@@ -333,10 +333,14 @@ ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow with one form for title, multiline instructions, and
-optional base ref plus a Headless checkbox for the initial Plan launch; use
-`alt+enter` for instruction newlines. On a Flow row, `enter` expands or
-collapses phase detail rows; `o` pages the linked plan body in `less -R`, and
-wtui shows a status message when the selected Flow has no linked plan. With
+optional base ref plus Headless and Plan Now checkboxes; use `alt+enter` for
+instruction newlines. Plan Now is checked by default and immediately launches
+the initial Plan phase after creating the Flow. Uncheck it to create a parked
+Flow with its instructions, worktree, branch, and start commit saved; the ready
+Plan phase can be launched later from the Flow row. On a Flow row, `enter`
+expands or collapses phase detail rows; `o` pages the linked plan body in
+`less -R`, and wtui shows a status message when the selected Flow has no linked
+plan. With
 destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
 record under the Flow artifact store; it does not remove repositories,
 worktrees, branches, checked-out code, linked plans, sessions, transcripts, or
@@ -352,10 +356,11 @@ of its expanded phase rows. Press `r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
 existing app thread without extra launch tracking. Press `m` on a Flow row or
-expanded phase row to toggle per-Flow auto mode, which is off by default and
-persisted on that Flow record. When auto mode is on, a successful completed
-phase transition launches the next ready non-merge phase in that same Flow
-through the same launch path as pressing `g`. For CLI phases running in an
+expanded phase row to toggle per-Flow auto mode, which is on by default for new
+Flows and persisted on that Flow record. Flows created before this field existed
+remain manual until auto mode is toggled on. When auto mode is on, a successful
+completed phase transition launches the next ready non-merge phase in that same
+Flow through the same launch path as pressing `g`. For CLI phases running in an
 embedded Flow terminal, wtui waits until the completed phase's terminal exits
 normally and auto-closes before launching the next phase; that exit also
 triggers a Flow refresh so completions recorded after the last refresh are
@@ -380,8 +385,9 @@ headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. Headless-off Flow launches prefill the phase prompt without
 submitting it, then focus the Flow terminal in input mode so you can review or
 edit it before pressing enter. Headless launches keep focus on the Flow list.
-Creating a new Flow has its own default-off Headless checkbox for the
-initial Plan launch; that checkbox does not change the selected-phase `h`
+Creating a new Flow has its own default-on Headless checkbox for the initial
+Plan launch; uncheck it for an interactive initial Plan launch. That checkbox
+is ignored when Plan Now is off and does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
 launches all use the configured agent and that agent's configured effort. Press
 `E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows

@@ -362,8 +362,16 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	Request       uint64
 }
 
+type FlowCreatedMsg struct {
+	RepoPath string
+	FlowID   string
+	Title    string
+	Request  uint64
+}
+
 type FlowCreateFailedMsg struct {
 	RepoPath string
+	FlowID   string
 	Title    string
 	Err      string
 	Request  uint64
