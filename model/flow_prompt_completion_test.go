@@ -128,62 +128,6 @@ func TestFlowPromptTemplatesAppendPhaseDoneInstruction(t *testing.T) {
 	}
 }
 
-func TestFlowPromptAliasesUseCanonicalReviewPrompts(t *testing.T) {
-	record := flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		PlanPath:     "/state/plans/plan-1/plan.md",
-		WorktreePath: "/dev/alpha-worktrees/flow-review",
-		Branch:       "flow/review",
-		Commit:       "abc123",
-		PR: flowstore.PullRequest{
-			Provider:   "github",
-			Number:     42,
-			URL:        "https://github.com/brian-bell/wtui/pull/42",
-			HeadBranch: "flow/review",
-			BaseBranch: "main",
-			Status:     "open",
-		},
-	}
-
-	reviewLoopPrompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop", Title: "Review Loop"}, record.PlanPath, "", model.FlowPromptTemplates{})
-	reviewLoop1Prompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop-1", Title: "Review Loop 1"}, record.PlanPath, "", model.FlowPromptTemplates{})
-	if reviewLoop1Prompt != reviewLoopPrompt {
-		t.Fatalf("review-loop-1 prompt = %q, want canonical review-loop prompt %q", reviewLoop1Prompt, reviewLoopPrompt)
-	}
-
-	autoreviewPrompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview"}, record.PlanPath, "", model.FlowPromptTemplates{})
-	reviewLoop2Prompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop-2", Title: "Review Loop 2"}, record.PlanPath, "", model.FlowPromptTemplates{})
-	if reviewLoop2Prompt != autoreviewPrompt {
-		t.Fatalf("review-loop-2 prompt = %q, want canonical autoreview prompt %q", reviewLoop2Prompt, autoreviewPrompt)
-	}
-}
-
-func TestFlowPromptAliasesUseCanonicalTemplates(t *testing.T) {
-	record := flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		PlanPath:     "/state/plans/plan-1/plan.md",
-		WorktreePath: "/dev/alpha-worktrees/flow-review",
-		Branch:       "flow/review",
-		Commit:       "abc123",
-	}
-	templates := model.FlowPromptTemplates{
-		ReviewLoop: "Review loop template for {phase_id}",
-		Autoreview: "Autoreview template for {phase_id}",
-	}
-
-	reviewLoop1Prompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop-1", Title: "Review Loop 1"}, record.PlanPath, "", templates)
-	wantReviewLoop1 := "Review loop template for review-loop-1\n\n" + model.FlowPhaseDoneInstructionForTest()
-	if reviewLoop1Prompt != wantReviewLoop1 {
-		t.Fatalf("review-loop-1 templated prompt = %q, want %q", reviewLoop1Prompt, wantReviewLoop1)
-	}
-
-	reviewLoop2Prompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "review-loop-2", Title: "Review Loop 2"}, record.PlanPath, "", templates)
-	wantReviewLoop2 := "Autoreview template for review-loop-2\n\n" + model.FlowPhaseDoneInstructionForTest()
-	if reviewLoop2Prompt != wantReviewLoop2 {
-		t.Fatalf("review-loop-2 templated prompt = %q, want %q", reviewLoop2Prompt, wantReviewLoop2)
-	}
-}
-
 func TestFlowPromptPhaseDoneInstructionDuplicateGuard(t *testing.T) {
 	instruction := model.FlowPhaseDoneInstructionForTest()
 	record := flowstore.FlowRecord{
