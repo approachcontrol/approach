@@ -21,9 +21,12 @@ type FlowStartRequest struct {
 	ReasoningEffort     string
 	SessionStateRoot    string
 	FlowPromptTemplates FlowPromptTemplates
-	PlanPhaseID         string
-	PlanPhaseTitle      string
-	PlanPhaseStatus     string
+	// FlowPromptTemplatesProvided forces StartPlan to use FlowPromptTemplates
+	// even when every template has been reset to the built-in default.
+	FlowPromptTemplatesProvided bool
+	PlanPhaseID                 string
+	PlanPhaseTitle              string
+	PlanPhaseStatus             string
 }
 
 // FlowStartResult is the prepared or launch-ready result of creating a new Flow.
@@ -169,7 +172,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 }
 
 func (s FlowStarter) promptTemplatesForRequest(req FlowStartRequest) FlowPromptTemplates {
-	if req.FlowPromptTemplates != (FlowPromptTemplates{}) {
+	if req.FlowPromptTemplatesProvided || req.FlowPromptTemplates != (FlowPromptTemplates{}) {
 		return req.FlowPromptTemplates
 	}
 	return s.flowPromptTemplates
