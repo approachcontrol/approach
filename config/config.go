@@ -514,7 +514,11 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 			continue
 		}
 		if inSection && isSectionAssignment(line, key) {
+			end := sectionAssignmentEnd(lines, i)
 			lines[i] = replaceSectionAssignment(line, assignmentLine)
+			if end > i+1 {
+				lines = append(lines[:i+1], lines[end:]...)
+			}
 			return []byte(strings.Join(lines, ""))
 		}
 	}
@@ -553,7 +557,8 @@ func removeSectionAssignment(data []byte, section, key string) []byte {
 			continue
 		}
 		if inSection && isSectionAssignment(line, key) {
-			lines = append(lines[:i], lines[i+1:]...)
+			end := sectionAssignmentEnd(lines, i)
+			lines = append(lines[:i], lines[end:]...)
 			return []byte(strings.Join(lines, ""))
 		}
 	}
@@ -607,6 +612,42 @@ func replaceSectionAssignment(line, assignmentLine string) string {
 	ending := line[len(body):]
 	indent := body[:len(body)-len(strings.TrimLeft(body, " \t"))]
 	return indent + strings.TrimSuffix(assignmentLine, "\n") + ending
+}
+
+func sectionAssignmentEnd(lines []string, start int) int {
+	if start < 0 || start >= len(lines) {
+		return start + 1
+	}
+	line := strings.TrimRight(lines[start], "\r\n")
+	eq := strings.Index(line, "=")
+	if eq == -1 {
+		return start + 1
+	}
+	value := strings.TrimSpace(line[eq+1:])
+	delim, ok := multilineStringDelimiter(value)
+	if !ok {
+		return start + 1
+	}
+	if strings.Contains(value[len(delim):], delim) {
+		return start + 1
+	}
+	for i := start + 1; i < len(lines); i++ {
+		if strings.Contains(lines[i], delim) {
+			return i + 1
+		}
+	}
+	return len(lines)
+}
+
+func multilineStringDelimiter(value string) (string, bool) {
+	switch {
+	case strings.HasPrefix(value, `"""`):
+		return `"""`, true
+	case strings.HasPrefix(value, `'''`):
+		return `'''`, true
+	default:
+		return "", false
+	}
 }
 
 func agentCommandLine(command string) string {
