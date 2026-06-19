@@ -269,6 +269,9 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.filteredRepos()) > 0 {
 			m.activePane = 1
+			if m.activeFlowSurfaceVisible() {
+				return m.syncActiveFlowsFromCache(), nil
+			}
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {

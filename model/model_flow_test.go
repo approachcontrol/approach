@@ -230,11 +230,19 @@ func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 }
 
 func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
+	alpha := flowWithPhaseDetails()
+	alpha.FlowID = "alpha-flow"
+	alpha.Title = "Alpha Flow"
+	bravo := flowWithPhaseDetails()
+	bravo.FlowID = "bravo-flow"
+	bravo.RepoPath = "/dev/bravo"
+	bravo.Title = "Bravo Flow"
+
 	var filters []flowstore.FlowFilter
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			filters = append(filters, filter)
-			return []flowstore.FlowRecord{{FlowID: "flow", RepoPath: filter.RepoPath, Title: "Repo Flow", Status: flowstore.StatusPending}}, nil
+			return []flowstore.FlowRecord{alpha, bravo}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -246,6 +254,9 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].FlowID != "bravo-flow" {
+		t.Fatalf("left-pane active flows = %#v, want repo-filtered bravo", got)
+	}
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
@@ -254,6 +265,9 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "Shortcuts  Active flows") {
 		t.Fatalf("left-pane enter should keep active flows visible:\n%s", view)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 2 || got[0].FlowID != "alpha-flow" || got[1].FlowID != "bravo-flow" {
+		t.Fatalf("left-pane enter active flows = %#v, want global alpha and bravo", got)
 	}
 	if len(filters) != 2 || filters[len(filters)-1].RepoPath != "" {
 		t.Fatalf("flow filters = %#v, want no repo-scoped fetch on left-pane enter", filters)
