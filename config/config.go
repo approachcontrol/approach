@@ -498,7 +498,8 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 	lines := strings.SplitAfter(string(data), "\n")
 	inSection := false
 	sectionHeader := -1
-	for i, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -520,6 +521,11 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 				lines = append(lines[:i+1], lines[end:]...)
 			}
 			return []byte(strings.Join(lines, ""))
+		}
+		if inSection {
+			if end := sectionAssignmentEnd(lines, i); end > i+1 {
+				i = end - 1
+			}
 		}
 	}
 
@@ -544,7 +550,8 @@ func removeSectionAssignment(data []byte, section, key string) []byte {
 
 	lines := strings.SplitAfter(string(data), "\n")
 	inSection := false
-	for i, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -560,6 +567,11 @@ func removeSectionAssignment(data []byte, section, key string) []byte {
 			end := sectionAssignmentEnd(lines, i)
 			lines = append(lines[:i], lines[end:]...)
 			return []byte(strings.Join(lines, ""))
+		}
+		if inSection {
+			if end := sectionAssignmentEnd(lines, i); end > i+1 {
+				i = end - 1
+			}
 		}
 	}
 	return data
