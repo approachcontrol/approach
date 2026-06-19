@@ -141,6 +141,7 @@ const ShortcutPaneWidth = 28
 const (
 	shortcutKeyColumnWidth = 6
 	shortcutOverflowMarker = "..."
+	paneShortcutKey        = "f2/tab"
 )
 
 const (
@@ -1082,8 +1083,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if sp.ActivePane == 1 && !sp.ActiveFlows {
 		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 	}
+	if flowSurfaceActive && sp.ActivePane == 1 && !sp.EmbeddedTerminalActive {
+		navigation = append(navigation, shortcutHint{Key: "⌫", Label: "pane", Inline: true})
+	}
 	global := []shortcutHint{
-		{Key: "f2", Label: "pane"},
+		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
 		{Key: "f5", Label: "refresh"},
 		{Key: "f3", Label: "active flows"},
@@ -1457,6 +1461,13 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 	return renderGenericFooterShortcuts(sp, sections)
 }
 
+func paneShortcutKeyForStatus(sp statusBarParams) string {
+	if sp.ActivePane == 0 {
+		return paneShortcutKey
+	}
+	return "f2"
+}
+
 func transientStatusStyle(fadeStep int) lipgloss.Style {
 	switch fadeStep {
 	case 1:
@@ -1470,7 +1481,7 @@ func transientStatusStyle(fadeStep int) lipgloss.Style {
 
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, "f2", "q/esc")
+	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
 	agent := footerHintsForKeys(hints, "A")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
@@ -1513,6 +1524,7 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 }
 
 func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	paneKey := paneShortcutKeyForStatus(sp)
 	for _, drop := range [][]string{
 		{},
 		{"f5", "f3"},
@@ -1521,14 +1533,14 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 		{"f5", "f3", "A", "D", "←/→"},
 		{"f5", "f3", "A", "D", "←/→", "↑/↓"},
 		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "f2"},
+		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", "f2")))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -1541,7 +1553,7 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 		return full
 	}
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, "f2", "q/esc")
+	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "⌫", "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "d")
@@ -1579,14 +1591,14 @@ func renderBranchFooterShortcuts(sp statusBarParams, sections []shortcutSection)
 	legend, rest := splitLegendSection(sections)
 	rest = branchFooterSectionOrder(rest)
 	hints := flattenShortcutHints(rest)
-	base := footerHintsForKeys(hints, "f2", "q/esc")
+	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
 	nav := footerHintsForKeys(hints, "↑/↓", "←/→")
 	actions := footerHintsForKeys(hints, "D", "n", "enter", "d", "f", "F", "t", "c", "a")
 
 	full := append(append(append([]string{}, base...), actions...), nav...)
 	baseActions := append(append([]string{}, base...), actions...)
 	baseNav := append(append([]string{}, base...), nav...)
-	baseArrow := footerHintsForKeys(hints, "f2", "q/esc", "←/→")
+	baseArrow := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc", "←/→")
 
 	for _, parts := range [][]string{full, baseActions} {
 		if candidate, ok := branchFooterCandidateWithLegend(sp.Width, legend, parts); ok {
@@ -2780,7 +2792,7 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
 		return "missing-session-id"
 	}
-	if phase.PhaseID == "merge" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
+	if phase.PhaseID == "autoreview" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
 		return "missing-pr"
 	}
 	return flowBasePhaseState(phase)

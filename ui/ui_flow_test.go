@@ -83,6 +83,9 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	if !strings.Contains(pane, "f3") || !strings.Contains(pane, "active flows") {
 		t.Fatalf("active-flow shortcut pane should keep f3 active flows hint:\n%s", pane)
 	}
+	if !strings.Contains(pane, "⌫      pane") {
+		t.Fatalf("active-flow shortcut pane should expose backspace pane hint:\n%s", pane)
+	}
 }
 
 func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
@@ -745,6 +748,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
+		"⌫      pane",
 		"f2     pane",
 		"q/esc  quit",
 		"f5     refresh",
@@ -855,11 +859,12 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	enterIndex := strings.Index(bar, "enter: phases")
 	headlessIndex := strings.Index(bar, "h: headless on")
 	agentIndex := strings.Index(bar, "A: codex")
-	tabIndex := strings.Index(bar, "f2: pane")
-	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || tabIndex < 0 {
+	backspaceIndex := strings.Index(bar, "⌫ pane")
+	paneIndex := strings.Index(bar, "f2: pane")
+	if enterIndex < 0 || headlessIndex < 0 || agentIndex < 0 || backspaceIndex < 0 || paneIndex < 0 {
 		t.Fatalf("full Flow footer missing expected hints, got %q", bar)
 	}
-	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < tabIndex) {
+	if !(enterIndex < headlessIndex && headlessIndex < agentIndex && agentIndex < backspaceIndex && backspaceIndex < paneIndex) {
 		t.Fatalf("full Flow footer should order Actions, Mode, Agent, Global, got %q", bar)
 	}
 }
@@ -1770,7 +1775,7 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 	}
 }
 
-func TestRender_FlowsModeShowsMergeMissingPRMetadata(t *testing.T) {
+func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected: 0,
@@ -1786,17 +1791,16 @@ func TestRender_FlowsModeShowsMergeMissingPRMetadata(t *testing.T) {
 				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 				{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
-				{PhaseID: "review-loop-1", Title: "Review loop 1", Status: flowstore.PhaseCompleted},
-				{PhaseID: "review-loop-2", Title: "Review loop 2", Status: flowstore.PhaseCompleted},
+				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
 				{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
-				{PhaseID: "merge", Title: "Merge", Status: flowstore.PhasePending},
+				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
 			},
 		}},
 		ActivePane:   1,
 		FlowSelected: 0,
 	})
 
-	for _, want := range []string{"merge:missing-pr", "missing", "Needs PR metadata"} {
+	for _, want := range []string{"autoreview:missing-pr", "missing", "Needs PR metadata"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing PR metadata view missing %q:\n%s", want, view)
 		}
@@ -1908,7 +1912,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
 			{PhaseID: "pr-creation", Title: "PR Creation", Status: flowstore.PhaseCompleted, Order: 2},
-			{PhaseID: "merge", Title: "Merge", Status: flowstore.PhasePending, Order: 3},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending, Order: 3},
 		},
 	}
 	view := Render(RenderParams{
@@ -1923,7 +1927,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		ExpandedFlowID: flow.FlowID,
 	})
 
-	for _, want := range []string{"merge:missing-pr", "plan:completed"} {
+	for _, want := range []string{"autoreview:missing-pr", "plan:completed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("recovery precedence view missing %q:\n%s", want, view)
 		}
@@ -1944,8 +1948,8 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		FlowSelected:   0,
 		ExpandedFlowID: flow.FlowID,
 	})
-	if !strings.Contains(view, "merge:completed") || strings.Contains(view, "merge:missing-pr") {
-		t.Fatalf("completed merge history should not be overwritten by missing PR recovery:\n%s", view)
+	if !strings.Contains(view, "autoreview:completed") || strings.Contains(view, "autoreview:missing-pr") {
+		t.Fatalf("completed autoreview history should not be overwritten by missing PR recovery:\n%s", view)
 	}
 }
 

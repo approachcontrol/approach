@@ -70,7 +70,7 @@ Use `wtui flow phase block --notes "..."` for blockers and
 For Plan Review, those wrappers fill default outcomes when omitted:
 `complete` => `approved`, `needs-attention` => `changes_requested`, and
 `block` => `blocked`. The `complete` wrapper can still take an explicit
-Plan Review outcome such as `approved_with_concerns`. For review-loop-2, the
+Plan Review outcome such as `approved_with_concerns`. For Autoreview, the
 wrappers fill `complete` => `passed`, `needs-attention` =>
 `needs_attention`, and `block` => `blocked`. Use `wtui flow phase restart`
 for reruns, and use the lower-level `wtui flow phase set` command for
@@ -281,51 +281,21 @@ workflow proceeds. If verification or persistence fails, do not report
 Implementation as completed; use `needs_attention` or `blocked` and include the
 failure in `--summary` or `--notes`.
 
-## review-loop-1 Phase
+## Review Loop Phase
 
-Goal: critique the implementation and drive revisions before second-level
-local worktree autoreview.
+Goal: critique the implementation and drive revisions before PR creation.
 
-Run the requested first review loop. Record `completed` when blocking findings
-are fixed, `needs_attention` when non-blocking concerns remain for the user,
-and `blocked` when the branch cannot be reviewed or fixed.
+Run the requested review loop. Record `completed` when blocking findings are
+fixed, `needs_attention` when non-blocking concerns remain for the user, and
+`blocked` when the branch cannot be reviewed or fixed.
 
 ```bash
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id review-loop-1 \
+  --phase-id review-loop \
   --status completed \
   --outcome "completed" \
   --summary "Review loop passed after revisions." \
-  "${FLOW_STATE_ARGS[@]}"
-```
-
-## review-loop-2 Phase
-
-Goal: perform a second-level local worktree autoreview before PR creation.
-
-Review the local worktree, branch, and start commit. Do not require or wait for
-PR metadata in this phase; that metadata belongs to PR Creation after this
-phase completes. Record `completed` when blocking findings are fixed,
-`needs_attention` when non-blocking concerns remain for the user, and `blocked`
-when the branch cannot be reviewed or fixed.
-
-If review-loop-2 is already `needs_attention` or `blocked`, do not mark it
-`completed` directly. First restart the phase as `running`, then complete it
-after the rerun succeeds:
-
-```bash
-wtui flow phase restart \
-  --flow-id "$WTUI_FLOW_ID" \
-  --phase-id review-loop-2 \
-  "${FLOW_STATE_ARGS[@]}"
-```
-
-```bash
-wtui flow phase complete \
-  --flow-id "$WTUI_FLOW_ID" \
-  --phase-id review-loop-2 \
-  --summary "Second-level local worktree autoreview passed; no blocking findings remain." \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
@@ -335,9 +305,9 @@ Goal: commit, push, and open or update the pull request.
 
 After the PR exists, record the PR provider, positive PR number, URL, head
 branch, base branch, and status through `wtui flow pr set`. Recording this
-structured PR metadata is a required part of PR Creation because it gates
-Merge, not optional bookkeeping. The command currently supports `--provider
-github`; the PR head branch must match the Flow branch.
+structured PR metadata is a required part of PR Creation, not optional
+bookkeeping. The command currently supports `--provider github`; the PR head
+branch must match the Flow branch.
 
 ```bash
 wtui flow pr set \
@@ -362,6 +332,36 @@ wtui flow phase set \
 If `wtui flow pr set` fails, do not mark PR Creation completed; report the
 command error. If a PR cannot be created, use `blocked` with notes explaining
 what failed.
+
+## Autoreview Phase
+
+Goal: perform a second-level review against the PR or pushed branch.
+
+Read the Flow first and verify the top-level `pr` object contains provider,
+number, URL, head branch, and base branch. If PR metadata is missing, do not run
+Autoreview and do not try to advance the pending Autoreview phase. Return to PR
+Creation by recording the missing metadata with `wtui flow pr set`; if a PR does
+not exist or cannot be recovered, rerun PR Creation as `running` with notes and
+then mark PR Creation `blocked` with notes.
+
+If Autoreview is already `needs_attention` or `blocked`, do not mark it
+`completed` directly. First restart the phase as `running`, then
+complete it after the rerun succeeds:
+
+```bash
+wtui flow phase restart \
+  --flow-id "$WTUI_FLOW_ID" \
+  --phase-id autoreview \
+  "${FLOW_STATE_ARGS[@]}"
+```
+
+```bash
+wtui flow phase complete \
+  --flow-id "$WTUI_FLOW_ID" \
+  --phase-id autoreview \
+  --summary "Autoreview passed; no blocking findings remain." \
+  "${FLOW_STATE_ARGS[@]}"
+```
 
 ## Merge Phase
 

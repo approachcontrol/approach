@@ -897,9 +897,9 @@ func autoFlowWithPhaseStatuses(statuses map[string]string) flowstore.FlowRecord 
 		{id: "plan", title: "Plan", order: 1},
 		{id: "plan-review", title: "Plan Review", order: 2},
 		{id: "implementation", title: "Implementation", order: 3},
-		{id: "review-loop-1", title: "Review loop 1", order: 4},
-		{id: "review-loop-2", title: "Review loop 2", order: 5},
-		{id: "pr-creation", title: "PR creation", order: 6},
+		{id: "review-loop", title: "Review loop", order: 4},
+		{id: "pr-creation", title: "PR creation", order: 5},
+		{id: "autoreview", title: "Autoreview", order: 6},
 		{id: "merge", title: "Merge", order: 7},
 	}
 	phases := make([]flowstore.FlowPhase, 0, len(statuses))
@@ -2643,24 +2643,22 @@ func TestModel_FlowAutoModeLaunchesNextImplementationChildOrReviewLoop(t *testin
 	}
 }
 
-func TestModel_FlowAutoModeDoesNotLaunchMergeAfterPRCreationCompletesWithPRMetadata(t *testing.T) {
+func TestModel_FlowAutoModeLaunchesAutoreviewAfterPRCreationCompletesWithPRMetadata(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
-		"review-loop-1":  flowstore.PhaseCompleted,
-		"review-loop-2":  flowstore.PhaseCompleted,
+		"review-loop":    flowstore.PhaseCompleted,
 		"pr-creation":    flowstore.PhaseRunning,
-		"merge":          flowstore.PhasePending,
+		"autoreview":     flowstore.PhasePending,
 	})
 	current := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseCompleted,
-		"review-loop-1":  flowstore.PhaseCompleted,
-		"review-loop-2":  flowstore.PhaseCompleted,
+		"review-loop":    flowstore.PhaseCompleted,
 		"pr-creation":    flowstore.PhaseCompleted,
-		"merge":          flowstore.PhaseReady,
+		"autoreview":     flowstore.PhaseReady,
 	})
 	current.Branch = "flow/auto"
 	current.PR = flowstore.PullRequest{
@@ -2671,12 +2669,12 @@ func TestModel_FlowAutoModeDoesNotLaunchMergeAfterPRCreationCompletesWithPRMetad
 		BaseBranch: "main",
 	}
 
-	cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
-	if cmd != nil {
-		t.Fatalf("pr-creation completion returned auto-launch command %T, want nil", cmd)
+	launchMsg, updates := autoLaunchFromFlowRefresh(t, previous, current)
+	if len(updates) != 1 || updates[0].PhaseID != "autoreview" {
+		t.Fatalf("launch updates = %#v, want autoreview", updates)
 	}
-	if len(*updates) != 0 {
-		t.Fatalf("launch updates = %#v, want none", updates)
+	if launchMsg.LaunchContext.FlowPhaseID != "autoreview" {
+		t.Fatalf("launched phase = %q, want autoreview", launchMsg.LaunchContext.FlowPhaseID)
 	}
 }
 
@@ -6506,6 +6504,97 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 	}
 }
 
+func TestModel_BackspaceFromFlowListReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+			m = selectFlowPhaseByID(t, m, "implementation")
+			before := listRequests(m)
+
+			m, cmd := update(m, tt.key)
+
+			if m.ActivePane() != 0 {
+				t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+			}
+			if got := m.SelectedFlowPhaseID(); got != "" {
+				t.Fatalf("selected Flow phase = %q, want cleared", got)
+			}
+			if cmd != nil {
+				t.Fatalf("backspace from Flow list returned cmd %T, want nil", cmd)
+			}
+			assertListRequestsUnchanged(t, before, m)
+		})
+	}
+}
+
+func TestModel_BackspaceFromActiveFlowsReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "implementation" {
+		t.Fatalf("selected active Flow phase = %q, want implementation before backspace", got)
+	}
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "" {
+		t.Fatalf("selected active Flow phase = %q, want cleared", got)
+	}
+	if cmd != nil {
+		t.Fatalf("backspace from active Flow list returned cmd %T, want nil", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
+func TestModel_BackspaceForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, flowLaunchKey())
+	if cmd == nil {
+		t.Fatal("g should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("terminal-owned backspace activePane = %d, want right pane", m.ActivePane())
+	}
+	if cmd != nil {
+		t.Fatalf("terminal-owned backspace returned cmd %T, want nil", cmd)
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x7f" {
+		t.Fatalf("terminal input backspace writes = %#v, want delete byte", fakeTerm.writes)
+	}
+}
+
 func TestModel_F2SwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -7771,12 +7860,12 @@ func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testi
 	}
 }
 
-func TestModel_GLaunchesFlowPhaseReviewLoop2WithLocalWorktreePrompt(t *testing.T) {
+func TestModel_GLaunchesFlowPhaseAutoreviewWithPRContext(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
-			t.Fatalf("Review Loop 2 launch should pass worktree metadata without pre-reading %q", planID)
+			t.Fatalf("Autoreview launch should pass PR metadata without pre-reading %q", planID)
 			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -7799,62 +7888,62 @@ func TestModel_GLaunchesFlowPhaseReviewLoop2WithLocalWorktreePrompt(t *testing.T
 		Commit:       "ghi789",
 		PlanID:       "plan-1",
 		Status:       flowstore.StatusInProgress,
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     115,
+			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			HeadBranch: "flow/pr",
+			BaseBranch: "main",
+			Status:     "open",
+		},
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
-			{PhaseID: "review-loop-1", Title: "Review loop 1", Status: flowstore.PhaseCompleted},
-			{PhaseID: "review-loop-2", Title: "Review Loop 2", Status: flowstore.PhaseReady},
-			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhasePending},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseReady},
 		},
 	}})
 
-	m, cmd := prepareSelectedFlowPhaseHeadlessOffLaunch(t, m, "review-loop-2")
+	m, cmd := prepareSelectedFlowPhaseHeadlessOffLaunch(t, m, "autoreview")
 	if cmd == nil {
-		t.Fatal("g should prepare a review-loop-2 launch")
+		t.Fatal("g should prepare an autoreview launch")
 	}
 	runPreparedFlowEmbeddedLaunch(t, m, cmd)
 
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
 		"second-level review",
-		"review the local worktree changes",
-		"use the commit skill when local revisions are made",
+		"use the ship skill when fixes require commits or pushes",
 		"use the wtui-flow skill to record the autoreview result before finishing",
 		"worktree: /dev/alpha-worktrees/flow-pr",
 		"branch: flow/pr",
 		"start commit: ghi789",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("review-loop-2 prompt missing %q:\n%s", want, launched.InitialPrompt)
-		}
-	}
-	for _, unwanted := range []string{
-		"saved plan body",
-		"not the pull request",
-		"pr target",
+		"pr target:",
 		"github #115",
 		"https://github.com/brian-bell/wtui/pull/115",
 		"head: flow/pr",
 		"base: main",
 		"status: open",
-		"wtui flow phase",
-		"--status completed",
-		"--status needs_attention",
-		"--status blocked",
 	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("autoreview prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{"saved plan body", "wtui flow phase", "--status completed", "--status needs_attention", "--status blocked"} {
 		if strings.Contains(prompt, unwanted) {
-			t.Fatalf("review-loop-2 prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
+			t.Fatalf("autoreview prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
 
-func TestModel_GLaunchesFlowPhaseReviewLoop2WithRecoveryPrompt(t *testing.T) {
+func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ReadPlan: func(planID string) (string, error) {
-			t.Fatalf("Review Loop 2 recovery launch should pass worktree metadata without pre-reading %q", planID)
+			t.Fatalf("Autoreview recovery launch should pass PR metadata without pre-reading %q", planID)
 			return "", nil
 		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -7877,76 +7966,65 @@ func TestModel_GLaunchesFlowPhaseReviewLoop2WithRecoveryPrompt(t *testing.T) {
 		Commit:       "ghi789",
 		PlanID:       "plan-1",
 		Status:       flowstore.StatusNeedsAttention,
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     115,
+			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			HeadBranch: "flow/pr",
+			BaseBranch: "main",
+			Status:     "open",
+		},
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
-			{PhaseID: "review-loop-1", Title: "Review loop 1", Status: flowstore.PhaseCompleted},
-			{PhaseID: "review-loop-2", Title: "Review Loop 2", Status: flowstore.PhaseNeedsAttention, Outcome: "needs_attention", Notes: "Non-blocking concern remains."},
-			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhasePending},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseNeedsAttention, Outcome: "needs_attention", Notes: "Non-blocking concern remains."},
 		},
 	}})
 
-	m, cmd := prepareSelectedFlowPhaseHeadlessOffLaunch(t, m, "review-loop-2")
+	m, cmd := prepareSelectedFlowPhaseHeadlessOffLaunch(t, m, "autoreview")
 	if cmd == nil {
-		t.Fatal("g should prepare a review-loop-2 relaunch")
+		t.Fatal("g should prepare an autoreview relaunch")
 	}
 	runPreparedFlowEmbeddedLaunch(t, m, cmd)
 
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, want := range []string{
 		"second-level review",
-		"review the local worktree changes",
-		"use the commit skill when local revisions are made",
+		"use the ship skill when fixes require commits or pushes",
 		"use the wtui-flow skill to record the autoreview result before finishing",
 		"worktree: /dev/alpha-worktrees/flow-pr",
 		"branch: flow/pr",
 		"start commit: ghi789",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("review-loop-2 recovery prompt missing %q:\n%s", want, launched.InitialPrompt)
-		}
-	}
-	for _, unwanted := range []string{
-		"not the pull request",
-		"pr target",
 		"github #115",
 		"head: flow/pr",
 		"base: main",
 		"status: open",
-		"restart required",
-		"--status running",
-		"rerunning autoreview",
-		"wtui flow phase",
 	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("autoreview recovery prompt missing %q:\n%s", want, launched.InitialPrompt)
+		}
+	}
+	for _, unwanted := range []string{"restart required", "--status running", "rerunning autoreview", "wtui flow phase"} {
 		if strings.Contains(prompt, unwanted) {
-			t.Fatalf("review-loop-2 recovery prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
+			t.Fatalf("autoreview recovery prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
 	}
 }
 
-func TestModel_GRelaunchesFlowPhaseReviewLoop2WithoutPRTarget(t *testing.T) {
-	var launched actions.AgentLaunchContext
+func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWithoutPRTarget(t *testing.T) {
+	var launchAttempted bool
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			if update.PhaseID != "review-loop-2" {
-				t.Fatalf("AddFlowPhaseLaunchID() phase = %q, want review-loop-2", update.PhaseID)
-			}
-			return flowstore.FlowRecord{
-				FlowID: update.FlowID,
-				Phases: []flowstore.FlowPhase{
-					{PhaseID: "review-loop-2", Title: "Review Loop 2", Status: flowstore.PhaseRunning, LaunchIDs: []string{update.LaunchID}},
-				},
-			}, nil
+			t.Fatalf("AddFlowPhaseLaunchID() should not run without PR metadata: %#v", update)
+			return flowstore.FlowRecord{}, nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
-			t.Fatalf("Flow phase CLI launch should start an embedded terminal, not LaunchAgent: %#v", ctx)
-			return actions.TerminalLaunchSpec{}, nil
-		},
-		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
-			launched = ctx
-			return &fakeEmbeddedTerminal{state: "running"}, nil
+			launchAttempted = true
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
@@ -7959,24 +8037,26 @@ func TestModel_GRelaunchesFlowPhaseReviewLoop2WithoutPRTarget(t *testing.T) {
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
-			{PhaseID: "review-loop-1", Title: "Review loop 1", Status: flowstore.PhaseCompleted},
-			{PhaseID: "review-loop-2", Title: "Review Loop 2", Status: flowstore.PhaseBlocked, Outcome: "blocked", Notes: "Needs another review."},
-			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhasePending},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseBlocked, Outcome: "blocked", Notes: "PR target missing."},
 		},
 	}})
 
-	m = selectFlowPhaseByID(t, m, "review-loop-2")
+	m = selectFlowPhaseByID(t, m, "autoreview")
 	m, cmd := update(m, flowLaunchKey())
-	if cmd == nil {
-		t.Fatal("g should launch blocked review-loop-2 without PR metadata")
+	if cmd != nil {
+		t.Fatal("g should not launch blocked autoreview without PR metadata")
 	}
-	runPreparedFlowEmbeddedLaunch(t, m, cmd)
-	if launched.FlowPhaseID != "review-loop-2" {
-		t.Fatalf("launched phase = %q, want review-loop-2", launched.FlowPhaseID)
+	if launchAttempted {
+		t.Fatal("LaunchAgent() ran without PR metadata")
+	}
+	if got := m.TransientError(); got != "No launchable Flow phase" {
+		t.Fatalf("status = %q, want no-launchable message", got)
 	}
 }
 
-func TestModel_GDoesNotRelaunchFlowPhaseReviewLoop2WhenPredecessorsAreUnsatisfied(t *testing.T) {
+func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWhenPredecessorsAreUnsatisfied(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -7994,20 +8074,28 @@ func TestModel_GDoesNotRelaunchFlowPhaseReviewLoop2WhenPredecessorsAreUnsatisfie
 		WorktreePath: "/dev/alpha-worktrees/flow-pr",
 		Branch:       "flow/pr",
 		Status:       flowstore.StatusBlocked,
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     115,
+			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			HeadBranch: "flow/pr",
+			BaseBranch: "main",
+			Status:     "open",
+		},
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
-			{PhaseID: "review-loop-1", Title: "Review loop 1", Status: flowstore.PhasePending},
-			{PhaseID: "review-loop-2", Title: "Review Loop 2", Status: flowstore.PhaseBlocked, Outcome: "blocked", Notes: "Needs another review."},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending},
 			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhasePending},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseBlocked, Outcome: "blocked", Notes: "Needs another review."},
 		},
 	}})
 
-	m = selectFlowPhaseByID(t, m, "review-loop-2")
+	m = selectFlowPhaseByID(t, m, "autoreview")
 	m, cmd := update(m, flowLaunchKey())
 	if cmd != nil {
-		t.Fatal("g should not launch blocked review-loop-2 while predecessors are unsatisfied")
+		t.Fatal("g should not launch blocked autoreview while predecessors are unsatisfied")
 	}
 	if got := m.TransientError(); got != "No launchable Flow phase" {
 		t.Fatalf("status = %q, want no-launchable message", got)
