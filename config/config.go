@@ -417,17 +417,16 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 	lines := strings.SplitAfter(string(data), "\n")
 	inSection := false
 	sectionHeader := -1
-	sectionHeaderLine := "[" + section + "]"
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r\n"))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if isTableHeader(trimmed) {
+		if header, ok := tableHeaderName(trimmed); ok {
 			if inSection {
 				return []byte(strings.Join(insertLine(lines, i, assignmentLine), ""))
 			}
-			inSection = trimmed == sectionHeaderLine
+			inSection = header == section
 			if inSection {
 				sectionHeader = i
 			}
@@ -453,8 +452,38 @@ func patchSectionAssignment(data []byte, section, key, assignmentLine string) []
 	return []byte(text + "[" + section + "]\n" + assignmentLine)
 }
 
-func isTableHeader(line string) bool {
-	return strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]")
+func tableHeaderName(line string) (string, bool) {
+	if strings.HasPrefix(line, "[[") {
+		end := strings.Index(line, "]]")
+		if end == -1 {
+			return "", false
+		}
+		tail := strings.TrimSpace(line[end+2:])
+		if tail != "" && !strings.HasPrefix(tail, "#") {
+			return "", false
+		}
+		name := strings.TrimSpace(line[2:end])
+		if name == "" {
+			return "", false
+		}
+		return "[[" + name + "]]", true
+	}
+	if !strings.HasPrefix(line, "[") {
+		return "", false
+	}
+	end := strings.Index(line, "]")
+	if end == -1 {
+		return "", false
+	}
+	tail := strings.TrimSpace(line[end+1:])
+	if tail != "" && !strings.HasPrefix(tail, "#") {
+		return "", false
+	}
+	name := strings.TrimSpace(line[1:end])
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 func isSectionAssignment(line, key string) bool {
