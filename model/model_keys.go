@@ -51,17 +51,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 
-	if key == "f3" {
-		return m.toggleActiveFlowsSurface()
-	}
-	if !m.searchActive && m.activePane == 1 && m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
+	m = m.clearAnyStatus()
+
+	if !m.searchActive && m.activePane == 1 && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd
 		}
 	}
-
-	m = m.clearAnyStatus()
 
 	if m.searchActive {
 		return m.handleSearchKey(msg)
@@ -274,12 +271,11 @@ func (m Model) setSearchActive(active bool) Model {
 func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
-		if m.activeFlowSurfaceVisible() {
-			m = m.exitActiveFlowsSurface()
-			return m.startFetchForMode()
-		}
 		if len(m.filteredRepos()) > 0 {
 			m.activePane = 1
+			if m.activeFlowSurfaceVisible() {
+				return m.syncActiveFlowsFromCache(), nil
+			}
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
@@ -338,11 +334,15 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.startFetchForMode()
 		}
 	case "l":
-		if m.mode < ui.ModeFlows {
+		if m.mode < ui.ModeActiveFlows {
+			previousMode := m.mode
 			m.mode++
-			m = m.resetModeCursors()
+			m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 			if m.mode == ui.ModeFlows {
 				return m.startFlowsModeFetchWithRefreshTick()
+			}
+			if m.mode == ui.ModeActiveFlows {
+				return m.startActiveFlowsFetchWithRefreshTick()
 			}
 			return m.startFetchForMode()
 		}
@@ -394,6 +394,12 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			m = m.resetModeCursors()
 			return m.startFlowsModeFetchWithRefreshTick()
 		}
+	case "9":
+		if m.mode != ui.ModeActiveFlows {
+			m.mode = ui.ModeActiveFlows
+			m = m.resetModeCursors()
+			return m.startActiveFlowsFetchWithRefreshTick()
+		}
 	case "y":
 		if m.mode == ui.ModePlans {
 			return m.handleCopyPlanPath()
@@ -401,19 +407,19 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeSessions {
 			return m.handleCopySessionID()
 		}
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleCopyFlowWorktreePath()
 		}
 		return m.handleCopyHash()
 	case "s":
 		return m.handleShowSessionSummary()
 	case "r":
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleResumeFlowPhaseSession()
 		}
 		return m.handleResumeSession()
 	case "E":
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleSetReasoningEffort()
 		}
 	case "i":
@@ -427,17 +433,17 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleTogglePlanPhases()
 		}
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleResetSelectedFlowPhase()
 		}
 	case "tab":
-		if m.mode == ui.ModeFlows && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+		if m.flowSurfaceVisible() && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 			m.flowFocus = flowFocusTerminal
 			m.terminalPrefixActive = true
 			return m, nil
 		}
 	case "g":
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleLaunchNextFlowPhase()
 		}
 	case "enter":
@@ -463,7 +469,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleOpenPlanText()
 		}
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleOpenFlowPlanText()
 		}
 	case "e":
@@ -474,7 +480,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
 		}
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m.handleToggleFlowAutoMode()
 		}
 	case "N":
@@ -485,7 +491,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
-		if m.mode == ui.ModeFlows {
+		if m.flowSurfaceVisible() {
 			return m, nil
 		}
 		return m.handleOpenAgent()
@@ -538,7 +544,7 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		return m.handleCursorDown()
 	case "left":
-		return m, nil
+		return m.handleHorizontalNavigation(-1)
 	case "right", "l":
 		return m.handleHorizontalNavigation(1)
 	case "h":
@@ -580,31 +586,31 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	if m.activePane == 0 {
 		return m, nil
 	}
-	if m.activeFlowSurfaceVisible() {
-		return m, nil
-	}
-
 	nextMode := modeAfterHorizontalNavigation(m.mode, direction)
 	if nextMode == m.mode {
 		return m, nil
 	}
+	previousMode := m.mode
 	m.mode = nextMode
-	m = m.resetModeCursors()
+	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()
+	}
+	if m.mode == ui.ModeActiveFlows {
+		return m.startActiveFlowsFetchWithRefreshTick()
 	}
 	return m.startFetchForMode()
 }
 
 func modeAfterHorizontalNavigation(current ui.Mode, direction int) ui.Mode {
 	if direction > 0 {
-		if current == ui.ModeFlows {
+		if current == ui.ModeActiveFlows {
 			return ui.ModeWorktrees
 		}
 		return current + 1
 	}
 	if current == ui.ModeWorktrees {
-		return ui.ModeFlows
+		return ui.ModeActiveFlows
 	}
 	return current - 1
 }
@@ -750,7 +756,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.mode == ui.ModeFlows {
+	if m.flowSurfaceVisible() {
 		return m.handleFlowEnter()
 	}
 	return m, nil
@@ -880,8 +886,9 @@ func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, "Flow has no linked plan")
 		return m, nil
 	}
-	m = m.startViewRequest(FetchPlanText, ui.ModeFlows)
-	return m, m.fetchPlanTextByID(record.PlanID, ui.ModeFlows)
+	mode := m.activeContentFetchMode()
+	m = m.startViewRequest(FetchPlanText, mode)
+	return m, m.fetchPlanTextByID(record.PlanID, mode)
 }
 
 func (m Model) handleEditPlan() (tea.Model, tea.Cmd) {
@@ -1498,7 +1505,7 @@ func (m Model) pathForOpenAction() (string, bool) {
 }
 
 func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
-	if m.mode == ui.ModeFlows {
+	if m.flowSurfaceVisible() {
 		return m, nil
 	}
 	path, ok := m.agentTargetPath()
@@ -2429,6 +2436,19 @@ func (m Model) resetModeCursors() Model {
 	return m
 }
 
+func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
+	if isFlowMode(from) && isFlowMode(to) {
+		m.flowFocus = flowFocusList
+		m.terminalPrefixActive = false
+		return m.invalidateViewRequest()
+	}
+	return m.resetModeCursors()
+}
+
+func isFlowMode(mode ui.Mode) bool {
+	return mode == ui.ModeFlows || mode == ui.ModeActiveFlows
+}
+
 func (m Model) resetRightPaneCursors() Model {
 	m = m.invalidateListRequests()
 	m.pendingBranchSelection = ""
@@ -2537,6 +2557,8 @@ func (m Model) contentHeightForMode() int {
 	case ui.ModePlans:
 		return m.planContentHeight()
 	case ui.ModeFlows:
+		return m.flowContentHeight()
+	case ui.ModeActiveFlows:
 		return m.flowContentHeight()
 	default:
 		return m.rightContentHeight()

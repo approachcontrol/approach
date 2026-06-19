@@ -22,14 +22,7 @@ import (
 	"github.com/brian-bell/wtui/ui"
 )
 
-const listRequestSlots = int(ui.ModeFlows) + 1
-
-type contentSurface int
-
-const (
-	surfaceModeContent contentSurface = iota
-	surfaceActiveFlows
-)
+const listRequestSlots = int(ui.ModeActiveFlows) + 1
 
 // Model is the bubbletea application model.
 type Model struct {
@@ -54,7 +47,6 @@ type Model struct {
 	selectedPlanPhaseID        string
 	selectedFlowPhaseID        string
 	selectedActiveFlowPhaseID  string
-	contentSurface             contentSurface
 	flowHeadless               bool
 	modal                      modal.Modal
 	diffRequestSeq             uint64
@@ -131,6 +123,7 @@ type Model struct {
 	embeddedTerminalTickGen    uint64
 	flowRefreshTickGen         uint64
 	flowRefreshInFlight        uint64
+	flowRefreshInFlightMode    ui.Mode
 	terminalPrefixActive       bool
 	terminalConfirmID          embeddedTerminalID
 	terminalConfirmScope       embeddedTerminalScope
@@ -451,20 +444,25 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bootstrapHookForRepo:     bootstrapHookForRepo,
 		runBootstrapHook:         runBootstrapHook,
 	}
-	for mode := ui.ModeWorktrees; mode <= ui.ModeFlows; mode++ {
+	for mode := ui.ModeWorktrees; mode <= ui.ModeActiveFlows; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
 	if m.mode == ui.ModeFlows {
 		if _, ok := m.currentRepoPath(); ok {
 			m.flowRefreshInFlight = m.currentListRequest(ui.ModeFlows)
+			m.flowRefreshInFlightMode = ui.ModeFlows
 		}
+	}
+	if m.mode == ui.ModeActiveFlows {
+		m.flowRefreshInFlight = m.currentListRequest(ui.ModeActiveFlows)
+		m.flowRefreshInFlightMode = ui.ModeActiveFlows
 	}
 	return m
 }
 
 func startupMode(mode ui.Mode) ui.Mode {
-	if mode >= ui.ModeWorktrees && mode <= ui.ModeFlows {
+	if mode >= ui.ModeWorktrees && mode <= ui.ModeActiveFlows {
 		return mode
 	}
 	return ui.ModeWorktrees
@@ -827,6 +825,8 @@ func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredSta
 		return m.plans.ItemCount(), filteredPlans
 	case ui.ModeFlows:
 		return m.flows.ItemCount(), filteredFlows
+	case ui.ModeActiveFlows:
+		return m.activeFlows.ItemCount(), filteredFlows
 	default:
 		return 0, 0
 	}
@@ -850,6 +850,8 @@ func modeDataName(mode ui.Mode) string {
 		return "plans"
 	case ui.ModeFlows:
 		return "flows"
+	case ui.ModeActiveFlows:
+		return "active flows"
 	default:
 		return "items"
 	}
@@ -872,6 +874,8 @@ func modeResultName(mode ui.Mode) string {
 	case ui.ModePlans:
 		return "plan"
 	case ui.ModeFlows:
+		return "flow"
+	case ui.ModeActiveFlows:
 		return "flow"
 	default:
 		return "item"
@@ -1137,7 +1141,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
 	case ActiveFlowResultMsg:
 		next, autoLaunchCmd := m.handleActiveFlowResult(msg)
-		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeFlows, msg.ListRequest)
+		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeActiveFlows, msg.ListRequest)
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
 	case FlowAutoModeSetMsg:
 		return m.handleFlowAutoModeSet(msg), nil

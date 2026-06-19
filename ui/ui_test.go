@@ -3986,17 +3986,16 @@ func TestStatusBar_HidesArrowViewHintWhenLeftPaneActive(t *testing.T) {
 	}
 }
 
-func TestStatusBar_HidesArrowViewHintForActiveFlows(t *testing.T) {
+func TestStatusBar_ShowsArrowViewHintForActiveFlows(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:        120,
-		Mode:         ModeSessions,
-		ActiveFlows:  true,
+		Mode:         ModeActiveFlows,
 		ActivePane:   1,
 		RepoSelected: true,
 		FlowSelected: true,
 	})
-	if strings.Contains(bar, "←/→") || strings.Contains(bar, "pane/view") {
-		t.Fatalf("active Flow status bar should not advertise arrow view navigation, got %q", bar)
+	if !strings.Contains(bar, "←/→ view") {
+		t.Fatalf("active Flow status bar should advertise arrow view navigation, got %q", bar)
 	}
 	if !strings.Contains(bar, "bksp: pane") {
 		t.Fatalf("active Flow status bar should advertise backspace pane navigation, got %q", bar)

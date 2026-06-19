@@ -26,11 +26,13 @@ func (m Model) flowRefreshTickCmd() tea.Cmd {
 
 func (m Model) startFlowsModeFetchWithRefreshTick() (Model, tea.Cmd) {
 	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
 	return m.startFlowRefreshFetch()
 }
 
 func (m Model) startActiveFlowsFetchWithRefreshTick() (Model, tea.Cmd) {
 	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
 	return m.startActiveFlowRefreshFetch()
 }
 
@@ -75,10 +77,14 @@ func (m Model) startActiveFlowRefreshFetch() (Model, tea.Cmd) {
 }
 
 func (m Model) finishFlowRefreshFetch(mode ui.Mode, request uint64) (Model, tea.Cmd) {
-	if mode != ui.ModeFlows || request == 0 || request != m.flowRefreshInFlight {
+	if (mode != ui.ModeFlows && mode != ui.ModeActiveFlows) || request == 0 || request != m.flowRefreshInFlight {
+		return m, nil
+	}
+	if mode != m.flowRefreshInFlightMode {
 		return m, nil
 	}
 	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
 	if !m.flowSurfaceVisible() {
 		return m, nil
 	}

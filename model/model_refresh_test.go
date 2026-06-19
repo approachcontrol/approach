@@ -26,6 +26,7 @@ func TestModel_F5RefreshesReposAndCurrentFetchBackedMode(t *testing.T) {
 		ui.ModeSessions,
 		ui.ModePlans,
 		ui.ModeFlows,
+		ui.ModeActiveFlows,
 	}
 
 	for _, mode := range modes {
@@ -511,6 +512,8 @@ func hasListFetchForMode(msgs []tea.Msg, mode ui.Mode, request uint64) bool {
 			return mode == ui.ModePlans && msg.ListRequest == request
 		case model.FlowResultMsg:
 			return mode == ui.ModeFlows && msg.ListRequest == request
+		case model.ActiveFlowResultMsg:
+			return mode == ui.ModeActiveFlows && msg.ListRequest == request
 		case model.FetchErrorMsg:
 			return msg.Kind == model.FetchList && msg.Mode == mode && msg.ListRequest == request
 		}

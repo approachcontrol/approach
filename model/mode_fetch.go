@@ -135,6 +135,9 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 }
 
 func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
+	if mode == ui.ModeActiveFlows {
+		return m.startFetchActiveFlows()
+	}
 	desc, ok := listFetchDescriptorForMode(mode)
 	if !ok {
 		return m, nil
@@ -147,27 +150,34 @@ func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
 	if desc.mode == ui.ModeFlows && m.flowSurfaceVisible() {
 		m.flowRefreshTickGen++
 		m.flowRefreshInFlight = 0
+		m.flowRefreshInFlightMode = 0
 		if cmd != nil {
 			m.flowRefreshInFlight = request
+			m.flowRefreshInFlightMode = desc.mode
 		}
 	}
 	return m, cmd
 }
 
 func (m Model) startFetchActiveFlows() (Model, tea.Cmd) {
-	m, request := m.nextListFetchRequest(ui.ModeFlows)
+	m, request := m.nextListFetchRequest(ui.ModeActiveFlows)
 	cmd := m.fetchActiveFlows(request)
 	if m.flowSurfaceVisible() {
 		m.flowRefreshTickGen++
 		m.flowRefreshInFlight = 0
+		m.flowRefreshInFlightMode = 0
 		if cmd != nil {
 			m.flowRefreshInFlight = request
+			m.flowRefreshInFlightMode = ui.ModeActiveFlows
 		}
 	}
 	return m, cmd
 }
 
 func (m Model) fetchMode(mode ui.Mode, request uint64) tea.Cmd {
+	if mode == ui.ModeActiveFlows {
+		return m.fetchActiveFlows(request)
+	}
 	desc, ok := listFetchDescriptorForMode(mode)
 	if !ok {
 		return nil
@@ -183,7 +193,7 @@ func (m Model) fetchActiveFlows(request uint64) tea.Cmd {
 				Pane:        "active-flows",
 				Err:         fmt.Sprintf("failed to load active flows: %v", err),
 				Kind:        FetchList,
-				Mode:        ui.ModeFlows,
+				Mode:        ui.ModeActiveFlows,
 				ListRequest: request,
 			}
 		}

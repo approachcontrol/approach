@@ -533,10 +533,10 @@ func (m Model) acceptListResult(repoPath string, mode ui.Mode, request uint64) (
 }
 
 func (m Model) acceptActiveFlowResult(request uint64) (Model, bool) {
-	if !m.activeFlowSurfaceVisible() || !m.isCurrentListRequest(ui.ModeFlows, request) {
+	if !m.activeFlowSurfaceVisible() || !m.isCurrentListRequest(ui.ModeActiveFlows, request) {
 		return m, false
 	}
-	return m.clearFetchListStatus(ui.ModeFlows), true
+	return m.clearFetchListStatus(ui.ModeActiveFlows), true
 }
 
 func (m Model) clearAnyStatus() Model {
@@ -1168,7 +1168,7 @@ func (m Model) handleForceDeleteFailed(msg ForceDeleteFailedMsg) Model {
 }
 
 func (m Model) handleFetchError(msg FetchErrorMsg) Model {
-	if m.activeFlowSurfaceVisible() && msg.Kind == FetchList && msg.Mode == ui.ModeFlows && msg.Pane == "active-flows" {
+	if m.activeFlowSurfaceVisible() && msg.Kind == FetchList && msg.Mode == ui.ModeActiveFlows && msg.Pane == "active-flows" {
 		if next, ok := m.acceptActiveFlowResult(msg.ListRequest); ok {
 			return next.setFetchStatus(msg)
 		}
@@ -1274,7 +1274,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if !m.flowSurfaceVisible() {
+	if m.mode != ui.ModeFlows {
 		return m, nil
 	}
 	if m.flowFocus != flowFocusTerminal {
@@ -1619,6 +1619,9 @@ func (m Model) currentPlanTextTargetMatches(mode ui.Mode, planID string) bool {
 		record, ok := m.selectedPlan()
 		return ok && record.PlanID == planID
 	case ui.ModeFlows:
+		record, ok := m.selectedFlow()
+		return ok && record.PlanID == planID
+	case ui.ModeActiveFlows:
 		record, ok := m.selectedFlow()
 		return ok && record.PlanID == planID
 	default:

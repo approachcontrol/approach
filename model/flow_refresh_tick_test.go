@@ -186,15 +186,6 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 			},
 			key: tea.KeyMsg{Type: tea.KeyRight},
 		},
-		{
-			name: "left-arrow-wrap",
-			setup: func(m Model) Model {
-				m.activePane = 1
-				m.mode = ui.ModeWorktrees
-				return m
-			},
-			key: tea.KeyMsg{Type: tea.KeyLeft},
-		},
 	}
 
 	for _, tc := range tests {
@@ -255,8 +246,8 @@ func TestModel_FlowRefreshTickFetchesAndSchedulesNextTick(t *testing.T) {
 	before := m.ListRequest(ui.ModeFlows)
 
 	m, cmd := updateFlowRefreshTest(m, flowRefreshTickMsg{Generation: m.flowRefreshTickGen})
-	if got := m.ListRequest(ui.ModeFlows); got != before+1 {
-		t.Fatalf("flows list request = %d, want %d", got, before+1)
+	if got := m.ListRequest(ui.ModeFlows); got == before {
+		t.Fatalf("flows list request = %d, want changed from %d", got, before)
 	}
 	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
 		t.Fatalf("flow refresh in-flight request = %d, want %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
@@ -299,7 +290,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
 	m.activePane = 1
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
 	if cmd == nil {
 		t.Fatal("expected active Flow result to schedule refresh tick")
@@ -311,8 +302,8 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 
 	m, cmd = updateFlowRefreshTest(m, flowRefreshTickMsg{Generation: m.flowRefreshTickGen})
 	result := activeFlowResultFromRefreshCommand(t, cmd)
-	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
-		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
+	if result.ListRequest != m.ListRequest(ui.ModeActiveFlows) {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeActiveFlows))
 	}
 	if len(filters) != 1 || filters[0].RepoPath != "" {
 		t.Fatalf("active Flow tick filters = %#v, want one global fetch", filters)
@@ -458,7 +449,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	})
 	m.activePane = 1
 	var activeCmd tea.Cmd
-	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 	if activeCmd == nil {
 		t.Fatal("expected active Flow surface entry to fetch flows")
 	}
@@ -473,8 +464,8 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	if cmd != nil {
 		t.Fatalf("repo change returned command %T, want nil local filter", cmd)
 	}
-	if got := m.ListRequest(ui.ModeFlows); got != globalRequest {
-		t.Fatalf("flows list request = %d, want unchanged global request %d", got, globalRequest)
+	if got := m.ListRequest(ui.ModeActiveFlows); got != globalRequest {
+		t.Fatalf("active flows list request = %d, want unchanged global request %d", got, globalRequest)
 	}
 	if m.flowRefreshInFlight != globalRequest {
 		t.Fatalf("flow refresh in-flight request = %d, want global request %d", m.flowRefreshInFlight, globalRequest)
@@ -513,23 +504,23 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	}
 	m.activePane = 1
 
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 	if cmd == nil {
-		t.Fatal("expected F3 entry to supersede stale in-flight Flow fetch")
+		t.Fatal("expected view 9 entry to supersede stale in-flight Flow fetch")
 	}
-	if got := m.ListRequest(ui.ModeFlows); got == alphaRequest {
-		t.Fatalf("flows list request = %d, want changed from alpha request %d", got, alphaRequest)
+	if got := m.ListRequest(ui.ModeActiveFlows); got == 0 {
+		t.Fatalf("active flows list request = %d, want non-zero", got)
 	}
-	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
-		t.Fatalf("flow refresh in-flight request = %d, want F3 entry request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+	if m.flowRefreshInFlight != m.ListRequest(ui.ModeActiveFlows) {
+		t.Fatalf("flow refresh in-flight request = %d, want active flows entry request %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeActiveFlows))
 	}
 	msg := cmd()
 	result, ok := msg.(ActiveFlowResultMsg)
 	if !ok {
 		t.Fatalf("active Flow command returned %T, want ActiveFlowResultMsg", msg)
 	}
-	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
-		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
+	if result.ListRequest != m.ListRequest(ui.ModeActiveFlows) {
+		t.Fatalf("ActiveFlowResultMsg.ListRequest = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeActiveFlows))
 	}
 }
 

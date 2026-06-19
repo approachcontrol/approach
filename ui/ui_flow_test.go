@@ -80,8 +80,11 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 		FlowSelected: 0,
 	})
 	pane := shortcutPaneText(ansi.Strip(view))
-	if !strings.Contains(pane, "f3") || !strings.Contains(pane, "active flows") {
-		t.Fatalf("active-flow shortcut pane should keep f3 active flows hint:\n%s", pane)
+	if strings.Contains(pane, "f3") {
+		t.Fatalf("active-flow shortcut pane should not advertise f3 active flows:\n%s", pane)
+	}
+	if !strings.Contains(pane, "Active flows") {
+		t.Fatalf("active-flow shortcut pane should identify Active flows:\n%s", pane)
 	}
 	if !strings.Contains(pane, "bksp   pane") {
 		t.Fatalf("active-flow shortcut pane should expose backspace pane hint:\n%s", pane)
@@ -821,6 +824,9 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 	if strings.Contains(pane, "n      new flow") {
 		t.Fatalf("active Flow shortcut pane should not expose new flow:\n%s", pane)
 	}
+	if strings.Contains(pane, "f3     active flows") {
+		t.Fatalf("active Flow shortcut pane should not expose f3 active flows:\n%s", pane)
+	}
 	for _, want := range []string{
 		"enter  phases",
 		"g      launch next",
@@ -830,7 +836,6 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		"m      auto: on",
 		"A      codex",
 		"E      effort: high",
-		"f3     active flows",
 	} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("active Flow shortcut pane missing %q:\n%s", want, pane)

@@ -418,6 +418,7 @@ func TestModelOptionsFromConfigMapsDefaultView(t *testing.T) {
 		{name: "missing uses flows", want: ui.ModeFlows},
 		{name: "view 1", view: intPtr(1), want: ui.ModeWorktrees},
 		{name: "view 8", view: intPtr(8), want: ui.ModeFlows},
+		{name: "view 9", view: intPtr(9), want: ui.ModeActiveFlows},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sessionStore, planStore, flowStore := testArtifactStores(t)

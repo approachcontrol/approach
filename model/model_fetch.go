@@ -49,8 +49,14 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 	}
 
 	cmds := []tea.Cmd{scanCmd}
-	if repoPath, ok := m.currentRepoPath(); ok {
-		fetchMode := m.activeContentFetchMode()
+	fetchMode := m.activeContentFetchMode()
+	if fetchMode == ui.ModeActiveFlows {
+		var fetchCmd tea.Cmd
+		m, fetchCmd = m.startFetchForMode()
+		if fetchCmd != nil {
+			cmds = append(cmds, fetchCmd)
+		}
+	} else if repoPath, ok := m.currentRepoPath(); ok {
 		if _, ok := listFetchDescriptorForMode(fetchMode); ok {
 			inlineWorktreePath := ""
 			if fetchMode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
@@ -76,7 +82,7 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 
 func (m Model) fetchForMode() tea.Cmd {
 	if m.activeFlowSurfaceVisible() {
-		return m.fetchActiveFlows(m.currentListRequest(ui.ModeFlows))
+		return m.fetchActiveFlows(m.currentListRequest(ui.ModeActiveFlows))
 	}
 	mode := m.activeContentFetchMode()
 	return m.fetchMode(mode, m.currentListRequest(mode))

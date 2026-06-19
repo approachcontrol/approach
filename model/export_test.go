@@ -26,6 +26,11 @@ func ActiveFlowSelectedForTest(m Model) int {
 	return m.activeFlows.SelectedIndex()
 }
 
+func ActiveFlowsForTest(m Model) []flowstore.FlowRecord {
+	flows, _, _ := m.activeFlows.View()
+	return flows
+}
+
 func SelectedActiveFlowPhaseIDForTest(m Model) string {
 	return m.selectedActiveFlowPhaseID
 }
