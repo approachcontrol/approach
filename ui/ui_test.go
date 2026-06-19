@@ -1622,6 +1622,15 @@ func TestRender_ShortcutPaneShowsGlobalRefreshShortcut(t *testing.T) {
 	}
 }
 
+func TestRender_ShortcutPaneShowsPromptTemplatesInGlobalSection(t *testing.T) {
+	pane := shortcutPaneText(renderShortcutPane(statusBarParams{Mode: ModeWorktrees}, 26, 20))
+	global := strings.Index(pane, "Global")
+	promptTemplates := strings.Index(pane, "f2     edit prompts")
+	if global < 0 || promptTemplates < 0 || promptTemplates < global {
+		t.Fatalf("shortcut pane should expose prompt templates in Global section, got:\n%s", pane)
+	}
+}
+
 func TestSidebarShortcutHintsGroupsOnlyAdjacentPairs(t *testing.T) {
 	grouped := sidebarShortcutHints([]shortcutHint{
 		{Key: "f", Label: "fetch"},

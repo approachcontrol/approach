@@ -1093,6 +1093,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	global := []shortcutHint{
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
+		{Key: "f2", Label: "edit prompts"},
 		{Key: "f5", Label: "refresh"},
 	}
 	if !flowSurfaceActive {
@@ -1534,19 +1535,20 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 	for _, drop := range [][]string{
 		{},
 		{"f5"},
-		{"f5", "A"},
-		{"f5", "A", "D"},
-		{"f5", "A", "D", "←/→"},
-		{"f5", "A", "D", "←/→", "↑/↓"},
-		{"f5", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
+		{"f5", "f2"},
+		{"f5", "f2", "A"},
+		{"f5", "f2", "A", "D"},
+		{"f5", "f2", "A", "D", "←/→"},
+		{"f5", "f2", "A", "D", "←/→", "↑/↓"},
+		{"f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
