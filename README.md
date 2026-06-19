@@ -334,10 +334,14 @@ ID when present, PR number or label, updated date, and title. Use `/` to filter
 by title, instructions, status, branch, worktree basename, plan metadata, PR
 metadata, phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow with one form for title, multiline instructions, and
-optional base ref plus a Headless checkbox for the initial Plan launch; use
-`alt+enter` for instruction newlines. On a Flow row, `enter` expands or
-collapses phase detail rows; `o` pages the linked plan body in `less -R`, and
-wtui shows a status message when the selected Flow has no linked plan. With
+optional base ref plus Headless and Plan Now checkboxes; use `alt+enter` for
+instruction newlines. Plan Now is checked by default and immediately launches
+the initial Plan phase after creating the Flow. Uncheck it to create a parked
+Flow with its instructions, worktree, branch, and start commit saved; the ready
+Plan phase can be launched later from the Flow row. On a Flow row, `enter`
+expands or collapses phase detail rows; `o` pages the linked plan body in
+`less -R`, and wtui shows a status message when the selected Flow has no linked
+plan. With
 destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
 record under the Flow artifact store; it does not remove repositories,
 worktrees, branches, checked-out code, linked plans, sessions, transcripts, or
@@ -382,9 +386,10 @@ terminal. Headless-off Flow launches prefill the phase prompt without
 submitting it, then focus the Flow terminal in input mode so you can review or
 edit it before pressing enter. Headless launches keep focus on the Flow list.
 Creating a new Flow has its own default-off Headless checkbox for the
-initial Plan launch; that checkbox does not change the selected-phase `h`
-setting. Manual phase launches, auto-launched phases, and new Flow Plan
-launches all use the configured agent and that agent's configured effort. Press
+initial Plan launch; that checkbox is ignored when Plan Now is off and does
+not change the selected-phase `h` setting. Manual phase launches,
+auto-launched phases, and new Flow Plan launches all use the configured agent
+and that agent's configured effort. Press
 `E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
 the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and

@@ -25,7 +25,7 @@ type FlowStartRequest struct {
 	PlanPhaseStatus  string
 }
 
-// FlowStartResult is the launch-ready result of starting a new Flow plan phase.
+// FlowStartResult is the prepared or launch-ready result of creating a new Flow.
 type FlowStartResult struct {
 	Flow          flowstore.FlowRecord
 	Worktree      actions.FlowWorktreeCreateResult
@@ -119,38 +119,13 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		phaseID = flowPlanPhaseID
 	}
 
-	flow, err := s.createFlow(flowstore.FlowRecord{
-		Title:        req.Title,
-		Instructions: req.Instructions,
-		RepoPath:     req.RepoPath,
-		BaseRef:      req.BaseRef,
-	})
+	result, err := s.PrepareFlow(req)
 	if err != nil {
-		return FlowStartResult{}, err
+		return result, err
 	}
-
-	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
-	if err != nil {
-		return FlowStartResult{}, s.blockPlanPhase(flow.FlowID, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
-	}
-
-	commit := s.resolveCommit(worktree.WorktreePath)
-	startedFlow, err := s.setStartMetadata(flowstore.StartMetadataUpdate{
-		FlowID:       flow.FlowID,
-		WorktreePath: worktree.WorktreePath,
-		Branch:       worktree.Branch,
-		BaseRef:      req.BaseRef,
-		Commit:       commit,
-	})
-	if err != nil {
-		return FlowStartResult{}, err
-	}
-	flow = startedFlow
-
-	if err := s.runBootstrap(req.RepoPath, worktree); err != nil {
-		errText := "Bootstrap hook failed: " + err.Error()
-		return FlowStartResult{}, s.blockPlanPhase(flow.FlowID, phaseID, errText, errText)
-	}
+	flow := result.Flow
+	worktree := result.Worktree
+	commit := result.Commit
 
 	launchID := s.newLaunchID()
 	launchedFlow, err := s.addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
@@ -159,9 +134,11 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		LaunchID: launchID,
 	})
 	if err != nil {
-		return FlowStartResult{}, err
+		return result, err
 	}
 	flow = launchedFlow
+	result.Flow = flow
+	result.LaunchID = launchID
 
 	phaseTitle := req.PlanPhaseTitle
 	if phaseTitle == "" {
@@ -171,7 +148,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	if phaseStatus == "" {
 		phaseStatus = flowstore.PhaseRunning
 	}
-	ctx := actions.AgentLaunchContext{
+	result.LaunchContext = actions.AgentLaunchContext{
 		Command:          req.AgentCommand,
 		ReasoningEffort:  req.ReasoningEffort,
 		LaunchID:         launchID,
@@ -187,13 +164,53 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		FlowPhaseID:      phaseID,
 		InitialPrompt:    flowPlanPrompt(flowStartPromptRecord(flow, req, worktree, commit), s.flowPromptTemplates),
 	}
-	return FlowStartResult{
-		Flow:          flow,
-		Worktree:      worktree,
-		Commit:        commit,
-		LaunchID:      launchID,
-		LaunchContext: ctx,
-	}, nil
+	return result, nil
+}
+
+func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) {
+	phaseID := req.PlanPhaseID
+	if phaseID == "" {
+		phaseID = flowPlanPhaseID
+	}
+
+	flow, err := s.createFlow(flowstore.FlowRecord{
+		Title:        req.Title,
+		Instructions: req.Instructions,
+		RepoPath:     req.RepoPath,
+		BaseRef:      req.BaseRef,
+	})
+	if err != nil {
+		return FlowStartResult{}, err
+	}
+	result := FlowStartResult{Flow: flow}
+
+	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
+	if err != nil {
+		return result, s.blockPlanPhase(flow.FlowID, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
+	}
+	result.Worktree = worktree
+
+	commit := s.resolveCommit(worktree.WorktreePath)
+	result.Commit = commit
+	startedFlow, err := s.setStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID:       flow.FlowID,
+		WorktreePath: worktree.WorktreePath,
+		Branch:       worktree.Branch,
+		BaseRef:      req.BaseRef,
+		Commit:       commit,
+	})
+	if err != nil {
+		return result, err
+	}
+	flow = startedFlow
+	result.Flow = flow
+
+	if err := s.runBootstrap(req.RepoPath, worktree); err != nil {
+		errText := "Bootstrap hook failed: " + err.Error()
+		return result, s.blockPlanPhase(flow.FlowID, phaseID, errText, errText)
+	}
+
+	return result, nil
 }
 
 func (s FlowStarter) runBootstrap(repoPath string, worktree actions.FlowWorktreeCreateResult) error {

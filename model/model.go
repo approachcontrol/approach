@@ -102,6 +102,7 @@ type Model struct {
 	readTranscript             func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	listPlans                  func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                  func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	createFlow                 func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan              func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase               func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode            func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
@@ -183,6 +184,7 @@ type Options struct {
 	ReadTranscript           func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	ListPlans                func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	ListFlows                func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
@@ -354,8 +356,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
-	if startFlowPlan == nil {
+	if createFlowForRepo == nil || startFlowPlan == nil {
 		root := opts.SessionStateRoot
 		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
@@ -383,7 +386,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			NewLaunchID:          newLaunchID,
 			FlowPromptTemplates:  opts.FlowPromptTemplates,
 		})
-		startFlowPlan = starter.StartPlan
+		if createFlowForRepo == nil {
+			createFlowForRepo = starter.PrepareFlow
+		}
+		if startFlowPlan == nil {
+			startFlowPlan = starter.StartPlan
+		}
 	}
 	finalizeAgentSession := opts.FinalizeAgentSession
 	if finalizeAgentSession == nil {
@@ -419,6 +427,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readTranscript:           readTranscript,
 		listPlans:                listPlans,
 		listFlows:                listFlows,
+		createFlow:               createFlowForRepo,
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
 		setFlowAutoMode:          setFlowAutoMode,
@@ -1221,6 +1230,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
+	case FlowCreatedMsg:
+		return m.handleFlowCreated(msg)
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:

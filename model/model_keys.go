@@ -201,6 +201,11 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 				msg.Request = request
 			}
 			return msg
+		case FlowCreatedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
 		case FlowCreateFailedMsg:
 			if msg.Request == 0 {
 				msg.Request = request
@@ -1086,6 +1091,7 @@ const (
 	flowCreateInstructionsField = "instructions"
 	flowCreateBaseRefField      = "base-ref"
 	flowCreateHeadlessField     = "headless"
+	flowCreatePlanNowField      = "plan-now"
 )
 
 func (m Model) handleNewRepo() (tea.Model, tea.Cmd) {
@@ -1218,10 +1224,6 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if m.agentCommand == "" {
-		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching a flow")
-		return m, nil
-	}
 	m.modal = modal.OpenForm(modal.FormSpec{
 		Purpose: flowCreateFormPurpose,
 		Title:   "New flow",
@@ -1230,9 +1232,20 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
 			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
 			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
+			{ID: flowCreatePlanNowField, Kind: modal.FormCheckbox, Label: "Plan Now", Checked: true},
 		},
-		Validate: validateFlowCreateForm,
+		Validate: func(values modal.FormValues) error {
+			return m.validateFlowCreateForm(values)
+		},
 		Submit: func(values modal.FormValues) tea.Cmd {
+			if !values.Checked[flowCreatePlanNowField] {
+				return m.createFlowForRepo(
+					repoPath,
+					values.Text[flowCreateTitleField],
+					values.Text[flowCreateInstructionsField],
+					values.Text[flowCreateBaseRefField],
+				)
+			}
 			return m.createFlowAndLaunchPlanForRepo(
 				repoPath,
 				values.Text[flowCreateTitleField],
@@ -1261,6 +1274,22 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 	return m, nil
 }
 
+func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+		return m, nil
+	}
+	m = m.clearFlowCreateRequest(msg.Request)
+	title := strings.TrimSpace(msg.Title)
+	if title == "" {
+		title = "Flow"
+	}
+	m = m.setStatus(statusOther, "Created flow: "+title)
+	if m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
+}
+
 func validateFlowCreateForm(values modal.FormValues) error {
 	if err := validateFlowTitleInput(values.Text[flowCreateTitleField]); err != nil {
 		return err
@@ -1269,6 +1298,16 @@ func validateFlowCreateForm(values modal.FormValues) error {
 		return err
 	}
 	return validateFlowBaseRefInput(values.Text[flowCreateBaseRefField])
+}
+
+func (m Model) validateFlowCreateForm(values modal.FormValues) error {
+	if err := validateFlowCreateForm(values); err != nil {
+		return err
+	}
+	if values.Checked[flowCreatePlanNowField] && m.agentCommand == "" {
+		return fmt.Errorf("Press A to choose %s before launching a flow", ui.AgentInputPlaceholder)
+	}
+	return nil
 }
 
 func validateWorktreeInput(input string) error {
