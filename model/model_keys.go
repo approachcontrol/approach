@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -95,6 +96,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key == "A" {
 		return m.handleSetAgent()
+	}
+
+	if key == "V" {
+		return m.handleSetDefaultView()
 	}
 
 	if key == "f5" {
@@ -539,8 +544,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleLaunchNextFlowPhase()
 	case "enter":
 		return m.handleFlowEnter()
-	case "n":
-		return m.handleNewFlow()
 	case "o":
 		return m.handleOpenFlowPlanText()
 	case "m":
@@ -1016,6 +1019,61 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 	}
 }
 
+func (m Model) handleSetDefaultView() (tea.Model, tea.Cmd) {
+	m.modal = modal.OpenSelectWithLayout(
+		"Choose default view",
+		defaultViewSelectItems(),
+		selectedDefaultViewIndex(m.defaultView),
+		modal.Layout{Width: 28, Height: len(viewChoices) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd {
+			number, err := strconv.Atoi(value)
+			if err != nil {
+				return func() tea.Msg {
+					return DefaultViewSetFailedMsg{Mode: m.defaultView, Err: "Unsupported default view"}
+				}
+			}
+			mode, ok := ModeForViewNumber(number)
+			if !ok {
+				return func() tea.Msg {
+					return DefaultViewSetFailedMsg{Mode: m.defaultView, Err: "Unsupported default view"}
+				}
+			}
+			return m.setDefaultView(mode)
+		},
+	)
+	return m, nil
+}
+
+func defaultViewSelectItems() []modal.SelectItem {
+	choices := ViewChoices()
+	items := make([]modal.SelectItem, 0, len(choices))
+	for _, choice := range choices {
+		items = append(items, modal.SelectItem{
+			Label: fmt.Sprintf("%d %s", choice.Number, choice.Label),
+			Value: strconv.Itoa(choice.Number),
+		})
+	}
+	return items
+}
+
+func selectedDefaultViewIndex(mode ui.Mode) int {
+	for i, choice := range viewChoices {
+		if choice.Mode == mode {
+			return i
+		}
+	}
+	return len(viewChoices) - 1
+}
+
+func (m Model) setDefaultView(mode ui.Mode) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.saveDefaultView(mode); err != nil {
+			return DefaultViewSetFailedMsg{Mode: mode, Err: err.Error()}
+		}
+		return DefaultViewSetMsg{Mode: mode}
+	}
+}
+
 const (
 	repoCreateFormPurpose       = "repo-create"
 	repoCreateNameField         = "name"
@@ -1169,7 +1227,7 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 			{ID: flowCreateTitleField, Kind: modal.FormText, Label: "Title", Placeholder: ui.FlowTitleInputPlaceholder},
 			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
 			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
-			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
+			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: true},
 		},
 		Validate: validateFlowCreateForm,
 		Submit: func(values modal.FormValues) tea.Cmd {

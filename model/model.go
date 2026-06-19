@@ -91,6 +91,7 @@ type Model struct {
 	agentCommand               string
 	codexReasoningEffort       string
 	claudeReasoningEffort      string
+	defaultView                ui.Mode
 	planPromptTemplate         string
 	flowPromptTemplates        FlowPromptTemplates
 	repoCreateRoot             string
@@ -114,6 +115,7 @@ type Model struct {
 	editFile                   func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                  func(string) error
 	saveAgentReasoningEffort   func(string, string) error
+	saveDefaultView            func(ui.Mode) error
 	launchTerminal             func(string) (actions.TerminalLaunchSpec, error)
 	launchDetachedTerminal     func(string, string) (actions.TerminalLaunchSpec, error)
 	launchAgent                func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
@@ -194,6 +196,7 @@ type Options struct {
 	EditFile                 func(path string) (actions.TerminalLaunchSpec, error)
 	SaveAgentCommand         func(string) error
 	SaveAgentReasoningEffort func(string, string) error
+	SaveDefaultView          func(ui.Mode) error
 	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
 	LaunchDetachedTerminal   func(targetShellCommand, cwd string) (actions.TerminalLaunchSpec, error)
 	LaunchAgent              func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error)
@@ -218,6 +221,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgentReasoningEffort := opts.SaveAgentReasoningEffort
 	if saveAgentReasoningEffort == nil {
 		saveAgentReasoningEffort = func(string, string) error { return nil }
+	}
+	saveDefaultView := opts.SaveDefaultView
+	if saveDefaultView == nil {
+		saveDefaultView = func(ui.Mode) error { return nil }
 	}
 	fetchRepo := opts.FetchRepo
 	if fetchRepo == nil {
@@ -382,6 +389,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
+	initialMode := startupMode(opts.StartupMode)
 	m := Model{
 		repos:                    newRepoPane().SetItems(repos),
 		rows:                     newBranchPane(),
@@ -396,7 +404,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		activeFlows:              newFlowPane(),
 		flowHeadless:             true,
 		flowRefreshTickGen:       1,
-		mode:                     startupMode(opts.StartupMode),
+		mode:                     initialMode,
+		defaultView:              initialMode,
 		agentCommand:             agent.Normalize(opts.AgentCommand),
 		codexReasoningEffort:     agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
 		claudeReasoningEffort:    agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
@@ -423,6 +432,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		editFile:                 editFile,
 		saveAgent:                saveAgent,
 		saveAgentReasoningEffort: saveAgentReasoningEffort,
+		saveDefaultView:          saveDefaultView,
 		launchTerminal:           launchTerminal,
 		launchDetachedTerminal:   launchDetachedTerminal,
 		launchAgent:              launchAgent,
@@ -540,6 +550,7 @@ func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
 func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
 func (m Model) AgentCommand() string            { return m.agentCommand }
+func (m Model) DefaultView() ui.Mode            { return m.defaultView }
 func (m Model) ReasoningEffortFor(command string) string {
 	switch agent.Normalize(command) {
 	case agent.CommandCodex:
@@ -726,6 +737,7 @@ func (m Model) View() string {
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
+		DefaultViewLabel:            ViewChoiceLabel(m.defaultView),
 		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
 		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
@@ -1181,6 +1193,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentReasoningEffortSet(msg), nil
 	case AgentReasoningEffortSetFailedMsg:
 		return m.handleAgentReasoningEffortSetFailed(msg), nil
+	case DefaultViewSetMsg:
+		return m.handleDefaultViewSet(msg), nil
+	case DefaultViewSetFailedMsg:
+		return m.handleDefaultViewSetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			return m, nil

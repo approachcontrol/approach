@@ -3400,6 +3400,156 @@ func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_ShiftVOpensDefaultViewSelectFromBothPanes(t *testing.T) {
+	for _, setup := range []struct {
+		name string
+		fn   func(model.Model) model.Model
+	}{
+		{name: "left", fn: func(m model.Model) model.Model { return m }},
+		{name: "right", fn: inRightPane},
+	} {
+		t.Run(setup.name, func(t *testing.T) {
+			m := setup.fn(model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeFlows}))
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+			if m.Overlay() != ui.OverlaySelect {
+				t.Fatalf("expected select overlay, got %d", m.Overlay())
+			}
+			view := m.View()
+			for _, want := range []string{"Choose default view", "1 worktrees", "2 branches", "3 stashes", "4 history", "5 reflog", "6 sessions", "7 plans", "8 flows"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("expected default view select to contain %q:\n%s", want, view)
+				}
+			}
+			if !strings.Contains(view, "> 8 flows") {
+				t.Fatalf("expected current default view to be preselected:\n%s", view)
+			}
+			if cmd != nil {
+				t.Fatalf("expected nil cmd opening default view select, got %T", cmd)
+			}
+		})
+	}
+}
+
+func TestModel_ShiftVOpensDefaultViewSelectFromActiveFlowsSurface(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeBranches})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected default view select overlay, got %d", m.Overlay())
+	}
+	if !strings.Contains(m.View(), "> 2 branches") {
+		t.Fatalf("expected branches default preselected:\n%s", m.View())
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening default view select, got %T", cmd)
+	}
+}
+
+func TestModel_DefaultViewSelectSavesAndUpdatesSessionChoice(t *testing.T) {
+	var saved ui.Mode
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartupMode: ui.ModeWorktrees,
+		SaveDefaultView: func(mode ui.Mode) error {
+			saved = mode
+			return nil
+		},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+	for range 7 {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected overlay closed, got %d", m.Overlay())
+	}
+	if cmd == nil {
+		t.Fatal("expected save default view command")
+	}
+	m, _ = update(m, cmd())
+	if saved != ui.ModeFlows {
+		t.Fatalf("saved default view = %v, want flows", saved)
+	}
+	if m.DefaultView() != ui.ModeFlows {
+		t.Fatalf("session default view = %v, want flows", m.DefaultView())
+	}
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("selecting default view should not switch current mode, got %v", m.Mode())
+	}
+}
+
+func TestModel_DefaultViewSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartupMode:     ui.ModeWorktrees,
+		SaveDefaultView: func(ui.Mode) error { return errors.New("read-only config") },
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save default view command")
+	}
+	m, _ = update(m, cmd())
+	if m.DefaultView() != ui.ModeBranches {
+		t.Fatalf("expected failed save to keep session default view branches, got %v", m.DefaultView())
+	}
+	if !strings.Contains(m.View(), "read-only config") {
+		t.Fatal("expected save failure in status bar")
+	}
+}
+
+func TestModel_ShiftVDuringSearchStaysInSearchInput(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("search input should not open overlay, got %d", m.Overlay())
+	}
+	if m.RepoSearch() != "V" {
+		t.Fatalf("repo search = %q, want V", m.RepoSearch())
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil search cmd, got %T", cmd)
+	}
+}
+
+func TestModel_ShiftVDoesNotReplaceExistingModal(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+
+	view := m.View()
+	if !strings.Contains(view, "Choose interactive helper") {
+		t.Fatalf("expected existing agent modal to remain open:\n%s", view)
+	}
+	if strings.Contains(view, "Choose default view") {
+		t.Fatalf("default view picker should not replace existing modal:\n%s", view)
+	}
+}
+
+func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
+	choices := model.ViewChoices()
+	if len(choices) != 8 {
+		t.Fatalf("ViewChoices length = %d, want 8", len(choices))
+	}
+	for _, choice := range choices {
+		mode, ok := model.ModeForViewNumber(choice.Number)
+		if !ok {
+			t.Fatalf("view number %d missing numbered mode mapping", choice.Number)
+		}
+		if mode != choice.Mode {
+			t.Fatalf("view number %d maps to %v, choice mode %v", choice.Number, mode, choice.Mode)
+		}
+		label := model.ViewChoiceLabel(choice.Mode)
+		want := fmt.Sprintf("%d %s", choice.Number, choice.Label)
+		if label != want {
+			t.Fatalf("ViewChoiceLabel(%v) = %q, want %q", choice.Mode, label, want)
+		}
+	}
+}
+
 func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	var savedCommand, savedEffort string
 	m := model.NewWithOptions(testRepos(), model.Options{

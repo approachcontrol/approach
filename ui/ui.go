@@ -291,6 +291,7 @@ type RenderParams struct {
 	FlowAutoModeSelected        bool
 	FlowAgentLabel              string
 	FlowReasoningEffort         string
+	DefaultViewLabel            string
 	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -514,6 +515,7 @@ func renderApplication(p RenderParams) string {
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowAgentLabel:              p.FlowAgentLabel,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
+		DefaultViewLabel:            p.DefaultViewLabel,
 		FlowNextLaunchReady:         p.FlowNextLaunchReady,
 		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
@@ -791,6 +793,7 @@ type statusBarParams struct {
 	FlowAutoModeSelected        bool
 	FlowAgentLabel              string
 	FlowReasoningEffort         string
+	DefaultViewLabel            string
 	FlowNextLaunchReady         bool
 	FlowPhaseResetReadySelected bool
 	FlowPhaseResumableSelected  bool
@@ -1092,6 +1095,11 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
+	if !flowSurfaceActive {
+		if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
+			global = slices.Insert(global, len(global)-1, shortcutHint{Key: "V", Label: label})
+		}
+	}
 
 	var actions []shortcutHint
 	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
@@ -1273,7 +1281,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	var flowModeControls []shortcutHint
 	var flowAgentControls []shortcutHint
 	if sp.ActivePane == 1 && sp.RepoSelected {
-		actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+		if !sp.ActiveFlows {
+			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
+		}
 		headlessLabel := "headless off"
 		headlessSuccessSuffix := ""
 		if sp.FlowHeadless {
@@ -1312,6 +1322,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
 		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
 	}
+	if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
+		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "V", Label: label})
+	}
 	var sections []shortcutSection
 	if len(actions) > 0 {
 		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
@@ -1345,6 +1358,14 @@ func flowReasoningEffortShortcutLabel(value string) string {
 	return value
 }
 
+func defaultViewShortcutLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return "default " + value
+}
+
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 	muted := make([]shortcutSection, 0, len(sections))
 	for _, section := range sections {
@@ -1362,6 +1383,7 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
 	if height < 20 && sp.Mode != ModeFlows && !sp.ActiveFlows {
+		sections = prioritizeShortcutInSection(sections, "Global", "V", "f2")
 		sections = prioritizeShortcutInSection(sections, "Global", "A", "q/esc")
 	}
 	if (sp.Mode == ModeFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {

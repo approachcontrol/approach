@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,9 @@ name = "github"
 
 [launch]
 prefer_multiplexer = true
+
+[ui]
+default_view = 8
 
 [agent]
 command = "codex"
@@ -95,6 +99,9 @@ timeout_seconds = 300
 	}
 	if !cfg.Launch.PreferMultiplexer {
 		t.Fatal("expected launch prefer_multiplexer to parse true")
+	}
+	if cfg.UI.DefaultView == nil || *cfg.UI.DefaultView != 8 {
+		t.Fatalf("expected ui.default_view 8, got %#v", cfg.UI.DefaultView)
 	}
 	if cfg.Agent.Command != "codex" {
 		t.Fatalf("expected agent command codex, got %q", cfg.Agent.Command)
@@ -174,6 +181,66 @@ func TestLoadFrom_DefaultsSessionsCopyRawTranscriptsOff(t *testing.T) {
 	}
 	if cfg.Sessions.CopyRawTranscripts {
 		t.Fatal("expected sessions copy_raw_transcripts to default false")
+	}
+}
+
+func TestLoadFrom_DefaultViewAbsentIsUnset(t *testing.T) {
+	cfg, err := config.LoadFrom(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.UI.DefaultView != nil {
+		t.Fatalf("expected missing default_view to remain unset, got %#v", cfg.UI.DefaultView)
+	}
+}
+
+func TestLoadFrom_AcceptsDefaultViewOneThroughEight(t *testing.T) {
+	for view := 1; view <= 8; view++ {
+		t.Run(fmt.Sprintf("view_%d", view), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(fmt.Sprintf("[ui]\ndefault_view = %d\n", view)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := config.LoadFrom(path)
+			if err != nil {
+				t.Fatalf("LoadFrom returned error: %v", err)
+			}
+			if cfg.UI.DefaultView == nil || *cfg.UI.DefaultView != view {
+				t.Fatalf("default_view = %#v, want %d", cfg.UI.DefaultView, view)
+			}
+		})
+	}
+}
+
+func TestLoadFrom_RejectsInvalidDefaultView(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "zero", body: "[ui]\ndefault_view = 0\n", want: "ui.default_view must be between 1 and 8"},
+		{name: "negative", body: "[ui]\ndefault_view = -1\n", want: "ui.default_view must be between 1 and 8"},
+		{name: "too high", body: "[ui]\ndefault_view = 9\n", want: "ui.default_view must be between 1 and 8"},
+		{name: "string", body: "[ui]\ndefault_view = \"8\"\n", want: "toml"},
+		{name: "float", body: "[ui]\ndefault_view = 8.0\n", want: "toml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := config.LoadFrom(path)
+			if err == nil {
+				t.Fatal("expected invalid default_view error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %q, got %q", tt.want, err.Error())
+			}
+		})
 	}
 }
 
@@ -588,6 +655,238 @@ func TestSaveAgentReasoningEffort_RejectsUnsupportedEffort(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported reasoning effort") {
 		t.Fatalf("expected unsupported effort error, got %q", err.Error())
+	}
+}
+
+func TestSaveDefaultView_CreatesMissingConfig(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveDefaultView(8,
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveDefaultView returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.UI.DefaultView == nil || *cfg.UI.DefaultView != 8 {
+		t.Fatalf("expected saved default view 8, got %#v", cfg.UI.DefaultView)
+	}
+}
+
+func TestSaveDefaultView_PreservesExistingContentAndInsertsUISection(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "# keep me\n[scan]\nroot = \"/src\"\n\n[agent]\ncommand = \"codex\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveDefaultView(6,
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveDefaultView returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"# keep me", "[scan]", `root = "/src"`, "[ui]", "default_view = 6", "[agent]", `command = "codex"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Count(text, "[ui]") != 1 {
+		t.Fatalf("expected one ui section, got:\n%s", text)
+	}
+}
+
+func TestSaveDefaultView_UpdatesExistingUISection(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[ui]\n# keep ui note\n  default_view = 2\n\n[agent]\ncommand = \"claude\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveDefaultView(7,
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveDefaultView returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Count(text, "[ui]") != 1 || strings.Count(text, "default_view") != 1 {
+		t.Fatalf("expected one updated ui default_view, got:\n%s", text)
+	}
+	for _, want := range []string{"# keep ui note", "  default_view = 7", "[agent]", `command = "claude"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestSaveDefaultView_UpdatesUISectionWithInlineComment(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[ui] # interface preferences\n# keep ui note\ndefault_view = 2\n\n[agent]\ncommand = \"claude\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveDefaultView(7,
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveDefaultView returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Count(text, "[ui]") != 1 || strings.Count(text, "default_view") != 1 {
+		t.Fatalf("expected one updated ui default_view, got:\n%s", text)
+	}
+	for _, want := range []string{"[ui] # interface preferences", "# keep ui note", "default_view = 7", "[agent]", `command = "claude"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestSaveDefaultView_InsertsBeforeArrayTable(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "[ui]\n# no default yet\n\n[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\nscript = \".wtui/bootstrap\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveDefaultView(5,
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveDefaultView returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	wantOrder := "[ui]\n# no default yet\n\ndefault_view = 5\n[[bootstrap.hooks]]"
+	if !strings.Contains(text, wantOrder) {
+		t.Fatalf("expected default_view before following array table, got:\n%s", text)
+	}
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.UI.DefaultView == nil || *cfg.UI.DefaultView != 5 {
+		t.Fatalf("expected saved default view 5, got %#v", cfg.UI.DefaultView)
+	}
+}
+
+func TestSaveDefaultView_RejectsInvalidValueWithoutWriting(t *testing.T) {
+	for _, view := range []int{0, -1, 9} {
+		t.Run(fmt.Sprintf("view_%d", view), func(t *testing.T) {
+			xdg := t.TempDir()
+			path := filepath.Join(xdg, "wtui", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			initial := "[ui]\ndefault_view = 3\n"
+			if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err := config.SaveDefaultView(view,
+				config.WithGetenv(func(key string) string {
+					if key == "XDG_CONFIG_HOME" {
+						return xdg
+					}
+					return ""
+				}),
+				config.WithHomeDir(func() (string, error) {
+					return t.TempDir(), nil
+				}),
+			)
+			if err == nil {
+				t.Fatal("expected invalid default view error")
+			}
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(raw) != initial {
+				t.Fatalf("invalid save should leave config unchanged, got:\n%s", raw)
+			}
+		})
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/scanner"
 	"github.com/brian-bell/wtui/sessions"
+	"github.com/brian-bell/wtui/ui"
 )
 
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
@@ -390,19 +391,7 @@ func TestRuntimeArtifactRootFallsBackThroughPlanSessionConfig(t *testing.T) {
 }
 
 func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
-	root := t.TempDir()
-	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
-	if err != nil {
-		t.Fatalf("NewStore sessions: %v", err)
-	}
-	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
-	if err != nil {
-		t.Fatalf("NewStore plans: %v", err)
-	}
-	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
-	if err != nil {
-		t.Fatalf("NewStore flows: %v", err)
-	}
+	sessionStore, planStore, flowStore := testArtifactStores(t)
 
 	opts := modelOptionsFromConfig(config.Config{
 		Agent: config.AgentConfig{
@@ -417,6 +406,32 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 	}
 	if opts.SaveAgentReasoningEffort == nil {
 		t.Fatal("SaveAgentReasoningEffort should be wired")
+	}
+}
+
+func TestModelOptionsFromConfigMapsDefaultView(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		view *int
+		want ui.Mode
+	}{
+		{name: "missing uses flows", want: ui.ModeFlows},
+		{name: "view 1", view: intPtr(1), want: ui.ModeWorktrees},
+		{name: "view 8", view: intPtr(8), want: ui.ModeFlows},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionStore, planStore, flowStore := testArtifactStores(t)
+			opts := modelOptionsFromConfig(config.Config{
+				UI: config.UIConfig{DefaultView: tt.view},
+			}, nil, sessionStore, planStore, flowStore)
+
+			if opts.StartupMode != tt.want {
+				t.Fatalf("StartupMode = %v, want %v", opts.StartupMode, tt.want)
+			}
+			if opts.SaveDefaultView == nil {
+				t.Fatal("SaveDefaultView should be wired")
+			}
+		})
 	}
 }
 
@@ -478,6 +493,28 @@ func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
 	if detachLaunch.Cmd.Dir != "/repo/worktree" {
 		t.Fatalf("LaunchDetachedTerminal dir = %q, want /repo/worktree", detachLaunch.Cmd.Dir)
 	}
+}
+
+func testArtifactStores(t *testing.T) (*sessions.Store, *planstore.Store, *flowstore.Store) {
+	t.Helper()
+	root := t.TempDir()
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore sessions: %v", err)
+	}
+	planStore, err := planstore.NewStore(planstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore plans: %v", err)
+	}
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	if err != nil {
+		t.Fatalf("NewStore flows: %v", err)
+	}
+	return sessionStore, planStore, flowStore
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 func TestModelOptionsFromConfigTerminalEnvOverridesConfiguredCommand(t *testing.T) {
