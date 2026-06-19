@@ -47,10 +47,11 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
 or `tab` on a selected repo to focus the content pane, and press `f2` to switch
-pane focus explicitly. Shortcut hints show `f2/tab` for pane focus because
-`tab` is the left-to-content shortcut. When a Flow embedded terminal is open,
-`tab` switches focus between the Flow list and that terminal while the right
-pane remains active.
+pane focus explicitly. Left-pane shortcut hints show `f2/tab` for pane focus
+because `tab` is the left-to-content shortcut; right-pane hints show `f2` unless
+Flow list-specific navigation is available. When a Flow embedded terminal is
+open, `tab` switches focus between the Flow list and that terminal while the
+right pane remains active.
 The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.

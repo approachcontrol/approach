@@ -111,7 +111,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "backspace" && m.activePane == 1 && m.flowSurfaceVisible() && m.flowFocus == flowFocusList {
+	if (key == "backspace" || key == "ctrl+h") && m.activePane == 1 && m.flowSurfaceVisible() && m.flowFocus == flowFocusList {
 		m = m.togglePrimaryPaneFocus()
 		return m, nil
 	}

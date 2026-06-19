@@ -6507,22 +6507,32 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 }
 
 func TestModel_BackspaceFromFlowListReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m = selectFlowPhaseByID(t, m, "implementation")
-	before := listRequests(m)
+	for _, tt := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+			m = selectFlowPhaseByID(t, m, "implementation")
+			before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+			m, cmd := update(m, tt.key)
 
-	if m.ActivePane() != 0 {
-		t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+			if m.ActivePane() != 0 {
+				t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+			}
+			if got := m.SelectedFlowPhaseID(); got != "" {
+				t.Fatalf("selected Flow phase = %q, want cleared", got)
+			}
+			if cmd != nil {
+				t.Fatalf("backspace from Flow list returned cmd %T, want nil", cmd)
+			}
+			assertListRequestsUnchanged(t, before, m)
+		})
 	}
-	if got := m.SelectedFlowPhaseID(); got != "" {
-		t.Fatalf("selected Flow phase = %q, want cleared", got)
-	}
-	if cmd != nil {
-		t.Fatalf("backspace from Flow list returned cmd %T, want nil", cmd)
-	}
-	assertListRequestsUnchanged(t, before, m)
 }
 
 func TestModel_BackspaceFromActiveFlowsReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
