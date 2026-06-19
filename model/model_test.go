@@ -72,6 +72,11 @@ func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 			msg.ListRequest = m.ListRequest(ui.ModeFlows)
 		}
 		return msg
+	case model.ActiveFlowResultMsg:
+		if msg.ListRequest == 0 {
+			msg.ListRequest = m.ListRequest(ui.ModeActiveFlows)
+		}
+		return msg
 	case model.FetchErrorMsg:
 		if msg.Kind == model.FetchList && msg.ListRequest == 0 {
 			msg.ListRequest = m.ListRequest(msg.Mode)
@@ -83,8 +88,8 @@ func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 }
 
 func listRequests(m model.Model) map[ui.Mode]uint64 {
-	requests := make(map[ui.Mode]uint64, int(ui.ModeFlows))
-	for mode := ui.ModeWorktrees; mode <= ui.ModeFlows; mode++ {
+	requests := make(map[ui.Mode]uint64, int(ui.ModeActiveFlows))
+	for mode := ui.ModeWorktrees; mode <= ui.ModeActiveFlows; mode++ {
 		requests[mode] = m.ListRequest(mode)
 	}
 	return requests
@@ -604,8 +609,8 @@ func TestModel_TabFromLeftPaneReturnsToActiveFlowsWithoutChangingMode(t *testing
 	if m.ActivePane() != 1 {
 		t.Fatalf("active pane = %d, want right pane after tab", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("mode = %d, want unchanged underlying worktrees mode", m.Mode())
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("mode = %d, want active flows", m.Mode())
 	}
 	if cmd != nil {
 		t.Fatalf("tab from left pane with active flows returned cmd %T, want nil", cmd)
@@ -1642,7 +1647,7 @@ func TestModel_RightCyclesThroughAllViewsAndWrapsToWorktrees(t *testing.T) {
 		t.Fatalf("expected starting mode worktrees, got %d", m.Mode())
 	}
 
-	for want := ui.ModeBranches; want <= ui.ModeFlows; want++ {
+	for want := ui.ModeBranches; want <= ui.ModeActiveFlows; want++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
 		if m.Mode() != want {
 			t.Fatalf("mode after right = %d, want %d", m.Mode(), want)
@@ -1673,9 +1678,9 @@ func TestModel_RightCyclesThroughAllViewsAndWrapsToWorktrees(t *testing.T) {
 func TestModel_LeftCyclesBackThroughAllViewsAndWrapsToFlows(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 
-	for want := ui.ModePlans; want >= ui.ModeWorktrees; want-- {
+	for want := ui.ModeFlows; want >= ui.ModeWorktrees; want-- {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
 		if m.Mode() != want {
 			t.Fatalf("mode after left = %d, want %d", m.Mode(), want)
@@ -1687,19 +1692,19 @@ func TestModel_LeftCyclesBackThroughAllViewsAndWrapsToFlows(t *testing.T) {
 
 	before := listRequests(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("Mode() = %d, want flows after wrapping", m.Mode())
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("Mode() = %d, want active flows after wrapping", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
-		t.Fatal("left from worktrees produced nil cmd, want flows fetch")
+		t.Fatal("left from worktrees produced nil cmd, want active flows fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeFlows, m.ListRequest(ui.ModeFlows)) {
-		t.Fatalf("left from worktrees command messages = %#v, want flows fetch for request %d", msgs, m.ListRequest(ui.ModeFlows))
+	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
+		t.Fatalf("left from worktrees command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
 	}
 }
 
@@ -1714,8 +1719,8 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("Mode() = %d, want flows after wrapping", m.Mode())
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("Mode() = %d, want active flows after wrapping", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
@@ -1724,12 +1729,12 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 		t.Fatalf("WorktreeSelected() = %d, want preserved cursor 1", m.WorktreeSelected())
 	}
 	if cmd == nil {
-		t.Fatal("left from worktrees produced nil cmd, want flows fetch")
+		t.Fatal("left from worktrees produced nil cmd, want active flows fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeFlows, m.ListRequest(ui.ModeFlows)) {
-		t.Fatalf("left from worktrees command messages = %#v, want flows fetch for request %d", msgs, m.ListRequest(ui.ModeFlows))
+	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
+		t.Fatalf("left from worktrees command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
 	}
 
 	flow := flowWithPhaseDetails()
@@ -1778,13 +1783,13 @@ func TestModel_HLClampAtModeEdges(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 	before = listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if m.ActivePane() != 1 || m.Mode() != ui.ModeFlows {
-		t.Fatalf("l at flows activePane=%d mode=%d, want right pane flows", m.ActivePane(), m.Mode())
+	if m.ActivePane() != 1 || m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("l at flows activePane=%d mode=%d, want right pane active flows", m.ActivePane(), m.Mode())
 	}
-	if cmd != nil {
-		t.Fatalf("l at flows produced cmd %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("l at flows produced nil cmd, want active flows fetch")
 	}
-	assertListRequestsUnchanged(t, before, m)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
 }
 
 func TestModel_RightFromStashesGoesToHistory(t *testing.T) {

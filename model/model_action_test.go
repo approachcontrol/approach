@@ -3415,7 +3415,7 @@ func TestModel_ShiftVOpensDefaultViewSelectFromBothPanes(t *testing.T) {
 				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
-			for _, want := range []string{"Choose default view", "1 worktrees", "2 branches", "3 stashes", "4 history", "5 reflog", "6 sessions", "7 plans", "8 flows"} {
+			for _, want := range []string{"Choose default view", "1 worktrees", "2 branches", "3 stashes", "4 history", "5 reflog", "6 sessions", "7 plans", "8 flows", "9 active flows"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected default view select to contain %q:\n%s", want, view)
 				}
@@ -3430,17 +3430,16 @@ func TestModel_ShiftVOpensDefaultViewSelectFromBothPanes(t *testing.T) {
 	}
 }
 
-func TestModel_ShiftVOpensDefaultViewSelectFromActiveFlowsSurface(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeBranches})
+func TestModel_ShiftVOpensDefaultViewSelectFromActiveFlowsMode(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeActiveFlows})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF3})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
 
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected default view select overlay, got %d", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "> 2 branches") {
-		t.Fatalf("expected branches default preselected:\n%s", m.View())
+	if !strings.Contains(m.View(), "> 9 active flows") {
+		t.Fatalf("expected active flows default preselected:\n%s", m.View())
 	}
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening default view select, got %T", cmd)
@@ -3457,7 +3456,7 @@ func TestModel_DefaultViewSelectSavesAndUpdatesSessionChoice(t *testing.T) {
 		},
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
-	for range 7 {
+	for range 8 {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -3468,11 +3467,11 @@ func TestModel_DefaultViewSelectSavesAndUpdatesSessionChoice(t *testing.T) {
 		t.Fatal("expected save default view command")
 	}
 	m, _ = update(m, cmd())
-	if saved != ui.ModeFlows {
-		t.Fatalf("saved default view = %v, want flows", saved)
+	if saved != ui.ModeActiveFlows {
+		t.Fatalf("saved default view = %v, want active flows", saved)
 	}
-	if m.DefaultView() != ui.ModeFlows {
-		t.Fatalf("session default view = %v, want flows", m.DefaultView())
+	if m.DefaultView() != ui.ModeActiveFlows {
+		t.Fatalf("session default view = %v, want active flows", m.DefaultView())
 	}
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("selecting default view should not switch current mode, got %v", m.Mode())
@@ -3531,8 +3530,8 @@ func TestModel_ShiftVDoesNotReplaceExistingModal(t *testing.T) {
 
 func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
 	choices := model.ViewChoices()
-	if len(choices) != 8 {
-		t.Fatalf("ViewChoices length = %d, want 8", len(choices))
+	if len(choices) != 9 {
+		t.Fatalf("ViewChoices length = %d, want 9", len(choices))
 	}
 	for _, choice := range choices {
 		mode, ok := model.ModeForViewNumber(choice.Number)
@@ -3547,6 +3546,16 @@ func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
 		if label != want {
 			t.Fatalf("ViewChoiceLabel(%v) = %q, want %q", choice.Mode, label, want)
 		}
+	}
+	mode, ok := model.ModeForViewNumber(9)
+	if !ok || mode != ui.ModeActiveFlows {
+		t.Fatalf("ModeForViewNumber(9) = %v, %v; want active flows, true", mode, ok)
+	}
+	if number, ok := model.ViewNumber(ui.ModeActiveFlows); !ok || number != 9 {
+		t.Fatalf("ViewNumber(ModeActiveFlows) = %d, %v; want 9, true", number, ok)
+	}
+	if label := model.ViewChoiceLabel(ui.ModeActiveFlows); label != "9 active flows" {
+		t.Fatalf("ViewChoiceLabel(ModeActiveFlows) = %q, want %q", label, "9 active flows")
 	}
 }
 

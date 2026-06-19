@@ -69,7 +69,7 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view (`1` through `8`) |
+| `V` | Choose and persist the startup default view (`1` through `9`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -84,9 +84,8 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows |
-| `F3` | Toggle global active Flows in the middle pane, filtered to non-merged Flow records |
-| `←`/`→`/`l` | Switch views in the right pane, clamping at worktrees and flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
+| `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows / active flows |
+| `←`/`→`/`l` | Switch views in the right pane, wrapping between worktrees and active flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Switch to the previous view outside flows view; toggle Flow headless/interactive command mode in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
@@ -96,7 +95,7 @@ filter matches, or a load failure with details in the status bar.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or toggle auto mode for the selected Flow (flows view) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view (`1` through `8`) |
+| `V` | Choose and persist the startup default view (`1` through `9`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view) |
@@ -365,13 +364,13 @@ missing-PR-metadata states do not auto-launch. Automation stops before Merge:
 if Autoreview completes and Merge becomes ready, wtui keeps auto mode on and
 requires the existing manual Merge launch.
 
-Press `F3` from any middle-pane view to keep the current numbered mode selected
-while showing active Flows across all repos. This active view hides merged Flow
-records; moving focus to the left repo pane temporarily filters the visible
-active rows to the selected repo, and returning focus to the middle pane restores
-the global list. Normal Flow actions, phase launches, attached-session resumes,
-auto-mode toggles, and embedded Flow terminals work from the visible active Flow
-rows.
+### Active Flows view (mode 9)
+
+Browse active Flow records across all repos. This view hides merged Flow records;
+moving focus to the left repo pane temporarily filters the visible active rows to
+the selected repo, and returning focus to the middle pane restores the global
+list. Normal Flow actions, phase launches, attached-session resumes, auto-mode
+toggles, and embedded Flow terminals work from the visible active Flow rows.
 
 Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
@@ -599,7 +598,7 @@ for compatibility. The same root is resolved to an absolute path when used as
 the parent directory for left-pane repo creation.
 `[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
 configure provider-specific effort for new CLI agent launches; empty or
-`default` keeps provider defaults. `[ui].default_view` accepts `1` through `8`
+`default` keeps provider defaults. `[ui].default_view` accepts `1` through `9`
 and controls the startup view; omitting it keeps the built-in Flows default.
 `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while

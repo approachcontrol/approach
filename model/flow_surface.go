@@ -9,7 +9,7 @@ import (
 )
 
 func (m Model) activeFlowSurfaceVisible() bool {
-	return m.contentSurface == surfaceActiveFlows
+	return m.mode == ui.ModeActiveFlows
 }
 
 func (m Model) flowSurfaceVisible() bool {
@@ -18,13 +18,14 @@ func (m Model) flowSurfaceVisible() bool {
 
 func (m Model) activeContentFetchMode() ui.Mode {
 	if m.activeFlowSurfaceVisible() {
-		return ui.ModeFlows
+		return ui.ModeActiveFlows
 	}
 	return m.mode
 }
 
 func (m Model) enterActiveFlowsSurface() (Model, tea.Cmd) {
-	m.contentSurface = surfaceActiveFlows
+	m.mode = ui.ModeActiveFlows
+	m.contentSurface = surfaceModeContent
 	m.flowFocus = flowFocusList
 	m.terminalPrefixActive = false
 	m = m.syncActiveFlowsFromCache()
@@ -217,7 +218,7 @@ func (m Model) reflowActiveFlows() Model {
 }
 
 func isNumberedModeKey(key string) bool {
-	return key >= "1" && key <= "8"
+	return key >= "1" && key <= "9"
 }
 
 func modeForNumberedKey(key string) (ui.Mode, bool) {
@@ -232,14 +233,18 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	if !ok {
 		return m, nil, false
 	}
-	m = m.exitActiveFlowsSurface()
 	if m.mode == mode {
 		return m, nil, true
 	}
+	previousMode := m.mode
 	m.mode = mode
-	m = m.resetModeCursors()
+	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		next, cmd := m.startFlowsModeFetchWithRefreshTick()
+		return next, cmd, true
+	}
+	if m.mode == ui.ModeActiveFlows {
+		next, cmd := m.startActiveFlowsFetchWithRefreshTick()
 		return next, cmd, true
 	}
 	next, cmd := m.startFetchMode(mode)

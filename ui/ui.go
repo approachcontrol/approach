@@ -130,6 +130,7 @@ const (
 	ModeSessions
 	ModePlans
 	ModeFlows
+	ModeActiveFlows
 )
 
 const LeftPaneWidth = 30
@@ -447,8 +448,9 @@ func renderApplication(p RenderParams) string {
 	stashSelected := p.Mode == ModeStashes && p.StashSelected >= 0 && p.StashSelected < len(p.Stashes)
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
-	embeddedTerminalActive := p.Mode == ModeSessions && !p.ActiveFlows && len(p.EmbeddedTerminals) > 0
-	flowSurfaceActive := p.Mode == ModeFlows || p.ActiveFlows
+	activeFlows := p.ActiveFlows || p.Mode == ModeActiveFlows
+	embeddedTerminalActive := p.Mode == ModeSessions && !activeFlows && len(p.EmbeddedTerminals) > 0
+	flowSurfaceActive := p.Mode == ModeFlows || activeFlows
 	flowEmbeddedTerminalActive := flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0
 	terminalShortcutsActive := embeddedTerminalActive || (flowEmbeddedTerminalActive && p.FlowTerminalFocused)
 	sessionSelected := p.Mode == ModeSessions && !embeddedTerminalActive && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
@@ -478,7 +480,7 @@ func renderApplication(p RenderParams) string {
 	status := statusBarParams{
 		Width:                       p.Width,
 		Mode:                        p.Mode,
-		ActiveFlows:                 p.ActiveFlows,
+		ActiveFlows:                 activeFlows,
 		Overlay:                     p.Overlay,
 		InputMode:                   inputRenderParamsFrom(p).mode,
 		FormHasMultiline:            formHasMultilineField(p.Form),
@@ -565,9 +567,6 @@ func renderApplication(p RenderParams) string {
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery)
 
 	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
-	if p.ActiveFlows {
-		modeHeader = renderActiveFlowsHeader(rightContentWidth)
-	}
 	rightContentHeight := p.Height - BranchContentOverhead
 
 	// Hide cursor in right pane when left pane is active
@@ -600,9 +599,9 @@ func renderApplication(p RenderParams) string {
 	var rightLines []string
 	switch {
 	case flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused, p.ActiveFlows, repoDisplayNames)
+		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused, activeFlows, repoDisplayNames)
 	case flowSurfaceActive && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.ActiveFlows, repoDisplayNames)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, activeFlows, repoDisplayNames)
 	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
 		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
 	case p.Mode == ModeBranches && len(p.Branches) > 0:
@@ -698,6 +697,7 @@ func renderModeHeader(mode Mode, width int) string {
 		{ModeSessions, "sessions"},
 		{ModePlans, "plans"},
 		{ModeFlows, "flows"},
+		{ModeActiveFlows, "active flows"},
 	}
 
 	var parts []string
@@ -930,7 +930,7 @@ func renderShortcutPane(sp statusBarParams, width, height int) string {
 	title := titleStyle.Render("Shortcuts") + "  " + modeStyle.Render(modeShortcutTitleForStatus(sp))
 	lines = append(lines, ansi.Truncate(" "+title, width, ""))
 	compact := height <= 3
-	flowSurfaceActive := sp.Mode == ModeFlows || sp.ActiveFlows
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
 	tight := height <= 7 || (flowSurfaceActive && height <= 14)
 	if !compact && !tight {
 		lines = append(lines, strings.Repeat(" ", width))
@@ -1047,7 +1047,7 @@ func padShortcutKey(key string, width int) string {
 }
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
-	flowSurfaceActive := sp.Mode == ModeFlows || sp.ActiveFlows
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
 	if (sp.Mode == ModeSessions || flowSurfaceActive) && sp.EmbeddedTerminalActive {
 		hints := []shortcutHint{{Key: "ctrl+]", Label: "commands"}}
 		if sp.EmbeddedTerminalPrefix {
@@ -1080,7 +1080,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if sp.ActivePane == 0 && sp.RepoSelected {
 		navigation = append(navigation, shortcutHint{Key: "enter", Label: "pane", Inline: true})
 	}
-	if sp.ActivePane == 1 && !sp.ActiveFlows {
+	if sp.ActivePane == 1 {
 		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 	}
 	if flowSurfaceActive && sp.ActivePane == 1 && !sp.EmbeddedTerminalActive {
@@ -1090,7 +1090,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
 		{Key: "f5", Label: "refresh"},
-		{Key: "f3", Label: "active flows"},
 	}
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
@@ -1348,7 +1347,7 @@ func flowAgentShortcut(value string) (string, bool) {
 }
 
 func shortcutsMuted(sp statusBarParams) bool {
-	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows || sp.ActiveFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
+	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
 }
 
 func flowReasoningEffortShortcutLabel(value string) string {
@@ -1380,11 +1379,11 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
-	if height < 20 && sp.Mode != ModeFlows && !sp.ActiveFlows {
+	if height < 20 && sp.Mode != ModeFlows && sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
 		sections = prioritizeShortcutInSection(sections, "Global", "V", "f2")
 		sections = prioritizeShortcutInSection(sections, "Global", "A", "q/esc")
 	}
-	if (sp.Mode == ModeFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
+	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
 		sections = withoutShortcutKeys(sections, "D", "n", "f5")
 	}
 	if height < 20 {
@@ -1455,7 +1454,7 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 	if sp.Mode == ModeBranches {
 		return renderBranchFooterShortcuts(sp, sections)
 	}
-	if sp.Mode == ModeFlows || sp.ActiveFlows {
+	if sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows {
 		return renderFlowFooterShortcuts(sp, sections)
 	}
 	return renderGenericFooterShortcuts(sp, sections)
@@ -1527,20 +1526,20 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 	paneKey := paneShortcutKeyForStatus(sp)
 	for _, drop := range [][]string{
 		{},
-		{"f5", "f3"},
-		{"f5", "f3", "A"},
-		{"f5", "f3", "A", "D"},
-		{"f5", "f3", "A", "D", "←/→"},
-		{"f5", "f3", "A", "D", "←/→", "↑/↓"},
-		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
+		{"f5"},
+		{"f5", "A"},
+		{"f5", "A", "D"},
+		{"f5", "A", "D", "←/→"},
+		{"f5", "A", "D", "←/→", "↑/↓"},
+		{"f5", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f3", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -1876,13 +1875,15 @@ func modeShortcutTitle(mode Mode) string {
 		return "Plans"
 	case ModeFlows:
 		return "Flows"
+	case ModeActiveFlows:
+		return "Active flows"
 	default:
 		return "Items"
 	}
 }
 
 func modeShortcutTitleForStatus(sp statusBarParams) string {
-	if sp.ActiveFlows {
+	if sp.ActiveFlows || sp.Mode == ModeActiveFlows {
 		return "Active flows"
 	}
 	return modeShortcutTitle(sp.Mode)

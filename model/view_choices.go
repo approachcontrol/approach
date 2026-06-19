@@ -21,6 +21,7 @@ var viewChoices = []ViewChoice{
 	{Number: 6, Mode: ui.ModeSessions, Label: "sessions"},
 	{Number: 7, Mode: ui.ModePlans, Label: "plans"},
 	{Number: 8, Mode: ui.ModeFlows, Label: "flows"},
+	{Number: 9, Mode: ui.ModeActiveFlows, Label: "active flows"},
 }
 
 func ViewChoices() []ViewChoice {

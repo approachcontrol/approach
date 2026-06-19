@@ -76,7 +76,7 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 
 func (m Model) fetchForMode() tea.Cmd {
 	if m.activeFlowSurfaceVisible() {
-		return m.fetchActiveFlows(m.currentListRequest(ui.ModeFlows))
+		return m.fetchActiveFlows(m.currentListRequest(ui.ModeActiveFlows))
 	}
 	mode := m.activeContentFetchMode()
 	return m.fetchMode(mode, m.currentListRequest(mode))

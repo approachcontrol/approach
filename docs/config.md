@@ -123,10 +123,10 @@ Stores user-interface preferences.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, and `8` flows. Omitted keeps the built-in Flows startup default. |
+| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. Omitted keeps the built-in Flows startup default. |
 
 Press `V` in wtui to choose and persist this value from a picker. The picker
-changes future launches only; use `1` through `8`, arrows, `h`, or `l` to switch
+changes future launches only; use `1` through `9`, arrows, `h`, or `l` to switch
 the current view.
 
 ### `[editor]`
@@ -345,11 +345,10 @@ terminal exits normally and auto-closes; terminal exit also triggers a Flow
 refresh so newly persisted completion state is discovered without waiting for
 unrelated UI activity. Auto mode still skips non-completed outcomes and stops
 before Merge.
-Press `F3` from any middle-pane view to keep the current numbered mode selected
-while showing active Flows across all repos. This active view hides merged Flow
-records; moving focus to the left repo pane temporarily filters the visible
-active rows to the selected repo, and returning focus to the middle pane restores
-the global list. It supports the same Flow actions, phase launches,
+The active flows pane (mode `9`) shows active Flows across all repos and hides
+merged Flow records. Moving focus to the left repo pane temporarily filters the
+visible active rows to the selected repo, and returning focus to the middle pane
+restores the global list. It supports the same Flow actions, phase launches,
 attached-session resumes, auto-mode toggles, and embedded Flow terminal
 management as the flows pane.
 Headless mode is on by default:

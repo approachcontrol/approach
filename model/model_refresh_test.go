@@ -511,6 +511,8 @@ func hasListFetchForMode(msgs []tea.Msg, mode ui.Mode, request uint64) bool {
 			return mode == ui.ModePlans && msg.ListRequest == request
 		case model.FlowResultMsg:
 			return mode == ui.ModeFlows && msg.ListRequest == request
+		case model.ActiveFlowResultMsg:
+			return mode == ui.ModeActiveFlows && msg.ListRequest == request
 		case model.FetchErrorMsg:
 			return msg.Kind == model.FetchList && msg.Mode == mode && msg.ListRequest == request
 		}
