@@ -12,6 +12,8 @@ import (
 	"github.com/brian-bell/wtui/ui"
 )
 
+const promptTemplateEditorVisibleLines = 16
+
 type promptTemplateTarget struct {
 	Section string
 	Key     string
@@ -94,7 +96,7 @@ func (m Model) handlePromptTemplateEditRequested(msg promptTemplateEditRequested
 			}
 			return m.savePromptTemplateCommand(target, input)
 		},
-	)
+	).WithInputHeight(promptTemplateEditorVisibleLines)
 	return m
 }
 

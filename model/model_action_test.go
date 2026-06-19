@@ -3602,6 +3602,40 @@ func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 	}
 }
 
+func TestModel_PromptTemplateEditUsesTallEditor(t *testing.T) {
+	template := strings.Join([]string{
+		"line 01",
+		"line 02",
+		"line 03",
+		"line 04",
+		"line 05",
+		"line 06",
+		"line 07",
+		"line 08",
+		"line 09",
+		"line 10",
+		"line 11",
+		"line 12",
+	}, "\n")
+	m := model.NewWithOptions(testRepos(), model.Options{
+		PlanPromptTemplate: template,
+	})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected prompt template edit request")
+	}
+	m, _ = update(m, cmd())
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"line 01", "line 12█"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("prompt template editor should show %q with tall editor:\n%s", want, view)
+		}
+	}
+}
+
 func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:       "codex",

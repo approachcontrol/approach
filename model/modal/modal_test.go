@@ -478,6 +478,23 @@ func TestRawMultiLineInputSubmitPreservesOuterWhitespace(t *testing.T) {
 	}
 }
 
+func TestInputHeightIsCarriedInView(t *testing.T) {
+	view := modal.OpenRawMultiLineInput("Template", "prompt template", "", nil, nil).
+		WithInputHeight(16).
+		View()
+
+	if view.InputHeight != 16 {
+		t.Fatalf("input height = %d, want 16", view.InputHeight)
+	}
+
+	view = modal.OpenRawMultiLineInput("Template", "prompt template", "", nil, nil).
+		WithInputHeight(-1).
+		View()
+	if view.InputHeight != 0 {
+		t.Fatalf("negative input height = %d, want normalized 0", view.InputHeight)
+	}
+}
+
 func TestSelectSnapshotsPromptItemsAndInitialSelection(t *testing.T) {
 	items := []modal.SelectItem{
 		{Label: "Codex", Value: "codex"},

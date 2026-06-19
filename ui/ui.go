@@ -239,6 +239,7 @@ type RenderParams struct {
 	InputValue                  string
 	InputError                  string
 	InputMode                   InputMode
+	InputHeight                 int
 	InputCursor                 int
 	WorktreeInputPrompt         string
 	WorktreeInputPlaceholder    string
@@ -3653,6 +3654,7 @@ type inputRenderParams struct {
 	value       string
 	errText     string
 	mode        InputMode
+	height      int
 	cursor      int
 }
 
@@ -3670,6 +3672,7 @@ func inputRenderParamsFrom(p RenderParams) inputRenderParams {
 			value:       p.InputValue,
 			errText:     p.InputError,
 			mode:        p.InputMode,
+			height:      p.InputHeight,
 			cursor:      p.InputCursor,
 		}
 	}
@@ -3683,6 +3686,7 @@ func inputRenderParamsFrom(p RenderParams) inputRenderParams {
 		value:       p.WorktreeInput,
 		errText:     p.WorktreeInputErr,
 		mode:        p.InputMode,
+		height:      p.InputHeight,
 		cursor:      cursor,
 	}
 }
@@ -3716,7 +3720,7 @@ func renderInputDialog(params inputRenderParams, width, height int) []string {
 
 	bodyLines := inputDialogBodyLines(params, contentWidth)
 	cursorLine := lineIndexContainingCursor(bodyLines)
-	maxInputLines := maxInputDialogLines(height, params.errText, contentWidth)
+	maxInputLines := maxInputDialogLines(height, params.errText, contentWidth, params.height)
 	bodyLines = compactInputDialogLines(bodyLines, maxInputLines, cursorLine)
 
 	content := make([]string, 0, len(bodyLines)+3)
@@ -3905,8 +3909,11 @@ func lineIndexContainingCursor(lines []string) int {
 	return -1
 }
 
-func maxInputDialogLines(height int, errText string, contentWidth int) int {
+func maxInputDialogLines(height int, errText string, contentWidth int, configuredLines int) int {
 	maxLines := launchInstructionsMaxLines
+	if configuredLines > 0 {
+		maxLines = configuredLines
+	}
 	available := height - 2
 	if errText != "" {
 		available -= 1 + len(wrapPlainText(errText, contentWidth))

@@ -3073,6 +3073,57 @@ func TestRender_InputDialogOverflowKeepsCursorVisible(t *testing.T) {
 	}
 }
 
+func TestRender_InputDialogConfiguredHeightShowsMoreText(t *testing.T) {
+	value := strings.Join([]string{
+		"line 01",
+		"line 02",
+		"line 03",
+		"line 04",
+		"line 05",
+		"line 06",
+		"line 07",
+		"line 08",
+		"line 09",
+		"line 10",
+		"line 11",
+		"line 12",
+	}, "\n")
+
+	defaultView := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       72,
+		Height:      22,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Edit Plan launch",
+		InputValue:  value,
+		InputCursor: len([]rune(value)),
+		InputMode:   InputMultiLine,
+	})
+	tallView := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
+		Width:       72,
+		Height:      22,
+		Mode:        ModePlans,
+		Overlay:     OverlayInput,
+		InputPrompt: "Edit Plan launch",
+		InputValue:  value,
+		InputCursor: len([]rune(value)),
+		InputMode:   InputMultiLine,
+		InputHeight: 16,
+	})
+
+	if strings.Contains(ansi.Strip(defaultView), "line 01") {
+		t.Fatalf("default input height unexpectedly shows the first line:\n%s", ansi.Strip(defaultView))
+	}
+	strippedTall := ansi.Strip(tallView)
+	for _, want := range []string{"line 01", "line 12█"} {
+		if !strings.Contains(strippedTall, want) {
+			t.Fatalf("configured input height should show %q:\n%s", want, strippedTall)
+		}
+	}
+}
+
 func TestRender_InputDialogTinyHeightKeepsCursorVisible(t *testing.T) {
 	value := strings.Join([]string{
 		"line one",

@@ -118,6 +118,7 @@ type Modal struct {
 	input        string
 	inputMode    InputMode
 	inputRaw     bool
+	inputHeight  int
 	inputCursor  int
 	inputColumn  int
 	inputErr     string
@@ -147,6 +148,7 @@ type View struct {
 	Force        bool
 	Input        string
 	InputMode    InputMode
+	InputHeight  int
 	InputCursor  int
 	InputErr     string
 	SelectItems  []SelectItem
@@ -203,6 +205,14 @@ func OpenMultiLineInput(prompt, placeholder, initial string, validate func(strin
 func OpenRawMultiLineInput(prompt, placeholder, initial string, validate func(string) error, submit func(string) tea.Cmd) Modal {
 	m := OpenMultiLineInput(prompt, placeholder, initial, validate, submit)
 	m.inputRaw = true
+	return m
+}
+
+func (m Modal) WithInputHeight(height int) Modal {
+	if height < 0 {
+		height = 0
+	}
+	m.inputHeight = height
 	return m
 }
 
@@ -301,6 +311,7 @@ func (m Modal) View() View {
 		Force:        m.force,
 		Input:        m.input,
 		InputMode:    m.inputMode,
+		InputHeight:  m.inputHeight,
 		InputCursor:  clampInputCursor(m.input, m.inputCursor),
 		InputErr:     m.inputErr,
 		SelectItems:  append([]SelectItem(nil), m.selectItems...),

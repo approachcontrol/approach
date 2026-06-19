@@ -703,6 +703,7 @@ func (m Model) View() string {
 		InputValue:                  modalView.Input,
 		InputError:                  modalView.InputErr,
 		InputMode:                   uiInputMode(modalView.InputMode),
+		InputHeight:                 modalView.InputHeight,
 		InputCursor:                 modalView.InputCursor,
 		WorktreeInputPrompt:         modalView.Prompt,
 		WorktreeInputPlaceholder:    modalView.Placeholder,
