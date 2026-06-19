@@ -429,6 +429,39 @@ func TestModel_F3ActiveFlowLeftKeyClampsAndPreservesUnderlyingMode(t *testing.T)
 	assertListRequestsUnchanged(t, before, m)
 }
 
+func TestModel_F3ActiveFlowNewFlowKeyIsIgnored(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("StartFlowPlan should not be called from active flows")
+			return model.FlowStartResult{}, nil
+		},
+	}), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if cmd != nil {
+		t.Fatalf("n from active Flow surface returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("n from active Flow surface opened overlay %d, want none", m.Overlay())
+	}
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("n from active Flow surface changed underlying mode = %d, want sessions", m.Mode())
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Active flows") {
+		t.Fatalf("n from active Flow surface should keep active Flow view visible:\n%s", view)
+	}
+	if strings.Contains(view, "New flow") || strings.Contains(view, ui.FlowTitleInputPlaceholder) {
+		t.Fatalf("n from active Flow surface should not open new Flow form:\n%s", view)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
 func TestModel_F3ActiveFlowTabWithoutTerminalKeepsFlowSurfaceFocused(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})

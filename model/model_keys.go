@@ -544,8 +544,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleLaunchNextFlowPhase()
 	case "enter":
 		return m.handleFlowEnter()
-	case "n":
-		return m.handleNewFlow()
 	case "o":
 		return m.handleOpenFlowPlanText()
 	case "m":
