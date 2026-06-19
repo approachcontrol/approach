@@ -6504,7 +6504,7 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 	}
 }
 
-func TestModel_BackspaceFromFlowListReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
+func TestModel_BackKeysFromFlowListReturnToLeftPaneAndClearSelectedPhase(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		key  tea.KeyMsg
