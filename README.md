@@ -46,9 +46,12 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 ### Keys
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
-on a selected repo to focus the content pane, and press `f2` to switch pane
-focus explicitly. When a Flow embedded terminal is open, `tab` switches focus
-between the Flow list and that terminal while the right pane remains active.
+or `tab` on a selected repo to focus the content pane, and press `f2` to switch
+pane focus explicitly. Left-pane shortcut hints show `f2/tab` for pane focus
+because `tab` is the left-to-content shortcut; right-pane hints show `f2` unless
+Flow list-specific navigation is available. When a Flow embedded terminal is
+open, `tab` switches focus between the Flow list and that terminal while the
+right pane remains active.
 The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
@@ -70,7 +73,7 @@ filter matches, or a load failure with details in the status bar.
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
 | `enter` | Switch focus to right pane |
-| `f2` | Switch pane focus |
+| `f2`/`tab` | Switch pane focus |
 | `q`/`esc` | Quit |
 
 **Right pane (content)**
@@ -109,13 +112,15 @@ filter matches, or a load failure with details in the status bar.
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
 | `f2` | Switch focus to left pane |
+| `⌫` | Switch focus to left pane from the Flow list |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
 switch between worktrees, branches, stashes, history, reflog, sessions, plans,
 and flows. Arrow-key view switching clamps at worktrees and flows. Press
-`enter` from the repo pane to focus the content pane, or `f2` to switch pane
-focus explicitly.
+`enter` or `tab` from the repo pane to focus the content pane, or `f2` to
+switch pane focus explicitly. In the Flow list, `⌫` switches focus back to the
+left repo pane.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered
@@ -386,12 +391,12 @@ as it works, while `claude --print` prints its result when the run completes,
 so a Claude phase can show an empty terminal until it finishes (the terminal tab
 still shows `running`). While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
-`tab` switches focus between them. Manually tabbing into Flow terminal focus
-starts in wtui command mode: `left`/`right` cycle Flow terminals, `1`-`9`
-switches by number, `x` closes, `d` detaches to tmux when available and opens
-the detached session in an external terminal, `q`/`esc` quits, unknown ordinary
-keys do not pass through to the PTY, `ctrl+]` sends a literal `ctrl+]`, and `i`
-enters terminal input mode. In input
+`tab` switches focus between them while the right pane remains active. Manually
+tabbing into Flow terminal focus starts in wtui command mode: `left`/`right`
+cycle Flow terminals, `1`-`9` switches by number, `x` closes, `d` detaches to
+tmux when available and opens the detached session in an external terminal,
+`q`/`esc` quits, unknown ordinary keys do not pass through to the PTY, `ctrl+]`
+sends a literal `ctrl+]`, and `i` enters terminal input mode. In input
 mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
 and `ctrl+]` returns to command mode. When
 Implementation is still gated by Plan Review, wtui reports the Plan Review state

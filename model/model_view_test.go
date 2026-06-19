@@ -342,8 +342,8 @@ func TestModel_ViewStatusBarShowsKeyHints(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
 	view := m.View()
-	if !strings.Contains(view, "f2     pane") {
-		t.Error("view should contain 'f2 pane' shortcut")
+	if !strings.Contains(view, "f2/tab pane") {
+		t.Error("view should contain 'f2/tab pane' shortcut")
 	}
 }
 

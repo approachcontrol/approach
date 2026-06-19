@@ -6506,6 +6506,97 @@ func TestModel_FlowTerminalFocusUsesPersistentCommandModeAndTabReturnsToList(t *
 	}
 }
 
+func TestModel_BackspaceFromFlowListReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "backspace", key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{name: "ctrl-h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+			m = selectFlowPhaseByID(t, m, "implementation")
+			before := listRequests(m)
+
+			m, cmd := update(m, tt.key)
+
+			if m.ActivePane() != 0 {
+				t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+			}
+			if got := m.SelectedFlowPhaseID(); got != "" {
+				t.Fatalf("selected Flow phase = %q, want cleared", got)
+			}
+			if cmd != nil {
+				t.Fatalf("backspace from Flow list returned cmd %T, want nil", cmd)
+			}
+			assertListRequestsUnchanged(t, before, m)
+		})
+	}
+}
+
+func TestModel_BackspaceFromActiveFlowsReturnsToLeftPaneAndClearsSelectedPhase(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "implementation" {
+		t.Fatalf("selected active Flow phase = %q, want implementation before backspace", got)
+	}
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "" {
+		t.Fatalf("selected active Flow phase = %q, want cleared", got)
+	}
+	if cmd != nil {
+		t.Fatalf("backspace from active Flow list returned cmd %T, want nil", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
+func TestModel_BackspaceForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+	m, cmd := update(m, flowLaunchKey())
+	if cmd == nil {
+		t.Fatal("g should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("terminal-owned backspace activePane = %d, want right pane", m.ActivePane())
+	}
+	if cmd != nil {
+		t.Fatalf("terminal-owned backspace returned cmd %T, want nil", cmd)
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x7f" {
+		t.Fatalf("terminal input backspace writes = %#v, want delete byte", fakeTerm.writes)
+	}
+}
+
 func TestModel_F2SwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
