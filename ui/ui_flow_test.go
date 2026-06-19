@@ -762,6 +762,60 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 	}
 }
 
+func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:    0,
+		Width:       180,
+		Height:      28,
+		Mode:        ModeFlows,
+		ActiveFlows: true,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Grouped shortcuts",
+			Status:       flowstore.StatusInProgress,
+			Branch:       "flow/grouped-shortcuts",
+			WorktreePath: "/dev/wtui-worktrees/flow-grouped-shortcuts",
+			PlanID:       "plan-1",
+			AutoMode:     true,
+			Phases: []flowstore.FlowPhase{{
+				PhaseID: "implementation",
+				Title:   "Implementation",
+				Status:  flowstore.PhaseReady,
+			}},
+		}},
+		ActivePane:                 1,
+		Destructive:                true,
+		FlowSelected:               0,
+		FlowHeadless:               true,
+		FlowAutoModeSelected:       true,
+		FlowNextLaunchReady:        true,
+		FlowAgentLabel:             "codex",
+		FlowReasoningEffort:        "effort: high",
+		FlowPhaseResumableSelected: true,
+	})
+
+	pane := shortcutPaneText(view)
+	if strings.Contains(pane, "n      new flow") {
+		t.Fatalf("active Flow shortcut pane should not expose new flow:\n%s", pane)
+	}
+	for _, want := range []string{
+		"enter  phases",
+		"g      launch next",
+		"o      open",
+		"y      copy path",
+		"h      headless on",
+		"m      auto: on",
+		"A      codex",
+		"E      effort: high",
+		"f3     active flows",
+	} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("active Flow shortcut pane missing %q:\n%s", want, pane)
+		}
+	}
+}
+
 func shortcutSectionTitles(pane string) []string {
 	known := map[string]bool{
 		"Actions":  true,
