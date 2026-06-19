@@ -2772,7 +2772,7 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
 		return "missing-session-id"
 	}
-	if phase.PhaseID == "merge" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
+	if phase.PhaseID == "autoreview" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
 		return "missing-pr"
 	}
 	return flowBasePhaseState(phase)

@@ -71,7 +71,7 @@ plan = "Produce a plan only for: {instructions}"
 implementation = "Implement {plan_path} in {worktree_path}, then use the commit skill before completing."
 review_loop = "Use review-loop for {branch}; use commit if revisions are made."
 pr_creation = "Use ship for {branch}; record PR metadata for flow {flow_id}."
-autoreview = "Second-level local worktree autoreview for {branch}; use commit if revisions are made."
+autoreview = "Autoreview {pr_url}; use ship when fixes require commits or pushes."
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
@@ -216,23 +216,20 @@ ends with that exact standalone instruction.
 | `plan` | string | Template for the initial Plan phase launch. |
 | `plan_review` | string | Template for Plan Review. |
 | `implementation` | string | Template for Implementation. |
-| `review_loop` | string | Template for review-loop-1. |
+| `review_loop` | string | Template for Review Loop. |
 | `pr_creation` | string | Template for PR Creation. |
-| `autoreview` | string | Template for review-loop-2, the second-level local worktree autoreview. |
+| `autoreview` | string | Template for Autoreview. |
 | `merge` | string | Template for Merge. |
 | `generic` | string | Template for non-standard Flow phase IDs. |
-
-`review-loop-1` uses the Review Loop prompt/template. `review-loop-2` uses the
-autoreview prompt/template.
 
 Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,
 `{plan_body}`, `{repo_path}`, `{worktree_path}`, `{branch}`, `{commit}`,
 `{base_ref}`, `{pr_provider}`, `{pr_number}`, `{pr_url}`, `{pr_head}`,
-`{pr_base}`, and `{pr_status}`. Standard Plan Review, Implementation,
-`review-loop-1`, `review-loop-2`, PR Creation, and Merge launches do not
-pre-read the linked plan body, so `{plan_body}` is empty for those built-in
-phase types unless a future phase path explicitly supplies it.
+`{pr_base}`, and `{pr_status}`. Standard Plan Review, Implementation, Review
+Loop, PR Creation, Autoreview, and Merge launches do not pre-read the linked
+plan body, so `{plan_body}` is empty for those built-in phase types unless a
+future phase path explicitly supplies it.
 
 ### `[sessions]`
 
@@ -416,8 +413,8 @@ completed state even if the linked-plan sync later fails.
 Flow IDs use the same safe single-path-segment shape as plans:
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use
 `YYYYMMDDTHHMMSSZ-<title-slug>` with a numeric suffix on collision. New flows
-start with a default phase graph: plan, plan review, implementation,
-review-loop-1, review-loop-2, PR creation, and merge.
+start with a default phase graph: plan, plan review, implementation, review
+loop, PR creation, autoreview, and merge.
 
 Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
@@ -432,7 +429,8 @@ metadata, `await-session` when a running phase has a launch attempt but no
 attached provider session yet, `session-mismatch` when a phase's attached
 session launch ID does not match the phase launch IDs, `missing-session-id`
 when an attached session lacks a provider session ID, and `missing-pr` on a
-pending Merge phase when PR Creation completed without structured PR metadata.
+pending Autoreview phase when PR Creation completed without structured PR
+metadata.
 
 On a selected `await-session` phase row, `x` offers a confirmed reset back to
 derived `ready` only when no running or starting embedded Flow terminal is
@@ -454,7 +452,7 @@ actionable phase state, and allowed statuses for that next action. Notes
 requirements are still enforced by the same store rules as `phase set`. Plan
 Review wrappers fill the unambiguous outcomes when omitted: `complete` uses
 `approved`, `block` uses `blocked`, and `needs-attention` uses
-`changes_requested`. `review-loop-2` wrappers fill `passed`, `blocked`, and
+`changes_requested`. Autoreview wrappers fill `passed`, `blocked`, and
 `needs_attention` for the matching common outcomes. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if `--notes` is omitted, wtui records a standard rerun note. Use
@@ -467,21 +465,20 @@ and lowercased): re-running the command with the same logical id -- including
 case or whitespace variants -- updates the same child instead of duplicating
 it, and updates collapse duplicate rows left by older records. `wtui flow phase
 set` resolves phase ids the same way. Child phases currently belong
-under `implementation`; they gate review-loop-1, review-loop-2, and PR
-creation until completed or skipped with notes. Flow phase launch prompts stay
-minimal: Plan Review and Implementation point to the saved plan artifact, while
-review-loop-1, review-loop-2, and PR Creation include only the worktree,
-branch, and start commit metadata needed to inspect the changes. Built-in
-prompts tell Plan to produce only a plan, Plan Review to use the review-loop
-skill with max 6 loops, Implementation to use the `commit` skill,
-review-loop-1 to use the review-loop workflow with goal `review-and-revise`
-and `commit` when revisions are made, review-loop-2 to run a second-level
-local worktree autoreview and use `commit` when revisions are made, and PR
-Creation to use the `ship` skill. All Flow phase launch prompts also end with:
+under `implementation`; they gate review loop and PR creation until completed or
+skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
+Implementation point to the saved plan artifact, while Review Loop and PR
+Creation include only the worktree, branch, and start commit metadata needed to
+inspect the changes. Built-in prompts tell Plan to produce only a plan,
+Plan Review to use the review-loop skill with max 6 loops, Implementation to
+use the `commit` skill, Review Loop to use the review-loop workflow with goal
+`review-and-revise` and `commit` when revisions are made, PR Creation to use
+the `ship` skill, and Autoreview to use `ship` when fixes require commits or
+pushes. All Flow phase launch prompts also end with:
 `After completing this phase goal, mark this Flow phase done with wtui-flow.`
-`review-loop-2` launch prompts include worktree, branch, and start commit
-metadata but leave detailed completion, needs-attention, blocked, and restart
-mechanics to the high-level Flow phase commands.
+Autoreview launch prompts include the PR target metadata but leave detailed
+completion, needs-attention, blocked, and restart mechanics to the high-level
+Flow phase commands.
 Override `[flow_prompts]` keys to customize those phase templates; wtui still
 appends the common phase-done instruction to custom templates.
 
@@ -489,7 +486,7 @@ The PR Creation phase should record structured PR metadata with
 `wtui flow pr set` after a pull request exists. The command currently supports
 GitHub PRs and validates the provider, absolute http(s) URL, positive PR
 number, required head/base branches, and that the head branch matches the Flow
-branch. Merge stays pending when PR Creation is complete but this PR target
+branch. Autoreview stays pending when PR Creation is complete but this PR target
 metadata is missing.
 
 The flow state root is resolved as: `--state-root` >

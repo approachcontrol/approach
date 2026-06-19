@@ -35,9 +35,9 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 		"plan",
 		"plan-review",
 		"implementation",
-		"review-loop-1",
-		"review-loop-2",
+		"review-loop",
 		"pr-creation",
+		"autoreview",
 		"merge",
 	})
 	requireContainsAll(t, "agent-facing phase statuses", skill, []string{
