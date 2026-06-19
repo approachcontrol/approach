@@ -1172,7 +1172,7 @@ func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:         0,
 		Width:            140,
-		Height:           18,
+		Height:           28,
 		Mode:             ModeWorktrees,
 		ActivePane:       1,
 		DefaultViewLabel: "8 flows",
@@ -1180,7 +1180,7 @@ func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		WorktreeSelected: 0,
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "V      default 8 flows") {
+	if !strings.Contains(pane, "V      default view") {
 		t.Fatalf("shortcut pane should advertise default view setting:\n%s", pane)
 	}
 }
@@ -1190,7 +1190,7 @@ func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:         0,
 		Width:            160,
-		Height:           18,
+		Height:           28,
 		Mode:             ModeFlows,
 		ActivePane:       1,
 		DefaultViewLabel: "2 branches",
@@ -1198,8 +1198,10 @@ func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		FlowSelected:     0,
 	})
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "V      default 2 branches") {
-		t.Fatalf("flow shortcut pane should advertise default view setting:\n%s", pane)
+	global := strings.Index(pane, "Global")
+	defaultView := strings.Index(pane, "V      default view")
+	if global < 0 || defaultView < 0 || defaultView < global {
+		t.Fatalf("flow shortcut pane should advertise default view setting in Global section:\n%s", pane)
 	}
 }
 

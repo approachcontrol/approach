@@ -1099,10 +1099,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
-	if !flowSurfaceActive {
-		if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
-			global = slices.Insert(global, len(global)-1, shortcutHint{Key: "V", Label: label})
-		}
+	if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
+		global = slices.Insert(global, len(global)-1, shortcutHint{Key: "V", Label: label})
 	}
 
 	var actions []shortcutHint
@@ -1326,9 +1324,6 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
 		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
 	}
-	if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
-		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "V", Label: label})
-	}
 	var sections []shortcutSection
 	if len(actions) > 0 {
 		sections = append(sections, shortcutSection{Title: "Actions", Hints: actions})
@@ -1367,7 +1362,7 @@ func defaultViewShortcutLabel(value string) string {
 	if value == "" {
 		return ""
 	}
-	return "default " + value
+	return "default view"
 }
 
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {
