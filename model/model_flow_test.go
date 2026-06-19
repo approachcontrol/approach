@@ -8282,7 +8282,7 @@ func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 		{id: "title", kind: ui.FormText, label: "Title", placeholder: ui.FlowTitleInputPlaceholder},
 		{id: "instructions", kind: ui.FormMultilineText, label: "Instructions", placeholder: ui.FlowInstructionsInputPlaceholder},
 		{id: "base-ref", kind: ui.FormText, label: "Base ref", placeholder: ui.FlowBaseRefInputPlaceholder},
-		{id: "headless", kind: ui.FormCheckbox, label: "Headless"},
+		{id: "headless", kind: ui.FormCheckbox, label: "Headless", checked: true},
 		{id: "plan-now", kind: ui.FormCheckbox, label: "Plan Now", checked: true},
 	}
 	for i, wantField := range want {
@@ -8408,7 +8408,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				started.LaunchID != "launch-1" ||
 				started.ReasoningEffort != wantEffort ||
 				!started.Embedded ||
-				started.Headless ||
+				!started.Headless ||
 				!started.FlowLaunchTracked {
 				t.Fatalf("embedded launch context = %#v", started)
 			}
@@ -8675,7 +8675,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
 
-	m, cmd := submitNewFlowPrompts(t, m, "Interactive Plan", "Write the plan", "main")
+	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -8690,6 +8690,9 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	}
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
+	}
+	if !model.FlowHeadlessForTest(m) {
+		t.Fatal("unchecked create-form headless option should not mutate flows-mode headless toggle")
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
@@ -9502,7 +9505,7 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 
 func submitNewFlowPrompts(t *testing.T, m model.Model, title, instructions, baseRef string) (model.Model, tea.Cmd) {
 	t.Helper()
-	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, false)
+	return submitNewFlowPromptsWithOptions(t, m, title, instructions, baseRef, true)
 }
 
 func submitNewFlowPromptsWithOptions(t *testing.T, m model.Model, title, instructions, baseRef string, headless bool) (model.Model, tea.Cmd) {
@@ -9514,7 +9517,7 @@ func submitNewFlowPromptsWithCreateOptions(t *testing.T, m model.Model, title, i
 	t.Helper()
 	m = openNewFlowForm(t, m, title, instructions, baseRef)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if headless {
+	if !headless {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})

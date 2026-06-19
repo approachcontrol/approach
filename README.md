@@ -385,11 +385,11 @@ headless off runs interactive `codex` or `claude` in the same embedded Flow
 terminal. Headless-off Flow launches prefill the phase prompt without
 submitting it, then focus the Flow terminal in input mode so you can review or
 edit it before pressing enter. Headless launches keep focus on the Flow list.
-Creating a new Flow has its own default-off Headless checkbox for the
-initial Plan launch; that checkbox is ignored when Plan Now is off and does
-not change the selected-phase `h` setting. Manual phase launches,
-auto-launched phases, and new Flow Plan launches all use the configured agent
-and that agent's configured effort. Press
+Creating a new Flow has its own default-on Headless checkbox for the initial
+Plan launch; uncheck it for an interactive initial Plan launch. That checkbox
+is ignored when Plan Now is off and does not change the selected-phase `h`
+setting. Manual phase launches, auto-launched phases, and new Flow Plan
+launches all use the configured agent and that agent's configured effort. Press
 `E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
 the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
