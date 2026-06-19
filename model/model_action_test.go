@@ -4542,6 +4542,42 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	}
 }
 
+func TestModel_BackspaceForwardsWhenSessionTerminalOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "codex-session-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		CWD:          "/dev/alpha-worktrees/feat",
+		Branch:       "feature/api",
+	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ActivePane() != 1 {
+		t.Fatalf("terminal-owned backspace activePane = %d, want right pane", m.ActivePane())
+	}
+	if cmd != nil {
+		t.Fatalf("terminal-owned backspace returned cmd %T, want nil", cmd)
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x7f" {
+		t.Fatalf("terminal input backspace writes = %#v, want delete byte", fakeTerm.writes)
+	}
+}
+
 func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

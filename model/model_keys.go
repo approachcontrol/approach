@@ -116,7 +116,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if (key == "backspace" || key == "ctrl+h") && m.activePane == 1 && m.flowSurfaceVisible() && m.flowFocus == flowFocusList {
+	if isPaneBackKey(key) && m.activePane == 1 {
 		m = m.togglePrimaryPaneFocus()
 		return m, nil
 	}
@@ -125,6 +125,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
+}
+
+func isPaneBackKey(key string) bool {
+	return key == "backspace" || key == "ctrl+h"
 }
 
 func isWorktreeCreateInput(view modal.View) bool {

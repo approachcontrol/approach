@@ -114,7 +114,7 @@ filter matches, or a load failure with details in the status bar.
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
 | `f2` | Switch focus to left pane |
-| `⌫` | Switch focus to left pane from the Flow list |
+| `bksp` | Switch focus to left pane |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the active mode. Press `1`–`8` or use arrow keys to
@@ -123,7 +123,7 @@ and flows. Arrow-key view switching clamps at worktrees and flows. Press `V` to
 choose which numbered view wtui opens on future launches; leaving it unset keeps
 the built-in startup default of Flows. Press `enter` or `tab` from the repo
 pane to focus the content pane, or `f2` to switch pane focus explicitly. In the
-Flow list, `⌫` switches focus back to the left repo pane.
+content pane, `bksp` switches focus back to the left repo pane.
 
 When the left repo pane is focused, press `f` to run `git fetch --prune` for
 the currently visible repos. Repo filtering limits the batch to the filtered

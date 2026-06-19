@@ -547,6 +547,53 @@ func TestModel_F2FromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
 	}
 }
 
+func TestModel_BackspaceFromRightPaneSwitchesToLeftAcrossModes(t *testing.T) {
+	for _, tt := range []struct {
+		mode ui.Mode
+		key  tea.KeyMsg
+	}{
+		{mode: ui.ModeWorktrees, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeBranches, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeStashes, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeHistory, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeReflog, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeSessions, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModePlans, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeFlows, key: tea.KeyMsg{Type: tea.KeyBackspace}},
+		{mode: ui.ModeWorktrees, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModeBranches, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModeStashes, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModeHistory, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModeReflog, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModeSessions, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModePlans, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{mode: ui.ModeFlows, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+	} {
+		t.Run(fmt.Sprintf("mode_%d_%s", tt.mode, tt.key.String()), func(t *testing.T) {
+			m := model.New(testRepos())
+			m = inRightPane(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(fmt.Sprint(int(tt.mode)))})
+			if m.ActivePane() != 1 || m.Mode() != tt.mode {
+				t.Fatalf("setup activePane=%d mode=%d, want right pane mode %d", m.ActivePane(), m.Mode(), tt.mode)
+			}
+			before := listRequests(m)
+
+			m, cmd := update(m, tt.key)
+
+			if m.ActivePane() != 0 {
+				t.Fatalf("active pane = %d, want left pane", m.ActivePane())
+			}
+			if m.Mode() != tt.mode {
+				t.Fatalf("mode = %d, want unchanged %d", m.Mode(), tt.mode)
+			}
+			if cmd != nil {
+				t.Fatalf("back key returned cmd %T, want nil", cmd)
+			}
+			assertListRequestsUnchanged(t, before, m)
+		})
+	}
+}
+
 func TestModel_F2FromPlansPaneClearsSelectedPhase(t *testing.T) {
 	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
 		PlanID:   "plan-1",
@@ -571,6 +618,36 @@ func TestModel_F2FromPlansPaneClearsSelectedPhase(t *testing.T) {
 	}
 	if m.Mode() != ui.ModePlans {
 		t.Fatalf("mode = %d, want unchanged plans", m.Mode())
+	}
+}
+
+func TestModel_BackspaceFromPlansPaneClearsSelectedPhase(t *testing.T) {
+	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
+		PlanID:   "plan-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Persist plans",
+		Status:   "draft",
+		Phases:   []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.SelectedPlanPhaseID(); got != "p1" {
+		t.Fatalf("selected plan phase = %q, want p1 before backspace", got)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
+	}
+	if got := m.SelectedPlanPhaseID(); got != "" {
+		t.Fatalf("selected plan phase = %q, want cleared", got)
+	}
+	if m.Mode() != ui.ModePlans {
+		t.Fatalf("mode = %d, want unchanged plans", m.Mode())
+	}
+	if cmd != nil {
+		t.Fatalf("backspace from plans pane returned cmd %T, want nil", cmd)
 	}
 }
 
@@ -620,6 +697,51 @@ func TestModel_F2DoesNotSwitchPanesWhileSearchIsActive(t *testing.T) {
 
 	if m.ActivePane() != 0 {
 		t.Fatalf("active pane = %d, want left pane while search handles f2", m.ActivePane())
+	}
+}
+
+func TestModel_BackKeysEditRightPaneSearchInsteadOfSwitchingPanes(t *testing.T) {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyBackspace}, {Type: tea.KeyCtrlH}} {
+		t.Run(key.String(), func(t *testing.T) {
+			m := model.New(testRepos())
+			m = inRightPane(m)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+
+			m, cmd := update(m, key)
+
+			if cmd != nil {
+				t.Fatalf("search back key returned cmd %T, want nil", cmd)
+			}
+			if m.ActivePane() != 1 {
+				t.Fatalf("active pane = %d, want right pane while search owns back key", m.ActivePane())
+			}
+			if m.ItemSearch() != "" || !m.SearchActive() {
+				t.Fatalf("item search query=%q active=%v, want empty active search", m.ItemSearch(), m.SearchActive())
+			}
+		})
+	}
+}
+
+func TestModel_BackspaceEditsModalInputInsteadOfSwitchingPanes(t *testing.T) {
+	m := model.New(testRepos())
+	m = inRightPane(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if cmd != nil {
+		t.Fatalf("opening worktree input produced cmd %T, want nil", cmd)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f', 'e', 'a', 't'}})
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if cmd != nil {
+		t.Fatalf("modal backspace returned cmd %T, want nil", cmd)
+	}
+	if m.ActivePane() != 1 {
+		t.Fatalf("active pane = %d, want right pane while modal owns backspace", m.ActivePane())
+	}
+	if got := m.WorktreeInput(); got != "fea" {
+		t.Fatalf("worktree input = %q, want edited value", got)
 	}
 }
 
