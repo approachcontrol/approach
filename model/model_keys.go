@@ -1229,7 +1229,7 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 			{ID: flowCreateTitleField, Kind: modal.FormText, Label: "Title", Placeholder: ui.FlowTitleInputPlaceholder},
 			{ID: flowCreateInstructionsField, Kind: modal.FormMultilineText, Label: "Instructions", Placeholder: ui.FlowInstructionsInputPlaceholder},
 			{ID: flowCreateBaseRefField, Kind: modal.FormText, Label: "Base ref", Placeholder: ui.FlowBaseRefInputPlaceholder},
-			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: false},
+			{ID: flowCreateHeadlessField, Kind: modal.FormCheckbox, Label: "Headless", Checked: true},
 		},
 		Validate: validateFlowCreateForm,
 		Submit: func(values modal.FormValues) tea.Cmd {
