@@ -8610,6 +8610,9 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
 	}
+	if !model.FlowHeadlessForTest(m) {
+		t.Fatal("unchecked create-form headless option should not mutate flows-mode headless toggle")
+	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	wantPrefill := "\x1b[200~Create and persist the plan.\x1b[201~"
