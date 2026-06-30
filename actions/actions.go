@@ -898,7 +898,10 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 			return nil, nil, fmt.Errorf("reasoning effort cannot be set for session resume")
 		}
 	}
-	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded, ctx.Headless, reasoningEffort)
+	args := agentLaunchArgs(command, resumeSessionID, ctx.Headless, reasoningEffort, agentLaunchArgsOptions{
+		embedded:   ctx.Embedded,
+		streamJSON: UsesStreamJSONOutput(ctx),
+	})
 	if ctx.InitialPrompt != "" && !ShouldPrefillEmbeddedPrompt(ctx) {
 		args = append(args, ctx.InitialPrompt)
 	}
@@ -1122,7 +1125,18 @@ func ResolveWorktreeCommit(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, reasoningEffort string) []string {
+// agentLaunchArgsOptions carries the embedded-launch flags that shape an agent's
+// argv beyond the resume/effort basics.
+type agentLaunchArgsOptions struct {
+	// embedded is true for an embedded-terminal launch (vs an external one).
+	embedded bool
+	// streamJSON is true when wtui will render the agent's stream-json output;
+	// it must equal UsesStreamJSONOutput for the same context so the args and
+	// the renderer stay in lockstep (raw JSON in the panel otherwise).
+	streamJSON bool
+}
+
+func agentLaunchArgs(command, resumeSessionID string, headless bool, reasoningEffort string, opts agentLaunchArgsOptions) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
@@ -1131,7 +1145,7 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, r
 		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
 			args = append(args, "--config", "model_reasoning_effort="+reasoningEffort)
 		}
-		if embedded && !headless {
+		if opts.embedded && !headless {
 			args = slices.Insert(args, 0, "--no-alt-screen")
 		}
 		if headless {
@@ -1156,8 +1170,9 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, r
 			// render readable progress as events arrive;
 			// --include-partial-messages adds token-by-token deltas so text and
 			// tool calls stream in rather than appearing only when each block
-			// completes.
-			if embedded {
+			// completes. opts.streamJSON is UsesStreamJSONOutput for this
+			// context, so these args appear iff the renderer is attached.
+			if opts.streamJSON {
 				args = append(args, "--verbose", "--output-format", "stream-json", "--include-partial-messages")
 			}
 		}

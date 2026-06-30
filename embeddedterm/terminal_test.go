@@ -117,6 +117,44 @@ func TestTerminalAppliesOutputTransform(t *testing.T) {
 	}
 }
 
+type bufferingTransform struct {
+	acc []byte
+}
+
+func (b *bufferingTransform) Transform(p []byte, final bool) []byte {
+	b.acc = append(b.acc, p...)
+	if !final {
+		return nil
+	}
+	return append([]byte("FLUSH:"), b.acc...)
+}
+
+// TestTerminalTransformFlushesOnEOF pins the readLoop EOF change: a transform
+// that only emits on final=true must still be flushed when the child closes the
+// PTY after writing output with no trailing newline (the final read is n==0).
+func TestTerminalTransformFlushesOnEOF(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", "printf abc")
+	term, err := NewManager().StartCommandWithOptions(ctx, cmd, 40, 5, StartOptions{Transform: &bufferingTransform{}})
+	if err != nil {
+		t.Fatalf("StartCommandWithOptions returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := strings.Join(term.VisibleLines(40, 5), "\n")
+	if !strings.Contains(got, "FLUSH:abc") {
+		t.Fatalf("buffered transform not flushed on EOF, got %q", got)
+	}
+}
+
 func TestTerminalBridgesTerminalQueryResponses(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

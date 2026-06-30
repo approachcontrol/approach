@@ -58,7 +58,10 @@ type detachableEmbeddedTerminal interface {
 	DetachTarget() string
 }
 
-var errEmbeddedTerminalDetachUnavailable = errors.New("detach unavailable: tmux was not available when this terminal started")
+// errEmbeddedTerminalDetachUnavailable marks a terminal that is not tmux-backed
+// and so cannot be detached: either tmux was unavailable when it started, or it
+// is a headless claude stream-json terminal that intentionally runs inline.
+var errEmbeddedTerminalDetachUnavailable = errors.New("detach unavailable: this terminal is not tmux-backed")
 
 type EmbeddedTerminalStarter func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error)
 
@@ -788,12 +791,12 @@ func (m Model) handleEmbeddedTerminalDetachPrefix(scope embeddedTerminalScope) (
 	}
 	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
 	if !ok {
-		return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started"), nil
+		return m.setStatus(statusOther, "Detach unavailable: this terminal is not tmux-backed"), nil
 	}
 	target := strings.TrimSpace(detachable.DetachTarget())
 	if err := detachable.Detach(); err != nil {
 		if errors.Is(err, errEmbeddedTerminalDetachUnavailable) {
-			return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started"), nil
+			return m.setStatus(statusOther, "Detach unavailable: this terminal is not tmux-backed"), nil
 		}
 		return m.setStatus(statusOther, err.Error()), nil
 	}

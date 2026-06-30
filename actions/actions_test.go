@@ -1808,6 +1808,42 @@ func TestUsesStreamJSONOutput(t *testing.T) {
 	}
 }
 
+func TestStreamJSONArgsMatchPredicate(t *testing.T) {
+	// The renderer is attached iff UsesStreamJSONOutput is true, so the launch
+	// args must carry stream-json under exactly the same condition. A mismatch
+	// would dump raw JSON into the panel (or render plain text as events).
+	for _, command := range []string{"claude", "codex"} {
+		for _, embedded := range []bool{true, false} {
+			for _, headless := range []bool{true, false} {
+				for _, resume := range []string{"", "sess-1"} {
+					for _, effort := range []string{"", "high"} {
+						ctx := actions.AgentLaunchContext{
+							Command:         command,
+							Embedded:        embedded,
+							Headless:        headless,
+							ResumeSessionID: resume,
+							ReasoningEffort: effort,
+							WorktreePath:    "/repo/worktree",
+						}
+						cmd, err := actions.AgentCommand(ctx)
+						if err != nil {
+							// Rejected combinations (headless+resume,
+							// resume+effort, unsupported effort) produce no args,
+							// so they cannot mismatch the renderer.
+							continue
+						}
+						hasStreamJSON := slices.Contains(cmd.Args, "stream-json")
+						if want := actions.UsesStreamJSONOutput(ctx); hasStreamJSON != want {
+							t.Fatalf("command=%s embedded=%v headless=%v resume=%q effort=%q: args stream-json=%v, UsesStreamJSONOutput=%v (must match); args=%#v",
+								command, embedded, headless, resume, effort, hasStreamJSON, want, cmd.Args)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestAgentCommandCodexAddsReasoningEffortConfig(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",

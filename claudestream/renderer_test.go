@@ -87,6 +87,14 @@ func TestRendererPassesThroughNonJSONLines(t *testing.T) {
 	}
 }
 
+func TestRendererPassesThroughMalformedJSON(t *testing.T) {
+	// Starts with '{' but is not valid JSON: must surface verbatim, not vanish.
+	got := renderAll(t, `{"type":"assistant" BROKEN`+"\n")
+	if !strings.Contains(got, "BROKEN") {
+		t.Errorf("malformed JSON should pass through verbatim, got:\n%q", got)
+	}
+}
+
 func TestRendererFlushesTrailingPartialLineOnFinal(t *testing.T) {
 	r := claudestream.NewRenderer()
 	// No trailing newline; the renderer must still flush on final=true.

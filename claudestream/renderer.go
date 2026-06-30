@@ -134,7 +134,11 @@ func (r *Renderer) renderEvent(ev streamEvent) []byte {
 		return nil
 	case "assistant":
 		if r.partial {
-			// Already streamed token-by-token via stream_event deltas.
+			// Already streamed token-by-token via stream_event deltas. This
+			// relies on a message's stream_event deltas (message_start, etc.)
+			// always preceding its aggregated assistant event, which the
+			// Anthropic stream-json ordering guarantees; otherwise the first
+			// assistant block would render twice.
 			return nil
 		}
 		return joinLines(renderBlocks(ev.Message.Content))
@@ -153,6 +157,9 @@ func (r *Renderer) renderEvent(ev streamEvent) []byte {
 	}
 }
 
+// renderStreamEvent handles a partial-message delta. It tracks a single
+// in-flight content block (claude streams blocks sequentially — block N fully
+// starts/deltas/stops before block N+1 — so the block `index` is not needed).
 func (r *Renderer) renderStreamEvent(ev innerEvent) []byte {
 	r.partial = true
 	switch ev.Type {
