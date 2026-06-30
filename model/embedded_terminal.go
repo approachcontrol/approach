@@ -16,6 +16,7 @@ import (
 
 	"github.com/brian-bell/wtui/actions"
 	"github.com/brian-bell/wtui/agent"
+	"github.com/brian-bell/wtui/claudestream"
 	"github.com/brian-bell/wtui/embeddedterm"
 	"github.com/brian-bell/wtui/model/modal"
 	"github.com/brian-bell/wtui/sessions"
@@ -57,7 +58,10 @@ type detachableEmbeddedTerminal interface {
 	DetachTarget() string
 }
 
-var errEmbeddedTerminalDetachUnavailable = errors.New("detach unavailable: tmux was not available when this terminal started")
+// errEmbeddedTerminalDetachUnavailable marks a terminal that is not tmux-backed
+// and so cannot be detached: either tmux was unavailable when it started, or it
+// is a headless claude stream-json terminal that intentionally runs inline.
+var errEmbeddedTerminalDetachUnavailable = errors.New("detach unavailable: this terminal is not tmux-backed")
 
 type EmbeddedTerminalStarter func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error)
 
@@ -121,6 +125,12 @@ type realEmbeddedTerminalRuntime interface {
 
 func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
 	ctx.Embedded = true
+	// Headless claude streams stream-json, which is only readable once
+	// translated. Run it directly (not via the tmux transport) so its output
+	// can be piped through the renderer before it reaches the emulator.
+	if actions.UsesStreamJSONOutput(ctx) {
+		return startStreamJSONClaudeTerminal(ctx, width, height)
+	}
 	tmuxSpec, err := actions.EmbeddedTmuxAgentCommand(ctx)
 	if err == nil {
 		term, err := embeddedterm.StartTmuxBackedAgent(context.Background(), tmuxSpec, width, height)
@@ -137,6 +147,21 @@ func defaultEmbeddedTerminalStarter(ctx actions.AgentLaunchContext, width, heigh
 		return nil, err
 	}
 	term, err := embeddedterm.NewManager().StartCommand(context.Background(), cmd, width, height)
+	if err != nil {
+		return nil, err
+	}
+	return realEmbeddedTerminal{term: term}, nil
+}
+
+func startStreamJSONClaudeTerminal(ctx actions.AgentLaunchContext, width, height int) (EmbeddedTerminal, error) {
+	cmd, err := actions.AgentCommand(ctx)
+	if err != nil {
+		return nil, err
+	}
+	term, err := embeddedterm.NewManager().StartCommandWithOptions(
+		context.Background(), cmd, width, height,
+		embeddedterm.StartOptions{Transform: claudestream.NewRenderer()},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -766,12 +791,12 @@ func (m Model) handleEmbeddedTerminalDetachPrefix(scope embeddedTerminalScope) (
 	}
 	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
 	if !ok {
-		return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started"), nil
+		return m.setStatus(statusOther, "Detach unavailable: this terminal is not tmux-backed"), nil
 	}
 	target := strings.TrimSpace(detachable.DetachTarget())
 	if err := detachable.Detach(); err != nil {
 		if errors.Is(err, errEmbeddedTerminalDetachUnavailable) {
-			return m.setStatus(statusOther, "Detach unavailable: tmux was not available when this terminal started"), nil
+			return m.setStatus(statusOther, "Detach unavailable: this terminal is not tmux-backed"), nil
 		}
 		return m.setStatus(statusOther, err.Error()), nil
 	}

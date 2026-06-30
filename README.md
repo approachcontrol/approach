@@ -397,10 +397,12 @@ the current value. Codex CLI launches use `--config
 model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
 session resumes do not receive effort flags. `codex-app` always uses the
 external deep-link route and keeps app-side/default reasoning. Embedded headless output
-is readable terminal text, not raw JSON events: `codex exec` streams progress
-as it works, while `claude --print` prints its result when the run completes,
-so a Claude phase can show an empty terminal until it finishes (the terminal tab
-still shows `running`). While a Flow terminal is open,
+is readable terminal text, not raw JSON events: `codex exec` streams its progress
+directly, while `claude --print` is run with `--output-format stream-json
+--include-partial-messages` and wtui translates those events into readable lines
+(thinking, tool calls and results, the final answer streamed token-by-token, and
+a closing summary) so a Claude phase shows live progress as it works instead of a
+blank terminal. While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` switches focus between them while the right pane remains active. Manually
 tabbing into Flow terminal focus starts in wtui command mode: `left`/`right`

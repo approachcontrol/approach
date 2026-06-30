@@ -216,6 +216,57 @@ func TestDefaultEmbeddedTerminalStarterFallsBackWhenTmuxUnavailable(t *testing.T
 	}
 }
 
+func TestDefaultEmbeddedTerminalStarterRendersHeadlessClaudeStreamJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	// A stream-json assistant text event; the renderer must turn it into a
+	// readable line, never raw JSON.
+	writeInternalFakeExecutable(t, dir, "claude", "#!/bin/sh\n"+
+		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello from claude"}]}}'`+"\n")
+	// tmux is available but must NOT be used for headless claude.
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("WTUI_TMUX_LOG", logPath)
+	writeInternalFakeExecutable(t, dir, "tmux", "#!/bin/sh\necho \"$@\" >> \"$WTUI_TMUX_LOG\"\nexit 0\n")
+	t.Setenv("PATH", dir)
+
+	term, err := defaultEmbeddedTerminalStarter(actions.AgentLaunchContext{
+		Command:       "claude",
+		Headless:      true,
+		LaunchID:      "launch-1",
+		WorktreePath:  dir,
+		InitialPrompt: "run",
+	}, 40, 6)
+	if err != nil {
+		t.Fatalf("defaultEmbeddedTerminalStarter returned error: %v", err)
+	}
+	defer term.Terminate()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+
+	got := strings.Join(term.VisibleLines(40, 6), "\n")
+	if !strings.Contains(got, "hello from claude") {
+		t.Fatalf("headless claude stream-json not rendered, got:\n%s", got)
+	}
+	if strings.Contains(got, `"type":`) {
+		t.Fatalf("raw stream-json leaked into the panel, got:\n%s", got)
+	}
+	// Headless claude bypasses tmux: it runs inline and is not detachable.
+	detachable, ok := term.(detachableEmbeddedTerminal)
+	if !ok {
+		t.Fatalf("starter returned %T, want model-facing detach method", term)
+	}
+	if err := detachable.Detach(); !errors.Is(err, errEmbeddedTerminalDetachUnavailable) {
+		t.Fatalf("headless claude Detach error = %v, want unavailable sentinel", err)
+	}
+	if body, _ := os.ReadFile(logPath); strings.TrimSpace(string(body)) != "" {
+		t.Fatalf("tmux must not be invoked for headless claude, log:\n%s", body)
+	}
+}
+
 func writeInternalFakeExecutable(t *testing.T, dir, name, body string) {
 	t.Helper()
 	path := filepath.Join(dir, name)

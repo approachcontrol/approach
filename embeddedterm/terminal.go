@@ -35,6 +35,21 @@ type StartRequest struct {
 	Height  int
 }
 
+// OutputTransform rewrites child output before it reaches the terminal
+// emulator. p is a chunk of (query-filtered) child output and final is true on
+// the read loop's last call (child EOF). Implementations may buffer partial
+// input across calls and must flush their remainder when final is true.
+type OutputTransform interface {
+	Transform(p []byte, final bool) []byte
+}
+
+// StartOptions carries optional behavior for StartCommandWithOptions.
+type StartOptions struct {
+	// Transform, when non-nil, post-processes child output (e.g. translating
+	// claude stream-json into readable lines) before it is rendered.
+	Transform OutputTransform
+}
+
 const (
 	defaultScrollbackLines  = 5000
 	finalOutputDrainTimeout = 200 * time.Millisecond
@@ -67,6 +82,12 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (*Terminal, error
 }
 
 func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height int) (*Terminal, error) {
+	return m.StartCommandWithOptions(ctx, cmd, width, height, StartOptions{})
+}
+
+// StartCommandWithOptions is StartCommand with optional behavior such as an
+// output transform applied to child output before rendering.
+func (m *Manager) StartCommandWithOptions(ctx context.Context, cmd *exec.Cmd, width, height int, opts StartOptions) (*Terminal, error) {
 	if cmd == nil {
 		return nil, fmt.Errorf("embedded terminal command is required")
 	}
@@ -89,6 +110,7 @@ func (m *Manager) StartCommand(ctx context.Context, cmd *exec.Cmd, width, height
 		cmd:       cmd,
 		pty:       ptmx,
 		emulator:  emu,
+		transform: opts.Transform,
 		state:     StateRunning,
 		done:      make(chan struct{}),
 		readDone:  make(chan struct{}),
@@ -106,6 +128,7 @@ type Terminal struct {
 	cmd         *exec.Cmd
 	pty         *os.File
 	emulator    *vt.SafeEmulator
+	transform   OutputTransform
 	state       State
 	err         error
 	terminating bool
@@ -300,8 +323,14 @@ func (t *Terminal) readLoop(ptmx *os.File, emu *vt.SafeEmulator) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := ptmx.Read(buf)
-		if n > 0 {
-			filtered := filter.Filter(buf[:n], err != nil)
+		// Run the final read (n==0 with EOF) through the pipeline too so a
+		// buffering transform can flush its trailing partial line.
+		if n > 0 || err != nil {
+			final := err != nil
+			filtered := filter.Filter(buf[:n], final)
+			if t.transform != nil {
+				filtered = t.transform.Transform(filtered, final)
+			}
 			if len(filtered) > 0 {
 				t.emuMu.Lock()
 				_, writeErr := emu.Write(filtered)

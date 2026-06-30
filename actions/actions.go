@@ -854,6 +854,14 @@ exit "$tmux_status"
 	return exec.Command("/bin/sh", "-c", script, "wtui", socketName, sessionName, statusPath)
 }
 
+// UsesStreamJSONOutput reports whether an embedded launch emits claude
+// stream-json that wtui must render into readable terminal lines. Headless
+// claude is the only mode that streams stream-json; codex and interactive
+// claude render their own output directly.
+func UsesStreamJSONOutput(ctx AgentLaunchContext) bool {
+	return agent.Normalize(ctx.Command) == agent.CommandClaude && ctx.Embedded && ctx.Headless
+}
+
 func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
 	command := agent.Normalize(ctx.Command)
 	return (command == agent.CommandCodex || command == agent.CommandClaude) &&
@@ -890,7 +898,10 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 			return nil, nil, fmt.Errorf("reasoning effort cannot be set for session resume")
 		}
 	}
-	args := agentLaunchArgs(command, resumeSessionID, ctx.Embedded, ctx.Headless, reasoningEffort)
+	args := agentLaunchArgs(command, resumeSessionID, ctx.Headless, reasoningEffort, agentLaunchArgsOptions{
+		embedded:   ctx.Embedded,
+		streamJSON: UsesStreamJSONOutput(ctx),
+	})
 	if ctx.InitialPrompt != "" && !ShouldPrefillEmbeddedPrompt(ctx) {
 		args = append(args, ctx.InitialPrompt)
 	}
@@ -1114,7 +1125,18 @@ func ResolveWorktreeCommit(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, reasoningEffort string) []string {
+// agentLaunchArgsOptions carries the embedded-launch flags that shape an agent's
+// argv beyond the resume/effort basics.
+type agentLaunchArgsOptions struct {
+	// embedded is true for an embedded-terminal launch (vs an external one).
+	embedded bool
+	// streamJSON is true when wtui will render the agent's stream-json output;
+	// it must equal UsesStreamJSONOutput for the same context so the args and
+	// the renderer stay in lockstep (raw JSON in the panel otherwise).
+	streamJSON bool
+}
+
+func agentLaunchArgs(command, resumeSessionID string, headless bool, reasoningEffort string, opts agentLaunchArgsOptions) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
@@ -1123,7 +1145,7 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, r
 		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
 			args = append(args, "--config", "model_reasoning_effort="+reasoningEffort)
 		}
-		if embedded && !headless {
+		if opts.embedded && !headless {
 			args = slices.Insert(args, 0, "--no-alt-screen")
 		}
 		if headless {
@@ -1142,6 +1164,17 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, r
 		}
 		if headless {
 			args = slices.Insert(args, 0, "--print")
+			// claude --print buffers plain-text output until completion, so an
+			// embedded headless launch would show a blank panel for the whole
+			// run. Stream stream-json (which requires --verbose) so wtui can
+			// render readable progress as events arrive;
+			// --include-partial-messages adds token-by-token deltas so text and
+			// tool calls stream in rather than appearing only when each block
+			// completes. opts.streamJSON is UsesStreamJSONOutput for this
+			// context, so these args appear iff the renderer is attached.
+			if opts.streamJSON {
+				args = append(args, "--verbose", "--output-format", "stream-json", "--include-partial-messages")
+			}
 		}
 		if resumeSessionID != "" {
 			args = append(args, "--resume", resumeSessionID)
