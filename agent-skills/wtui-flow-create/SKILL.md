@@ -42,7 +42,9 @@ checkout. Required values:
 - `FLOW_TITLE`: short task title.
 - `FLOW_INSTRUCTIONS` or `FLOW_INSTRUCTIONS_FILE`: the task instructions used to
   seed the Flow.
-- `WTUI_REPO_PATH`: absolute repository path.
+- `WTUI_REPO_PATH`: absolute repository path, as wtui's scanner lists the repo
+  (its **main worktree**, not a linked worktree). Derive it automatically when
+  launch metadata does not provide it.
 
 A normal repo-backed Flow must ship with worktree metadata. The next section
 creates a dedicated branch and git worktree and populates `WTUI_WORKTREE_PATH`,
@@ -50,17 +52,42 @@ creates a dedicated branch and git worktree and populates `WTUI_WORKTREE_PATH`,
 implementation-ready without manual repair. Worktree metadata is not optional
 for normal repo-backed creation.
 
-`WTUI_BASE_REF` defaults to `origin/main`. Set it only when the user explicitly
-asks to base the Flow on a different ref. If `WTUI_REPO_PATH` is missing,
-relative, or unclear, ask the user instead of creating a malformed Flow.
+Derive `WTUI_REPO_PATH` from the current git checkout when launch metadata does
+not provide it. wtui's scanner lists a repository by its main worktree, so a Flow
+only surfaces under a repo when its `repo_path` equals that main-worktree path.
+Resolve it that way — never a linked worktree path — so Flows created from any
+repo (or from inside one of its worktrees) appear in wtui for that repo.
+
+```bash
+if [ -z "${WTUI_REPO_PATH:-}" ]; then
+  # The first `git worktree list` entry is always the main worktree, which is the
+  # path wtui's scanner discovers, even when run from inside a linked worktree.
+  WTUI_REPO_PATH=$(git -C "${WTUI_WORKTREE_PATH:-$PWD}" worktree list --porcelain 2>/dev/null \
+    | sed -n 's/^worktree //p' | head -n1) || WTUI_REPO_PATH=""
+fi
+case "${WTUI_REPO_PATH:-}" in
+  /*) ;;
+  *)
+    echo "Could not resolve an absolute WTUI_REPO_PATH (the repo as wtui's scanner lists it); ask the user." >&2
+    exit 1
+    ;;
+esac
+```
+
+`WTUI_BASE_REF` defaults to the repository's own default branch, detected from
+`origin/HEAD` rather than a hard-coded `origin/main`, so repos on `master` or any
+other default branch work; repos without a usable `origin` fall back to the local
+HEAD branch. Set `WTUI_BASE_REF` explicitly only when the user asks to base the
+Flow on a different ref. If `WTUI_REPO_PATH` is still missing, relative, or
+unclear, ask the user instead of creating a malformed Flow.
 
 Skip worktree creation only in two cases:
 
 - The user explicitly asks for a metadata-only Flow (set `WTUI_FLOW_METADATA_ONLY=1`).
 - The user provides an existing worktree to reuse (set `WTUI_WORKTREE_PATH`).
   `WTUI_BRANCH` and `WTUI_COMMIT` are derived from that worktree when unset, and
-  `WTUI_BASE_REF` still defaults to `origin/main`, so the reuse path also ships
-  complete metadata.
+  `WTUI_BASE_REF` still defaults to the repository's default branch, so the reuse
+  path also ships complete metadata.
 
 ## Create Or Reuse A Worktree
 
@@ -71,8 +98,20 @@ creation fails, stop and report the command error instead of creating a partial
 Flow.
 
 ```bash
-# Default base ref is origin/main unless the user explicitly provides another.
-WTUI_BASE_REF="${WTUI_BASE_REF:-origin/main}"
+# Resolve the base ref. Default to the repository's own default branch
+# (origin/HEAD), falling back to the local HEAD branch when there is no usable
+# origin, so repos on master or with no remote still ship complete metadata. Set
+# WTUI_BASE_REF explicitly to override.
+if [ -z "${WTUI_BASE_REF:-}" ]; then
+  WTUI_BASE_REF=$(git -C "${WTUI_REPO_PATH:-}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || WTUI_BASE_REF=""
+  if [ -z "$WTUI_BASE_REF" ] && git -C "${WTUI_REPO_PATH:-}" remote get-url origin >/dev/null 2>&1; then
+    git -C "${WTUI_REPO_PATH:-}" remote set-head origin --auto >/dev/null 2>&1 || true
+    WTUI_BASE_REF=$(git -C "${WTUI_REPO_PATH:-}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || WTUI_BASE_REF=""
+  fi
+  if [ -z "$WTUI_BASE_REF" ]; then
+    WTUI_BASE_REF=$(git -C "${WTUI_REPO_PATH:-}" rev-parse --abbrev-ref HEAD 2>/dev/null) || WTUI_BASE_REF=""
+  fi
+fi
 
 if [ -n "${WTUI_FLOW_METADATA_ONLY:-}" ]; then
   echo "Metadata-only Flow requested; skipping worktree creation." >&2
@@ -101,21 +140,21 @@ else
       ;;
   esac
 
-  # Fetch the requested base ref so the worktree starts from current upstream state.
+  # Fetch the base ref when it is a remote-tracking ref so the worktree starts
+  # from current upstream state. A local base ref (no matching remote) skips the
+  # fetch and branches from the local ref, so local-only repos still work.
   case "$WTUI_BASE_REF" in
     */*)
       BASE_REMOTE="${WTUI_BASE_REF%%/*}"
       BASE_BRANCH="${WTUI_BASE_REF#*/}"
-      ;;
-    *)
-      BASE_REMOTE="origin"
-      BASE_BRANCH="$WTUI_BASE_REF"
+      if git -C "${WTUI_REPO_PATH:-}" remote get-url "$BASE_REMOTE" >/dev/null 2>&1; then
+        if ! git -C "${WTUI_REPO_PATH:-}" fetch "$BASE_REMOTE" "$BASE_BRANCH"; then
+          echo "git fetch $BASE_REMOTE $BASE_BRANCH failed; report the command error and do not create a partial Flow." >&2
+          exit 1
+        fi
+      fi
       ;;
   esac
-  if ! git -C "${WTUI_REPO_PATH:-}" fetch "$BASE_REMOTE" "$BASE_BRANCH"; then
-    echo "git fetch $BASE_REMOTE $BASE_BRANCH failed; report the command error and do not create a partial Flow." >&2
-    exit 1
-  fi
 
   # Allocate a unique flow branch/worktree pair, bumping the suffix on collision.
   SLUG=$(printf '%s' "${FLOW_TITLE:-flow}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//')
