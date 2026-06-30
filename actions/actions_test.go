@@ -1749,7 +1749,7 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 	args := cmd.Args
 	// Headless claude streams stream-json so the embedded panel can render
 	// readable progress; --verbose is mandatory alongside it.
-	want := []string{"claude", "--print", "--settings", args[3], "--verbose", "--output-format", "stream-json", "Implement this phase."}
+	want := []string{"claude", "--print", "--settings", args[3], "--verbose", "--output-format", "stream-json", "--include-partial-messages", "Implement this phase."}
 	if !slices.Equal(args, want) {
 		t.Fatalf("headless claude args = %#v, want %#v", args, want)
 	}

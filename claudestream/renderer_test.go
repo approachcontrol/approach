@@ -109,3 +109,69 @@ func TestRendererToolResultErrorMarked(t *testing.T) {
 		t.Errorf("error tool result content should surface, got:\n%s", got)
 	}
 }
+
+// partialEvents mirrors `--include-partial-messages`: stream_event deltas arrive
+// alongside the aggregated assistant events that must be suppressed.
+const partialEvents = `{"type":"system","subtype":"init","model":"claude-opus-4-8","permissionMode":"auto"}
+{"type":"stream_event","event":{"type":"message_start"}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"x"}}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""}]}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","name":"Bash"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"cat notes.txt"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"description\": \"read\"}"}}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cat notes.txt","description":"read"}}]}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"wtui is a worktree TUI."}]}}
+{"type":"stream_event","event":{"type":"message_start"}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"notes.txt "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"contains a single line."}}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"notes.txt contains a single line."}]}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":4000,"num_turns":2,"total_cost_usd":0.1}
+`
+
+func TestRendererStreamsPartialMessagesWithoutDuplication(t *testing.T) {
+	got := renderAll(t, partialEvents)
+
+	// Streamed text deltas reassemble into the final answer, exactly once: the
+	// aggregated assistant text event must be suppressed in partial mode.
+	if n := strings.Count(got, "notes.txt contains a single line."); n != 1 {
+		t.Errorf("assistant text rendered %d times, want exactly 1, got:\n%s", n, got)
+	}
+	// The tool call is rendered once from the streamed input_json_delta, not
+	// also from the aggregated assistant event.
+	if n := strings.Count(got, "Bash(cat notes.txt)"); n != 1 {
+		t.Errorf("tool call rendered %d times, want exactly 1, got:\n%s", n, got)
+	}
+	if !strings.Contains(got, "✻ Thinking…") {
+		t.Errorf("missing thinking marker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "wtui is a worktree TUI.") {
+		t.Errorf("missing tool result, got:\n%s", got)
+	}
+	if !strings.Contains(got, "2 turns") {
+		t.Errorf("missing result summary, got:\n%s", got)
+	}
+	if strings.Contains(got, `"type":`) || strings.Contains(got, "stream_event") {
+		t.Errorf("raw JSON leaked into output:\n%s", got)
+	}
+}
+
+func TestRendererStreamsPartialTextAcrossChunks(t *testing.T) {
+	r := claudestream.NewRenderer()
+	data := []byte(partialEvents)
+	var b strings.Builder
+	for i := 0; i < len(data); i++ {
+		b.Write(r.Transform(data[i:i+1], i == len(data)-1))
+	}
+	got := b.String()
+	if n := strings.Count(got, "notes.txt contains a single line."); n != 1 {
+		t.Errorf("byte-chunked partial stream rendered text %d times, want 1, got:\n%s", n, got)
+	}
+	if n := strings.Count(got, "Bash(cat notes.txt)"); n != 1 {
+		t.Errorf("byte-chunked partial stream rendered tool call %d times, want 1, got:\n%s", n, got)
+	}
+}

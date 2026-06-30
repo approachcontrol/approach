@@ -1153,9 +1153,12 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, r
 			// claude --print buffers plain-text output until completion, so an
 			// embedded headless launch would show a blank panel for the whole
 			// run. Stream stream-json (which requires --verbose) so wtui can
-			// render readable progress as events arrive.
+			// render readable progress as events arrive;
+			// --include-partial-messages adds token-by-token deltas so text and
+			// tool calls stream in rather than appearing only when each block
+			// completes.
 			if embedded {
-				args = append(args, "--verbose", "--output-format", "stream-json")
+				args = append(args, "--verbose", "--output-format", "stream-json", "--include-partial-messages")
 			}
 		}
 		if resumeSessionID != "" {

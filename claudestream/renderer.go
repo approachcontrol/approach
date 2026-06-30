@@ -1,8 +1,16 @@
 // Package claudestream renders the JSONL event stream emitted by
-// `claude --print --verbose --output-format stream-json` into readable
-// terminal lines for the wtui embedded terminal. Claude's print mode offers no
-// human-readable streaming format (text output is buffered until completion),
-// so headless launches stream stream-json and translate each event here.
+// `claude --print --verbose --output-format stream-json --include-partial-messages`
+// into readable terminal lines for the wtui embedded terminal. Claude's print
+// mode offers no human-readable streaming format (text output is buffered until
+// completion), so headless launches stream stream-json and translate each event
+// here.
+//
+// With --include-partial-messages, claude emits low-level `stream_event` deltas
+// (token-by-token text, incremental tool-call arguments) in addition to the
+// aggregated `assistant` events. The renderer streams from the deltas and
+// suppresses the aggregated `assistant` events to avoid double-printing; if no
+// deltas are seen (older claude, flag ignored) it falls back to rendering the
+// aggregated events.
 package claudestream
 
 import (
@@ -15,19 +23,27 @@ import (
 
 // Renderer converts a stream of stream-json bytes into readable terminal lines.
 // It is stateful: callers feed arbitrary byte chunks to Transform, which buffers
-// partial lines across calls. Renderer is not safe for concurrent use; the
-// embedded terminal read loop is the single writer.
+// partial lines across calls and tracks the in-flight streamed content block.
+// Renderer is not safe for concurrent use; the embedded terminal read loop is
+// the single writer.
 type Renderer struct {
 	buf []byte
+
+	partial   bool   // a stream_event was seen; suppress aggregated assistant events
+	blockType string // type of the streaming content block: text/thinking/tool_use
+	toolName  string // tool name for the streaming tool_use block
+	toolArgs  []byte // accumulated input_json_delta fragments
+	textOpen  bool   // a streamed text line is open and needs a closing newline
 }
 
-// NewRenderer returns a Renderer with an empty line buffer.
+// NewRenderer returns a Renderer with empty state.
 func NewRenderer() *Renderer { return &Renderer{} }
 
 // Transform consumes a chunk of child output and returns the readable bytes to
 // write to the terminal emulator. Complete lines are parsed as stream-json
 // events and rendered; a trailing partial line is held until the next call.
-// When final is true (child EOF), any buffered remainder is flushed.
+// When final is true (child EOF), any buffered remainder is flushed and an open
+// streamed text line is closed.
 func (r *Renderer) Transform(p []byte, final bool) []byte {
 	r.buf = append(r.buf, p...)
 	var out []byte
@@ -38,36 +54,44 @@ func (r *Renderer) Transform(p []byte, final bool) []byte {
 		}
 		line := r.buf[:i]
 		r.buf = r.buf[i+1:]
-		out = appendLines(out, r.renderLine(line))
+		out = append(out, r.renderLine(line)...)
 	}
-	if final && len(bytes.TrimSpace(r.buf)) > 0 {
-		out = appendLines(out, r.renderLine(r.buf))
+	if final {
+		if len(bytes.TrimSpace(r.buf)) > 0 {
+			out = append(out, r.renderLine(r.buf)...)
+		}
 		r.buf = nil
-	}
-	return out
-}
-
-// appendLines writes each rendered line followed by CRLF so the vt emulator
-// returns the carriage to column zero on each newline.
-func appendLines(out []byte, lines []string) []byte {
-	for _, line := range lines {
-		out = append(out, line...)
-		out = append(out, '\r', '\n')
+		if r.textOpen {
+			out = append(out, '\r', '\n')
+			r.textOpen = false
+		}
 	}
 	return out
 }
 
 type streamEvent struct {
-	Type           string          `json:"type"`
-	Subtype        string          `json:"subtype"`
-	Model          string          `json:"model"`
-	PermissionMode string          `json:"permissionMode"`
-	Message        streamMessage   `json:"message"`
-	IsError        bool            `json:"is_error"`
-	DurationMs     int64           `json:"duration_ms"`
-	NumTurns       int             `json:"num_turns"`
-	TotalCostUSD   float64         `json:"total_cost_usd"`
-	Result         json.RawMessage `json:"result"`
+	Type           string        `json:"type"`
+	Subtype        string        `json:"subtype"`
+	Model          string        `json:"model"`
+	PermissionMode string        `json:"permissionMode"`
+	Message        streamMessage `json:"message"`
+	IsError        bool          `json:"is_error"`
+	DurationMs     int64         `json:"duration_ms"`
+	NumTurns       int           `json:"num_turns"`
+	TotalCostUSD   float64       `json:"total_cost_usd"`
+	Event          *innerEvent   `json:"event"`
+}
+
+type innerEvent struct {
+	Type         string       `json:"type"`
+	ContentBlock *streamBlock `json:"content_block"`
+	Delta        *streamDelta `json:"delta"`
+}
+
+type streamDelta struct {
+	Type        string `json:"type"`
+	Text        string `json:"text"`
+	PartialJSON string `json:"partial_json"`
 }
 
 type streamMessage struct {
@@ -84,7 +108,7 @@ type streamBlock struct {
 	IsError  bool            `json:"is_error"`
 }
 
-func (r *Renderer) renderLine(raw []byte) []string {
+func (r *Renderer) renderLine(raw []byte) []byte {
 	line := bytes.TrimSpace(raw)
 	if len(line) == 0 {
 		return nil
@@ -92,30 +116,103 @@ func (r *Renderer) renderLine(raw []byte) []string {
 	// Anything that is not a JSON object (stray warnings, auth errors, "trust
 	// this folder" prompts) is surfaced verbatim so failures stay visible.
 	if line[0] != '{' {
-		return []string{string(line)}
+		return crlf(string(line))
 	}
 	var ev streamEvent
 	if err := json.Unmarshal(line, &ev); err != nil {
-		return []string{string(line)}
+		return crlf(string(line))
 	}
-	return renderEvent(ev)
+	return r.renderEvent(ev)
 }
 
-func renderEvent(ev streamEvent) []string {
+func (r *Renderer) renderEvent(ev streamEvent) []byte {
 	switch ev.Type {
 	case "system":
 		if ev.Subtype == "init" {
-			return renderInit(ev)
+			return joinLines(renderInit(ev))
 		}
 		return nil
-	case "assistant", "user":
-		return renderBlocks(ev.Message.Content)
+	case "assistant":
+		if r.partial {
+			// Already streamed token-by-token via stream_event deltas.
+			return nil
+		}
+		return joinLines(renderBlocks(ev.Message.Content))
+	case "user":
+		return joinLines(renderBlocks(ev.Message.Content))
 	case "result":
-		return renderResult(ev)
+		return joinLines(renderResult(ev))
+	case "stream_event":
+		if ev.Event == nil {
+			return nil
+		}
+		return r.renderStreamEvent(*ev.Event)
 	default:
-		// rate_limit_event, stream_event, and anything unknown are dropped.
+		// rate_limit_event and anything unknown are dropped.
 		return nil
 	}
+}
+
+func (r *Renderer) renderStreamEvent(ev innerEvent) []byte {
+	r.partial = true
+	switch ev.Type {
+	case "message_start":
+		r.resetBlock()
+	case "content_block_start":
+		r.resetBlock()
+		if ev.ContentBlock == nil {
+			return nil
+		}
+		switch ev.ContentBlock.Type {
+		case "text":
+			r.blockType = "text"
+		case "thinking":
+			r.blockType = "thinking"
+			return crlf("✻ Thinking…")
+		case "tool_use":
+			r.blockType = "tool_use"
+			r.toolName = ev.ContentBlock.Name
+		}
+	case "content_block_delta":
+		if ev.Delta == nil {
+			return nil
+		}
+		switch ev.Delta.Type {
+		case "text_delta":
+			if r.blockType == "text" && ev.Delta.Text != "" {
+				r.textOpen = true
+				return []byte(normalizeCRLF(ev.Delta.Text))
+			}
+		case "input_json_delta":
+			if r.blockType == "tool_use" {
+				r.toolArgs = append(r.toolArgs, ev.Delta.PartialJSON...)
+			}
+		}
+	case "content_block_stop":
+		return r.closeBlock()
+	}
+	return nil
+}
+
+func (r *Renderer) closeBlock() []byte {
+	var out []byte
+	switch r.blockType {
+	case "text":
+		if r.textOpen {
+			out = crlf("")
+		}
+	case "tool_use":
+		out = crlf("⏺ " + r.toolName + "(" + summarizeToolInput(r.toolArgs) + ")")
+	}
+	r.resetBlock()
+	return out
+}
+
+func (r *Renderer) resetBlock() {
+	r.blockType = ""
+	r.toolName = ""
+	r.toolArgs = nil
+	r.textOpen = false
 }
 
 func renderInit(ev streamEvent) []string {
@@ -197,7 +294,7 @@ func toolResultText(raw json.RawMessage) string {
 // summarizeToolInput picks the most informative argument from a tool_use input
 // object so a Bash call reads "Bash(wc -l notes.txt)" rather than a JSON blob.
 func summarizeToolInput(raw json.RawMessage) string {
-	if len(raw) == 0 {
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return ""
 	}
 	var input map[string]any
@@ -232,6 +329,27 @@ func renderResult(ev streamEvent) []string {
 		parts = append(parts, fmt.Sprintf("$%.4f", ev.TotalCostUSD))
 	}
 	return []string{strings.Join(parts, " · ")}
+}
+
+// crlf returns the line followed by CRLF so the vt emulator returns the carriage
+// to column zero on each newline.
+func crlf(s string) []byte {
+	return append([]byte(s), '\r', '\n')
+}
+
+func joinLines(lines []string) []byte {
+	var out []byte
+	for _, line := range lines {
+		out = append(out, line...)
+		out = append(out, '\r', '\n')
+	}
+	return out
+}
+
+// normalizeCRLF rewrites any newline style in streamed text to CRLF.
+func normalizeCRLF(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\n", "\r\n")
 }
 
 func stringify(v any) string {
