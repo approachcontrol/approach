@@ -1747,14 +1747,11 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 	}
 
 	args := cmd.Args
-	if len(args) != 5 {
-		t.Fatalf("args = %#v, want command plus --print, hook settings, and prompt", args)
-	}
-	if args[0] != "claude" || args[1] != "--print" || args[2] != "--settings" || args[4] != "Implement this phase." {
-		t.Fatalf("unexpected headless claude args: %#v", args)
-	}
-	if strings.Contains(strings.Join(args, "\x00"), "json") {
-		t.Fatalf("headless claude args should stay human-readable, got %#v", args)
+	// Headless claude streams stream-json so the embedded panel can render
+	// readable progress; --verbose is mandatory alongside it.
+	want := []string{"claude", "--print", "--settings", args[3], "--verbose", "--output-format", "stream-json", "Implement this phase."}
+	if !slices.Equal(args, want) {
+		t.Fatalf("headless claude args = %#v, want %#v", args, want)
 	}
 	if !strings.Contains(args[3], "session-hook --provider claude") {
 		t.Fatalf("expected claude hook settings in args, got %#v", args)
@@ -1772,6 +1769,42 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
 		}
+	}
+}
+
+func TestUsesStreamJSONOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  actions.AgentLaunchContext
+		want bool
+	}{
+		{
+			name: "embedded headless claude renders stream-json",
+			ctx:  actions.AgentLaunchContext{Command: "claude", Embedded: true, Headless: true},
+			want: true,
+		},
+		{
+			name: "interactive claude does not",
+			ctx:  actions.AgentLaunchContext{Command: "claude", Embedded: true, Headless: false},
+			want: false,
+		},
+		{
+			name: "headless codex does not",
+			ctx:  actions.AgentLaunchContext{Command: "codex", Embedded: true, Headless: true},
+			want: false,
+		},
+		{
+			name: "non-embedded headless claude does not",
+			ctx:  actions.AgentLaunchContext{Command: "claude", Embedded: false, Headless: true},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := actions.UsesStreamJSONOutput(tc.ctx); got != tc.want {
+				t.Fatalf("UsesStreamJSONOutput = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

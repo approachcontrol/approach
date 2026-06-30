@@ -854,6 +854,14 @@ exit "$tmux_status"
 	return exec.Command("/bin/sh", "-c", script, "wtui", socketName, sessionName, statusPath)
 }
 
+// UsesStreamJSONOutput reports whether an embedded launch emits claude
+// stream-json that wtui must render into readable terminal lines. Headless
+// claude is the only mode that streams stream-json; codex and interactive
+// claude render their own output directly.
+func UsesStreamJSONOutput(ctx AgentLaunchContext) bool {
+	return agent.Normalize(ctx.Command) == agent.CommandClaude && ctx.Embedded && ctx.Headless
+}
+
 func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
 	command := agent.Normalize(ctx.Command)
 	return (command == agent.CommandCodex || command == agent.CommandClaude) &&
@@ -1142,6 +1150,13 @@ func agentLaunchArgs(command, resumeSessionID string, embedded, headless bool, r
 		}
 		if headless {
 			args = slices.Insert(args, 0, "--print")
+			// claude --print buffers plain-text output until completion, so an
+			// embedded headless launch would show a blank panel for the whole
+			// run. Stream stream-json (which requires --verbose) so wtui can
+			// render readable progress as events arrive.
+			if embedded {
+				args = append(args, "--verbose", "--output-format", "stream-json")
+			}
 		}
 		if resumeSessionID != "" {
 			args = append(args, "--resume", resumeSessionID)

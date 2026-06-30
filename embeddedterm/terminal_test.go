@@ -73,6 +73,50 @@ func TestTerminalRendersOutputWhileCommandIsRunning(t *testing.T) {
 	t.Fatalf("visible lines never showed live output: %#v", term.VisibleLines(40, 5))
 }
 
+type fakeOutputTransform struct {
+	sawFinal bool
+}
+
+func (f *fakeOutputTransform) Transform(p []byte, final bool) []byte {
+	if final {
+		f.sawFinal = true
+	}
+	if len(strings.TrimSpace(string(p))) == 0 {
+		return nil
+	}
+	return []byte("TRANSFORMED\r\n")
+}
+
+func TestTerminalAppliesOutputTransform(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pty tests require a Unix-like platform")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	transform := &fakeOutputTransform{}
+	cmd := exec.CommandContext(ctx, "sh", "-c", `printf '{"k":1}\n'`)
+	term, err := NewManager().StartCommandWithOptions(ctx, cmd, 40, 5, StartOptions{Transform: transform})
+	if err != nil {
+		t.Fatalf("StartCommandWithOptions returned error: %v", err)
+	}
+	defer term.Close()
+
+	if err := term.Wait(ctx); err != nil {
+		t.Fatalf("Wait returned error: %v", err)
+	}
+	got := strings.Join(term.VisibleLines(40, 5), "\n")
+	if !strings.Contains(got, "TRANSFORMED") {
+		t.Fatalf("transformed output missing, got %q", got)
+	}
+	if strings.Contains(got, `{"k":1}`) {
+		t.Fatalf("raw output leaked past transform, got %q", got)
+	}
+	if !transform.sawFinal {
+		t.Fatalf("transform was never called with final=true")
+	}
+}
+
 func TestTerminalBridgesTerminalQueryResponses(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

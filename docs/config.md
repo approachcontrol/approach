@@ -387,8 +387,11 @@ terminal input mode. In input mode, keys pass through to the PTY (including
 agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command mode. Embedded
 headless output is rendered as
 readable terminal text rather than raw provider event JSON; `codex exec` streams
-progress while it runs, whereas `claude --print` only prints its result once the
-run completes. Expanded rows
+its progress directly, whereas headless `claude --print` runs with
+`--output-format stream-json` and wtui translates those events (thinking, tool
+calls and results, the final answer, and a closing summary) into readable lines
+so the panel shows live progress instead of staying blank until the run
+completes. Expanded rows
 group child implementation phases directly under Implementation. New launches
 record a launch ID and Flow/plan environment metadata for the agent; CLI
 phase-session resumes also record a fresh launch ID, while `codex-app` resumes
