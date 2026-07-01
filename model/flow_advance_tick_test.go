@@ -269,8 +269,61 @@ func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T)
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
 	}
-	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: implementation started" {
-		t.Fatalf("status = %#v, want auto-advance started status", m.status)
+	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: implementation queued" {
+		t.Fatalf("status = %#v, want auto-advance queued status", m.status)
+	}
+}
+
+func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *testing.T) {
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	previous := current
+	previous.Phases = append([]flowstore.FlowPhase(nil), current.Phases...)
+	previous.Phases[1].Status = flowstore.PhaseRunning
+	previous.Phases[2].Status = flowstore.PhasePending
+
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return current, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+
+	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	if cmd == nil {
+		t.Fatal("auto-advance should queue a launch command")
+	}
+	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: implementation queued" {
+		t.Fatalf("status = %#v, want queued status before async launch command runs", m.status)
+	}
+	if m.status.Text == "Flow Bravo Flow: implementation started" {
+		t.Fatalf("status = %#v, should not claim async launch started before command runs", m.status)
+	}
+}
+
+func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m.mode = ui.ModeWorktrees
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+	m.status = statusError{Source: statusOther, Text: "keep this"}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	if m.status.Source != statusOther || m.status.Text != "keep this" {
+		t.Fatalf("status = %#v, want existing status preserved after auto preflight failure", m.status)
 	}
 }
 

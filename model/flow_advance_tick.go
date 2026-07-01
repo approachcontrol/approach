@@ -142,7 +142,7 @@ func autoAdvanceStatusEvents(previous []flowstore.FlowRecord, launched []autoAdv
 		if title == "" {
 			continue
 		}
-		events = append(events, "Flow "+title+": "+autoAdvancePhaseLabel(launch.PhaseID)+" started")
+		events = append(events, "Flow "+title+": "+autoAdvancePhaseLabel(launch.PhaseID)+" queued")
 	}
 
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previous))

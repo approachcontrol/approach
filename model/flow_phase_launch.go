@@ -278,7 +278,9 @@ func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, t
 func (m Model) flowPhaseLaunchTarget(req FlowPhaseLaunchRequest) (flowPhaseLaunchTarget, bool, Model) {
 	prepared, err := m.flowPhaseLauncher().Preflight(req)
 	if err != nil {
-		m = m.setStatus(statusOther, err.Error())
+		if !req.AutoLaunch {
+			m = m.setStatus(statusOther, err.Error())
+		}
 		return flowPhaseLaunchTarget{}, false, m
 	}
 	return flowPhaseLaunchTarget{FlowPhaseLaunchPreparedRequest: prepared}, true, m
