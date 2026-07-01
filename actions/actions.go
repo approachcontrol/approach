@@ -1933,14 +1933,16 @@ func parsePullRequestInput(input string) (pullRequestInput, error) {
 	}
 
 	rawURL := input
-	if strings.HasPrefix(rawURL, "github.com/") {
+	if strings.HasPrefix(strings.ToLower(rawURL), "github.com/") ||
+		strings.HasPrefix(strings.ToLower(rawURL), "www.github.com/") {
 		rawURL = "https://" + rawURL
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
 		return pullRequestInput{}, fmt.Errorf("invalid PR number or URL: %q", input)
 	}
-	if strings.EqualFold(u.Host, "github.com") {
+	host := strings.ToLower(u.Hostname())
+	if host == "github.com" || host == "www.github.com" {
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) >= 4 && parts[2] == "pull" {
 			if number, ok := parsePositiveInt(parts[3]); ok {
@@ -1949,7 +1951,7 @@ func parsePullRequestInput(input string) (pullRequestInput, error) {
 		}
 		return pullRequestInput{}, fmt.Errorf("invalid GitHub PR URL: %q", input)
 	}
-	return pullRequestInput{}, fmt.Errorf("unsupported PR URL host: %s", u.Host)
+	return pullRequestInput{}, fmt.Errorf("unsupported PR URL host: %s", u.Hostname())
 }
 
 func parsePositiveInt(s string) (int, bool) {

@@ -1503,6 +1503,8 @@ func TestModel_ShiftMMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	}
 	if len(markCalls) != 1 ||
 		markCalls[0].FlowID != "flow-1" ||
+		markCalls[0].PRNumber != 116 ||
+		markCalls[0].PRURL != "https://github.com/brian-bell/wtui/pull/116" ||
 		markCalls[0].Commit != "0123456789abcdef" ||
 		!markCalls[0].MergedAt.Equal(mergedAt) {
 		t.Fatalf("manual merge calls = %#v", markCalls)

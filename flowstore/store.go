@@ -146,6 +146,8 @@ type MergeUpdate struct {
 // ManualMergeUpdate records metadata for a PR that was manually merged in GitHub.
 type ManualMergeUpdate struct {
 	FlowID   string
+	PRNumber int
+	PRURL    string
 	Commit   string
 	MergedAt time.Time
 	Summary  string
@@ -1467,6 +1469,12 @@ func validateMergeUpdate(record FlowRecord, update MergeUpdate) (Merge, error) {
 func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update ManualMergeUpdate) (Merge, error) {
 	if !HasPRTarget(record.PR) {
 		return Merge{}, fmt.Errorf("manual merge requires existing PR metadata")
+	}
+	if update.PRNumber <= 0 || strings.TrimSpace(update.PRURL) == "" {
+		return Merge{}, fmt.Errorf("manual merge requires verified PR target")
+	}
+	if update.PRNumber != record.PR.Number || strings.TrimSpace(update.PRURL) != strings.TrimSpace(record.PR.URL) {
+		return Merge{}, fmt.Errorf("manual merge PR target changed after verification")
 	}
 	commit := strings.TrimSpace(update.Commit)
 	if commit == "" {

@@ -2981,6 +2981,8 @@ func TestStoreMarkManualMergeCompletesMergeAndRecordsMetadata(t *testing.T) {
 
 	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
+		PRNumber: 116,
+		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -3005,6 +3007,47 @@ func TestStoreMarkManualMergeCompletesMergeAndRecordsMetadata(t *testing.T) {
 		updated.Merge.MergedAt == nil ||
 		!updated.Merge.MergedAt.Equal(mergedAt) {
 		t.Fatalf("merge metadata = %#v", updated.Merge)
+	}
+}
+
+func TestStoreMarkManualMergeRejectsChangedPRTarget(t *testing.T) {
+	root := t.TempDir()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := mustCreateManualMergeFlow(t, store, root, true, true)
+	record, err = store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     117,
+		URL:        "https://github.com/brian-bell/wtui/pull/117",
+		HeadBranch: "flow/manual-merge",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+
+	_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
+		FlowID:   record.FlowID,
+		PRNumber: 116,
+		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		Commit:   "0123456789abcdef",
+		MergedAt: mergedAt,
+	})
+	if err == nil || !strings.Contains(err.Error(), "PR target changed") {
+		t.Fatalf("MarkManualMerge() error = %v, want PR target changed", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Status == flowstore.StatusMerged || read.PR.Status == flowstore.MergeMerged || read.Merge.Status == flowstore.MergeMerged {
+		t.Fatalf("rejected manual merge mutated record to merged: %#v", read)
 	}
 }
 
@@ -3067,6 +3110,8 @@ func TestStoreMarkManualMergeValidatesEligibility(t *testing.T) {
 
 			_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
 				FlowID:   record.FlowID,
+				PRNumber: record.PR.Number,
+				PRURL:    record.PR.URL,
 				Commit:   tc.commit,
 				MergedAt: tc.mergedAt,
 			})
@@ -3104,6 +3149,8 @@ func TestStoreMarkManualMergeCollapsesDuplicateMergePhases(t *testing.T) {
 
 	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
+		PRNumber: 116,
+		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -3144,6 +3191,8 @@ func TestStoreMarkManualMergeLinkedPlanSyncFailureKeepsFlowRecoverable(t *testin
 
 	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
+		PRNumber: 116,
+		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})

@@ -918,6 +918,8 @@ func (m Model) markFlowManuallyMergedCmd(repoPath string, record flowstore.FlowR
 		}
 		flow, err := m.markFlowManualMerge(flowstore.ManualMergeUpdate{
 			FlowID:   record.FlowID,
+			PRNumber: record.PR.Number,
+			PRURL:    record.PR.URL,
 			Commit:   merge.Commit,
 			MergedAt: merge.MergedAt,
 		})

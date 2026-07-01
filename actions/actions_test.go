@@ -954,6 +954,22 @@ func TestLookupGitHubPRMergeWithRunnerReturnsMergedMetadata(t *testing.T) {
 	}
 }
 
+func TestLookupGitHubPRMergeWithRunnerAcceptsValidatedGitHubURLHosts(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdout: []byte(`{"state":"MERGED","mergedAt":"2026-06-08T15:04:05Z","mergeCommit":{"oid":"0123456789abcdef"}}`),
+	}
+
+	_, err := actions.LookupGitHubPRMergeWithRunner(123, "https://www.github.com:443/acme/project/pull/123", runner)
+	if err != nil {
+		t.Fatalf("LookupGitHubPRMergeWithRunner() error = %v", err)
+	}
+
+	wantArgs := []string{"pr", "view", "123", "--repo", "acme/project", "--json", "state,mergedAt,mergeCommit"}
+	if !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner args = %#v, want %#v", runner.args, wantArgs)
+	}
+}
+
 func TestLookupGitHubPRMergeWithRunnerValidatesGitHubResult(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
