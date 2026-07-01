@@ -133,6 +133,11 @@ type Model struct {
 	flowRefreshTickGen         uint64
 	flowRefreshInFlight        uint64
 	flowRefreshInFlightMode    ui.Mode
+	autoAdvanceRequestSeq      uint64
+	autoAdvanceInFlight        uint64
+	autoAdvanceSnapshot        []flowstore.FlowRecord
+	autoAdvanceLaunchedPhases  []autoAdvanceLaunchedPhase
+	autoAdvanceStatusSeq       uint64
 	terminalPrefixActive       bool
 	terminalConfirmID          embeddedTerminalID
 	terminalConfirmScope       embeddedTerminalScope
@@ -149,6 +154,7 @@ const (
 	statusFetch
 	statusGitMutation
 	statusOther
+	statusFlowAutoAdvance
 )
 
 type statusError struct {
@@ -740,13 +746,10 @@ func (m Model) RepoCreateRoot() string { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
 	fetchCmd := m.fetchForMode()
-	if m.mode != ui.ModeFlows {
-		return fetchCmd
+	if m.mode == ui.ModeFlows && fetchCmd == nil {
+		fetchCmd = m.flowRefreshTickCmd()
 	}
-	if fetchCmd != nil {
-		return fetchCmd
-	}
-	return m.flowRefreshTickCmd()
+	return batchNonNil(fetchCmd, autoAdvanceTickCmd())
 }
 
 func (m Model) View() string {
@@ -1183,6 +1186,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.startFlowSurfaceRefreshFetch()
+	case autoAdvanceTickMsg:
+		return m.startAutoAdvanceFetch()
+	case AutoAdvanceResultMsg:
+		return m.handleAutoAdvanceResult(msg)
+	case AutoAdvanceStatusExpiredMsg:
+		return m.handleAutoAdvanceStatusExpired(msg), nil
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -1628,15 +1637,6 @@ func (m Model) flowPhaseByID(flowID, phaseID string) (flowstore.FlowRecord, flow
 		return record, flowstore.FlowPhase{}, false
 	}
 	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-}
-
-func (m Model) flowByID(flowID string) (flowstore.FlowRecord, bool) {
-	for _, record := range m.flowLookupRecords() {
-		if record.FlowID == flowID {
-			return record, true
-		}
-	}
-	return flowstore.FlowRecord{}, false
 }
 
 func (m Model) flowLookupRecords() []flowstore.FlowRecord {

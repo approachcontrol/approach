@@ -39,6 +39,27 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func initWorktreeResult(t *testing.T, m model.Model) model.WorktreeResultMsg {
+	t.Helper()
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("expected Init command")
+	}
+	msg := cmd()
+	if result, ok := msg.(model.WorktreeResultMsg); ok {
+		return result
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, subcmd := range batch {
+			if result, ok := subcmd().(model.WorktreeResultMsg); ok {
+				return result
+			}
+		}
+	}
+	t.Fatalf("expected WorktreeResultMsg, got %T: %v", msg, msg)
+	return model.WorktreeResultMsg{}
+}
+
 func envValue(env []string, key string) string {
 	for _, entry := range env {
 		gotKey, value, ok := strings.Cut(entry, "=")
@@ -120,10 +141,7 @@ func setupModelPullRequestRepoWithOptions(t *testing.T, opts model.Options) (mod
 func TestModel_ModeFetchesProduceResultsAgainstRealRepo(t *testing.T) {
 	t.Run("worktrees via Init", func(t *testing.T) {
 		m, _ := setupModelRepo(t)
-		msg := m.Init()()
-		if _, ok := msg.(model.WorktreeResultMsg); !ok {
-			t.Fatalf("expected WorktreeResultMsg, got %T: %v", msg, msg)
-		}
+		_ = initWorktreeResult(t, m)
 	})
 
 	cases := []struct {
@@ -157,7 +175,7 @@ func TestModel_WorktreeDiffPayloadAgainstRealRepo(t *testing.T) {
 	writeFile(t, dir, "README.md", "hello\nchanged\n")
 
 	m = inRightPane(m)
-	m, _ = update(m, m.Init()()) // load real worktrees (root is dirty)
+	m, _ = update(m, initWorktreeResult(t, m)) // load real worktrees (root is dirty)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
@@ -267,7 +285,7 @@ func TestModel_MoveWorktreeAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "worktree", "add", oldPath, "-b", "feat")
 
 	m = inRightPane(m)
-	m, _ = update(m, m.Init()())
+	m, _ = update(m, initWorktreeResult(t, m))
 	if len(m.Worktrees()) != 2 {
 		t.Fatalf("expected root and linked worktree, got %+v", m.Worktrees())
 	}
@@ -400,7 +418,7 @@ func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, m.Init()())
+	m, _ = update(m, initWorktreeResult(t, m))
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")

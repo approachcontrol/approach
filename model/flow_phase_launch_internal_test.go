@@ -203,10 +203,9 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	}
 
 	m.embeddedTerminals = nil
-	m.flows = m.flows.SetItems([]flowstore.FlowRecord{current})
-	m, cmd = m.prepareDeferredAutoFlowPhaseLaunches()
+	m, cmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom([]flowstore.FlowRecord{current})
 	if cmd == nil {
-		t.Fatal("prepareDeferredAutoFlowPhaseLaunches() returned nil after source terminal closed")
+		t.Fatal("prepareDeferredAutoFlowPhaseLaunchesFrom() returned nil after source terminal closed")
 	}
 	msg := cmd()
 	if batch, ok := msg.(tea.BatchMsg); ok && len(batch) == 1 {

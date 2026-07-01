@@ -465,20 +465,30 @@ func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, 
 		Record:     record,
 		Phase:      phase,
 		AutoLaunch: true,
-		Headless:   m.flowHeadless,
+		Headless:   true,
 	})
 	m = next
 	if !ok {
 		return m, nil
 	}
+	m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
+		FlowTitle: record.Title,
+		PhaseID:   phase.PhaseID,
+	})
 	return m, next.prepareFlowPhaseLaunch(target)
 }
 
-func (m Model) prepareDeferredAutoFlowPhaseLaunches() (Model, tea.Cmd) {
+func (m Model) prepareDeferredAutoFlowPhaseLaunchesFrom(records []flowstore.FlowRecord) (Model, tea.Cmd) {
+	recordsByID := make(map[string]flowstore.FlowRecord, len(records))
+	for _, record := range records {
+		if record.FlowID != "" {
+			recordsByID[record.FlowID] = record
+		}
+	}
 	var cmds []tea.Cmd
 	for key := range m.deferredAutoFlowLaunches {
 		delete(m.deferredAutoFlowLaunches, key)
-		record, ok := m.flowByID(key.FlowID)
+		record, ok := recordsByID[key.FlowID]
 		if !ok {
 			continue
 		}

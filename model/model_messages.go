@@ -1332,7 +1332,6 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	previousFlows := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1348,20 +1347,10 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if m.mode != ui.ModeFlows {
-		return m, nil
-	}
-	if m.flowFocus != flowFocusTerminal {
+	if m.mode == ui.ModeFlows && m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
-	var cmds []tea.Cmd
-	var autoCmd tea.Cmd
-	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
-	cmds = append(cmds, autoCmd)
-	var deferredCmd tea.Cmd
-	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches()
-	cmds = append(cmds, deferredCmd)
-	return m, batchNonNil(cmds...)
+	return m, nil
 }
 
 func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) {
@@ -1370,21 +1359,13 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
-	previousFlows := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
 	if m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
-	var cmds []tea.Cmd
-	var autoCmd tea.Cmd
-	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
-	cmds = append(cmds, autoCmd)
-	var deferredCmd tea.Cmd
-	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches()
-	cmds = append(cmds, deferredCmd)
-	return m, batchNonNil(cmds...)
+	return m, nil
 }
 
 func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {
