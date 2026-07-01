@@ -98,6 +98,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSetAgent()
 	}
 
+	if key == "M" && m.flowSurfaceVisible() {
+		return m.handleFlowModelOrManualMerge()
+	}
+
+	if key == "E" && m.flowSurfaceVisible() {
+		return m.handleSetReasoningEffort()
+	}
+
 	if key == "V" {
 		return m.handleSetDefaultView()
 	}
@@ -110,8 +118,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePromptTemplates()
 	}
 
-	if key == "tab" && m.activePane == 0 {
-		m = m.togglePrimaryPaneFocus()
+	if key == "tab" {
+		m = m.cyclePaneFocusForward()
 		return m, nil
 	}
 
@@ -424,6 +432,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleSetReasoningEffort()
 		}
+	case "M":
+		if m.flowSurfaceVisible() {
+			return m.handleFlowModelOrManualMerge()
+		}
 	case "i":
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
@@ -437,12 +449,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 		if m.flowSurfaceVisible() {
 			return m.handleResetSelectedFlowPhase()
-		}
-	case "tab":
-		if m.flowSurfaceVisible() && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
-			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = true
-			return m, nil
 		}
 	case "g":
 		if m.flowSurfaceVisible() {
@@ -490,10 +496,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleToggleFlowAutoMode()
 		}
-	case "M":
-		if m.flowSurfaceVisible() {
-			return m.handleMarkFlowManuallyMerged()
-		}
 	case "N":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(true)
@@ -517,6 +519,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "t":
 		return m.handleOpenTerminal()
 	case "c":
+		if m.flowSurfaceVisible() {
+			return m.handleCopyFlowID()
+		}
 		return m.handleOpenCode()
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
@@ -546,6 +551,45 @@ func (m Model) togglePrimaryPaneFocus() Model {
 	return m
 }
 
+func (m Model) cyclePaneFocusForward() Model {
+	if !m.flowSurfaceVisible() {
+		if m.activePane == 0 {
+			m.activePane = 1
+			return m
+		}
+		m.activePane = 0
+		if m.mode == ui.ModePlans {
+			m = m.clearSelectedPlanPhase()
+		}
+		return m
+	}
+
+	if m.activePane == 0 {
+		m.activePane = 1
+		m.flowFocus = flowFocusList
+		m.terminalPrefixActive = false
+		if m.activeFlowSurfaceVisible() {
+			m = m.syncActiveFlowsFromCache()
+		}
+		return m.syncActiveFlowTerminalToSelectedFlow()
+	}
+
+	if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) && m.flowFocus != flowFocusTerminal {
+		m.flowFocus = flowFocusTerminal
+		m.terminalPrefixActive = true
+		return m
+	}
+
+	m.activePane = 0
+	m.flowFocus = flowFocusList
+	m.terminalPrefixActive = false
+	m = m.clearSelectedFlowPhase()
+	if m.activeFlowSurfaceVisible() {
+		return m.syncActiveFlowsFromCache()
+	}
+	return m
+}
+
 func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "up", "k":
@@ -558,12 +602,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleHorizontalNavigation(1)
 	case "h":
 		return m.handleToggleFlowHeadless()
-	case "tab":
-		if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
-			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = true
-			return m, nil
-		}
 	case "g":
 		return m.handleLaunchNextFlowPhase()
 	case "enter":
@@ -572,16 +610,18 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenFlowPlanText()
 	case "m":
 		return m.handleToggleFlowAutoMode()
-	case "M":
-		return m.handleMarkFlowManuallyMerged()
 	case "p":
 		return m.handleOpenSelectedFlowPR()
 	case "y":
 		return m.handleCopyFlowWorktreePath()
+	case "c":
+		return m.handleCopyFlowID()
 	case "r":
 		return m.handleResumeFlowPhaseSession()
 	case "E":
 		return m.handleSetReasoningEffort()
+	case "M":
+		return m.handleFlowModelOrManualMerge()
 	case "x":
 		return m.handleResetSelectedFlowPhase()
 	case "d":
@@ -1096,6 +1136,71 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 		func(value string) tea.Cmd { return m.setReasoningEffort(command, value) },
 	)
 	return m, nil
+}
+
+func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
+	command := agent.Normalize(m.agentCommand)
+	if command == "" {
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting model")
+		return m, nil
+	}
+	if command == agent.CommandCodexApp {
+		m = m.setStatus(statusOther, "Codex App uses app default model")
+		return m, nil
+	}
+	if err := agent.Validate(command); err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	items := modelSelectItems(command)
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose %s model", command),
+		items,
+		selectedModelIndex(command, m.ModelFor(command)),
+		modal.Layout{Width: 38, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd { return m.setModel(command, value) },
+	)
+	return m, nil
+}
+
+func (m Model) handleFlowModelOrManualMerge() (tea.Model, tea.Cmd) {
+	if _, _, ok := m.selectedManualMergeFlow(); ok {
+		return m.handleMarkFlowManuallyMerged()
+	}
+	if _, ok := m.selectedFlow(); ok {
+		return m, nil
+	}
+	return m.handleSetModel()
+}
+
+func modelSelectItems(command string) []modal.SelectItem {
+	choices := agent.ModelChoices(command)
+	items := make([]modal.SelectItem, 0, len(choices))
+	for _, choice := range choices {
+		items = append(items, modal.SelectItem{Label: choice, Value: choice})
+	}
+	return items
+}
+
+func selectedModelIndex(command, model string) int {
+	model = modelDisplay(model)
+	for i, choice := range agent.ModelChoices(command) {
+		if choice == model {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) setModel(command, selectedModel string) tea.Cmd {
+	command = agent.Normalize(command)
+	selectedModel = agent.NormalizeModel(selectedModel)
+	return func() tea.Msg {
+		if err := m.saveAgentModel(command, selectedModel); err != nil {
+			return AgentModelSetFailedMsg{Command: command, Model: selectedModel, Err: err.Error()}
+		}
+		return AgentModelSetMsg{Command: command, Model: selectedModel}
+	}
 }
 
 func reasoningEffortSelectItems(command string) []modal.SelectItem {
@@ -1967,6 +2072,7 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          m.agentCommand,
+		Model:            m.launchModelFor(m.agentCommand),
 		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
@@ -2277,6 +2383,7 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 	}
 	return actions.AgentLaunchContext{
 		Command:          m.agentCommand,
+		Model:            m.launchModelFor(m.agentCommand),
 		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
@@ -2314,7 +2421,7 @@ func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleOpenCode() (tea.Model, tea.Cmd) {
-	return m.openAtPath(actions.OpenVSCode)
+	return m.openAtPath(m.openCode)
 }
 
 func (m Model) pageBody(body string) (Model, tea.Cmd) {

@@ -819,6 +819,16 @@ func TestCodexAppLaunchRejectsUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestCodexAppLaunchRejectsModelBeforeUnsupportedPlatform(t *testing.T) {
+	_, err := agentLaunch(AgentLaunchContext{Command: "codex-app", WorktreePath: "/repo/worktree", Model: "gpt-5.5"}, "linux", fakeGetenv(nil), fakeLookPath())
+	if err == nil {
+		t.Fatal("expected codex-app model error")
+	}
+	if !strings.Contains(err.Error(), "model") || !strings.Contains(err.Error(), "codex-app") {
+		t.Fatalf("expected codex-app model error, got %q", err.Error())
+	}
+}
+
 func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	putAgentOnPath(t, "codex")
 	t.Setenv("TMUX", "/tmp/parent-tmux.sock")

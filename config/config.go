@@ -63,6 +63,8 @@ type UIConfig struct {
 type AgentConfig struct {
 	Command               string `toml:"command"`
 	PlanPrompt            string `toml:"plan_prompt"`
+	CodexModel            string `toml:"codex_model"`
+	ClaudeModel           string `toml:"claude_model"`
 	CodexReasoningEffort  string `toml:"codex_reasoning_effort"`
 	ClaudeReasoningEffort string `toml:"claude_reasoning_effort"`
 }
@@ -192,6 +194,18 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 	if cfg.Agent.Command != "" {
 		cfg.Agent.Command = agent.Normalize(cfg.Agent.Command)
 		if err := agent.Validate(cfg.Agent.Command); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+	if cfg.Agent.CodexModel != "" {
+		cfg.Agent.CodexModel = agent.NormalizeModel(cfg.Agent.CodexModel)
+		if err := agent.ValidateModel(agent.CommandCodex, cfg.Agent.CodexModel); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+	if cfg.Agent.ClaudeModel != "" {
+		cfg.Agent.ClaudeModel = agent.NormalizeModel(cfg.Agent.ClaudeModel)
+		if err := agent.ValidateModel(agent.CommandClaude, cfg.Agent.ClaudeModel); err != nil {
 			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}
 	}
@@ -328,6 +342,33 @@ func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
 	return saveAgentReasoningEffortTo(path, command, effort, options...)
 }
 
+// SaveAgentModel persists the selected provider-specific model to wtui's
+// default config file, creating the config directory when needed. An empty
+// model is saved as "default".
+func SaveAgentModel(command, model string, options ...Option) error {
+	command = agent.Normalize(command)
+	if command != agent.CommandCodex && command != agent.CommandClaude {
+		if err := agent.Validate(command); err != nil {
+			return err
+		}
+		return fmt.Errorf("model is configurable only for codex or claude")
+	}
+	model = agent.NormalizeModel(model)
+	if model == "" {
+		model = agent.ModelDefault
+	}
+	if err := agent.ValidateModel(command, model); err != nil {
+		return err
+	}
+
+	opts := defaultOptions(options...)
+	path, err := writableDefaultPath(opts)
+	if err != nil {
+		return err
+	}
+	return saveAgentModelTo(path, command, model, options...)
+}
+
 // SaveDefaultView persists the startup default view number to wtui's default
 // config file, creating the config directory when needed.
 func SaveDefaultView(view int, options ...Option) error {
@@ -426,6 +467,16 @@ func saveAgentReasoningEffortTo(path, command, effort string, options ...Option)
 	})
 }
 
+func saveAgentModelTo(path, command, model string, options ...Option) error {
+	key := "codex_model"
+	if command == agent.CommandClaude {
+		key = "claude_model"
+	}
+	return saveAgentConfigTo(path, options, func(data []byte) []byte {
+		return patchAgentModel(data, key, model)
+	})
+}
+
 func saveDefaultViewTo(path string, view int, options ...Option) error {
 	return saveAgentConfigTo(path, options, func(data []byte) []byte {
 		return patchSectionAssignment(data, "ui", "default_view", fmt.Sprintf("default_view = %d\n", view))
@@ -488,6 +539,10 @@ func patchAgentCommand(data []byte, command string) []byte {
 
 func patchAgentReasoningEffort(data []byte, key, effort string) []byte {
 	return patchSectionAssignment(data, "agent", key, agentReasoningEffortLine(key, effort))
+}
+
+func patchAgentModel(data []byte, key, model string) []byte {
+	return patchSectionAssignment(data, "agent", key, agentModelLine(key, model))
 }
 
 func patchSectionAssignment(data []byte, section, key, assignmentLine string) []byte {
@@ -668,6 +723,10 @@ func agentCommandLine(command string) string {
 
 func agentReasoningEffortLine(key, effort string) string {
 	return fmt.Sprintf("%s = %q\n", key, effort)
+}
+
+func agentModelLine(key, model string) string {
+	return fmt.Sprintf("%s = %q\n", key, model)
 }
 
 func escapeTOMLString(value string) string {

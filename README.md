@@ -47,10 +47,9 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
 or `tab` on a selected repo to focus the content pane; from the content pane,
-`bksp` returns focus to the repo pane. Press `f2` to open the prompt-template
-editor for plan and Flow launch prompts. When a Flow embedded terminal is open, `tab`
-switches focus between the Flow list and that terminal while the right pane
-remains active.
+`tab` or `bksp` returns focus to the repo pane. Press `f2` to open the
+prompt-template editor for plan and Flow launch prompts. When a Flow embedded
+terminal is open, `tab` cycles through the repo pane, Flow list, and terminal.
 The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
@@ -87,6 +86,7 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows / active flows |
 | `←`/`→`/`l` | Switch views in the right pane, wrapping between worktrees and active flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Switch to the previous view outside flows view; toggle Flow headless/interactive command mode in flows view |
+| `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
@@ -104,7 +104,7 @@ filter matches, or a load failure with details in the status bar.
 | `f` | Fetch with `--prune` (worktrees and branches views) |
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
-| `c` | Open VSCode at worktree path |
+| `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected `await-session` Flow phase after confirmation |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
@@ -113,6 +113,7 @@ filter matches, or a load failure with details in the status bar.
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
+| `tab` | Cycle pane focus forward; with a Flow terminal open, cycles repo pane → Flow list → terminal |
 | `bksp` | Switch focus to left pane |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -123,7 +124,7 @@ flows, and active flows. Horizontal view switching wraps between worktrees and
 active flows. Press `V` to choose which numbered view wtui opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
 `enter` or `tab` from the repo pane to focus the content pane. In the content
-pane, `bksp` switches focus back to the left repo pane. Press `f2` from normal
+pane, `tab` or `bksp` switches focus back to the left repo pane. Press `f2` from normal
 TUI views to edit the `[agent].plan_prompt` and `[flow_prompts]` templates;
 Flow terminal input focus passes F2 through to the embedded agent.
 
@@ -229,9 +230,11 @@ transcript.
 Resuming a CLI `codex` or `claude` session from the full sessions view opens a
 runtime-only embedded terminal in the sessions pane. While embedded terminals
 exist, the saved-session table is hidden and the pane shows a compact numbered
-terminal header plus the active terminal screen. Keys go directly to the active
-PTY (including agent shortcuts like `ctrl+g`); press `ctrl+]` for wtui
-commands: `ctrl+] 1`-`9` switches terminals, `ctrl+] l` opens a saved-session
+terminal header plus the active terminal screen. While the session terminal
+right pane is focused, all keys except `tab` go directly to the active PTY
+(including agent shortcuts like `ctrl+g`); after tabbing to the left pane, repo
+pane keys operate normally. Press `ctrl+]` for wtui commands: `ctrl+] 1`-`9`
+switches terminals, `ctrl+] l` opens a saved-session
 picker, `ctrl+] d` detaches a tmux-backed terminal and opens a new external
 terminal attached to that tmux session, `ctrl+] x` dismisses an exited terminal or confirms termination of a
 running one, `ctrl+] q` or `ctrl+] esc` quits with cleanup, and
@@ -355,8 +358,9 @@ the phase list. Press
 canonical phase order. This action
 uses the selected Flow, so a highlighted pending phase row can still launch an
 earlier ready sibling, and nothing is persisted when no phase is launchable.
-Press `y` to copy the selected Flow worktree path from either a Flow row or one
-of its expanded phase rows. Press `r` on an expanded phase row with an
+Press `c` to copy the selected Flow ID, and press `y` to copy the selected Flow
+worktree path, from either a Flow row or one of its expanded phase rows. Press
+`r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
 existing app thread without extra launch tracking. Press `m` on a Flow row or
@@ -383,8 +387,9 @@ Browse active Flow records across all repos. This view hides merged Flow records
 moving focus to the left repo pane temporarily filters the visible active rows to
 the selected repo, and returning focus to the middle pane restores the global
 list. Normal Flow actions, phase launches, attached-session resumes, auto-mode
-toggles, linked-PR opening with `p`, and embedded Flow terminals work from the
-visible active Flow rows.
+toggles, linked-PR opening with `p`, `c` Flow ID copy, `y` worktree path copy,
+and embedded Flow terminals work from the visible active Flow rows and their
+expanded phase rows.
 
 Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
@@ -398,20 +403,22 @@ Creating a new Flow has its own default-on Headless checkbox for the initial
 Plan launch; uncheck it for an interactive initial Plan launch. That checkbox
 is ignored when Plan Now is off and does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
-launches all use the configured agent and that agent's configured effort. Press
-`E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
-the current value. Codex CLI launches use `--config
-model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
-session resumes do not receive effort flags. `codex-app` always uses the
-external deep-link route and keeps app-side/default reasoning. Embedded headless output
-is readable terminal text, not raw JSON events: `codex exec` streams its progress
+launches all use the configured agent and that agent's configured model and
+effort. Press `M` to choose the selected CLI agent's model; press `E` to choose
+its reasoning effort. The shortcut pane shows the current values. Codex CLI
+launches use `--model <model>` and `--config
+model_reasoning_effort=<effort>`; Claude launches use `--model <model>` and
+`--effort <effort>`. Session resumes do not receive model or effort flags.
+`codex-app` always uses the external deep-link route and keeps app-side/default
+model and reasoning. Embedded headless output is readable terminal text, not raw
+JSON events: `codex exec` streams its progress
 directly, while `claude --print` is run with `--output-format stream-json
 --include-partial-messages` and wtui translates those events into readable lines
 (thinking, tool calls and results, the final answer streamed token-by-token, and
 a closing summary) so a Claude phase shows live progress as it works instead of a
 blank terminal. While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
-`tab` switches focus between them while the right pane remains active. Manually
+`tab` cycles focus through the repo pane, Flow list, and Flow terminal. Manually
 tabbing into Flow terminal focus starts in wtui command mode: `left`/`right`
 cycle Flow terminals, `1`-`9` switches by number, `x` closes, `d` detaches to
 tmux when available and opens the detached session in an external terminal,
@@ -590,6 +597,8 @@ max_depth = 2
 
 [agent]
 command = "codex"
+codex_model = "gpt-5.5"
+claude_model = "claude-sonnet-5"
 codex_reasoning_effort = "high"
 claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
@@ -619,7 +628,10 @@ for compatibility. The same root is resolved to an absolute path when used as
 the parent directory for left-pane repo creation.
 `[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
 configure provider-specific effort for new CLI agent launches; empty or
-`default` keeps provider defaults. `[ui].default_view` accepts `1` through `9`
+`default` keeps provider defaults. `[agent].codex_model` supports `default` and
+`gpt-5.5`; `[agent].claude_model` supports `default`, `claude-opus-4-8`,
+`claude-sonnet-5`, and `claude-fable-5`. Empty or `default` omits the model
+override and keeps provider defaults. `[ui].default_view` accepts `1` through `9`
 and controls the startup view; omitting it keeps the built-in Flows default.
 `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while

@@ -696,10 +696,13 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 	if strings.Contains(bar, "n: new flow") {
 		t.Fatalf("active Flow status bar should not expose new flow, got %q", bar)
 	}
-	for _, want := range []string{"enter: phases", "g: launch next", "h: headless on", "o: open", "y: copy path"} {
+	for _, want := range []string{"enter: phases", "g: launch next", "h: headless on", "o: open", "c: copy id", "y: copy path"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("active Flow status bar missing %q, got %q", want, bar)
 		}
+	}
+	if strings.Contains(bar, "c: code") {
+		t.Fatalf("active Flow status bar should not expose c: code, got %q", bar)
 	}
 }
 
@@ -712,12 +715,13 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 		Mode:                ModeFlows,
 		ActivePane:          1,
 		FlowAgentLabel:      "codex",
+		FlowModel:           "model: gpt-5.5",
 		FlowReasoningEffort: "effort: high",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "A      codex\nE      effort: high") {
-		t.Fatalf("flows shortcut pane should group agent before reasoning effort:\n%s", pane)
+	if !strings.Contains(pane, "A      codex\nM      model: gpt-5.5\nE      effort: high") {
+		t.Fatalf("flows shortcut pane should group agent before model and reasoning effort:\n%s", pane)
 	}
 	if strings.Contains(pane, "A      set agent") {
 		t.Fatalf("flows shortcut pane should not show generic set-agent label:\n%s", pane)
@@ -768,6 +772,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"enter  phases",
 		"g      launch next",
 		"o      open",
+		"c      copy id",
 		"y      copy path",
 		"d      delete",
 		"h      headless on",
@@ -831,6 +836,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		"enter  phases",
 		"g      launch next",
 		"o      open",
+		"c      copy id",
 		"y      copy path",
 		"h      headless on",
 		"m      auto: on",
@@ -958,7 +964,7 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 		want      string
 		wantNoKey string
 	}{
-		{name: "codex app", agent: "codex-app", effort: "app default", want: "A      codex-app\nE      app default"},
+		{name: "codex app", agent: "codex-app", effort: "effort: app", want: "A      codex-app\nE      effort: app"},
 		{name: "unset", agent: "choose agent", effort: "", want: "A      choose agent", wantNoKey: "E"},
 		{name: "missing agent label", effort: "effort: high", want: "A      choose agent", wantNoKey: "E"},
 	}
@@ -987,7 +993,7 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 
 func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
-		Width:                    120,
+		Width:                    240,
 		Mode:                     ModeFlows,
 		ActivePane:               1,
 		RepoSelected:             true,
@@ -996,14 +1002,33 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 		FlowPlanLinked:           true,
 		FlowHeadless:             true,
 	})
-	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "y: copy path"} {
+	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "c: copy id", "y: copy path"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
 		}
 	}
-	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
+	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase", "c: code"} {
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("selected flow hint should not include %q, got %q", notWant, bar)
+		}
+	}
+}
+
+func TestStatusBar_FlowsModeShowsFlowIDCopyHintWithoutWorktreePath(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        240,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
+	})
+	if !strings.Contains(bar, "c: copy id") {
+		t.Fatalf("selected flow without worktree path should expose copy id, got %q", bar)
+	}
+	for _, notWant := range []string{"c: code", "y: copy path"} {
+		if strings.Contains(bar, notWant) {
+			t.Fatalf("selected flow without worktree path should not include %q, got %q", notWant, bar)
 		}
 	}
 }
@@ -1033,6 +1058,56 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 	ineligible := renderStatusBarWithState(base)
 	if strings.Contains(ineligible, "mark merged") {
 		t.Fatalf("ineligible Flow row should hide manual merge shortcut, got %q", ineligible)
+	}
+}
+
+func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: 1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Compact selected flow",
+			Status: flowstore.StatusInProgress,
+		}},
+		FlowSelected:         0,
+		FlowHeadless:         true,
+		FlowAutoModeSelected: true,
+	})
+
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"enter  phases", "c      copy id", "h      headless on"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("compact selected Flow pane missing %q:\n%s", want, pane)
+		}
+	}
+	if strings.Contains(pane, "n      new flow") {
+		t.Fatalf("compact selected Flow pane should prioritize selected-flow actions over new-flow shortcut:\n%s", pane)
+	}
+}
+
+func TestStatusBar_ActiveFlowsModeShowsFlowIDCopyHint(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                    240,
+		Mode:                     ModeActiveFlows,
+		ActiveFlows:              true,
+		ActivePane:               1,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowWorktreePathSelected: true,
+		FlowHeadless:             true,
+	})
+	for _, want := range []string{"c: copy id", "y: copy path"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("active flows selected flow hint missing %q, got %q", want, bar)
+		}
+	}
+	if strings.Contains(bar, "c: code") {
+		t.Fatalf("active flows selected flow should not include c: code, got %q", bar)
 	}
 }
 
@@ -1304,12 +1379,12 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  phases", "g      launch next", "h      headless off", "y      copy path"} {
+	for _, want := range []string{"enter  phases", "g      launch next", "h      headless off", "c      copy id", "y      copy path"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
 	}
-	for _, notWant := range []string{"enter  launch phase", "x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
+	for _, notWant := range []string{"enter  launch phase", "x      phases", "a      launch phase", "i      embed phase", "c      code"} {
 		if strings.Contains(pane, notWant) {
 			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
 		}
@@ -1424,12 +1499,14 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 		ActivePane:          1,
 		RepoSelected:        true,
 		FlowAgentLabel:      "codex",
+		FlowModel:           "model: gpt-5.5",
 		FlowReasoningEffort: "effort: high",
 	})
 	agentIndex := strings.Index(bar, "A: codex")
+	modelIndex := strings.Index(bar, "M: model: gpt-5.5")
 	effortIndex := strings.Index(bar, "E: effort: high")
-	if agentIndex < 0 || effortIndex < 0 || agentIndex > effortIndex {
-		t.Fatalf("Flow footer should group agent before effort, got %q", bar)
+	if agentIndex < 0 || modelIndex < 0 || effortIndex < 0 || agentIndex > modelIndex || modelIndex > effortIndex {
+		t.Fatalf("Flow footer should group agent before model before effort, got %q", bar)
 	}
 	if strings.Contains(bar, "A: set agent") || strings.Contains(bar, "E: codex effort: high") {
 		t.Fatalf("Flow footer should not show generic or duplicated labels, got %q", bar)

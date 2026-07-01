@@ -477,7 +477,7 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, head
 }
 
 func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
-	command, reasoningEffort := m.flowLaunchAgentSettings()
+	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
 			RepoPath:                    repoPath,
@@ -485,6 +485,7 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			Instructions:                instructions,
 			BaseRef:                     baseRef,
 			AgentCommand:                command,
+			Model:                       model,
 			ReasoningEffort:             reasoningEffort,
 			SessionStateRoot:            m.sessionStateRoot,
 			FlowPromptTemplates:         m.flowPromptTemplates,

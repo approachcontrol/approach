@@ -2097,6 +2097,155 @@ func TestAgentCommandRejectsResumeWithReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestAgentCommandCodexAddsModelBeforeExec(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:       "codex",
+		WorktreePath:  "/repo/worktree",
+		Embedded:      true,
+		Headless:      true,
+		Model:         "gpt-5.5",
+		InitialPrompt: "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	modelIndex := slices.Index(args, "--model")
+	execIndex := slices.Index(args, "exec")
+	if modelIndex == -1 || modelIndex+1 >= len(args) || args[modelIndex+1] != "gpt-5.5" {
+		t.Fatalf("expected codex --model gpt-5.5 pair, got %#v", args)
+	}
+	if execIndex == -1 || modelIndex > execIndex {
+		t.Fatalf("expected codex model before exec, got %#v", args)
+	}
+	if args[len(args)-1] != "Implement this phase." {
+		t.Fatalf("expected prompt to remain final arg, got %#v", args)
+	}
+}
+
+func TestAgentCommandCodexInteractiveAddsModelAsGlobalFlag(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:       "codex",
+		WorktreePath:  "/repo/worktree",
+		Model:         " GPT-5.5 ",
+		InitialPrompt: "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	modelIndex := slices.Index(args, "--model")
+	if modelIndex == -1 || modelIndex+1 >= len(args) || args[modelIndex+1] != "gpt-5.5" {
+		t.Fatalf("expected codex --model gpt-5.5 pair, got %#v", args)
+	}
+	if args[len(args)-1] != "Implement this phase." {
+		t.Fatalf("expected prompt to remain final arg, got %#v", args)
+	}
+}
+
+func TestAgentCommandClaudeAddsModelArg(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:       "claude",
+		WorktreePath:  "/repo/worktree",
+		Embedded:      true,
+		Headless:      true,
+		Model:         "claude-sonnet-5",
+		InitialPrompt: "Implement this phase.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+
+	args := cmd.Args
+	modelFlagIndex := slices.Index(args, "--model")
+	printIndex := slices.Index(args, "--print")
+	streamIndex := slices.Index(args, "stream-json")
+	if modelFlagIndex == -1 || modelFlagIndex+1 >= len(args) || args[modelFlagIndex+1] != "claude-sonnet-5" {
+		t.Fatalf("expected claude --model claude-sonnet-5 pair, got %#v", args)
+	}
+	if printIndex == -1 || streamIndex == -1 {
+		t.Fatalf("expected headless stream-json args to remain, got %#v", args)
+	}
+	if args[len(args)-1] != "Implement this phase." {
+		t.Fatalf("expected prompt to remain final arg, got %#v", args)
+	}
+}
+
+func TestAgentCommandDefaultModelOmitsProviderArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		model   string
+	}{
+		{name: "codex empty", command: "codex", model: ""},
+		{name: "codex default", command: "codex", model: "default"},
+		{name: "claude default", command: "claude", model: " default "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+				Command:       tt.command,
+				WorktreePath:  "/repo/worktree",
+				Model:         tt.model,
+				InitialPrompt: "Implement this phase.",
+			})
+			if err != nil {
+				t.Fatalf("AgentCommand returned error: %v", err)
+			}
+			if slices.Contains(cmd.Args, "--model") {
+				t.Fatalf("default model should not add --model, got %#v", cmd.Args)
+			}
+		})
+	}
+}
+
+func TestAgentCommandRejectsUnsupportedModel(t *testing.T) {
+	_, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:      "codex",
+		WorktreePath: "/repo/worktree",
+		Model:        "claude-sonnet-5",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported model error")
+	}
+	if !strings.Contains(err.Error(), "unsupported model") {
+		t.Fatalf("expected unsupported model error, got %q", err.Error())
+	}
+}
+
+func TestAgentCommandRejectsResumeWithModel(t *testing.T) {
+	_, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "claude",
+		WorktreePath:     "/repo/worktree",
+		ResumeSessionID:  "session-1",
+		Model:            "claude-opus-4-8",
+		SessionStateRoot: "/state/wtui/sessions/v1",
+	})
+	if err == nil {
+		t.Fatal("expected resume model error")
+	}
+	if !strings.Contains(err.Error(), "model") || !strings.Contains(err.Error(), "resume") {
+		t.Fatalf("expected resume model error, got %q", err.Error())
+	}
+}
+
+func TestAgentLaunchRejectsCodexAppModelOverride(t *testing.T) {
+	_, err := actions.AgentLaunch(actions.AgentLaunchContext{
+		Command:      "codex-app",
+		WorktreePath: "/repo/worktree",
+		Model:        "gpt-5.5",
+	})
+	if err == nil {
+		t.Fatal("expected codex-app model error")
+	}
+	if !strings.Contains(err.Error(), "model") || !strings.Contains(err.Error(), "codex-app") {
+		t.Fatalf("expected codex-app model error, got %q", err.Error())
+	}
+}
+
 func TestAgentCommandBuildsEmbeddedInteractiveCodexCommand(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:           "codex",

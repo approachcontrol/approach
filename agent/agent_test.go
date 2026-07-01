@@ -75,3 +75,44 @@ func TestValidateReasoningEffortRejectsUnsupportedProviderValues(t *testing.T) {
 		t.Fatalf("expected default claude effort to be accepted, got %v", err)
 	}
 }
+
+func TestModelChoicesAreProviderSpecific(t *testing.T) {
+	tests := []struct {
+		command string
+		want    []string
+	}{
+		{agent.CommandCodex, []string{"default", "gpt-5.5"}},
+		{agent.CommandClaude, []string{"default", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5"}},
+		{agent.CommandCodexApp, []string{"default"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			got := agent.ModelChoices(tt.command)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("ModelChoices(%q) = %#v, want %#v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateModelRejectsUnsupportedProviderValues(t *testing.T) {
+	if err := agent.ValidateModel(agent.CommandCodex, "claude-sonnet-5"); err == nil {
+		t.Fatal("expected codex claude-sonnet-5 model to be rejected")
+	}
+	if err := agent.ValidateModel(agent.CommandCodex, " GPT-5.5 "); err != nil {
+		t.Fatalf("expected codex gpt-5.5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandClaude, "claude-fable-5"); err != nil {
+		t.Fatalf("expected claude-fable-5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCodex, ""); err != nil {
+		t.Fatalf("expected empty codex model to mean default, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandClaude, " DEFAULT "); err != nil {
+		t.Fatalf("expected default claude model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCodexApp, "gpt-5.5"); err == nil {
+		t.Fatal("expected codex-app non-default model to be rejected")
+	}
+}

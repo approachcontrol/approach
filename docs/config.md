@@ -25,6 +25,7 @@ exist:
 | Plan editor command | `[editor].command` | `EDITOR` | unset |
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
 | Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
 | Startup default view | none | `[ui].default_view` | flows view (`8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
@@ -66,6 +67,8 @@ default_view = 8
 
 [agent]
 command = "codex"
+codex_model = "gpt-5.5"
+claude_model = "claude-sonnet-5"
 codex_reasoning_effort = "high"
 claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
@@ -208,6 +211,8 @@ value immediately, creating the config file if needed.
 | Key | Type | Description |
 |-----|------|-------------|
 | `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
+| `codex_model` | string | Optional Codex CLI model for new launches. Supported values: `default`, `gpt-5.5`. Empty or `default` omits the Codex override and keeps provider defaults. |
+| `claude_model` | string | Optional Claude Code model for new launches. Supported values: `default`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-fable-5`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `minimal`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
@@ -216,12 +221,13 @@ Press `F2` in normal TUI views to open the prompt-template editor. The editor
 can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
 preview the built-in prompt.
 
-In the flows pane, `E` opens a provider-specific reasoning-effort picker for
-the selected CLI agent and persists the corresponding key. New Codex CLI
-launches use `--config model_reasoning_effort=<effort>`; new Claude Code
-launches use `--effort <effort>`. Session resumes do not receive effort flags.
-`codex-app` launches keep app-side/default reasoning because the current deep
-link path cannot carry a verified effort setting.
+In the flows pane, `M` opens a provider-specific model picker for the selected
+CLI agent and persists the corresponding key. `E` opens the reasoning-effort
+picker. New Codex CLI launches use `--model <model>` and `--config
+model_reasoning_effort=<effort>`; new Claude Code launches use
+`--model <model>` and `--effort <effort>`. Session resumes do not receive model
+or effort flags. `codex-app` launches keep app-side/default model and reasoning
+because the current deep-link path cannot carry verified provider settings.
 
 ### `[flow_prompts]`
 
@@ -344,14 +350,15 @@ is set. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row or expanded
 phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
-launchable phase for the selected Flow. Press `y` to copy the selected Flow
-worktree path from either a Flow row or one of its expanded phase rows. Press
-`m` to toggle per-Flow auto mode. New Flow records start with auto mode on, and
-the toggle is persisted on each Flow. Flows created before this field existed
-remain manual until auto mode is toggled on. Press `M` on an eligible Flow row
-to mark a recorded GitHub PR as already merged; wtui verifies the PR with `gh`,
-records the existing merge commit and timestamp, completes the Merge phase, and
-does not launch a Merge phase agent. When auto mode is on, completed
+launchable phase for the selected Flow. Press `c` to copy the selected Flow ID,
+and press `y` to copy the selected Flow worktree path, from either a Flow row or
+one of its expanded phase rows. Press `m` to toggle per-Flow auto mode. New Flow
+records start with auto mode on, and the toggle is persisted on each Flow. Flows
+created before this field existed remain manual until auto mode is toggled on.
+Press `M` on an eligible Flow row to mark a recorded GitHub PR as already
+merged; wtui verifies the PR with `gh`, records the existing merge commit and
+timestamp, completes the Merge phase, and does not launch a Merge phase agent.
+When auto mode is on, completed
 CLI phases running in an embedded Flow terminal advance only after the completed
 phase's terminal exits normally and auto-closes; terminal exit also triggers a
 Flow refresh so newly persisted completion state is discovered without waiting
@@ -361,8 +368,8 @@ The active flows pane (mode `9`) shows active Flows across all repos and hides
 merged Flow records. Moving focus to the left repo pane temporarily filters the
 visible active rows to the selected repo, and returning focus to the middle pane
 restores the global list. It supports the same Flow actions, phase launches,
-attached-session resumes, auto-mode toggles, and embedded Flow terminal
-management as the flows pane.
+attached-session resumes, auto-mode toggles, `c` Flow ID copy, `y` worktree path
+copy, and embedded Flow terminal management as the flows pane.
 Headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs
@@ -373,16 +380,17 @@ mode so you can review or edit it before pressing enter. Headless launches keep
 focus on the Flow list. Creating a new Flow has its own default-on Headless
 checkbox for the initial Plan launch; uncheck it for an interactive initial
 Plan launch. That checkbox does not change the selected-phase `h` setting.
-Press `E` to choose the configured CLI agent's reasoning effort for future
-launches; the shortcut pane shows the current value. Manual phase
-launches, auto-launched phases, and new Flow Plan launches all use the
-configured agent and that agent's configured effort.
+Press `M` to choose the configured CLI agent's model and `E` to choose its
+reasoning effort for future launches; the shortcut pane shows the current
+values. Manual phase launches, auto-launched phases, and new Flow Plan launches
+all use the configured agent and that agent's configured model and effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses
-app-side/default reasoning. Press `r` to resume an attached
+app-side/default model and reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
-While a Flow terminal is open, `tab` switches focus between the Flow list and
-terminal. Manually tabbing into Flow terminal focus starts in wtui command mode:
+While a Flow terminal is open, `tab` cycles focus through the repo pane, Flow
+list, and Flow terminal. Manually tabbing into Flow terminal focus starts in
+wtui command mode:
 `left`/`right` cycles Flow terminals, `1`-`9` switches by number, `d` detaches to
 tmux when available, `x` closes, `q`/`esc` quits, unknown ordinary keys do not
 pass through to the PTY, and `ctrl+]` sends a literal `ctrl+]`; `i` enters

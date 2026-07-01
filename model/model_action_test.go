@@ -3833,11 +3833,77 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	}
 }
 
+func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
+	var savedCommand, savedModel string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		SaveAgentModel: func(command, selectedModel string) error {
+			savedCommand = command
+			savedModel = selectedModel
+			return nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening model picker, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected model select overlay, got %d", m.Overlay())
+	}
+	view := m.View()
+	for _, want := range []string{"Choose codex model", "default", "gpt-5.5"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("codex model picker missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "claude-sonnet-5") {
+		t.Fatalf("codex model picker should not include claude models:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected save model command")
+	}
+	m, _ = update(m, cmd())
+	if savedCommand != "codex" || savedModel != "gpt-5.5" {
+		t.Fatalf("saved command/model = %q/%q, want codex/gpt-5.5", savedCommand, savedModel)
+	}
+	if got := m.ModelFor("codex"); got != "gpt-5.5" {
+		t.Fatalf("session codex model = %q, want gpt-5.5", got)
+	}
+}
+
+func TestModel_FlowModelPickerOpensFromLeftPane(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartupMode:  ui.ModeFlows,
+	})
+	if m.ActivePane() != 0 {
+		t.Fatalf("test setup active pane = %d, want left pane", m.ActivePane())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening model picker, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected model select overlay from left pane, got %d", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("codex model picker did not open from left pane:\n%s", view)
+	}
+}
+
 func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 	tests := []struct {
 		name       string
 		options    model.Options
 		wantAgent  string
+		wantModel  string
 		wantEffort string
 		notWant    []string
 	}{
@@ -3852,8 +3918,9 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			name:       "codex app",
 			options:    model.Options{AgentCommand: "codex-app"},
 			wantAgent:  "A      codex-app",
-			wantEffort: "E      app default",
-			notWant:    []string{"E      codex-app default"},
+			wantModel:  "M      model: app",
+			wantEffort: "E      effort: app",
+			notWant:    []string{"M      app default", "E      app default", "E      codex-app default"},
 		},
 		{
 			name:       "claude",
@@ -3881,8 +3948,15 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 				t.Fatalf("Flow shortcuts missing agent label %q:\n%s", tt.wantAgent, view)
 			}
 			if tt.wantEffort != "" {
+				modelIndex := -1
+				if tt.wantModel != "" {
+					modelIndex = strings.Index(view, tt.wantModel)
+					if modelIndex < 0 || agentIndex > modelIndex {
+						t.Fatalf("Flow shortcuts should group agent before model %q:\n%s", tt.wantModel, view)
+					}
+				}
 				effortIndex := strings.Index(view, tt.wantEffort)
-				if effortIndex < 0 || agentIndex > effortIndex {
+				if effortIndex < 0 || agentIndex > effortIndex || (modelIndex >= 0 && modelIndex > effortIndex) {
 					t.Fatalf("Flow shortcuts should group agent before effort %q:\n%s", tt.wantEffort, view)
 				}
 			}
@@ -4007,15 +4081,34 @@ func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
 	}
 }
 
+func TestModel_FlowModelPickerReportsCodexAppDefault(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex-app"})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd for codex-app model, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlayNone {
+		t.Fatalf("expected no overlay for codex-app model, got %d", m.Overlay())
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Codex App uses app default model") {
+		t.Fatalf("status = %q, want app default model message", got)
+	}
+}
+
 func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
-	var gotPath, gotCommand, gotEffort string
+	var gotPath, gotCommand, gotModel, gotEffort string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:          "codex",
+		CodexModel:            "gpt-5.5",
 		CodexReasoningEffort:  "high",
 		ClaudeReasoningEffort: "max",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			gotPath = ctx.WorktreePath
 			gotCommand = ctx.Command
+			gotModel = ctx.Model
 			gotEffort = ctx.ReasoningEffort
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
 		},
@@ -4031,6 +4124,9 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	}
 	if gotPath != "/dev/alpha" || gotCommand != "codex" {
 		t.Fatalf("expected launch /dev/alpha with codex, got path=%q command=%q", gotPath, gotCommand)
+	}
+	if gotModel != "gpt-5.5" {
+		t.Fatalf("expected codex launch model gpt-5.5, got %q", gotModel)
 	}
 	if gotEffort != "high" {
 		t.Fatalf("expected codex launch effort high, got %q", gotEffort)
@@ -4822,6 +4918,68 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 				t.Fatalf("terminal input %s writes = %#v, want delete byte", tt.name, fakeTerm.writes)
 			}
 		})
+	}
+}
+
+func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "codex-session-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		CWD:          "/dev/alpha-worktrees/feat",
+		Branch:       "feature/api",
+	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab from session terminal returned cmd %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("tab from session terminal active pane = %d, want left pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("tab from session terminal should not write to PTY: %#v", fakeTerm.writes)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if m.Selected() != 1 {
+		t.Fatalf("j in left pane selected repo = %d, want 1", m.Selected())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("left pane key should not write to session terminal: %#v", fakeTerm.writes)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab back to session terminal returned cmd %T, want nil", cmd)
+	}
+	if m.ActivePane() != 1 {
+		t.Fatalf("second tab active pane = %d, want right pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("tab back to session terminal should not write to PTY: %#v", fakeTerm.writes)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if cmd != nil {
+		t.Fatalf("backspace after returning to session terminal returned cmd %T, want nil", cmd)
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x7f" {
+		t.Fatalf("backspace after returning to session terminal writes = %#v, want delete byte", fakeTerm.writes)
 	}
 }
 

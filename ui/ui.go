@@ -295,6 +295,7 @@ type RenderParams struct {
 	FlowAutoModeSelected         bool
 	FlowPRTargetSelected         bool
 	FlowAgentLabel               string
+	FlowModel                    string
 	FlowReasoningEffort          string
 	DefaultViewLabel             string
 	FlowNextLaunchReady          bool
@@ -528,6 +529,7 @@ func renderApplication(p RenderParams) string {
 		FlowHeadless:                 p.FlowHeadless,
 		FlowAutoModeSelected:         flowAutoModeSelected,
 		FlowAgentLabel:               p.FlowAgentLabel,
+		FlowModel:                    p.FlowModel,
 		FlowReasoningEffort:          p.FlowReasoningEffort,
 		DefaultViewLabel:             p.DefaultViewLabel,
 		FlowNextLaunchReady:          p.FlowNextLaunchReady,
@@ -807,6 +809,7 @@ type statusBarParams struct {
 	FlowHeadless                 bool
 	FlowAutoModeSelected         bool
 	FlowAgentLabel               string
+	FlowModel                    string
 	FlowReasoningEffort          string
 	DefaultViewLabel             string
 	FlowNextLaunchReady          bool
@@ -1319,6 +1322,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			if !sp.FlowPhaseSelected && sp.FlowPlanLinked {
 				actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 			}
+			actions = append(actions, shortcutHint{Key: "c", Label: "copy id"})
 			if sp.FlowPRTargetSelected {
 				actions = append(actions, shortcutHint{Key: "p", Label: "open PR"})
 			}
@@ -1339,6 +1343,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	}
 	agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
 	flowAgentControls = append(flowAgentControls, shortcutHint{Key: "A", Label: agentLabel})
+	if modelLabel := flowModelShortcutLabel(sp.FlowModel); agentConfigured && modelLabel != "" {
+		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "M", Label: modelLabel})
+	}
 	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
 		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
 	}
@@ -1375,6 +1382,11 @@ func flowReasoningEffortShortcutLabel(value string) string {
 	return value
 }
 
+func flowModelShortcutLabel(value string) string {
+	value = strings.TrimSpace(value)
+	return value
+}
+
 func defaultViewShortcutLabel(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1406,6 +1418,9 @@ func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	}
 	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
 		sections = withoutShortcutKeys(sections, "D", "n", "f5")
+	}
+	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && sp.FlowSelected && height <= 12 {
+		sections = withoutShortcutKey(sections, "n")
 	}
 	if height < 20 {
 		return withoutShortcutKey(sections, "f5")
@@ -1586,14 +1601,17 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m")
 	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
 	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "A", "f", "F")
-	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "f", "F")
+	actionsWithoutModelAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
+	actionsWithoutAgentAndPreferences := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
 		appendParts(base, upDown, arrow, actionsWithoutEffort),
+		appendParts(base, upDown, arrow, actionsWithoutModelAndEffort),
 		appendParts(base, arrow, actionsWithoutEffort),
-		appendParts(base, upDown, arrow, actionsWithoutAgentAndEffort),
-		appendParts(base, arrow, actionsWithoutAgentAndEffort),
+		appendParts(base, arrow, actionsWithoutModelAndEffort),
+		appendParts(base, upDown, arrow, actionsWithoutAgentAndPreferences),
+		appendParts(base, arrow, actionsWithoutAgentAndPreferences),
 		appendParts(base, arrow, selectedActionsWithAuto),
 		appendParts(compactBase, selectedActionsWithAuto),
 		appendParts(base, arrow, coreActionsWithAuto),

@@ -67,6 +67,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		Instructions:     "Build the thing",
 		BaseRef:          "main",
 		AgentCommand:     "codex",
+		Model:            "gpt-5.5",
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		PlanPhaseID:      "plan",
 		PlanPhaseTitle:   "Plan",
@@ -106,6 +107,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 
 	ctx := result.LaunchContext
 	if ctx.Command != "codex" ||
+		ctx.Model != "gpt-5.5" ||
 		ctx.LaunchID != "launch-1" ||
 		ctx.RepoPath != "/dev/alpha" ||
 		ctx.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
