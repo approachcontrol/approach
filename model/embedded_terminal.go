@@ -654,7 +654,13 @@ func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) 
 		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeFlow)
 	}
 	if m.mode == ui.ModeSessions && !m.activeFlowSurfaceVisible() && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
-		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeSession)
+		if msg.String() == "tab" {
+			m.terminalPrefixActive = false
+			return m.cyclePaneFocusForward(), nil, true
+		}
+		if m.activePane == 1 {
+			return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeSession)
+		}
 	}
 	return m, nil, false
 }

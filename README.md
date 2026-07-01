@@ -47,10 +47,9 @@ WORKTREE_ROOT=~/projects ./bin/wtui
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
 or `tab` on a selected repo to focus the content pane; from the content pane,
-`bksp` returns focus to the repo pane. Press `f2` to open the prompt-template
-editor for plan and Flow launch prompts. When a Flow embedded terminal is open, `tab`
-switches focus between the Flow list and that terminal while the right pane
-remains active.
+`tab` or `bksp` returns focus to the repo pane. Press `f2` to open the
+prompt-template editor for plan and Flow launch prompts. When a Flow embedded
+terminal is open, `tab` cycles through the repo pane, Flow list, and terminal.
 The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
@@ -112,6 +111,7 @@ filter matches, or a load failure with details in the status bar.
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch |
 | `D` | Toggle destructive mode |
+| `tab` | Cycle pane focus forward; with a Flow terminal open, cycles repo pane → Flow list → terminal |
 | `bksp` | Switch focus to left pane |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -122,7 +122,7 @@ flows, and active flows. Horizontal view switching wraps between worktrees and
 active flows. Press `V` to choose which numbered view wtui opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
 `enter` or `tab` from the repo pane to focus the content pane. In the content
-pane, `bksp` switches focus back to the left repo pane. Press `f2` from normal
+pane, `tab` or `bksp` switches focus back to the left repo pane. Press `f2` from normal
 TUI views to edit the `[agent].plan_prompt` and `[flow_prompts]` templates;
 Flow terminal input focus passes F2 through to the embedded agent.
 
@@ -228,9 +228,11 @@ transcript.
 Resuming a CLI `codex` or `claude` session from the full sessions view opens a
 runtime-only embedded terminal in the sessions pane. While embedded terminals
 exist, the saved-session table is hidden and the pane shows a compact numbered
-terminal header plus the active terminal screen. Keys go directly to the active
-PTY (including agent shortcuts like `ctrl+g`); press `ctrl+]` for wtui
-commands: `ctrl+] 1`-`9` switches terminals, `ctrl+] l` opens a saved-session
+terminal header plus the active terminal screen. While the session terminal
+right pane is focused, all keys except `tab` go directly to the active PTY
+(including agent shortcuts like `ctrl+g`); after tabbing to the left pane, repo
+pane keys operate normally. Press `ctrl+]` for wtui commands: `ctrl+] 1`-`9`
+switches terminals, `ctrl+] l` opens a saved-session
 picker, `ctrl+] d` detaches a tmux-backed terminal and opens a new external
 terminal attached to that tmux session, `ctrl+] x` dismisses an exited terminal or confirms termination of a
 running one, `ctrl+] q` or `ctrl+] esc` quits with cleanup, and
@@ -404,7 +406,7 @@ directly, while `claude --print` is run with `--output-format stream-json
 a closing summary) so a Claude phase shows live progress as it works instead of a
 blank terminal. While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
-`tab` switches focus between them while the right pane remains active. Manually
+`tab` cycles focus through the repo pane, Flow list, and Flow terminal. Manually
 tabbing into Flow terminal focus starts in wtui command mode: `left`/`right`
 cycle Flow terminals, `1`-`9` switches by number, `x` closes, `d` detaches to
 tmux when available and opens the detached session in an external terminal,
