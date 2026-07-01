@@ -55,7 +55,7 @@ func TestFlowPhaseLaunchTargetManualPreflightFailureSetsStatus(t *testing.T) {
 		},
 	}
 
-	_, ok, m := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
+	_, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
 		Record: record,
 		Phase:  record.Phases[0],
 	})

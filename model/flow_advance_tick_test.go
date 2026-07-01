@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -324,6 +325,30 @@ func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.
 	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
 	if m.status.Source != statusOther || m.status.Text != "keep this" {
 		t.Fatalf("status = %#v, want existing status preserved after auto preflight failure", m.status)
+	}
+}
+
+func TestModel_AutoAdvancePreflightFailureSetsAutoAdvanceStatus(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+	m.autoAdvanceInFlight = 1
+
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	if cmd == nil {
+		t.Fatal("preflight failure should still reschedule status/tick commands")
+	}
+	if m.status.Source != statusFlowAutoAdvance || !strings.Contains(m.status.Text, "choose codex") {
+		t.Fatalf("status = %#v, want auto-advance preflight guidance", m.status)
 	}
 }
 
