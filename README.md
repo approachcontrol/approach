@@ -86,7 +86,7 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows / active flows |
 | `←`/`→`/`l` | Switch views in the right pane, wrapping between worktrees and active flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Switch to the previous view outside flows view; toggle Flow headless/interactive command mode in flows view |
-| `M` | Choose and persist model for the selected CLI agent in flows view |
+| `M` | Choose and persist model for the selected CLI agent in flows view, except on selected top-level Flow rows |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
@@ -403,8 +403,9 @@ Plan launch; uncheck it for an interactive initial Plan launch. That checkbox
 is ignored when Plan Now is off and does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
 launches all use the configured agent and that agent's configured model and
-effort. Press `M` to choose the selected CLI agent's model; press `E` to choose
-its reasoning effort. The shortcut pane shows the current values. Codex CLI
+effort. Press `M` outside selected top-level Flow rows to choose the selected
+CLI agent's model; press `E` to choose its reasoning effort. The shortcut pane
+shows the current values. Codex CLI
 launches use `--model <model>` and `--config
 model_reasoning_effort=<effort>`; Claude launches use `--model <model>` and
 `--effort <effort>`. Session resumes do not receive model or effort flags.

@@ -1166,10 +1166,14 @@ func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleFlowModelPicker() (tea.Model, tea.Cmd) {
-	if _, ok := m.selectedFlow(); ok {
+	if m.flowModelPickerSuppressedForSelectedFlowRow() {
 		return m, nil
 	}
 	return m.handleSetModel()
+}
+
+func (m Model) flowModelPickerSuppressedForSelectedFlowRow() bool {
+	return m.flowSurfaceVisible() && m.activePane == 1 && m.currentSelectedFlowPhaseID() == "" && m.selectedFlowID() != ""
 }
 
 func modelSelectItems(command string) []modal.SelectItem {

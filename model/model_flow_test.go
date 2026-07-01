@@ -1653,6 +1653,24 @@ func TestModel_ShiftMManualMergeNoopsOnSelectedFlowRow(t *testing.T) {
 	}
 }
 
+func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "merge")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected Flow phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("M on selected Flow phase overlay = %d, want model select", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("M on selected Flow phase did not open model picker:\n%s", view)
+	}
+}
+
 func TestModel_MKeyManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
@@ -1816,6 +1834,30 @@ func TestModel_ShiftMManualMergeNoopsOnActiveFlowRow(t *testing.T) {
 	}
 	if called {
 		t.Fatal("LookupPRMerge should not run for uppercase M on selected active Flow row")
+	}
+}
+
+func TestModel_ShiftMOpensModelPickerOnSelectedActiveFlowPhaseRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "merge"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "merge" {
+		t.Fatalf("selected active Flow phase = %q, want merge", got)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected active Flow phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("M on selected active Flow phase overlay = %d, want model select", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("M on selected active Flow phase did not open model picker:\n%s", view)
 	}
 }
 

@@ -221,9 +221,10 @@ Press `F2` in normal TUI views to open the prompt-template editor. The editor
 can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
 preview the built-in prompt.
 
-In the flows pane, `M` opens a provider-specific model picker for the selected
-CLI agent and persists the corresponding key. `E` opens the reasoning-effort
-picker. New Codex CLI launches use `--model <model>` and `--config
+In the flows pane, `M` opens a provider-specific model picker outside selected
+top-level Flow rows and persists the corresponding key for the selected CLI
+agent. `E` opens the reasoning-effort picker. New Codex CLI launches use
+`--model <model>` and `--config
 model_reasoning_effort=<effort>`; new Claude Code launches use
 `--model <model>` and `--effort <effort>`. Session resumes do not receive model
 or effort flags. `codex-app` launches keep app-side/default model and reasoning
@@ -380,10 +381,11 @@ mode so you can review or edit it before pressing enter. Headless launches keep
 focus on the Flow list. Creating a new Flow has its own default-on Headless
 checkbox for the initial Plan launch; uncheck it for an interactive initial
 Plan launch. That checkbox does not change the selected-phase `h` setting.
-Press `M` to choose the configured CLI agent's model and `E` to choose its
-reasoning effort for future launches; the shortcut pane shows the current
-values. Manual phase launches, auto-launched phases, and new Flow Plan launches
-all use the configured agent and that agent's configured model and effort.
+Press `M` outside selected top-level Flow rows to choose the configured CLI
+agent's model and `E` to choose its reasoning effort for future launches; the
+shortcut pane shows the current values. Manual phase launches, auto-launched
+phases, and new Flow Plan launches all use the configured agent and that
+agent's configured model and effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses
 app-side/default model and reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
