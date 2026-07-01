@@ -10,9 +10,11 @@ wtui looks for config in this order:
 2. `~/.config/wtui/config.toml`
 
 The file is optional. If it does not exist, wtui starts with built-in defaults.
-If a config file exists but cannot be read or parsed, startup fails before
-repository scanning. wtui only falls through to the next path when the earlier
-path does not exist.
+If a config file exists but cannot be read, has malformed TOML, uses the wrong
+type for a known key, or contains an invalid known value, startup fails before
+repository scanning. Unknown sections and keys are ignored so config written by
+a newer wtui version does not block older versions from starting. wtui only
+falls through to the next path when the earlier path does not exist.
 
 ## Precedence
 

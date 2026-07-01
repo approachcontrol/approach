@@ -597,6 +597,9 @@ $XDG_CONFIG_HOME/wtui/config.toml
 ~/.config/wtui/config.toml
 ```
 
+Unknown sections and keys are ignored for version compatibility; malformed
+TOML, wrong types for known keys, and invalid known values still fail startup.
+
 Example:
 
 ```toml
