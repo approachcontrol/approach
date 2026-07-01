@@ -99,7 +99,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "M" && m.flowSurfaceVisible() {
-		return m.handleSetModel()
+		return m.handleFlowModelOrManualMerge()
 	}
 
 	if key == "E" && m.flowSurfaceVisible() {
@@ -434,7 +434,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "M":
 		if m.flowSurfaceVisible() {
-			return m.handleSetModel()
+			return m.handleFlowModelOrManualMerge()
 		}
 	case "i":
 		if m.mode == ui.ModePlans {
@@ -621,7 +621,7 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "E":
 		return m.handleSetReasoningEffort()
 	case "M":
-		return m.handleSetModel()
+		return m.handleFlowModelOrManualMerge()
 	case "x":
 		return m.handleResetSelectedFlowPhase()
 	case "d":
@@ -899,6 +899,86 @@ func (m Model) setFlowAutoModeCmd(repoPath, flowID string, enabled bool) tea.Cmd
 	}
 }
 
+func (m Model) handleMarkFlowManuallyMerged() (tea.Model, tea.Cmd) {
+	record, repoPath, ok := m.selectedManualMergeFlow()
+	if !ok {
+		return m, nil
+	}
+	m.modal = modal.OpenConfirm(fmt.Sprintf("Mark PR #%d as merged? (y/n)", record.PR.Number), func() tea.Cmd {
+		return m.markFlowManuallyMergedCmd(repoPath, record)
+	})
+	return m, nil
+}
+
+func (m Model) selectedManualMergeFlow() (flowstore.FlowRecord, string, bool) {
+	if !m.flowSurfaceVisible() || m.currentSelectedFlowPhaseID() != "" {
+		return flowstore.FlowRecord{}, "", false
+	}
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return flowstore.FlowRecord{}, "", false
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" || !flowManualMergeEligible(record) {
+		return flowstore.FlowRecord{}, "", false
+	}
+	return record, repoPath, true
+}
+
+func flowManualMergeEligible(record flowstore.FlowRecord) bool {
+	if record.Status == flowstore.StatusMerged || !flowstore.HasPRTarget(record.PR) {
+		return false
+	}
+	merge, ok := flowRecordPhaseByID(record, "merge")
+	if !ok || !flowstore.PhasePredecessorsSatisfied(record, merge.PhaseID) {
+		return false
+	}
+	switch merge.Status {
+	case flowstore.PhaseReady:
+		return true
+	case flowstore.PhaseCompleted:
+		return record.Merge.Status == flowstore.MergePending || record.Merge.Status == flowstore.MergeMerged
+	default:
+		return false
+	}
+}
+
+func (m Model) markFlowManuallyMergedCmd(repoPath string, record flowstore.FlowRecord) tea.Cmd {
+	return func() tea.Msg {
+		merge, err := m.lookupPRMerge(record.PR.Number, record.PR.URL)
+		if err != nil {
+			return FlowManualMergeSetFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				Err:      fmt.Sprintf("failed to verify PR merge: %v", err),
+			}
+		}
+		flow, err := m.markFlowManualMerge(flowstore.ManualMergeUpdate{
+			FlowID:   record.FlowID,
+			PRNumber: record.PR.Number,
+			PRURL:    record.PR.URL,
+			Commit:   merge.Commit,
+			MergedAt: merge.MergedAt,
+		})
+		if err != nil {
+			return FlowManualMergeSetFailedMsg{
+				RepoPath: repoPath,
+				FlowID:   record.FlowID,
+				Flow:     flow,
+				Err:      fmt.Sprintf("failed to mark Flow as merged: %v", err),
+			}
+		}
+		return FlowManualMergeSetMsg{
+			RepoPath: repoPath,
+			FlowID:   record.FlowID,
+			Flow:     flow,
+		}
+	}
+}
+
 func (m Model) handleToggleWorktreeSessions() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeWorktrees || len(m.filteredWorktrees()) == 0 {
 		return m, nil
@@ -1081,6 +1161,16 @@ func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
 		func(value string) tea.Cmd { return m.setModel(command, value) },
 	)
 	return m, nil
+}
+
+func (m Model) handleFlowModelOrManualMerge() (tea.Model, tea.Cmd) {
+	if _, _, ok := m.selectedManualMergeFlow(); ok {
+		return m.handleMarkFlowManuallyMerged()
+	}
+	if _, ok := m.selectedFlow(); ok {
+		return m, nil
+	}
+	return m.handleSetModel()
 }
 
 func modelSelectItems(command string) []modal.SelectItem {

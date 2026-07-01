@@ -218,105 +218,106 @@ const StashPrefixWidth = 15
 
 // RenderParams holds everything the renderer needs.
 type RenderParams struct {
-	Repos                       []scanner.Repo
-	ActiveTerminalRepoPaths     map[string]bool
-	Selected                    int
-	Width                       int
-	Height                      int
-	Mode                        Mode
-	ActiveFlows                 bool
-	Branches                    []gitquery.BranchRow
-	Stashes                     []gitquery.Stash
-	BranchSelected              int
-	StashSelected               int
-	Overlay                     OverlayState
-	OverlayDiff                 string
-	OverlayScroll               int
-	ConfirmPrompt               string
-	ConfirmForce                bool
-	InputPrompt                 string
-	InputPlaceholder            string
-	InputValue                  string
-	InputError                  string
-	InputMode                   InputMode
-	InputHeight                 int
-	InputCursor                 int
-	WorktreeInputPrompt         string
-	WorktreeInputPlaceholder    string
-	WorktreeInput               string
-	WorktreeInputErr            string
-	SelectPrompt                string
-	SelectItems                 []SelectItem
-	SelectSelected              int
-	SelectWidth                 int
-	SelectHeight                int
-	SelectPlacement             SelectPlacement
-	Form                        FormView
-	BranchScroll                int
-	RepoScroll                  int
-	StashScroll                 int
-	ActivePane                  int
-	Destructive                 bool
-	Worktrees                   []gitquery.Worktree
-	WorktreeSelected            int
-	WorktreeScroll              int
-	WorktreeSessions            []sessions.SessionRecord
-	WorktreeSessionSelected     int
-	WorktreeSessionScroll       int
-	InlineWorktreeSessions      bool
-	Commits                     []gitquery.Commit
-	CommitSelected              int
-	CommitScroll                int
-	Reflogs                     []gitquery.ReflogEntry
-	ReflogSelected              int
-	ReflogScroll                int
-	Sessions                    []sessions.SessionRecord
-	SessionSelected             int
-	SessionScroll               int
-	EmbeddedTerminals           []EmbeddedTerminalTab
-	EmbeddedTerminalLines       []string
-	EmbeddedTerminalPrefix      bool
-	Plans                       []planstore.PlanRecord
-	PlanSelected                int
-	PlanScroll                  int
-	Flows                       []flowstore.FlowRecord
-	FlowSelected                int
-	FlowScroll                  int
-	FlowEmbeddedTerminals       []EmbeddedTerminalTab
-	FlowEmbeddedTerminalLines   []string
-	FlowEmbeddedTerminalPrefix  bool
-	FlowTerminalActivity        []FlowTerminalActivity
-	FlowTerminalFocused         bool
-	ExpandedPlanID              string
-	ExpandedFlowID              string
-	SelectedPlanPhaseID         string
-	SelectedFlowPhaseID         string
-	FlowHeadless                bool
-	FlowAutoModeSelected        bool
-	FlowPRTargetSelected        bool
-	FlowAgentLabel              string
-	FlowModel                   string
-	FlowReasoningEffort         string
-	DefaultViewLabel            string
-	FlowNextLaunchReady         bool
-	FlowPhaseResetReadySelected bool
-	FlowPhaseResumableSelected  bool
-	OverlayText                 string
-	TransientError              string
-	TransientErrorFadeStep      int
-	SearchActive                bool
-	RepoSearch                  string
-	ItemSearch                  string
-	RepoEmptyMessage            string
-	RightEmptyMessage           string
-	FetchAvailable              bool
-	FetchVisibleAvailable       bool
-	RepoCreateAvailable         bool
-	PullAvailable               bool
-	WorktreeMoveAvailable       bool
-	WorktreeSessionsOpen        bool
-	AgentAvailable              bool
-	NewAgentAvailable           bool
+	Repos                        []scanner.Repo
+	ActiveTerminalRepoPaths      map[string]bool
+	Selected                     int
+	Width                        int
+	Height                       int
+	Mode                         Mode
+	ActiveFlows                  bool
+	Branches                     []gitquery.BranchRow
+	Stashes                      []gitquery.Stash
+	BranchSelected               int
+	StashSelected                int
+	Overlay                      OverlayState
+	OverlayDiff                  string
+	OverlayScroll                int
+	ConfirmPrompt                string
+	ConfirmForce                 bool
+	InputPrompt                  string
+	InputPlaceholder             string
+	InputValue                   string
+	InputError                   string
+	InputMode                    InputMode
+	InputHeight                  int
+	InputCursor                  int
+	WorktreeInputPrompt          string
+	WorktreeInputPlaceholder     string
+	WorktreeInput                string
+	WorktreeInputErr             string
+	SelectPrompt                 string
+	SelectItems                  []SelectItem
+	SelectSelected               int
+	SelectWidth                  int
+	SelectHeight                 int
+	SelectPlacement              SelectPlacement
+	Form                         FormView
+	BranchScroll                 int
+	RepoScroll                   int
+	StashScroll                  int
+	ActivePane                   int
+	Destructive                  bool
+	Worktrees                    []gitquery.Worktree
+	WorktreeSelected             int
+	WorktreeScroll               int
+	WorktreeSessions             []sessions.SessionRecord
+	WorktreeSessionSelected      int
+	WorktreeSessionScroll        int
+	InlineWorktreeSessions       bool
+	Commits                      []gitquery.Commit
+	CommitSelected               int
+	CommitScroll                 int
+	Reflogs                      []gitquery.ReflogEntry
+	ReflogSelected               int
+	ReflogScroll                 int
+	Sessions                     []sessions.SessionRecord
+	SessionSelected              int
+	SessionScroll                int
+	EmbeddedTerminals            []EmbeddedTerminalTab
+	EmbeddedTerminalLines        []string
+	EmbeddedTerminalPrefix       bool
+	Plans                        []planstore.PlanRecord
+	PlanSelected                 int
+	PlanScroll                   int
+	Flows                        []flowstore.FlowRecord
+	FlowSelected                 int
+	FlowScroll                   int
+	FlowEmbeddedTerminals        []EmbeddedTerminalTab
+	FlowEmbeddedTerminalLines    []string
+	FlowEmbeddedTerminalPrefix   bool
+	FlowTerminalActivity         []FlowTerminalActivity
+	FlowTerminalFocused          bool
+	ExpandedPlanID               string
+	ExpandedFlowID               string
+	SelectedPlanPhaseID          string
+	SelectedFlowPhaseID          string
+	FlowHeadless                 bool
+	FlowAutoModeSelected         bool
+	FlowPRTargetSelected         bool
+	FlowAgentLabel               string
+	FlowModel                    string
+	FlowReasoningEffort          string
+	DefaultViewLabel             string
+	FlowNextLaunchReady          bool
+	FlowManualMergeReadySelected bool
+	FlowPhaseResetReadySelected  bool
+	FlowPhaseResumableSelected   bool
+	OverlayText                  string
+	TransientError               string
+	TransientErrorFadeStep       int
+	SearchActive                 bool
+	RepoSearch                   string
+	ItemSearch                   string
+	RepoEmptyMessage             string
+	RightEmptyMessage            string
+	FetchAvailable               bool
+	FetchVisibleAvailable        bool
+	RepoCreateAvailable          bool
+	PullAvailable                bool
+	WorktreeMoveAvailable        bool
+	WorktreeSessionsOpen         bool
+	AgentAvailable               bool
+	NewAgentAvailable            bool
 }
 
 func FlowSplitPanelHeights(height int) (listHeight, terminalHeight int) {
@@ -489,62 +490,63 @@ func renderApplication(p RenderParams) string {
 		flowPRTargetSelected = false
 	}
 	status := statusBarParams{
-		Width:                       p.Width,
-		Mode:                        p.Mode,
-		ActiveFlows:                 activeFlows,
-		Overlay:                     p.Overlay,
-		InputMode:                   inputRenderParamsFrom(p).mode,
-		FormHasMultiline:            formHasMultilineField(p.Form),
-		WorktreeInputPrompt:         p.WorktreeInputPrompt,
-		ActivePane:                  p.ActivePane,
-		Destructive:                 p.Destructive,
-		RepoSelected:                repoPath != "",
-		WorktreeSelected:            worktreeSelected,
-		StaleSelected:               staleSelected,
-		DirtySelected:               dirtySelected,
-		LockedSelected:              lockedSelected,
-		WorktreeDeletableSelected:   worktreeDeletableSelected,
-		WorktreeOpenableSelected:    worktreeOpenableSelected,
-		WorktreeMoveSelected:        worktreeMoveSelected,
-		WorktreeSessionsOpen:        p.WorktreeSessionsOpen,
-		WorktreeSessionSelected:     worktreeSessionSelected,
-		BranchDirtySelected:         branchDirtySelected,
-		BranchDeletableSelected:     branchDeletableSelected,
-		BranchOpenableSelected:      branchOpenableSelected,
-		StashSelected:               stashSelected,
-		CommitSelected:              commitSelected,
-		ReflogSelected:              reflogSelected,
-		SessionSelected:             sessionSelected,
-		EmbeddedTerminalActive:      terminalShortcutsActive,
-		EmbeddedTerminalPrefix:      p.EmbeddedTerminalPrefix || p.FlowEmbeddedTerminalPrefix,
-		PlanSelected:                planSelected,
-		PlanPhaseSelected:           planPhaseSelected,
-		FlowSelected:                flowSelected,
-		FlowPhaseSelected:           flowPhaseSelected,
-		FlowDeletableSelected:       flowDeletableSelected,
-		FlowWorktreePathSelected:    flowWorktreePathSelected,
-		FlowPlanLinked:              flowPlanLinked,
-		FlowPRTargetSelected:        flowPRTargetSelected,
-		FlowHeadless:                p.FlowHeadless,
-		FlowAutoModeSelected:        flowAutoModeSelected,
-		FlowAgentLabel:              p.FlowAgentLabel,
-		FlowModel:                   p.FlowModel,
-		FlowReasoningEffort:         p.FlowReasoningEffort,
-		DefaultViewLabel:            p.DefaultViewLabel,
-		FlowNextLaunchReady:         p.FlowNextLaunchReady,
-		FlowPhaseResetReadySelected: p.FlowPhaseResetReadySelected,
-		FlowPhaseResumableSelected:  p.FlowPhaseResumableSelected,
-		TransientError:              p.TransientError,
-		TransientErrorFadeStep:      p.TransientErrorFadeStep,
-		SearchActive:                p.SearchActive,
-		RepoSearch:                  p.RepoSearch,
-		ItemSearch:                  p.ItemSearch,
-		FetchAvailable:              p.FetchAvailable,
-		FetchVisibleAvailable:       p.FetchVisibleAvailable,
-		RepoCreateAvailable:         p.RepoCreateAvailable,
-		PullAvailable:               p.PullAvailable,
-		AgentAvailable:              p.AgentAvailable,
-		NewAgent:                    p.NewAgentAvailable,
+		Width:                        p.Width,
+		Mode:                         p.Mode,
+		ActiveFlows:                  activeFlows,
+		Overlay:                      p.Overlay,
+		InputMode:                    inputRenderParamsFrom(p).mode,
+		FormHasMultiline:             formHasMultilineField(p.Form),
+		WorktreeInputPrompt:          p.WorktreeInputPrompt,
+		ActivePane:                   p.ActivePane,
+		Destructive:                  p.Destructive,
+		RepoSelected:                 repoPath != "",
+		WorktreeSelected:             worktreeSelected,
+		StaleSelected:                staleSelected,
+		DirtySelected:                dirtySelected,
+		LockedSelected:               lockedSelected,
+		WorktreeDeletableSelected:    worktreeDeletableSelected,
+		WorktreeOpenableSelected:     worktreeOpenableSelected,
+		WorktreeMoveSelected:         worktreeMoveSelected,
+		WorktreeSessionsOpen:         p.WorktreeSessionsOpen,
+		WorktreeSessionSelected:      worktreeSessionSelected,
+		BranchDirtySelected:          branchDirtySelected,
+		BranchDeletableSelected:      branchDeletableSelected,
+		BranchOpenableSelected:       branchOpenableSelected,
+		StashSelected:                stashSelected,
+		CommitSelected:               commitSelected,
+		ReflogSelected:               reflogSelected,
+		SessionSelected:              sessionSelected,
+		EmbeddedTerminalActive:       terminalShortcutsActive,
+		EmbeddedTerminalPrefix:       p.EmbeddedTerminalPrefix || p.FlowEmbeddedTerminalPrefix,
+		PlanSelected:                 planSelected,
+		PlanPhaseSelected:            planPhaseSelected,
+		FlowSelected:                 flowSelected,
+		FlowPhaseSelected:            flowPhaseSelected,
+		FlowDeletableSelected:        flowDeletableSelected,
+		FlowWorktreePathSelected:     flowWorktreePathSelected,
+		FlowPlanLinked:               flowPlanLinked,
+		FlowPRTargetSelected:         flowPRTargetSelected,
+		FlowHeadless:                 p.FlowHeadless,
+		FlowAutoModeSelected:         flowAutoModeSelected,
+		FlowAgentLabel:               p.FlowAgentLabel,
+		FlowModel:                    p.FlowModel,
+		FlowReasoningEffort:          p.FlowReasoningEffort,
+		DefaultViewLabel:             p.DefaultViewLabel,
+		FlowNextLaunchReady:          p.FlowNextLaunchReady,
+		FlowManualMergeReadySelected: p.FlowManualMergeReadySelected && flowSelected && !flowPhaseSelected,
+		FlowPhaseResetReadySelected:  p.FlowPhaseResetReadySelected,
+		FlowPhaseResumableSelected:   p.FlowPhaseResumableSelected,
+		TransientError:               p.TransientError,
+		TransientErrorFadeStep:       p.TransientErrorFadeStep,
+		SearchActive:                 p.SearchActive,
+		RepoSearch:                   p.RepoSearch,
+		ItemSearch:                   p.ItemSearch,
+		FetchAvailable:               p.FetchAvailable,
+		FetchVisibleAvailable:        p.FetchVisibleAvailable,
+		RepoCreateAvailable:          p.RepoCreateAvailable,
+		PullAvailable:                p.PullAvailable,
+		AgentAvailable:               p.AgentAvailable,
+		NewAgent:                     p.NewAgentAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
 	activeStatusQuery := hasActiveStatusQuery(status)
@@ -767,63 +769,64 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 // statusBarParams groups the many fields the status-bar renderer needs,
 // avoiding a long and error-prone positional parameter list.
 type statusBarParams struct {
-	Width                       int
-	Mode                        Mode
-	ActiveFlows                 bool
-	Overlay                     OverlayState
-	InputMode                   InputMode
-	FormHasMultiline            bool
-	WorktreeInputPrompt         string
-	SelectPrompt                string
-	ActivePane                  int
-	Destructive                 bool
-	RepoSelected                bool
-	WorktreeSelected            bool
-	StaleSelected               bool
-	DirtySelected               bool
-	LockedSelected              bool
-	WorktreeDeletableSelected   bool
-	WorktreeOpenableSelected    bool
-	WorktreeMoveSelected        bool
-	WorktreeSessionsOpen        bool
-	WorktreeSessionSelected     bool
-	BranchDirtySelected         bool
-	BranchDeletableSelected     bool
-	BranchOpenableSelected      bool
-	StashSelected               bool
-	CommitSelected              bool
-	ReflogSelected              bool
-	SessionSelected             bool
-	EmbeddedTerminalActive      bool
-	EmbeddedTerminalPrefix      bool
-	PlanSelected                bool
-	PlanPhaseSelected           bool
-	FlowSelected                bool
-	FlowPhaseSelected           bool
-	FlowDeletableSelected       bool
-	FlowWorktreePathSelected    bool
-	FlowPlanLinked              bool
-	FlowPRTargetSelected        bool
-	FlowHeadless                bool
-	FlowAutoModeSelected        bool
-	FlowAgentLabel              string
-	FlowModel                   string
-	FlowReasoningEffort         string
-	DefaultViewLabel            string
-	FlowNextLaunchReady         bool
-	FlowPhaseResetReadySelected bool
-	FlowPhaseResumableSelected  bool
-	TransientError              string
-	TransientErrorFadeStep      int
-	SearchActive                bool
-	RepoSearch                  string
-	ItemSearch                  string
-	FetchAvailable              bool
-	FetchVisibleAvailable       bool
-	RepoCreateAvailable         bool
-	PullAvailable               bool
-	AgentAvailable              bool
-	NewAgent                    bool
+	Width                        int
+	Mode                         Mode
+	ActiveFlows                  bool
+	Overlay                      OverlayState
+	InputMode                    InputMode
+	FormHasMultiline             bool
+	WorktreeInputPrompt          string
+	SelectPrompt                 string
+	ActivePane                   int
+	Destructive                  bool
+	RepoSelected                 bool
+	WorktreeSelected             bool
+	StaleSelected                bool
+	DirtySelected                bool
+	LockedSelected               bool
+	WorktreeDeletableSelected    bool
+	WorktreeOpenableSelected     bool
+	WorktreeMoveSelected         bool
+	WorktreeSessionsOpen         bool
+	WorktreeSessionSelected      bool
+	BranchDirtySelected          bool
+	BranchDeletableSelected      bool
+	BranchOpenableSelected       bool
+	StashSelected                bool
+	CommitSelected               bool
+	ReflogSelected               bool
+	SessionSelected              bool
+	EmbeddedTerminalActive       bool
+	EmbeddedTerminalPrefix       bool
+	PlanSelected                 bool
+	PlanPhaseSelected            bool
+	FlowSelected                 bool
+	FlowPhaseSelected            bool
+	FlowDeletableSelected        bool
+	FlowWorktreePathSelected     bool
+	FlowPlanLinked               bool
+	FlowPRTargetSelected         bool
+	FlowHeadless                 bool
+	FlowAutoModeSelected         bool
+	FlowAgentLabel               string
+	FlowModel                    string
+	FlowReasoningEffort          string
+	DefaultViewLabel             string
+	FlowNextLaunchReady          bool
+	FlowManualMergeReadySelected bool
+	FlowPhaseResetReadySelected  bool
+	FlowPhaseResumableSelected   bool
+	TransientError               string
+	TransientErrorFadeStep       int
+	SearchActive                 bool
+	RepoSearch                   string
+	ItemSearch                   string
+	FetchAvailable               bool
+	FetchVisibleAvailable        bool
+	RepoCreateAvailable          bool
+	PullAvailable                bool
+	AgentAvailable               bool
+	NewAgent                     bool
 }
 
 type shortcutHint struct {
@@ -1310,6 +1313,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			if sp.FlowNextLaunchReady {
 				actions = append(actions, shortcutHint{Key: "g", Label: "launch next"})
 			}
+			if !sp.FlowPhaseSelected && sp.FlowManualMergeReadySelected {
+				actions = append(actions, shortcutHint{Key: "M", Label: "mark merged"})
+			}
 			if sp.FlowPhaseSelected && sp.FlowPhaseResetReadySelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
 			}
@@ -1588,13 +1594,13 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	tinyBase := footerHintsForKeys(hints, "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
-	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "d")
-	coreActionsWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "d")
-	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "d", "m")
-	coreActionsWithAutoWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "d", "m")
-	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "x", "o", "y", "d", "r", "m")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "M", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "M", "f", "F")
+	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "d")
+	coreActionsWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "M", "d")
+	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "d", "m")
+	coreActionsWithAutoWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "M", "d", "m")
+	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "A", "f", "F")
 	actionsWithoutModelAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
 	actionsWithoutAgentAndPreferences := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "f", "F")
 

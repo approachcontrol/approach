@@ -75,6 +75,34 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 	}
 }
 
+func manualMergeEligibleFlow() flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Title:    "Manual merge Flow",
+		Status:   flowstore.StatusInProgress,
+		Branch:   "flow/manual-merge",
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     116,
+			URL:        "https://github.com/brian-bell/wtui/pull/116",
+			HeadBranch: "flow/manual-merge",
+			BaseBranch: "main",
+			Status:     "open",
+		},
+		Merge: flowstore.Merge{Status: flowstore.MergePending},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseCompleted},
+			{PhaseID: "pr-creation", Title: "PR creation", Status: flowstore.PhaseCompleted},
+			{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhaseCompleted, Outcome: "passed"},
+			{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseReady},
+		},
+	}
+}
+
 func TestModel_Key9ShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.T) {
 	alpha := flowWithPhaseDetails()
 	alpha.FlowID = "alpha-flow"
@@ -1467,6 +1495,182 @@ func TestModel_MKeyFlowAutoModeNoopsWithoutSelectedFlow(t *testing.T) {
 	}
 	if called {
 		t.Fatal("SetFlowAutoMode should not be called without a selected Flow")
+	}
+}
+
+func TestModel_ShiftMMarksSelectedFlowAsManuallyMerged(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	updated := flow
+	updated.Status = flowstore.StatusMerged
+	updated.PR.Status = flowstore.MergeMerged
+	updated.Merge = flowstore.Merge{Status: flowstore.MergeMerged, Commit: "0123456789abcdef", MergedAt: &mergedAt}
+	updated.Phases[len(updated.Phases)-1].Status = flowstore.PhaseCompleted
+	updated.Phases[len(updated.Phases)-1].Outcome = flowstore.MergeMerged
+
+	var lookupCalls int
+	var markCalls []flowstore.ManualMergeUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(number int, url string) (actions.PullRequestMerge, error) {
+			lookupCalls++
+			if number != 116 || url != "https://github.com/brian-bell/wtui/pull/116" {
+				t.Fatalf("LookupPRMerge(%d, %q), want stored PR", number, url)
+			}
+			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
+		},
+		MarkFlowManualMerge: func(update flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error) {
+			markCalls = append(markCalls, update)
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("opening manual merge confirmation returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm || !strings.Contains(m.ConfirmPrompt(), "Mark PR #116 as merged?") {
+		t.Fatalf("manual merge confirmation prompt = %q overlay=%d", m.ConfirmPrompt(), m.Overlay())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("confirming manual merge should return command")
+	}
+	raw := cmd()
+	if _, ok := raw.(model.FlowEmbeddedLaunchRequestedMsg); ok {
+		t.Fatal("manual merge must not launch a Flow phase")
+	}
+	m, cmd = update(m, raw)
+	if cmd != nil {
+		t.Fatalf("manual merge result returned follow-up command %T, want nil", cmd)
+	}
+
+	if lookupCalls != 1 {
+		t.Fatalf("lookup calls = %d, want 1", lookupCalls)
+	}
+	if len(markCalls) != 1 ||
+		markCalls[0].FlowID != "flow-1" ||
+		markCalls[0].PRNumber != 116 ||
+		markCalls[0].PRURL != "https://github.com/brian-bell/wtui/pull/116" ||
+		markCalls[0].Commit != "0123456789abcdef" ||
+		!markCalls[0].MergedAt.Equal(mergedAt) {
+		t.Fatalf("manual merge calls = %#v", markCalls)
+	}
+	if got := m.Flows(); len(got) != 1 || got[0].Status != flowstore.StatusMerged {
+		t.Fatalf("Flows() = %#v, want merged replacement", got)
+	}
+}
+
+func TestModel_ShiftMManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			called = true
+			return actions.PullRequestMerge{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "merge")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() == ui.OverlayConfirm {
+		t.Fatalf("M on selected phase opened confirmation %q", m.ConfirmPrompt())
+	}
+	if called {
+		t.Fatal("LookupPRMerge should not run for selected phase row")
+	}
+}
+
+func TestModel_ShiftMManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	flow.Phases[len(flow.Phases)-1].Status = flowstore.PhaseRunning
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			called = true
+			return actions.PullRequestMerge{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on running merge phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() == ui.OverlayConfirm {
+		t.Fatalf("M on running merge phase opened confirmation %q", m.ConfirmPrompt())
+	}
+	if called {
+		t.Fatal("LookupPRMerge should not run when merge phase is running")
+	}
+}
+
+func TestModel_ShiftMManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	recovered := flow
+	recovered.Phases = append([]flowstore.FlowPhase(nil), flow.Phases...)
+	recovered.Phases[len(recovered.Phases)-1].Status = flowstore.PhaseNeedsAttention
+	recovered.Phases[len(recovered.Phases)-1].Notes = "sync linked plan phase: missing plan"
+	recovered.Merge = flowstore.Merge{Status: flowstore.MergePending}
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
+		},
+		MarkFlowManualMerge: func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error) {
+			return recovered, errors.New("sync linked plan phase: missing plan")
+		},
+	}), []flowstore.FlowRecord{flow})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("confirming manual merge should return command")
+	}
+	m, _ = update(m, cmd())
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() length = %d, want 1", len(got))
+	}
+	mergePhase := phaseByID(got[0], "merge")
+	if mergePhase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(mergePhase.Notes, "missing plan") {
+		t.Fatalf("manual merge failure did not replace recovered flow state: %#v", got[0])
+	}
+	if strings.Contains(m.View(), "M      mark merged") {
+		t.Fatalf("recovered needs_attention Flow should not advertise manual merge:\n%s", m.View())
+	}
+}
+
+func TestModel_ShiftMManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	merged := flow
+	merged.Status = flowstore.StatusMerged
+	merged.PR.Status = flowstore.MergeMerged
+	merged.Merge = flowstore.Merge{Status: flowstore.MergeMerged, Commit: "0123456789abcdef", MergedAt: &mergedAt}
+	m := enterActiveFlowsWithRecords(t, model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
+		},
+		MarkFlowManualMerge: func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error) {
+			return merged, nil
+		},
+	}), []flowstore.FlowRecord{flow})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("confirming manual merge should return command")
+	}
+	m, _ = update(m, cmd())
+
+	if strings.Contains(m.View(), "Manual merge Flow") {
+		t.Fatalf("merged Flow should be filtered from active view:\n%s", m.View())
 	}
 }
 

@@ -94,6 +94,7 @@ filter matches, or a load failure with details in the status bar.
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or toggle auto mode for the selected Flow (flows view) |
+| `M` | Mark the selected Flow's GitHub PR as already merged, after verifying the stored PR is merged in GitHub |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `V` | Choose and persist the startup default view (`1` through `9`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
@@ -365,7 +366,11 @@ fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
 existing app thread without extra launch tracking. Press `m` on a Flow row or
 expanded phase row to toggle per-Flow auto mode, which is on by default for new
 Flows and persisted on that Flow record. Flows created before this field existed
-remain manual until auto mode is toggled on. When auto mode is on, a successful
+remain manual until auto mode is toggled on. Press `M` on an eligible Flow row
+when its recorded GitHub PR was merged manually in GitHub; wtui verifies the PR
+is merged with `gh`, records the merge commit and timestamp, marks the Merge
+phase completed, and hides the Flow from active lists without launching a Merge
+phase agent. When auto mode is on, a successful
 completed phase transition launches the next ready non-merge phase in that same
 Flow through the same launch path as pressing `g`. For CLI phases running in an
 embedded Flow terminal, wtui waits until the completed phase's terminal exits
@@ -515,6 +520,10 @@ also marks a matching saved-plan phase with the same normalized phase ID as
 marks the Flow phase `needs_attention` and reports the persistence error.
 Repeating `completed` for an already-completed Flow phase preserves that
 completed state even if the linked-plan sync later fails.
+The TUI-owned manual merge shortcut still treats linked-plan sync failure as
+recoverable: it restores the previous PR status, clears terminal merge
+metadata, marks the Merge phase `needs_attention`, and keeps the Flow visible
+for repair.
 
 Child implementation phases gate downstream readiness in phase order: review
 loop and PR creation remain pending until required implementation children are

@@ -308,6 +308,19 @@ type FlowAutoModeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowManualMergeSetMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+}
+
+type FlowManualMergeSetFailedMsg struct {
+	RepoPath string
+	FlowID   string
+	Flow     flowstore.FlowRecord
+	Err      string
+}
+
 type PlanReadResultMsg struct {
 	RepoPath    string
 	PlanID      string
@@ -1388,6 +1401,27 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "failed to set Flow auto mode"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowManualMergeSet(msg FlowManualMergeSetMsg) Model {
+	if msg.FlowID == "" || (!m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath)) {
+		return m
+	}
+	return m.replaceFlowRecord(msg.Flow)
+}
+
+func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) Model {
+	if !m.activeFlowSurfaceVisible() && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to mark Flow as merged"
+	}
+	if msg.Flow.FlowID != "" {
+		m = m.replaceFlowRecord(msg.Flow)
 	}
 	return m.setStatus(statusOther, errText)
 }

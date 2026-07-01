@@ -1033,6 +1033,34 @@ func TestStatusBar_FlowsModeShowsFlowIDCopyHintWithoutWorktreePath(t *testing.T)
 	}
 }
 
+func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T) {
+	base := statusBarParams{
+		Width:                        160,
+		Mode:                         ModeFlows,
+		ActivePane:                   1,
+		RepoSelected:                 true,
+		FlowSelected:                 true,
+		FlowManualMergeReadySelected: true,
+	}
+	flowRow := renderStatusBarWithState(base)
+	if !strings.Contains(flowRow, "M: mark merged") {
+		t.Fatalf("eligible Flow row should expose manual merge shortcut, got %q", flowRow)
+	}
+
+	base.FlowPhaseSelected = true
+	phaseRow := renderStatusBarWithState(base)
+	if strings.Contains(phaseRow, "mark merged") {
+		t.Fatalf("selected Flow phase should hide manual merge shortcut, got %q", phaseRow)
+	}
+
+	base.FlowPhaseSelected = false
+	base.FlowManualMergeReadySelected = false
+	ineligible := renderStatusBarWithState(base)
+	if strings.Contains(ineligible, "mark merged") {
+		t.Fatalf("ineligible Flow row should hide manual merge shortcut, got %q", ineligible)
+	}
+}
+
 func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
