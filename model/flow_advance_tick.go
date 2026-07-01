@@ -135,6 +135,14 @@ func (m Model) handleAutoAdvanceStatusExpired(msg AutoAdvanceStatusExpiredMsg) M
 	return m
 }
 
+func (m Model) seedAutoAdvanceSnapshot(flows []flowstore.FlowRecord) Model {
+	if len(m.autoAdvanceSnapshot) != 0 {
+		return m
+	}
+	m.autoAdvanceSnapshot = cloneFlowRecords(flows)
+	return m
+}
+
 func autoAdvanceStatusEvents(previous []flowstore.FlowRecord, launched []autoAdvanceLaunchedPhase, current []flowstore.FlowRecord) []string {
 	var events []string
 	for _, launch := range launched {

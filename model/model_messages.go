@@ -1332,6 +1332,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	m = m.seedAutoAdvanceSnapshot(msg.Flows)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1359,6 +1360,7 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
+	m = m.seedAutoAdvanceSnapshot(msg.Flows)
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()

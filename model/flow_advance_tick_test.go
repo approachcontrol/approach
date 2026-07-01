@@ -351,6 +351,50 @@ func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
 	}
 }
 
+func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		StartupMode:  ui.ModeFlows,
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+	})
+
+	m, _ = updateFlowRefreshTest(m, FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{previous},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+	if len(updates) != 0 {
+		t.Fatalf("display seed launch updates = %#v, want none", updates)
+	}
+	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want display fetch running baseline", m.autoAdvanceSnapshot)
+	}
+
+	m.autoAdvanceInFlight = 1
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
+	}
+}
+
 func TestModel_AutoAdvanceRequiresCompletionEdgeAndAutoMode(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,
