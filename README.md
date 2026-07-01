@@ -93,11 +93,10 @@ filter matches, or a load failure with details in the status bar.
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
-| `m` | Move or rename a linked worktree (worktrees view), or toggle auto mode for the selected Flow (flows view) |
-| `M` | Mark the selected Flow's GitHub PR as already merged, after verifying the stored PR is merged in GitHub |
+| `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
 | `V` | Choose and persist the startup default view (`1` through `9`) |
-| `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
+| `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
 | `u` | Unlock a locked worktree (worktrees view) |
@@ -363,10 +362,10 @@ worktree path, from either a Flow row or one of its expanded phase rows. Press
 `r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
-existing app thread without extra launch tracking. Press `m` on a Flow row or
+existing app thread without extra launch tracking. Press `a` on a Flow row or
 expanded phase row to toggle per-Flow auto mode, which is on by default for new
 Flows and persisted on that Flow record. Flows created before this field existed
-remain manual until auto mode is toggled on. Press `M` on an eligible Flow row
+remain manual until auto mode is toggled on. Press `m` on an eligible Flow row
 when its recorded GitHub PR was merged manually in GitHub; wtui verifies the PR
 is merged with `gh`, records the merge commit and timestamp, marks the Merge
 phase completed, and hides the Flow from active lists without launching a Merge

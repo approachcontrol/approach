@@ -352,10 +352,10 @@ phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
 launchable phase for the selected Flow. Press `c` to copy the selected Flow ID,
 and press `y` to copy the selected Flow worktree path, from either a Flow row or
-one of its expanded phase rows. Press `m` to toggle per-Flow auto mode. New Flow
+one of its expanded phase rows. Press `a` to toggle per-Flow auto mode. New Flow
 records start with auto mode on, and the toggle is persisted on each Flow. Flows
 created before this field existed remain manual until auto mode is toggled on.
-Press `M` on an eligible Flow row to mark a recorded GitHub PR as already
+Press `m` on an eligible Flow row to mark a recorded GitHub PR as already
 merged; wtui verifies the PR with `gh`, records the existing merge commit and
 timestamp, completes the Merge phase, and does not launch a Merge phase agent.
 When auto mode is on, completed

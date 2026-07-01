@@ -776,7 +776,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"y      copy path",
 		"d      delete",
 		"h      headless on",
-		"m      auto: on",
+		"a      auto: on",
 		"A      codex",
 		"E      effort: high",
 		"bksp   pane",
@@ -839,7 +839,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		"c      copy id",
 		"y      copy path",
 		"h      headless on",
-		"m      auto: on",
+		"a      auto: on",
 		"A      codex",
 		"E      effort: high",
 	} {
@@ -1043,7 +1043,7 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 		FlowManualMergeReadySelected: true,
 	}
 	flowRow := renderStatusBarWithState(base)
-	if !strings.Contains(flowRow, "M: mark merged") {
+	if !strings.Contains(flowRow, "m: mark merged") {
 		t.Fatalf("eligible Flow row should expose manual merge shortcut, got %q", flowRow)
 	}
 
@@ -1151,7 +1151,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 		FlowSelected:         true,
 		FlowAutoModeSelected: false,
 	})
-	if !strings.Contains(flowRow, "m: auto: off") {
+	if !strings.Contains(flowRow, "a: auto: off") {
 		t.Fatalf("selected Flow row should expose auto-mode off toggle, got %q", flowRow)
 	}
 
@@ -1164,7 +1164,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 		FlowPhaseSelected:    true,
 		FlowAutoModeSelected: true,
 	})
-	if !strings.Contains(phaseRow, "m: auto: on") {
+	if !strings.Contains(phaseRow, "a: auto: on") {
 		t.Fatalf("selected Flow phase should expose auto-mode on toggle, got %q", phaseRow)
 	}
 }
@@ -1178,7 +1178,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 		FlowSelected:         true,
 		FlowAutoModeSelected: false,
 	})
-	if !strings.Contains(flowRow, "m: auto: off") {
+	if !strings.Contains(flowRow, "a: auto: off") {
 		t.Fatalf("compact selected Flow row should keep auto-mode off toggle, got %q", flowRow)
 	}
 
@@ -1191,7 +1191,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 		FlowPhaseSelected:    true,
 		FlowAutoModeSelected: true,
 	})
-	if !strings.Contains(phaseRow, "m: auto: on") {
+	if !strings.Contains(phaseRow, "a: auto: on") {
 		t.Fatalf("compact selected Flow phase should keep auto-mode on toggle, got %q", phaseRow)
 	}
 }

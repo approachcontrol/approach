@@ -1289,9 +1289,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 
 func flowAutoModeShortcutHint(enabled bool) shortcutHint {
 	if enabled {
-		return shortcutHint{Key: "m", Label: "auto: on", SuccessSuffix: "on"}
+		return shortcutHint{Key: "a", Label: "auto: on", SuccessSuffix: "on"}
 	}
-	return shortcutHint{Key: "m", Label: "auto: off"}
+	return shortcutHint{Key: "a", Label: "auto: off"}
 }
 
 func flowShortcutSections(sp statusBarParams, actions, navigation, global []shortcutHint) []shortcutSection {
@@ -1314,7 +1314,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 				actions = append(actions, shortcutHint{Key: "g", Label: "launch next"})
 			}
 			if !sp.FlowPhaseSelected && sp.FlowManualMergeReadySelected {
-				actions = append(actions, shortcutHint{Key: "M", Label: "mark merged"})
+				actions = append(actions, shortcutHint{Key: "m", Label: "mark merged"})
 			}
 			if sp.FlowPhaseSelected && sp.FlowPhaseResetReadySelected {
 				actions = append(actions, shortcutHint{Key: "x", Label: "reset ready"})
@@ -1594,15 +1594,15 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	tinyBase := footerHintsForKeys(hints, "q/esc")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
-	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "d")
-	coreActionsWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "M", "d")
-	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "d", "m")
-	coreActionsWithAutoWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "M", "d", "m")
-	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "M", "x", "o", "y", "d", "r", "m", "A", "f", "F")
-	actionsWithoutModelAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
-	actionsWithoutAgentAndPreferences := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "f", "F")
+	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "m", "d")
+	coreActionsWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "m", "d")
+	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "m", "d", "a")
+	coreActionsWithAutoWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "m", "d", "a")
+	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "m", "x", "o", "y", "d", "r", "a")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "m", "x", "o", "y", "d", "r", "a", "A", "M", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "m", "x", "o", "y", "d", "r", "a", "A", "M", "f", "F")
+	actionsWithoutModelAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "m", "x", "o", "y", "d", "r", "a", "A", "f", "F")
+	actionsWithoutAgentAndPreferences := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "m", "x", "o", "y", "d", "r", "a", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
