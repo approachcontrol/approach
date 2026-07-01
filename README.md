@@ -104,7 +104,7 @@ filter matches, or a load failure with details in the status bar.
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
-| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected `await-session` Flow phase after confirmation |
+| `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected recoverable Flow phase after confirmation |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
 | `s` | Page selected agent session summary (sessions view) |
@@ -441,15 +441,20 @@ ordinary empty or pending work. A saved Flow with no branch/worktree metadata
 shows `recover-worktree`, a running phase with a recorded launch but no attached
 session yet shows `await-session`, a phase with an attached session whose
 launch ID does not match the phase's launch attempts shows `session-mismatch`,
+a running phase whose latest attached session has ended shows `ended-session`,
 and an attached session that lacks a provider session ID shows
 `missing-session-id`. A pending Autoreview phase whose PR Creation predecessor
 completed without structured PR metadata shows `missing-pr`.
 
-When an expanded phase row shows `await-session`, and no running or starting
-embedded Flow terminal is attached to that same Flow phase, the selected phase
-row exposes `x reset ready`. Confirming the prompt removes the newest orphan
-launch attempt and lets wtui derive the phase back to `ready`. This is TUI
-recovery for an abandoned launch attempt, not a new agent transition; `ready`
+When an expanded phase row shows `await-session` or `ended-session`, and no
+running or starting embedded Flow terminal is attached to that same Flow phase,
+the selected phase row exposes `x reset ready`. Confirming the prompt removes
+the newest stale launch attempt, removes ended session records tied to that
+launch, persists the phase as `pending`, and lets wtui derive the phase back to
+`ready`. `wtui flow phase reset` performs the same recovery from the CLI. Live
+or unknown-status attached sessions anywhere on the merged logical phase, and
+session launch mismatches, are rejected. This is wtui recovery for an abandoned
+launch attempt or ended provider session, not a new agent transition; `ready`
 still cannot be set through `wtui flow phase set`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
@@ -486,6 +491,7 @@ wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review \
   --notes "Revise the rollout section"
 wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation \
   --notes "Waiting on review"
+wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
 
 # The lower-level phase set command remains available for explicit status,
 # outcome, summary, and notes updates. approved_with_concerns,

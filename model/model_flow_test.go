@@ -1013,6 +1013,20 @@ func flowWithAwaitingImplementation() flowstore.FlowRecord {
 	return flow
 }
 
+func flowWithEndedRunningImplementation() flowstore.FlowRecord {
+	flow := flowWithPhaseDetails()
+	for i := range flow.Phases {
+		if flow.Phases[i].PhaseID == "implementation" {
+			flow.Phases[i].Status = flowstore.PhaseRunning
+			flow.Phases[i].LaunchIDs = []string{"launch-ended"}
+			flow.Phases[i].Sessions = []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-ended", LaunchID: "launch-ended", Status: "ended"},
+			}
+		}
+	}
+	return flow
+}
+
 func autoFlowWithPhaseStatuses(statuses map[string]string) flowstore.FlowRecord {
 	defs := []struct {
 		id    string
@@ -1878,6 +1892,22 @@ func TestModel_SelectedAwaitingFlowPhaseAdvertisesResetShortcut(t *testing.T) {
 	}
 }
 
+func TestModel_SelectedEndedSessionFlowPhaseAdvertisesResetShortcut(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithEndedRunningImplementation()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "implementation:ended-session") {
+		t.Fatalf("ended-session Flow phase should render recovery label:\n%s", view)
+	}
+	if !strings.Contains(view, "x      reset ready") {
+		t.Fatalf("ended-session Flow phase should expose reset shortcut:\n%s", view)
+	}
+	if strings.Contains(view, "r      resume") {
+		t.Fatalf("running ended-session Flow phase should not expose resume shortcut:\n%s", view)
+	}
+}
+
 func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) {
 	flow := flowWithAwaitingImplementation()
 	flow.Phases[2].LaunchIDs = []string{"launch-orphan"}
@@ -1907,6 +1937,32 @@ func TestModel_SelectedSessionMismatchFlowPhaseHidesResetShortcut(t *testing.T) 
 	}
 	if resetCalled {
 		t.Fatal("reset should not be called for session-mismatch phase")
+	}
+}
+
+func TestModel_SelectedLiveSessionFlowPhaseHidesResetShortcut(t *testing.T) {
+	flow := flowWithEndedRunningImplementation()
+	flow.Phases[2].Sessions[0].Status = "running"
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "reset ready") {
+		t.Fatalf("live attached Flow phase should hide reset shortcut:\n%s", view)
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("x on live attached phase returned cmd=%T overlay=%d", cmd, m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called for live attached phase")
 	}
 }
 
@@ -1966,6 +2022,47 @@ func TestModel_XKeyOnResettableFlowPhaseConfirmsAndResets(t *testing.T) {
 	}
 	if phase := m.Flows()[0].Phases[2]; phase.Status != flowstore.PhaseReady {
 		t.Fatalf("implementation after reset refresh = %#v, want ready", phase)
+	}
+}
+
+func TestModel_XKeyOnEndedSessionFlowPhaseConfirmsAndResets(t *testing.T) {
+	ended := flowWithEndedRunningImplementation()
+	reset := flowWithPhaseDetails()
+	var resetCalls []flowstore.PhaseResetUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ResetFlowPhase: func(update flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalls = append(resetCalls, update)
+			return reset, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{reset}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{ended})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil {
+		t.Fatalf("opening reset confirmation returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlayConfirm {
+		t.Fatalf("reset overlay = %d, want confirm", m.Overlay())
+	}
+	if len(resetCalls) != 0 {
+		t.Fatalf("reset called before confirmation: %#v", resetCalls)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("accepting reset confirmation should return reset command")
+	}
+	m, resetCmd := update(m, cmd())
+	if resetCmd == nil {
+		t.Fatal("confirmed reset should return persistence command")
+	}
+	m, _ = update(m, resetCmd())
+	if len(resetCalls) != 1 || resetCalls[0].FlowID != "flow-1" || resetCalls[0].PhaseID != "implementation" {
+		t.Fatalf("reset calls = %#v", resetCalls)
 	}
 }
 
@@ -2121,6 +2218,44 @@ func TestModel_ResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T
 
 	if strings.Contains(m.View(), "reset ready") {
 		t.Fatalf("matching running Flow terminal should hide reset shortcut:\n%s", m.View())
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd != nil || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("x with matching running Flow terminal returned cmd=%T overlay=%d", cmd, m.Overlay())
+	}
+	if resetCalled {
+		t.Fatal("reset should not be called while matching Flow terminal is running")
+	}
+}
+
+func TestModel_EndedSessionResetShortcutHiddenWhenMatchingFlowTerminalIsRunning(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+	resetCalled := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+		ResetFlowPhase: func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error) {
+			resetCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, cmd := prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
+	if cmd == nil {
+		t.Fatal("g on ready Flow should prepare embedded terminal launch")
+	}
+	m, _ = update(m, cmd())
+	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithEndedRunningImplementation()}, ListRequest: m.ListRequest(ui.ModeFlows)})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "reset ready") {
+		t.Fatalf("matching running Flow terminal should hide ended-session reset shortcut:\n%s", view)
 	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if cmd != nil || m.Overlay() != ui.OverlayNone {
@@ -5791,6 +5926,21 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	}
 }
 
+func TestModel_SkippedFlowPhaseWithEndedSessionAdvertisesResume(t *testing.T) {
+	flow := flowWithEndedRunningImplementation()
+	flow.Phases[2].Status = flowstore.PhaseSkipped
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "r      resume") {
+		t.Fatalf("skipped Flow phase with ended session should expose resume shortcut:\n%s", view)
+	}
+	if strings.Contains(view, "x      reset ready") {
+		t.Fatalf("skipped Flow phase should not expose reset shortcut:\n%s", view)
+	}
+}
+
 func TestModel_RKeyOnSelectedFlowPhaseUsesCodexAppPreferenceForCodexSession(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -5909,6 +6059,115 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *
 	}
 	if got := m.TransientError(); !strings.Contains(got, "awaiting session") {
 		t.Fatalf("status = %q, want awaiting session", got)
+	}
+}
+
+func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderLiveSession(t *testing.T) {
+	launchRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			launchRan = true
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Await latest with live older session",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/await-latest-live",
+		WorktreePath: "/dev/alpha-worktrees/flow-await-latest-live",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseRunning,
+			LaunchIDs: []string{"launch-old", "launch-new"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-old", LaunchID: "launch-old", Status: "last_seen"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if strings.Contains(m.View(), "r      resume") {
+		t.Fatalf("awaiting latest session with older live session should not advertise resume:\n%s", m.View())
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("awaiting latest session should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("launch ran for stale Flow phase session")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "awaiting session") {
+		t.Fatalf("status = %q, want awaiting session", got)
+	}
+}
+
+func TestModel_RKeyOnRunningEndedSessionFlowPhaseDoesNotResume(t *testing.T) {
+	launchRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			launchRan = true
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithEndedRunningImplementation()})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("running ended-session phase should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("launcher ran for running ended-session Flow phase")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "ended session") || !strings.Contains(got, "reset") {
+		t.Fatalf("status = %q, want ended session reset guidance", got)
+	}
+}
+
+func TestModel_RKeyOnRunningEndedLatestSessionDoesNotResumeWhenOlderSessionIsLive(t *testing.T) {
+	launchRan := false
+	flow := flowWithEndedRunningImplementation()
+	flow.Phases[2].LaunchIDs = []string{"launch-old", "launch-ended"}
+	flow.Phases[2].Sessions = append([]flowstore.Session{
+		{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+	}, flow.Phases[2].Sessions...)
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			launchRan = true
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	if strings.Contains(m.View(), "r      resume") {
+		t.Fatalf("running ended latest session should not advertise resume:\n%s", m.View())
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("running ended latest session should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("launcher ran for running ended latest session")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "ended session") || strings.Contains(got, "reset it to ready") {
+		t.Fatalf("status = %q, want non-resumable ended session guidance", got)
 	}
 }
 

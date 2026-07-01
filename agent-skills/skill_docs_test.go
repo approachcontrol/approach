@@ -24,6 +24,7 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 		"wtui flow phase block",
 		"wtui flow phase needs-attention",
 		"wtui flow phase restart",
+		"wtui flow phase reset",
 		"wtui flow phase set",
 		"wtui flow plan set",
 		"wtui flow issue set",
@@ -80,6 +81,9 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 	if !strings.Contains(skill, "wtui flow phase restart") || !strings.Contains(flowCLI, "runFlowPhaseRestart") {
 		t.Fatal("skill and CLI should both expose flow phase restart")
+	}
+	if !strings.Contains(skill, "wtui flow phase reset") || !strings.Contains(flowCLI, "runFlowPhaseReset") {
+		t.Fatal("skill and CLI should both expose flow phase reset")
 	}
 	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
 		t.Fatal("skill and CLI should both expose flow plan set")
@@ -651,6 +655,7 @@ func commandFunctionName(commandParts []string) (string, bool) {
 		"flow phase block":           "runFlowPhaseAction",
 		"flow phase needs-attention": "runFlowPhaseAction",
 		"flow phase restart":         "runFlowPhaseRestart",
+		"flow phase reset":           "runFlowPhaseReset",
 		"flow phase add-child":       "runFlowPhaseAddChild",
 		"flow plan set":              "runFlowPlanSet",
 		"flow issue set":             "runFlowIssueSet",

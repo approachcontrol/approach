@@ -331,7 +331,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			if err != nil {
 				return flowstore.FlowRecord{}, err
 			}
-			return store.ResetAwaitingSessionPhase(update)
+			return store.ResetRecoverableRunningPhase(update)
 		}
 	}
 	deleteFlow := opts.DeleteFlow
@@ -1585,7 +1585,8 @@ func (m Model) selectedFlowPhaseIndex() (int, bool) {
 
 func (m Model) selectedFlowPhaseResumable() bool {
 	phase, ok := m.selectedFlowPhase()
-	if !ok || (phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase)) {
+	if !ok || flowPhaseHasRecoverableRunningSession(phase) ||
+		flowPhaseHasStaleRunningLatestLaunch(phase) {
 		return false
 	}
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
@@ -1596,6 +1597,16 @@ func (m Model) selectedFlowPhaseResumable() bool {
 		return false
 	}
 	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
+}
+
+func flowPhaseHasRecoverableRunningSession(phase flowstore.FlowPhase) bool {
+	_, ok := flowstore.RecoverableRunningPhaseResetReason(phase)
+	return ok
+}
+
+func flowPhaseHasStaleRunningLatestLaunch(phase flowstore.FlowPhase) bool {
+	return phase.Status == flowstore.PhaseRunning &&
+		(flowstore.PhaseAwaitingSession(phase) || flowstore.PhaseLatestLaunchEnded(phase))
 }
 
 func (m Model) selectedFlowHasLaunchablePhase() bool {
