@@ -692,6 +692,74 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *test
 	}
 }
 
+func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testing.T) {
+	baseline := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseCompleted,
+		"review-loop":    flowstore.PhasePending,
+	})
+	childRunning := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseCompleted,
+		"review-loop":    flowstore.PhasePending,
+	})
+	childRunning.Phases = append(childRunning.Phases, flowstore.FlowPhase{
+		PhaseID:       "implementation-api",
+		ParentPhaseID: "implementation",
+		Title:         "API integration",
+		Kind:          "implementation_child",
+		Status:        flowstore.PhaseRunning,
+		Order:         10,
+	})
+	childCompleted := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseCompleted,
+		"review-loop":    flowstore.PhaseReady,
+	})
+	childCompleted.Phases = append(childCompleted.Phases, flowstore.FlowPhase{
+		PhaseID:       "implementation-api",
+		ParentPhaseID: "implementation",
+		Title:         "API integration",
+		Kind:          "implementation_child",
+		Status:        flowstore.PhaseCompleted,
+		Order:         10,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		StartupMode:  ui.ModeActiveFlows,
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return childCompleted, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{baseline}
+
+	m, _ = updateFlowRefreshTest(m, ActiveFlowResultMsg{
+		Flows:       []flowstore.FlowRecord{childRunning},
+		ListRequest: m.ListRequest(ui.ModeActiveFlows),
+	})
+	if len(m.autoAdvanceSnapshot) != 1 || len(m.autoAdvanceSnapshot[0].Phases) != len(childRunning.Phases) {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want display baseline with running child", m.autoAdvanceSnapshot)
+	}
+
+	m.autoAdvanceInFlight = 1
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{
+		Flows:   []flowstore.FlowRecord{childCompleted},
+		Request: 1,
+	})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "review-loop" {
+		t.Fatalf("auto-advance launch context = %#v, want review-loop after child completion", launch.LaunchContext)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "review-loop" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates = %#v, want review-loop auto launch after child completion", updates)
+	}
+}
+
 func TestModel_AutoAdvanceRequiresCompletionEdgeAndAutoMode(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,

@@ -223,7 +223,7 @@ func autoAdvanceDisplayRecordRefreshesBaseline(previous, current flowstore.FlowR
 		}
 		previousPhase, ok := previousByPhaseID[phaseID]
 		if !ok {
-			continue
+			return true
 		}
 		if previousPhase.Status == flowstore.PhaseCompleted || previousPhase.Status == flowstore.PhaseSkipped {
 			return true
