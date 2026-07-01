@@ -451,15 +451,15 @@ func TestModel_QuitKeys(t *testing.T) {
 
 // --- Pane switching ---
 
-func TestModel_TabFromRightPaneDoesNotSwitchToLeft(t *testing.T) {
+func TestModel_TabFromRightPaneSwitchesToLeft(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if m.ActivePane() != 1 {
-		t.Errorf("expected right pane after tab, got %d", m.ActivePane())
+	if m.ActivePane() != 0 {
+		t.Errorf("expected left pane after tab, got %d", m.ActivePane())
 	}
 	if cmd != nil {
 		t.Fatalf("tab from right pane produced cmd %T, want nil", cmd)
@@ -517,8 +517,8 @@ func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	if m.Mode() != 3 {
 		t.Errorf("expected mode unchanged at 3, got %d", m.Mode())
 	}
-	if m.ActivePane() != 1 {
-		t.Errorf("expected active pane unchanged at right pane, got %d", m.ActivePane())
+	if m.ActivePane() != 0 {
+		t.Errorf("expected active pane cycled to left pane, got %d", m.ActivePane())
 	}
 }
 
