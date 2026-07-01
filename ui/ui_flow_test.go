@@ -2058,6 +2058,39 @@ func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Ended latest session",
+			Status:       flowstore.StatusInProgress,
+			Branch:       "flow/ended-session",
+			WorktreePath: "/dev/wtui-worktrees/flow-ended-session",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-1"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "codex-1", LaunchID: "launch-1", Status: "ended"},
+				},
+			}},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	if !strings.Contains(view, "implementation:ended-session") {
+		t.Fatalf("running phase with ended latest session should render ended-session:\n%s", view)
+	}
+}
+
 func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
@@ -2301,17 +2334,58 @@ func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 					},
 				},
 			},
+			{
+				FlowID:       "ended-session",
+				Title:        "Latest session ended",
+				Status:       flowstore.StatusInProgress,
+				Branch:       "flow/ended-session",
+				WorktreePath: "/dev/wtui-worktrees/flow-ended-session",
+				Phases: []flowstore.FlowPhase{
+					{
+						PhaseID:   "implementation",
+						Title:     "Implementation",
+						Status:    flowstore.PhaseRunning,
+						LaunchIDs: []string{"launch-4"},
+						Sessions: []flowstore.Session{
+							{Provider: "codex", SessionID: "codex-4", LaunchID: "launch-4", Status: "ended"},
+						},
+					},
+				},
+			},
 		},
 		ActivePane: 1,
 	})
 
-	for _, want := range []string{"plan:recover-worktree", "implementation:await-session", "review-loop:session-mismatch"} {
+	for _, want := range []string{"plan:recover-worktree", "implementation:await-session", "review-loop:session-mismatch", "implementation:ended-session"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("recovery view missing %q:\n%s", want, view)
 		}
 	}
 	if !strings.Contains(view, "missing-worktree") {
 		t.Fatalf("flow with missing worktree metadata should show a recoverable branch marker:\n%s", view)
+	}
+}
+
+func TestRender_FlowRecoveryWarningsPreferSessionMismatchOverEndedSession(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "mismatched-ended-flow",
+		Title:        "Mismatched ended flow",
+		Status:       flowstore.StatusNeedsAttention,
+		Branch:       "flow/mismatched-ended",
+		WorktreePath: "/dev/wtui-worktrees/flow-mismatched-ended",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseRunning,
+			LaunchIDs: []string{"launch-current"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-stale", LaunchID: "launch-stale", Status: "ended"},
+			},
+		}},
+	}
+
+	if got := flowPhaseProgress(record); got != "0/1 implementation:session-mismatch" {
+		t.Fatalf("phase progress = %q, want session-mismatch to win", got)
 	}
 }
 

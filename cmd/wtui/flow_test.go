@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		"wtui flow phase block --flow-id",
 		"wtui flow phase needs-attention --flow-id",
 		"wtui flow phase restart --flow-id",
+		"wtui flow phase reset --flow-id",
 		"wtui flow phase set --flow-id",
 		"wtui flow issue set --flow-id",
 		"wtui flow pr set --flow-id",
@@ -53,12 +55,13 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|add-child> [flags]",
+		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
 		"wtui flow phase set --flow-id",
 		"wtui flow phase complete --flow-id",
 		"wtui flow phase block --flow-id",
 		"wtui flow phase needs-attention --flow-id",
 		"wtui flow phase restart --flow-id",
+		"wtui flow phase reset --flow-id",
 		"--status completed",
 		"wtui flow phase add-child --flow-id",
 	})
@@ -246,6 +249,16 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "phase reset",
+			args: []string{"wtui", "flow", "phase", "reset", "--help"},
+			wants: []string{
+				"Usage: wtui flow phase reset [flags]",
+				"--flow-id FLOW_ID",
+				"--phase-id PHASE_ID",
+				"wtui flow phase reset --flow-id",
+			},
+		},
+		{
 			name: "plan set",
 			args: []string{"wtui", "flow", "plan", "set", "--help"},
 			wants: []string{
@@ -315,7 +328,24 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|add-child> [flags]",
+		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
+	})
+}
+
+func TestRunFlowPhaseUnknownSubcommandSuggestsReset(t *testing.T) {
+	err := run([]string{"wtui", "flow", "phase", "rese"}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			t.Fatal("loadConfig should not run for unknown flow phase subcommand")
+			return config.Config{}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("expected unknown subcommand error")
+	}
+	requireContainsAll(t, err.Error(), []string{
+		`unknown command "rese"; did you mean "reset"?`,
+		"reset",
 	})
 }
 
@@ -1260,6 +1290,188 @@ func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseResetReturnsEndedSessionPhaseToReady(t *testing.T) {
+	root := t.TempDir()
+	record := mustRunFlowReadyForImplementation(t, root, "reset ended", "flow/reset-ended")
+	store := mustFlowStore(t, root)
+	var err error
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-old"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(old) error = %v", err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(old) error = %v", err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-ended"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(ended) error = %v", err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{Provider: "claude", SessionID: "session-ended", LaunchID: "launch-ended", Status: "ended"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(ended) error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{
+		"wtui", "flow", "phase", "reset",
+		"--flow-id", record.FlowID,
+		"--phase-id", "implementation",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	implementation := result.UpdatedPhase
+	if implementation.Status != flowstore.PhaseReady {
+		t.Fatalf("updated phase = %#v, want ready", implementation)
+	}
+	if len(implementation.LaunchIDs) != 1 || implementation.LaunchIDs[0] != "launch-old" {
+		t.Fatalf("launch ids = %#v, want old launch only", implementation.LaunchIDs)
+	}
+	if len(implementation.Sessions) != 1 || implementation.Sessions[0].SessionID != "session-old" {
+		t.Fatalf("sessions = %#v, want old session only", implementation.Sessions)
+	}
+	if result.NextPhase == nil || result.NextPhase.PhaseID != "implementation" || result.NextPhase.Status != flowstore.PhaseReady ||
+		!slices.Contains(result.NextPhase.AllowedStatuses, flowstore.PhaseRunning) {
+		t.Fatalf("next phase = %#v, want ready implementation with running allowed", result.NextPhase)
+	}
+}
+
+func TestRunFlowPhaseResetReturnsAwaitingSessionPhaseToReady(t *testing.T) {
+	root := t.TempDir()
+	record := mustRunFlowReadyForImplementation(t, root, "reset awaiting", "flow/reset-awaiting")
+	store := mustFlowStore(t, root)
+	record, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-orphan"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{
+		"wtui", "flow", "phase", "reset",
+		"--flow-id", record.FlowID,
+		"--phase-id", "implementation",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Status != flowstore.PhaseReady || len(result.UpdatedPhase.LaunchIDs) != 0 {
+		t.Fatalf("updated phase = %#v, want ready with orphan removed", result.UpdatedPhase)
+	}
+}
+
+func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) flowstore.FlowRecord
+		want    string
+	}{
+		{
+			name: "live latest session",
+			prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) flowstore.FlowRecord {
+				t.Helper()
+				record, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-live"})
+				if err != nil {
+					t.Fatalf("AddPhaseLaunchID() error = %v", err)
+				}
+				record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+					FlowID:  record.FlowID,
+					PhaseID: "implementation",
+					Session: flowstore.Session{Provider: "codex", SessionID: "session-live", LaunchID: "launch-live", Status: "running"},
+				})
+				if err != nil {
+					t.Fatalf("AttachSession() error = %v", err)
+				}
+				return record
+			},
+			want: "requires latest launch without a live attached session",
+		},
+		{
+			name: "session mismatch",
+			prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) flowstore.FlowRecord {
+				t.Helper()
+				record, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-current"})
+				if err != nil {
+					t.Fatalf("AddPhaseLaunchID() error = %v", err)
+				}
+				record.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+				for i := range record.Phases {
+					if record.Phases[i].PhaseID == "implementation" {
+						record.Phases[i].Sessions = []flowstore.Session{{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}}
+					}
+				}
+				if err := overwriteFlowRecord(t, root, record); err != nil {
+					t.Fatalf("overwriteFlowRecord() error = %v", err)
+				}
+				return record
+			},
+			want: "requires attached sessions to match phase launch ids",
+		},
+		{
+			name: "unsatisfied predecessors",
+			prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) flowstore.FlowRecord {
+				t.Helper()
+				record.Phases = []flowstore.FlowPhase{
+					{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseRunning, Order: 1},
+					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
+				}
+				if err := overwriteFlowRecord(t, root, record); err != nil {
+					t.Fatalf("overwriteFlowRecord() error = %v", err)
+				}
+				return record
+			},
+			want: "requires satisfied predecessors",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			title := "reset reject " + tc.name
+			record := mustRunFlowReadyForImplementation(t, root, title, "flow/"+strings.ReplaceAll(title, " ", "-"))
+			store := mustFlowStore(t, root)
+			record = tc.prepare(t, store, record)
+			before := phaseByID(record, "implementation")
+
+			err := run([]string{
+				"wtui", "flow", "phase", "reset",
+				"--flow-id", record.FlowID,
+				"--phase-id", "implementation",
+				"--state-root", root,
+			}, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+			read, err := store.Read(record.FlowID)
+			if err != nil {
+				t.Fatalf("Read() error = %v", err)
+			}
+			after := phaseByID(read, "implementation")
+			if before.Status != after.Status || strings.Join(before.LaunchIDs, ",") != strings.Join(after.LaunchIDs, ",") || len(before.Sessions) != len(after.Sessions) {
+				t.Fatalf("record changed after rejected reset: before=%#v after=%#v", before, after)
+			}
+		})
+	}
+}
+
 func TestRunFlowPhaseActionRejectsInvalidTransitionAndKeepsRecordUnchanged(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -1639,6 +1851,21 @@ func mustRunFlow(t *testing.T, args []string) flowstore.FlowRecord {
 	return record
 }
 
+func mustRunFlowReadyForImplementation(t *testing.T, root, title, branch string) flowstore.FlowRecord {
+	t.Helper()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", title,
+		"--instructions", "phase it",
+		"--repo-path", filepath.Join(root, "repo-"+strings.ReplaceAll(title, " ", "-")),
+		"--branch", branch,
+		"--json",
+		"--state-root", root,
+	})
+	mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
+	return mustSetFlowPhase(t, root, created.FlowID, "plan-review", flowstore.PhaseCompleted, flowstore.OutcomeApproved, "", "")
+}
+
 func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flowstore.FlowRecord {
 	t.Helper()
 	created := mustRunFlow(t, []string{
@@ -1688,6 +1915,28 @@ func mustSetFlowPhase(t *testing.T, root, flowID, phaseID, status, outcome, summ
 		args = append(args, "--notes", notes)
 	}
 	return mustRunFlow(t, args)
+}
+
+func mustFlowStore(t *testing.T, root string) *flowstore.Store {
+	t.Helper()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	return store
+}
+
+func overwriteFlowRecord(t *testing.T, root string, record flowstore.FlowRecord) error {
+	t.Helper()
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(root, "flows", record.FlowID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o600)
 }
 
 func phaseByID(record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {

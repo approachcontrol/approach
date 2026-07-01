@@ -439,6 +439,7 @@ wtui flow phase needs-attention --flow-id ID --phase-id ID \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow phase restart --flow-id ID --phase-id ID \
     [--notes TEXT] [--state-root PATH]
+wtui flow phase reset --flow-id ID --phase-id ID [--state-root PATH]
 wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
 wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
@@ -476,16 +477,19 @@ story live in [flow-phases.md](flow-phases.md).
 The flows pane distinguishes recoverable partial states from ordinary phase
 states. It shows `recover-worktree` when a saved Flow has no branch/worktree
 metadata, `await-session` when a running phase has a launch attempt but no
-attached provider session yet, `session-mismatch` when a phase's attached
-session launch ID does not match the phase launch IDs, `missing-session-id`
-when an attached session lacks a provider session ID, and `missing-pr` on a
-pending Autoreview phase when PR Creation completed without structured PR
-metadata.
+attached provider session yet, `ended-session` when the latest attached
+provider session has ended, `session-mismatch` when a phase's attached session
+launch ID does not match the phase launch IDs, `missing-session-id` when an
+attached session lacks a provider session ID, and `missing-pr` on a pending
+Autoreview phase when PR Creation completed without structured PR metadata.
 
-On a selected `await-session` phase row, `x` offers a confirmed reset back to
-derived `ready` only when no running or starting embedded Flow terminal is
-attached to that same Flow phase. The reset removes the orphan launch attempt;
-agents still cannot set `ready` directly.
+On a selected `await-session` or `ended-session` phase row, `x` offers a
+confirmed reset back to derived `ready` only when no running or starting
+embedded Flow terminal is attached to that same Flow phase. `wtui flow phase
+reset` performs the same persisted recovery from the CLI. The reset removes the
+stale latest launch attempt, removes sessions tied to that launch, persists the
+phase as `pending`, and lets wtui derive `ready`. Live attached sessions and
+session mismatches are rejected; agents still cannot set `ready` directly.
 
 The Plan Review phase gates Implementation. Plan Review completion must use
 `--outcome approved` or `--outcome approved_with_concerns`; the latter requires
@@ -506,7 +510,9 @@ Review wrappers fill the unambiguous outcomes when omitted: `complete` uses
 `needs_attention` for the matching common outcomes. Use
 `wtui flow phase restart` to rerun a blocked or needs-attention phase as
 `running`; if `--notes` is omitted, wtui records a standard rerun note. Use
-`phase set` when a phase needs an explicit uncommon status or a
+`wtui flow phase reset` only for wtui-owned stale running recovery
+(`await-session` or `ended-session`). Use `phase set` when a phase needs an
+explicit uncommon status or a
 skipped-with-notes override.
 
 Implementation can be split into ordered child phases with

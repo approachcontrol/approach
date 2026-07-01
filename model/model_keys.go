@@ -1759,8 +1759,8 @@ func (m Model) selectedFlowPhaseResetTarget() (flowstore.FlowRecord, flowstore.F
 }
 
 func (m Model) flowPhaseResettable(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
-	return phase.Status == flowstore.PhaseRunning &&
-		flowstore.PhaseAwaitingSession(phase) &&
+	_, recoverable := flowstore.RecoverableRunningPhaseResetReason(phase)
+	return recoverable &&
 		!flowstore.PhaseSessionLaunchMismatch(phase) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID) &&
 		!m.hasRunningFlowEmbeddedTerminalForPhase(record.FlowID, phase.PhaseID)
@@ -1908,8 +1908,12 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
-		m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); ok {
+		if reason == flowstore.PhaseResetReasonAwaitSession {
+			m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
+			return m, nil
+		}
+		m = m.setStatus(statusOther, "Flow phase has an ended session; reset it to ready")
 		return m, nil
 	}
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {

@@ -936,6 +936,13 @@ func validateAutoPhaseLaunch(record FlowRecord, phase FlowPhase) error {
 // running phase and lets wtui derive it back to ready. This is intentionally
 // not part of the agent-facing phase transition table.
 func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, error) {
+	return s.ResetRecoverableRunningPhase(update)
+}
+
+// ResetRecoverableRunningPhase removes the latest stale launch attempt from a
+// running phase and lets wtui derive it back to ready. This is intentionally
+// not part of the agent-facing phase transition table.
+func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
@@ -951,10 +958,7 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		}
 		phase := record.Phases[phaseIndex]
 		if phase.Status != PhaseRunning {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires running await-session; %s is %s", phase.PhaseID, phase.Status)
-		}
-		if !PhaseAwaitingSession(phase) {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires latest launch without an attached session")
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires running recoverable phase; %s is %s", phase.PhaseID, phase.Status)
 		}
 		if PhaseSessionLaunchMismatch(phase) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
@@ -962,9 +966,12 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires satisfied predecessors for %s", phase.PhaseID)
 		}
+		if _, ok := RecoverableRunningPhaseResetReason(phase); !ok {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires latest launch without a live attached session")
+		}
 		launchIDs, removedLaunchID, ok := removeLatestPhaseLaunchID(phase.LaunchIDs)
 		if !ok {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires an orphan launch id")
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires a latest launch id")
 		}
 		phase.LaunchIDs = launchIDs
 		phase.Status = PhasePending
@@ -975,6 +982,7 @@ func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, 
 		if resetIndex := phaseIndexByID(record.Phases, update.PhaseID); resetIndex >= 0 {
 			resetPhase := record.Phases[resetIndex]
 			resetPhase.LaunchIDs = removePhaseLaunchID(resetPhase.LaunchIDs, removedLaunchID)
+			resetPhase.Sessions = removePhaseSessionsForLaunchID(resetPhase.Sessions, removedLaunchID)
 			if PhaseSessionLaunchMismatch(resetPhase) {
 				return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
 			}
@@ -1001,6 +1009,20 @@ func removeLatestPhaseLaunchID(values []string) ([]string, string, bool) {
 		return out, values[i], true
 	}
 	return values, "", false
+}
+
+func removePhaseSessionsForLaunchID(values []Session, target string) []Session {
+	if target == "" {
+		return values
+	}
+	out := make([]Session, 0, len(values))
+	for _, value := range values {
+		if value.LaunchID == target {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func removePhaseLaunchID(values []string, target string) []string {

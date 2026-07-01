@@ -2,6 +2,11 @@ package flowstore
 
 import "strings"
 
+const (
+	PhaseResetReasonAwaitSession = "await-session"
+	PhaseResetReasonEndedSession = "ended-session"
+)
+
 // LatestPhaseSession returns the display/latest session for a phase. A session
 // attached to the latest non-empty launch ID wins; otherwise timestamps and
 // slice order provide deterministic legacy-record fallback.
@@ -48,6 +53,32 @@ func PhaseAwaitingSession(phase FlowPhase) bool {
 	return true
 }
 
+// RecoverableRunningPhaseResetReason reports whether a running phase can be
+// reset by wtui-owned stale-session recovery.
+func RecoverableRunningPhaseResetReason(phase FlowPhase) (string, bool) {
+	if phase.Status != PhaseRunning || PhaseSessionLaunchMismatch(phase) {
+		return "", false
+	}
+	latestLaunchID := LatestPhaseLaunchID(phase)
+	if latestLaunchID == "" {
+		return "", false
+	}
+	foundLatestSession := false
+	for _, session := range phase.Sessions {
+		if session.LaunchID != latestLaunchID {
+			continue
+		}
+		foundLatestSession = true
+		if !sessionEnded(session) {
+			return "", false
+		}
+	}
+	if !foundLatestSession {
+		return PhaseResetReasonAwaitSession, true
+	}
+	return PhaseResetReasonEndedSession, true
+}
+
 // PhaseSessionLaunchMismatch reports whether any attached session cannot be
 // matched back to one of the phase launch attempts.
 func PhaseSessionLaunchMismatch(phase FlowPhase) bool {
@@ -78,6 +109,10 @@ func LatestPhaseLaunchID(phase FlowPhase) string {
 		}
 	}
 	return ""
+}
+
+func sessionEnded(session Session) bool {
+	return strings.TrimSpace(session.Status) == "ended" || !session.EndedAt.IsZero()
 }
 
 func sessionNewer(a, b Session) bool {

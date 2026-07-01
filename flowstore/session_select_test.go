@@ -119,3 +119,97 @@ func TestLatestPhaseSessionDistinguishesMalformedLatestSession(t *testing.T) {
 		t.Fatalf("LatestPhaseSession(requireSessionID=true) = %#v, %v; want legacy usable fallback", session, ok)
 	}
 }
+
+func TestRecoverableRunningPhaseResetReasonClassifiesLatestLaunchOnly(t *testing.T) {
+	endedAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		phase flowstore.FlowPhase
+		want  string
+		ok    bool
+	}{
+		{
+			name: "latest launch without session awaits session capture",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-old", "launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"}},
+			},
+			want: "await-session",
+			ok:   true,
+		},
+		{
+			name: "latest launch with ended session",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-new", LaunchID: "launch-new", Status: "ended"}},
+			},
+			want: "ended-session",
+			ok:   true,
+		},
+		{
+			name: "latest launch with ended timestamp",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-new", LaunchID: "launch-new", EndedAt: endedAt}},
+			},
+			want: "ended-session",
+			ok:   true,
+		},
+		{
+			name: "latest launch with live session",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-new", LaunchID: "launch-new", Status: "running"}},
+			},
+		},
+		{
+			name: "latest launch with mixed ended and live sessions",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-ended", LaunchID: "launch-new", Status: "ended"},
+					{Provider: "claude", SessionID: "session-live", LaunchID: "launch-new"},
+				},
+			},
+		},
+		{
+			name: "older ended session does not classify newer live launch",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-old", "launch-new"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"},
+					{Provider: "claude", SessionID: "session-new", LaunchID: "launch-new"},
+				},
+			},
+		},
+		{
+			name: "session mismatch is not recoverable",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-stale", LaunchID: "launch-stale", Status: "ended"}},
+			},
+		},
+		{
+			name: "non-running phase is not recoverable",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseCompleted,
+				LaunchIDs: []string{"launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-new", LaunchID: "launch-new", Status: "ended"}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := flowstore.RecoverableRunningPhaseResetReason(tc.phase)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("RecoverableRunningPhaseResetReason() = %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
