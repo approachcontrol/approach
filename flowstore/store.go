@@ -143,6 +143,14 @@ type MergeUpdate struct {
 	MergedAt time.Time
 }
 
+// ManualMergeUpdate records metadata for a PR that was manually merged in GitHub.
+type ManualMergeUpdate struct {
+	FlowID   string
+	Commit   string
+	MergedAt time.Time
+	Summary  string
+}
+
 // Merge stores agent-reported merge metadata.
 type Merge struct {
 	Status   string     `json:"status,omitempty"`
@@ -678,6 +686,73 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 		record.UpdatedAt = now
 		return record, nil
 	})
+}
+
+// MarkManualMerge completes the merge phase and records verified GitHub merge
+// metadata for a PR that was merged outside wtui.
+func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	release, err := s.acquireFlowLock(update.FlowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	defer release()
+	record, ok := s.readRecord(update.FlowID)
+	if !ok {
+		return FlowRecord{}, flowNotFoundError(update.FlowID)
+	}
+	phaseIndex := phaseIndexByID(record.Phases, "merge")
+	if phaseIndex < 0 {
+		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
+	}
+	phase := record.Phases[phaseIndex]
+	merge, err := validateManualMergeUpdate(record, phase, update)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	if record.PR.Status == MergeMerged &&
+		phase.Status == PhaseCompleted &&
+		mergeEqual(record.Merge, merge) {
+		return record, nil
+	}
+
+	now := s.now()
+	summary := strings.TrimSpace(update.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
+	}
+	phase.Status = PhaseCompleted
+	phase.Outcome = MergeMerged
+	phase.Summary = summary
+	phase.PhaseID = "merge"
+	phase.UpdatedAt = now
+	record.Phases[phaseIndex] = phase
+	record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+	record.PR.Status = MergeMerged
+	record.Merge = merge
+	record.UpdatedAt = now
+	record = refreshPhaseReadiness(record, now)
+	record.Status = DeriveStatus(record)
+	if err := s.write(record); err != nil {
+		return FlowRecord{}, err
+	}
+	if err := s.syncLinkedPlanPhase(record, phase); err != nil {
+		failedPhase := markPhaseSyncNeedsAttention(phase, err, now)
+		if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
+			record.Phases[failedIndex] = failedPhase
+		}
+		record.Merge = Merge{Status: MergePending}
+		record.UpdatedAt = now
+		record = refreshPhaseReadiness(record, now)
+		record.Status = DeriveStatus(record)
+		if writeErr := s.write(record); writeErr != nil {
+			return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+		}
+		return FlowRecord{}, err
+	}
+	return record, nil
 }
 
 // SetAutoMode enables or disables TUI-owned automatic phase launching for one Flow.
@@ -1385,6 +1460,42 @@ func validateMergeUpdate(record FlowRecord, update MergeUpdate) (Merge, error) {
 	default:
 		return Merge{}, fmt.Errorf("invalid merge status %q", update.Status)
 	}
+}
+
+func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update ManualMergeUpdate) (Merge, error) {
+	if !HasPRTarget(record.PR) {
+		return Merge{}, fmt.Errorf("manual merge requires existing PR metadata")
+	}
+	commit := strings.TrimSpace(update.Commit)
+	if commit == "" {
+		return Merge{}, fmt.Errorf("manual merge requires merge commit")
+	}
+	if update.MergedAt.IsZero() {
+		return Merge{}, fmt.Errorf("manual merge requires merge timestamp")
+	}
+	if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
+		return Merge{}, fmt.Errorf("manual merge requires satisfied predecessors for %s", phase.PhaseID)
+	}
+	mergedAt := update.MergedAt.UTC()
+	merge := Merge{Status: MergeMerged, Commit: commit, MergedAt: &mergedAt}
+	switch phase.Status {
+	case PhaseReady, PhaseRunning:
+		if err := validatePhaseUpdate(phase, PhaseUpdate{
+			FlowID:  update.FlowID,
+			PhaseID: "merge",
+			Status:  PhaseCompleted,
+			Outcome: MergeMerged,
+		}); err != nil {
+			return Merge{}, err
+		}
+	case PhaseCompleted:
+		if record.Merge.Status == MergeMerged && !mergeEqual(record.Merge, merge) {
+			return Merge{}, fmt.Errorf("manual merge metadata differs from existing merge metadata")
+		}
+	default:
+		return Merge{}, fmt.Errorf("manual merge requires merge phase ready, running, or completed; merge is %s", phase.Status)
+	}
+	return merge, nil
 }
 
 func mergeEqual(left, right Merge) bool {

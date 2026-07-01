@@ -129,6 +129,12 @@ phase blocked → `blocked`; any phase needs_attention → `needs_attention`; al
 phases completed/skipped → `completed`; any phase started → `in_progress`;
 otherwise `pending`.
 
+The TUI can also record a manual GitHub merge for a Flow whose PR metadata is
+present and whose Merge phase is eligible. That operation verifies the PR is
+already merged in GitHub, completes the Merge phase, records structured merge
+metadata, and lets the derived Flow status become `merged` without launching a
+Merge phase agent.
+
 ## Linked plan sync
 
 When a Flow has a linked saved plan, transitioning a Flow phase to `completed`
@@ -139,6 +145,10 @@ transition, wtui marks the Flow phase `needs_attention` with a sync-failure note
 and returns the persistence error so the agent can report it. Repeating
 `completed` for an already-completed Flow phase preserves that completed state
 even if the linked-plan sync later fails.
+Manual GitHub merge recording is stricter: if syncing the linked plan's Merge
+phase fails while terminal merge metadata is being recorded, wtui clears that
+terminal metadata, marks the Merge phase `needs_attention`, and keeps the Flow
+recoverable instead of deriving it as `merged`.
 
 ## Compatibility and migration
 

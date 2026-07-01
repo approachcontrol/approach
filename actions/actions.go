@@ -35,6 +35,25 @@ type envVar struct {
 type lookPathFunc func(string) (string, error)
 type getenvFunc func(string) string
 
+// CommandRunner executes a command and returns stdout, stderr, and the command error.
+type CommandRunner interface {
+	Run(name string, args ...string) ([]byte, []byte, error)
+}
+
+type execCommandRunner struct{}
+
+func (execCommandRunner) Run(name string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.Command(name, args...)
+	stdout, err := cmd.Output()
+	if err == nil {
+		return stdout, nil, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return stdout, exitErr.Stderr, err
+	}
+	return stdout, nil, err
+}
+
 // BootstrapHook configures a script to run after a worktree is created.
 type BootstrapHook struct {
 	Script         string
@@ -67,6 +86,12 @@ type BootstrapContext struct {
 	WorktreePath string
 	Ref          string
 	Kind         WorktreeCreateKind
+}
+
+// PullRequestMerge is the verified GitHub merge metadata for a PR.
+type PullRequestMerge struct {
+	Commit   string
+	MergedAt time.Time
 }
 
 // RemoveWorktree runs `git worktree remove` for the given worktree path,
@@ -475,6 +500,57 @@ func NormalizePullRequestWorktreeRef(input string) (string, error) {
 		return "", err
 	}
 	return strconv.Itoa(pr.Number), nil
+}
+
+// LookupGitHubPRMerge returns verified merge metadata for a GitHub PR.
+func LookupGitHubPRMerge(number int, prURL string) (PullRequestMerge, error) {
+	return LookupGitHubPRMergeWithRunner(number, prURL, execCommandRunner{})
+}
+
+// LookupGitHubPRMergeWithRunner returns verified merge metadata using runner.
+func LookupGitHubPRMergeWithRunner(number int, prURL string, runner CommandRunner) (PullRequestMerge, error) {
+	if number <= 0 {
+		return PullRequestMerge{}, fmt.Errorf("PR number must be positive")
+	}
+	pr, err := parsePullRequestInput(prURL)
+	if err != nil || pr.Owner == "" || pr.Repo == "" {
+		return PullRequestMerge{}, fmt.Errorf("manual merge lookup requires GitHub PR URL with owner and repo")
+	}
+	if pr.Number != number {
+		return PullRequestMerge{}, fmt.Errorf("PR URL number %d must match PR number %d", pr.Number, number)
+	}
+	stdout, stderr, err := runner.Run("gh", "pr", "view", strconv.Itoa(number), "--repo", pr.Owner+"/"+pr.Repo, "--json", "state,mergedAt,mergeCommit")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return PullRequestMerge{}, fmt.Errorf("gh executable not found")
+		}
+		detail := strings.TrimSpace(string(stderr))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return PullRequestMerge{}, fmt.Errorf("gh pr view failed: %s", detail)
+	}
+	var parsed struct {
+		State       string `json:"state"`
+		MergedAt    string `json:"mergedAt"`
+		MergeCommit *struct {
+			OID string `json:"oid"`
+		} `json:"mergeCommit"`
+	}
+	if err := json.Unmarshal(stdout, &parsed); err != nil {
+		return PullRequestMerge{}, fmt.Errorf("parse gh PR JSON: %w", err)
+	}
+	if parsed.State != "MERGED" {
+		return PullRequestMerge{}, fmt.Errorf("GitHub PR #%d is %s, not MERGED", number, parsed.State)
+	}
+	if parsed.MergeCommit == nil || strings.TrimSpace(parsed.MergeCommit.OID) == "" {
+		return PullRequestMerge{}, fmt.Errorf("GitHub PR #%d is missing merge commit", number)
+	}
+	mergedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(parsed.MergedAt))
+	if err != nil {
+		return PullRequestMerge{}, fmt.Errorf("invalid mergedAt for GitHub PR #%d: %w", number, err)
+	}
+	return PullRequestMerge{Commit: strings.TrimSpace(parsed.MergeCommit.OID), MergedAt: mergedAt}, nil
 }
 
 // DefaultWorktreePath returns the conventional sibling path used for new

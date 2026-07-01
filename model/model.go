@@ -98,6 +98,8 @@ type Model struct {
 	startFlowPlan              func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase               func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode            func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	lookupPRMerge              func(int, string) (actions.PullRequestMerge, error)
+	markFlowManualMerge        func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID       func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase             func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                 func(string) error
@@ -183,6 +185,8 @@ type Options struct {
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	LookupPRMerge            func(int, string) (actions.PullRequestMerge, error)
+	MarkFlowManualMerge      func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase           func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow               func(flowID string) error
@@ -277,6 +281,21 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 				return flowstore.FlowRecord{}, err
 			}
 			return store.SetAutoMode(update)
+		}
+	}
+	lookupPRMerge := opts.LookupPRMerge
+	if lookupPRMerge == nil {
+		lookupPRMerge = actions.LookupGitHubPRMerge
+	}
+	markFlowManualMerge := opts.MarkFlowManualMerge
+	if markFlowManualMerge == nil {
+		root := opts.SessionStateRoot
+		markFlowManualMerge = func(update flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.MarkManualMerge(update)
 		}
 	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
@@ -436,6 +455,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
 		setFlowAutoMode:          setFlowAutoMode,
+		lookupPRMerge:            lookupPRMerge,
+		markFlowManualMerge:      markFlowManualMerge,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
 		resetFlowPhase:           resetFlowPhase,
 		deleteFlow:               deleteFlow,
@@ -682,103 +703,104 @@ func (m Model) View() string {
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
-		Repos:                       repos,
-		ActiveTerminalRepoPaths:     m.activeTerminalRepoPaths(),
-		Selected:                    selected,
-		Width:                       m.width,
-		Height:                      m.height,
-		Mode:                        m.mode,
-		ActiveFlows:                 m.activeFlowSurfaceVisible(),
-		Branches:                    rows,
-		Stashes:                     stashes,
-		BranchSelected:              branchSelected,
-		StashSelected:               stashSelected,
-		Overlay:                     m.overlayState(),
-		OverlayDiff:                 modalView.Diff,
-		OverlayScroll:               modalView.Scroll,
-		ConfirmPrompt:               modalView.Prompt,
-		ConfirmForce:                modalView.Force,
-		InputPrompt:                 modalView.Prompt,
-		InputPlaceholder:            modalView.Placeholder,
-		InputValue:                  modalView.Input,
-		InputError:                  modalView.InputErr,
-		InputMode:                   uiInputMode(modalView.InputMode),
-		InputHeight:                 modalView.InputHeight,
-		InputCursor:                 modalView.InputCursor,
-		WorktreeInputPrompt:         modalView.Prompt,
-		WorktreeInputPlaceholder:    modalView.Placeholder,
-		WorktreeInput:               modalView.Input,
-		WorktreeInputErr:            modalView.InputErr,
-		SelectPrompt:                modalView.Prompt,
-		SelectItems:                 uiSelectItems(modalView.SelectItems),
-		SelectSelected:              modalView.SelectIndex,
-		SelectWidth:                 modalView.SelectLayout.Width,
-		SelectHeight:                modalView.SelectLayout.Height,
-		SelectPlacement:             uiSelectPlacement(modalView.SelectLayout.Placement),
-		Form:                        uiFormView(modalView.Form),
-		BranchScroll:                branchScroll,
-		RepoScroll:                  repoScroll,
-		StashScroll:                 stashScroll,
-		ActivePane:                  m.activePane,
-		Destructive:                 m.destructive,
-		Worktrees:                   worktrees,
-		WorktreeSelected:            worktreeSelected,
-		WorktreeScroll:              worktreeScroll,
-		WorktreeSessions:            worktreeSessions,
-		WorktreeSessionSelected:     worktreeSessionSelected,
-		WorktreeSessionScroll:       worktreeSessionScroll,
-		InlineWorktreeSessions:      m.inlineWorktreeSessionPath != "",
-		Commits:                     commits,
-		CommitSelected:              commitSelected,
-		CommitScroll:                commitScroll,
-		Reflogs:                     reflogs,
-		ReflogSelected:              reflogSelected,
-		ReflogScroll:                reflogScroll,
-		Sessions:                    sessions,
-		SessionSelected:             sessionSelected,
-		SessionScroll:               sessionScroll,
-		EmbeddedTerminals:           m.embeddedTerminalTabs(),
-		EmbeddedTerminalLines:       m.embeddedTerminalLines(),
-		EmbeddedTerminalPrefix:      m.terminalPrefixActive,
-		Plans:                       plans,
-		PlanSelected:                planSelected,
-		PlanScroll:                  planScroll,
-		Flows:                       flows,
-		FlowSelected:                flowSelected,
-		FlowScroll:                  flowScroll,
-		FlowEmbeddedTerminals:       m.flowEmbeddedTerminalTabs(),
-		FlowEmbeddedTerminalLines:   m.flowEmbeddedTerminalLines(),
-		FlowEmbeddedTerminalPrefix:  m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
-		FlowTerminalActivity:        m.flowTerminalActivity(),
-		FlowTerminalFocused:         m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
-		ExpandedPlanID:              m.expandedPlanID,
-		ExpandedFlowID:              m.currentExpandedFlowID(),
-		SelectedPlanPhaseID:         m.selectedPlanPhaseID,
-		SelectedFlowPhaseID:         m.currentSelectedFlowPhaseID(),
-		FlowHeadless:                m.flowHeadless,
-		FlowAutoModeSelected:        flowAutoModeSelected,
-		FlowAgentLabel:              m.flowAgentShortcutLabel(),
-		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
-		DefaultViewLabel:            ViewChoiceLabel(m.defaultView),
-		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
-		FlowPhaseResetReadySelected: m.selectedFlowPhaseResettable(),
-		FlowPhaseResumableSelected:  m.selectedFlowPhaseResumable(),
-		OverlayText:                 modalView.Text,
-		TransientError:              m.visibleStatusText(),
-		TransientErrorFadeStep:      m.visibleStatusFadeStep(),
-		SearchActive:                m.searchActive,
-		RepoSearch:                  m.repos.Query(),
-		ItemSearch:                  m.activeItemPaneQuery(),
-		RepoEmptyMessage:            repoEmptyMessage,
-		RightEmptyMessage:           rightEmptyMessage,
-		FetchAvailable:              m.canFetch(),
-		FetchVisibleAvailable:       m.canFetchVisibleRepos(),
-		RepoCreateAvailable:         m.canCreateRepo(),
-		PullAvailable:               m.canPull(),
-		WorktreeMoveAvailable:       m.canMoveWorktree(),
-		WorktreeSessionsOpen:        m.inlineWorktreeSessionPath != "",
-		AgentAvailable:              m.canLaunchAgent(),
-		NewAgentAvailable:           m.canCreateAndLaunchAgent(),
+		Repos:                        repos,
+		ActiveTerminalRepoPaths:      m.activeTerminalRepoPaths(),
+		Selected:                     selected,
+		Width:                        m.width,
+		Height:                       m.height,
+		Mode:                         m.mode,
+		ActiveFlows:                  m.activeFlowSurfaceVisible(),
+		Branches:                     rows,
+		Stashes:                      stashes,
+		BranchSelected:               branchSelected,
+		StashSelected:                stashSelected,
+		Overlay:                      m.overlayState(),
+		OverlayDiff:                  modalView.Diff,
+		OverlayScroll:                modalView.Scroll,
+		ConfirmPrompt:                modalView.Prompt,
+		ConfirmForce:                 modalView.Force,
+		InputPrompt:                  modalView.Prompt,
+		InputPlaceholder:             modalView.Placeholder,
+		InputValue:                   modalView.Input,
+		InputError:                   modalView.InputErr,
+		InputMode:                    uiInputMode(modalView.InputMode),
+		InputHeight:                  modalView.InputHeight,
+		InputCursor:                  modalView.InputCursor,
+		WorktreeInputPrompt:          modalView.Prompt,
+		WorktreeInputPlaceholder:     modalView.Placeholder,
+		WorktreeInput:                modalView.Input,
+		WorktreeInputErr:             modalView.InputErr,
+		SelectPrompt:                 modalView.Prompt,
+		SelectItems:                  uiSelectItems(modalView.SelectItems),
+		SelectSelected:               modalView.SelectIndex,
+		SelectWidth:                  modalView.SelectLayout.Width,
+		SelectHeight:                 modalView.SelectLayout.Height,
+		SelectPlacement:              uiSelectPlacement(modalView.SelectLayout.Placement),
+		Form:                         uiFormView(modalView.Form),
+		BranchScroll:                 branchScroll,
+		RepoScroll:                   repoScroll,
+		StashScroll:                  stashScroll,
+		ActivePane:                   m.activePane,
+		Destructive:                  m.destructive,
+		Worktrees:                    worktrees,
+		WorktreeSelected:             worktreeSelected,
+		WorktreeScroll:               worktreeScroll,
+		WorktreeSessions:             worktreeSessions,
+		WorktreeSessionSelected:      worktreeSessionSelected,
+		WorktreeSessionScroll:        worktreeSessionScroll,
+		InlineWorktreeSessions:       m.inlineWorktreeSessionPath != "",
+		Commits:                      commits,
+		CommitSelected:               commitSelected,
+		CommitScroll:                 commitScroll,
+		Reflogs:                      reflogs,
+		ReflogSelected:               reflogSelected,
+		ReflogScroll:                 reflogScroll,
+		Sessions:                     sessions,
+		SessionSelected:              sessionSelected,
+		SessionScroll:                sessionScroll,
+		EmbeddedTerminals:            m.embeddedTerminalTabs(),
+		EmbeddedTerminalLines:        m.embeddedTerminalLines(),
+		EmbeddedTerminalPrefix:       m.terminalPrefixActive,
+		Plans:                        plans,
+		PlanSelected:                 planSelected,
+		PlanScroll:                   planScroll,
+		Flows:                        flows,
+		FlowSelected:                 flowSelected,
+		FlowScroll:                   flowScroll,
+		FlowEmbeddedTerminals:        m.flowEmbeddedTerminalTabs(),
+		FlowEmbeddedTerminalLines:    m.flowEmbeddedTerminalLines(),
+		FlowEmbeddedTerminalPrefix:   m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
+		FlowTerminalActivity:         m.flowTerminalActivity(),
+		FlowTerminalFocused:          m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
+		ExpandedPlanID:               m.expandedPlanID,
+		ExpandedFlowID:               m.currentExpandedFlowID(),
+		SelectedPlanPhaseID:          m.selectedPlanPhaseID,
+		SelectedFlowPhaseID:          m.currentSelectedFlowPhaseID(),
+		FlowHeadless:                 m.flowHeadless,
+		FlowAutoModeSelected:         flowAutoModeSelected,
+		FlowAgentLabel:               m.flowAgentShortcutLabel(),
+		FlowReasoningEffort:          m.flowReasoningEffortLabel(),
+		DefaultViewLabel:             ViewChoiceLabel(m.defaultView),
+		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
+		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
+		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
+		FlowPhaseResumableSelected:   m.selectedFlowPhaseResumable(),
+		OverlayText:                  modalView.Text,
+		TransientError:               m.visibleStatusText(),
+		TransientErrorFadeStep:       m.visibleStatusFadeStep(),
+		SearchActive:                 m.searchActive,
+		RepoSearch:                   m.repos.Query(),
+		ItemSearch:                   m.activeItemPaneQuery(),
+		RepoEmptyMessage:             repoEmptyMessage,
+		RightEmptyMessage:            rightEmptyMessage,
+		FetchAvailable:               m.canFetch(),
+		FetchVisibleAvailable:        m.canFetchVisibleRepos(),
+		RepoCreateAvailable:          m.canCreateRepo(),
+		PullAvailable:                m.canPull(),
+		WorktreeMoveAvailable:        m.canMoveWorktree(),
+		WorktreeSessionsOpen:         m.inlineWorktreeSessionPath != "",
+		AgentAvailable:               m.canLaunchAgent(),
+		NewAgentAvailable:            m.canCreateAndLaunchAgent(),
 	})
 }
 
@@ -1162,6 +1184,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:
 		return m.handleFlowAutoModeSetFailed(msg), nil
+	case FlowManualMergeSetMsg:
+		return m.handleFlowManualMergeSet(msg), nil
+	case FlowManualMergeSetFailedMsg:
+		return m.handleFlowManualMergeSetFailed(msg), nil
 	case flowPhaseResetConfirmedMsg:
 		return m.handleFlowPhaseResetConfirmed(msg)
 	case flowPhaseResetMsg:
@@ -1453,6 +1479,11 @@ func (m Model) selectedFlowPhaseResumable() bool {
 func (m Model) selectedFlowHasLaunchablePhase() bool {
 	_, _, ok := m.selectedFlowNextLaunchablePhase()
 	return ok
+}
+
+func (m Model) selectedFlowManualMergeReady() bool {
+	record, _, ok := m.selectedManualMergeFlow()
+	return ok && flowManualMergeEligible(record)
 }
 
 func (m Model) selectedFlowPhaseResettable() bool {

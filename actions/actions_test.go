@@ -1,15 +1,34 @@
 package actions_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brian-bell/wtui/actions"
 )
+
+var errFakeCommand = errors.New("fake command failed")
+
+type fakeCommandRunner struct {
+	name   string
+	args   []string
+	stdout []byte
+	stderr []byte
+	err    error
+}
+
+func (r *fakeCommandRunner) Run(name string, args ...string) ([]byte, []byte, error) {
+	r.name = name
+	r.args = append([]string(nil), args...)
+	return r.stdout, r.stderr, r.err
+}
 
 func mustRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -907,6 +926,104 @@ func TestCreatePullRequestWorktree_FromGitHubURL(t *testing.T) {
 	}
 	if got := runOutput(t, worktreePath, "git", "rev-parse", "HEAD"); got != wantHead {
 		t.Fatalf("expected worktree HEAD %s, got %s", wantHead, got)
+	}
+}
+
+func TestLookupGitHubPRMergeWithRunnerReturnsMergedMetadata(t *testing.T) {
+	runner := &fakeCommandRunner{
+		stdout: []byte(`{"state":"MERGED","mergedAt":"2026-06-08T15:04:05Z","mergeCommit":{"oid":"0123456789abcdef"}}`),
+	}
+
+	result, err := actions.LookupGitHubPRMergeWithRunner(123, "https://github.com/acme/project/pull/123", runner)
+	if err != nil {
+		t.Fatalf("LookupGitHubPRMergeWithRunner() error = %v", err)
+	}
+
+	if result.Commit != "0123456789abcdef" {
+		t.Fatalf("Commit = %q, want merge commit oid", result.Commit)
+	}
+	if want := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC); !result.MergedAt.Equal(want) {
+		t.Fatalf("MergedAt = %s, want %s", result.MergedAt, want)
+	}
+	if runner.name != "gh" {
+		t.Fatalf("runner command = %q, want gh", runner.name)
+	}
+	wantArgs := []string{"pr", "view", "123", "--repo", "acme/project", "--json", "state,mergedAt,mergeCommit"}
+	if !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner args = %#v, want %#v", runner.args, wantArgs)
+	}
+}
+
+func TestLookupGitHubPRMergeWithRunnerValidatesGitHubResult(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		number int
+		url    string
+		stdout string
+		stderr string
+		err    error
+		want   string
+	}{
+		{
+			name:   "open PR",
+			number: 123,
+			url:    "https://github.com/acme/project/pull/123",
+			stdout: `{"state":"OPEN","mergedAt":null,"mergeCommit":null}`,
+			want:   "is OPEN, not MERGED",
+		},
+		{
+			name:   "missing merge commit",
+			number: 123,
+			url:    "https://github.com/acme/project/pull/123",
+			stdout: `{"state":"MERGED","mergedAt":"2026-06-08T15:04:05Z","mergeCommit":null}`,
+			want:   "missing merge commit",
+		},
+		{
+			name:   "bad timestamp",
+			number: 123,
+			url:    "https://github.com/acme/project/pull/123",
+			stdout: `{"state":"MERGED","mergedAt":"not-time","mergeCommit":{"oid":"abc123"}}`,
+			want:   "invalid mergedAt",
+		},
+		{
+			name:   "malformed JSON",
+			number: 123,
+			url:    "https://github.com/acme/project/pull/123",
+			stdout: `not json`,
+			want:   "parse gh PR JSON",
+		},
+		{
+			name:   "URL without repo",
+			number: 123,
+			url:    "123",
+			want:   "requires GitHub PR URL with owner and repo",
+		},
+		{
+			name:   "command failure",
+			number: 123,
+			url:    "https://github.com/acme/project/pull/123",
+			stderr: "authentication required",
+			err:    errFakeCommand,
+			want:   "authentication required",
+		},
+		{
+			name:   "command not found",
+			number: 123,
+			url:    "https://github.com/acme/project/pull/123",
+			err:    exec.ErrNotFound,
+			want:   "gh executable not found",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := actions.LookupGitHubPRMergeWithRunner(tc.number, tc.url, &fakeCommandRunner{
+				stdout: []byte(tc.stdout),
+				stderr: []byte(tc.stderr),
+				err:    tc.err,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LookupGitHubPRMergeWithRunner() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
