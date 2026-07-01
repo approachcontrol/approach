@@ -3907,13 +3907,33 @@ func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
 		t.Fatalf("blank Flow ID returned copy command %T, want nil", cmd)
 	}
+
+	m = enterActiveFlowsWithRecords(t, m, nil)
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+		t.Fatalf("empty active Flow pane returned copy command %T, want nil", cmd)
+	}
+
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{{
+		FlowID: "  ",
+		Title:  "Blank active Flow ID",
+		Status: flowstore.StatusInProgress,
+	}})
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+		t.Fatalf("blank active Flow ID returned copy command %T, want nil", cmd)
+	}
 	if copied {
 		t.Fatal("blank Flow ID should not copy to clipboard")
 	}
 }
 
 func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
-	m := model.New(testRepos())
+	var opened []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		OpenCode: func(path string) error {
+			opened = append(opened, path)
+			return nil
+		},
+	})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{
@@ -3926,6 +3946,11 @@ func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
 
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd == nil {
 		t.Fatal("expected non-flow c key to keep open-code command path")
+	} else {
+		_ = cmd()
+	}
+	if got := opened; !slices.Equal(got, []string{"/dev/alpha"}) {
+		t.Fatalf("opened code paths = %#v, want /dev/alpha", got)
 	}
 }
 

@@ -2228,7 +2228,7 @@ func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleOpenCode() (tea.Model, tea.Cmd) {
-	return m.openAtPath(actions.OpenVSCode)
+	return m.openAtPath(m.openCode)
 }
 
 func (m Model) pageBody(body string) (Model, tea.Cmd) {

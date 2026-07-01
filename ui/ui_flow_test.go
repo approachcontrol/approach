@@ -771,6 +771,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"enter  phases",
 		"g      launch next",
 		"o      open",
+		"c      copy id",
 		"y      copy path",
 		"d      delete",
 		"h      headless on",
@@ -834,6 +835,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		"enter  phases",
 		"g      launch next",
 		"o      open",
+		"c      copy id",
 		"y      copy path",
 		"h      headless on",
 		"m      auto: on",
@@ -940,6 +942,35 @@ func TestStatusBar_FlowsModeShowsFlowIDCopyHintWithoutWorktreePath(t *testing.T)
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("selected flow without worktree path should not include %q, got %q", notWant, bar)
 		}
+	}
+}
+
+func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: 1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Compact selected flow",
+			Status: flowstore.StatusInProgress,
+		}},
+		FlowSelected:         0,
+		FlowHeadless:         true,
+		FlowAutoModeSelected: true,
+	})
+
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"enter  phases", "c      copy id", "h      headless on"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("compact selected Flow pane missing %q:\n%s", want, pane)
+		}
+	}
+	if strings.Contains(pane, "n      new flow") {
+		t.Fatalf("compact selected Flow pane should prioritize selected-flow actions over new-flow shortcut:\n%s", pane)
 	}
 }
 
