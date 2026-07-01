@@ -2862,6 +2862,9 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); ok {
 		return reason
 	}
+	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
+		return flowstore.PhaseResetReasonAwaitSession
+	}
 	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseLatestLaunchEnded(phase) {
 		return flowstore.PhaseResetReasonEndedSession
 	}

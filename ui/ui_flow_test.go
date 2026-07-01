@@ -2125,6 +2125,39 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSes
 	}
 }
 
+func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLiveSession(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Await latest session with live older session",
+			Status:       flowstore.StatusInProgress,
+			Branch:       "flow/await-session",
+			WorktreePath: "/dev/wtui-worktrees/flow-await-session",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-old", "launch-new"},
+				Sessions: []flowstore.Session{
+					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+				},
+			}},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	if !strings.Contains(view, "implementation:await-session") {
+		t.Fatalf("running phase awaiting latest session should render await-session:\n%s", view)
+	}
+}
+
 func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
