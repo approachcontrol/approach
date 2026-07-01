@@ -3809,11 +3809,19 @@ func TestModel_PKeyOpensSelectedFlowPullRequest(t *testing.T) {
 	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 0 || m.SelectedFlowPhaseID() != "" || m.Overlay() != ui.OverlayNone {
 		t.Fatalf("p changed Flow selection state: mode=%v selected=%d phase=%q overlay=%v", m.Mode(), m.FlowSelected(), m.SelectedFlowPhaseID(), m.Overlay())
 	}
-	if msg := cmd(); msg != (model.OpenURLResultMsg{}) {
-		t.Fatalf("open PR command returned %#v, want empty OpenURLResultMsg", msg)
+	msg, ok := cmd().(model.OpenURLResultMsg)
+	if !ok {
+		t.Fatalf("open PR command returned %T, want OpenURLResultMsg", msg)
+	}
+	if msg.Err != "" || msg.Label != "Opened PR #123 in browser" {
+		t.Fatalf("open PR command returned %#v, want success label", msg)
 	}
 	if got := opened; !slices.Equal(got, []string{prURL}) {
 		t.Fatalf("opened URLs = %#v, want %q", got, prURL)
+	}
+	m, _ = update(m, msg)
+	if got := m.TransientError(); got != "Opened PR #123 in browser" {
+		t.Fatalf("status = %q, want PR open success", got)
 	}
 }
 
@@ -3832,11 +3840,61 @@ func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("p on selected Active Flow with PR target should return open command")
 	}
-	if msg := cmd(); msg != (model.OpenURLResultMsg{}) {
-		t.Fatalf("open active Flow PR command returned %#v, want empty OpenURLResultMsg", msg)
+	msg, ok := cmd().(model.OpenURLResultMsg)
+	if !ok {
+		t.Fatalf("open active Flow PR command returned %T, want OpenURLResultMsg", msg)
+	}
+	if msg.Err != "" || msg.Label != "Opened PR #123 in browser" {
+		t.Fatalf("open active Flow PR command returned %#v, want success label", msg)
 	}
 	if got := opened; !slices.Equal(got, []string{prURL}) {
 		t.Fatalf("opened URLs = %#v, want %q", got, prURL)
+	}
+}
+
+func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
+	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	m := model.NewWithOptions(testRepos(), model.Options{
+		OpenURL: func(string) error {
+			return errors.New("browser unavailable")
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPullRequestTarget("flow-1", prURL)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd == nil {
+		t.Fatal("p on selected Flow with PR target should return open command")
+	}
+	msg, ok := cmd().(model.OpenURLResultMsg)
+	if !ok {
+		t.Fatalf("open PR command returned %T, want OpenURLResultMsg", msg)
+	}
+	if msg.Err != "browser unavailable" {
+		t.Fatalf("open PR command error = %q, want browser unavailable", msg.Err)
+	}
+	m, _ = update(m, msg)
+	if got := m.TransientError(); got != "browser unavailable" {
+		t.Fatalf("status = %q, want browser failure", got)
+	}
+}
+
+func TestModel_UppercasePDoesNotOpenSelectedFlowPullRequest(t *testing.T) {
+	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	var opened []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		OpenURL: func(url string) error {
+			opened = append(opened, url)
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPullRequestTarget("flow-1", prURL)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}})
+	if cmd != nil {
+		t.Fatalf("uppercase P on selected Flow with PR target returned command %T, want nil", cmd)
+	}
+	if len(opened) != 0 {
+		t.Fatalf("opened URLs = %#v, want none", opened)
 	}
 }
 
@@ -3845,6 +3903,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 	valid := flowWithPullRequestTarget("flow-1", prURL)
 	incomplete := valid
 	incomplete.PR.BaseBranch = ""
+	var terminalInputTerm *fakeEmbeddedTerminal
 
 	tests := []struct {
 		name  string
@@ -3926,6 +3985,41 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 				m, _ = update(m, cmd())
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 				return m
+			},
+		},
+		{
+			name: "Flow terminal input forwards p",
+			setup: func(t *testing.T, openURL func(string) error) model.Model {
+				fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+				terminalInputTerm = fakeTerm
+				m := model.NewWithOptions(testRepos(), model.Options{
+					AgentCommand: "codex",
+					OpenURL:      openURL,
+					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+						return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+					},
+					StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+						return fakeTerm, nil
+					},
+				})
+				m = flowsInRightPane(t, m, []flowstore.FlowRecord{valid})
+				m = selectFlowPhaseByID(t, m, "implementation")
+				m, cmd := update(m, flowLaunchKey())
+				if cmd == nil {
+					t.Fatal("g should prepare an embedded Flow launch")
+				}
+				m, _ = update(m, cmd())
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+				return m
+			},
+			check: func(t *testing.T, m model.Model) {
+				if terminalInputTerm == nil {
+					t.Fatal("terminal input test did not capture fake terminal")
+				}
+				if !slices.Equal(terminalInputTerm.writes, []string{"p"}) {
+					t.Fatalf("terminal input writes = %#v, want p", terminalInputTerm.writes)
+				}
 			},
 		},
 		{

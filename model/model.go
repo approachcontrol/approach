@@ -675,7 +675,7 @@ func (m Model) View() string {
 	if flowSelected >= 0 && flowSelected < len(flows) {
 		flowAutoModeSelected = flows[flowSelected].AutoMode
 	}
-	_, flowPRTargetSelected := m.selectedFlowPRURL()
+	_, flowPRTargetSelected := m.selectedFlowPR()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
 	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows))
 	if len(repos) == 0 {
@@ -1197,6 +1197,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case OpenURLResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)
+		} else if msg.Label != "" {
+			m = m.setStatus(statusOther, msg.Label)
 		}
 		return m, nil
 	case TerminalResultMsg:
@@ -1394,18 +1396,18 @@ func (m Model) selectedFlowID() string {
 	return record.FlowID
 }
 
-func (m Model) selectedFlowPRURL() (string, bool) {
+func (m Model) selectedFlowPR() (flowstore.PullRequest, bool) {
 	if !m.flowSurfaceVisible() {
-		return "", false
+		return flowstore.PullRequest{}, false
 	}
 	if _, ok := m.selectedFlowPhase(); ok {
-		return "", false
+		return flowstore.PullRequest{}, false
 	}
 	record, ok := m.selectedFlow()
 	if !ok || !flowstore.HasPRTarget(record.PR) {
-		return "", false
+		return flowstore.PullRequest{}, false
 	}
-	return record.PR.URL, true
+	return record.PR, true
 }
 
 func (m Model) selectedPlanID() string {
