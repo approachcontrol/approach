@@ -643,6 +643,55 @@ func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testi
 	}
 }
 
+func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *testing.T) {
+	completedBaseline := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhasePending,
+	})
+	rerunRunning := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	rerunCompleted := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		StartupMode:  ui.ModeActiveFlows,
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return rerunCompleted, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{completedBaseline}
+
+	m, _ = updateFlowRefreshTest(m, ActiveFlowResultMsg{
+		Flows:       []flowstore.FlowRecord{rerunRunning},
+		ListRequest: m.ListRequest(ui.ModeActiveFlows),
+	})
+	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want display rerun running baseline", m.autoAdvanceSnapshot)
+	}
+
+	m.autoAdvanceInFlight = 1
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{
+		Flows:   []flowstore.FlowRecord{rerunCompleted},
+		Request: 1,
+	})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowID != "flow-1" || launch.LaunchContext.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch context = %#v, want implementation after rerun", launch.LaunchContext)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates = %#v, want implementation auto launch after rerun", updates)
+	}
+}
+
 func TestModel_AutoAdvanceRequiresCompletionEdgeAndAutoMode(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,

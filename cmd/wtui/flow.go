@@ -63,6 +63,7 @@ Commands:
   phase needs-attention
                    Mark a Flow phase as needing attention.
   phase restart    Restart a blocked or needs-attention phase.
+  phase reset      Recover a stale running phase back to ready.
   phase set        Advance a Flow phase with explicit status.
   phase add-child  Add or update an implementation child phase.
   plan set         Link a saved plan artifact to a Flow.
@@ -77,6 +78,7 @@ Examples:
   wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
   wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --notes "Revise scope"
   wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
   wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
@@ -291,7 +293,7 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow phase <set|complete|block|needs-attention|restart|add-child> [flags]")
+		return fmt.Errorf("usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]")
 	}
 	switch args[0] {
 	case "set":
@@ -319,10 +321,12 @@ func runFlowPhase(args []string, deps runDeps) error {
 		})
 	case "restart":
 		return runFlowPhaseRestart(args[1:], deps)
+	case "reset":
+		return runFlowPhaseReset(args[1:], deps)
 	case "add-child":
 		return runFlowPhaseAddChild(args[1:], deps)
 	default:
-		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "restart", "add-child"}, flowPhaseHelpText)
+		return unknownCommandError(args[0], []string{"set", "complete", "block", "needs-attention", "restart", "reset", "add-child"}, flowPhaseHelpText)
 	}
 }
 
@@ -330,7 +334,7 @@ func printFlowPhaseHelp(w io.Writer) {
 	io.WriteString(w, flowPhaseHelpText)
 }
 
-const flowPhaseHelpText = `Usage: wtui flow phase <set|complete|block|needs-attention|restart|add-child> [flags]
+const flowPhaseHelpText = `Usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]
 
 Update Flow phase state. Readiness is derived by wtui; agents set running,
 completed, needs_attention, blocked, or skipped.
@@ -341,6 +345,7 @@ Commands:
   block            Mark a phase blocked.
   needs-attention  Mark a phase as needing attention.
   restart          Restart a blocked or needs-attention phase.
+  reset            Recover a stale running phase back to ready.
   add-child        Add or update an implementation child phase.
 
 Examples:
@@ -350,6 +355,7 @@ Examples:
   wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
   wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
   wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
   wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
 
@@ -574,6 +580,49 @@ func runFlowPhaseRestart(args []string, deps runDeps) error {
 	})
 }
 
+func runFlowPhaseReset(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow phase reset", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowPhaseResetHelp(deps.stdout) }
+	flowID := flags.String("flow-id", "", "flow id")
+	phaseID := flags.String("phase-id", "", "phase id")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow phase reset requires --flow-id")
+	}
+	if *phaseID == "" {
+		return fmt.Errorf("flow phase reset requires --phase-id")
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{
+		FlowID:  *flowID,
+		PhaseID: *phaseID,
+	})
+	if err != nil {
+		return err
+	}
+	updated, ok := flowPhaseByID(record, *phaseID)
+	if !ok {
+		return fmt.Errorf("phase %q not found in updated flow %q", *phaseID, *flowID)
+	}
+	return writeFlowJSON(deps.stdout, flowPhaseActionResult{
+		FlowID:       record.FlowID,
+		FlowStatus:   record.Status,
+		UpdatedPhase: updated,
+		NextPhase:    nextFlowPhaseActionState(record, updated),
+		Flow:         record,
+	})
+}
+
 func defaultPhaseTitle(phaseID string) string {
 	normalized := normalizeFlowPhaseID(phaseID)
 	if normalized == "" {
@@ -673,6 +722,24 @@ Common flags:
 Examples:
   wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
   wtui flow phase restart --flow-id "$FLOW_ID" --phase-id implementation --notes "Rerunning after fixing review findings."
+`)
+}
+
+func printFlowPhaseResetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow phase reset [flags]
+
+Recover a stale running Flow phase back to ready and print the next actionable
+phase state. wtui derives ready after removing the latest stale launch.
+
+Required flags:
+  --flow-id FLOW_ID
+  --phase-id PHASE_ID
+
+Common flags:
+  --state-root PATH
+
+Examples:
+  wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
 `)
 }
 

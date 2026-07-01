@@ -74,7 +74,9 @@ Plan Review outcome such as `approved_with_concerns`. For Autoreview, the
 wrappers fill `complete` => `passed`, `needs-attention` =>
 `needs_attention`, and `block` => `blocked`. Use `wtui flow phase restart`
 for reruns, and use the lower-level `wtui flow phase set` command for
-`skipped` or other explicit status updates.
+`skipped` or other explicit status updates. `wtui flow phase reset` is a
+wtui-owned stale running recovery command for `await-session` or
+`ended-session`; do not use it to report normal agent progress.
 
 ## Persistence Failures
 
@@ -84,7 +86,7 @@ progression. Do not say a phase advanced, a plan was saved, a PR was recorded,
 or a merge was recorded unless the corresponding command succeeded.
 
 The current Flow CLI exposes `create`, `list`, `read`, `phase complete`,
-`phase block`, `phase needs-attention`, `phase restart`, `phase set`,
+`phase block`, `phase needs-attention`, `phase restart`, `phase reset`, `phase set`,
 `phase add-child`,
 `plan set`, `issue set`, `pr set`, and `merge set`. Record merge metadata with
 `wtui flow merge set`; do not claim a merge was recorded unless that structured

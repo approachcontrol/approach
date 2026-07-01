@@ -2859,8 +2859,14 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if flowPhaseSessionMismatch(phase) {
 		return "session-mismatch"
 	}
-	if phase.Status == flowstore.PhaseRunning && flowPhaseAwaitingSession(phase) {
-		return "await-session"
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); ok {
+		return reason
+	}
+	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
+		return flowstore.PhaseResetReasonAwaitSession
+	}
+	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseLatestLaunchEnded(phase) {
+		return flowstore.PhaseResetReasonEndedSession
 	}
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
 		return "missing-session-id"

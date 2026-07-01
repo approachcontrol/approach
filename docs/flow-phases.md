@@ -41,8 +41,10 @@ Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
 `wtui flow phase complete`, `wtui flow phase block`, and
 `wtui flow phase needs-attention` use the same validation and persistence path
 for the common `completed`, `blocked`, and `needs_attention` outcomes. The
-`wtui flow phase restart` wrapper records `running` with a rerun note. These
-wrappers print JSON with the updated phase and next actionable phase state.
+`wtui flow phase restart` wrapper records `running` with a rerun note.
+`wtui flow phase reset` is a wtui-owned recovery operation for stale running
+phases, not an agent-facing transition. These wrappers print JSON with the
+updated phase and next actionable phase state.
 They do not add separate notes requirements; store validation remains the
 source of truth. Setting `ready` is rejected with "readiness is derived"; the
 CLI rejects unknown statuses with the valid list, and the store rejects them as
@@ -78,16 +80,21 @@ Additional rules:
   `codex-app` resume deep links are untracked app navigation because they cannot
   carry wtui launch metadata. Reopening a finished phase deliberately remains
   `wtui flow phase restart`.
-- The TUI can also recover a selected `await-session` phase after confirmation
-  by removing the newest orphan launch attempt and re-deriving readiness. This
-  is a UI-owned recovery mutation, not an agent-settable transition, and it is
-  unavailable while a running or starting embedded Flow terminal is attached to
-  the same Flow phase.
+- The TUI and `wtui flow phase reset` can recover selected stale `running`
+  phases after confirmation or command invocation. `await-session` means the
+  latest launch has no attached session record. `ended-session` means every
+  session attached to the latest launch has `status: ended` or a non-zero
+  `ended_at`. The reset removes the newest stale launch attempt, removes
+  sessions tied to that launch, persists the phase as `pending`, and re-derives
+  readiness. Any non-ended attached session on the merged logical phase,
+  session launch mismatches, and unsatisfied predecessor gates are rejected.
+  The TUI reset is unavailable while a running or starting embedded Flow
+  terminal is attached to the same Flow phase.
 
 ## Derived readiness
 
 The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetPR`,
-`AddPhaseLaunchID`, and `ResetAwaitingSessionPhase`) re-derive readiness with
+`AddPhaseLaunchID`, and `ResetRecoverableRunningPhase`) re-derive readiness with
 `refreshPhaseReadiness`, regardless of graph shape. Loads and the remaining
 mutations normalize only records containing a `plan-review` phase — the
 standard graph; hand-authored records without one keep their stored statuses
@@ -161,7 +168,7 @@ previous PR status, clears that terminal metadata, marks the Merge phase
   migration.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
-  `ResetAwaitingSessionPhase`) re-derive readiness for any graph, and records
+  `ResetRecoverableRunningPhase`) re-derive readiness for any graph, and records
   containing a `plan-review` phase (the standard graph) are additionally
   normalized on load, so records written before a gate rule existed converge to
   correct `pending`/`ready` values. Records without a `plan-review` phase keep
@@ -173,14 +180,18 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 
 The flows pane renders the persisted status, or the phase outcome when one is
 recorded (for example `plan-review:approved`). Recovery labels for partial
-states (`recover-worktree`, `await-session`, `session-mismatch`,
-`missing-session-id`, `missing-pr`) are layered on top, rendered prefixed
+states (`recover-worktree`, `await-session`, `ended-session`,
+`session-mismatch`, `missing-session-id`, `missing-pr`) are layered on top, rendered prefixed
 with the phase ID like any phase state (for example `autoreview:missing-pr`),
 and are display-only; they never change persisted phase status. See
 `docs/config.md` for the pane behavior.
 
-When `await-session` is caused by an orphaned latest launch and predecessor
-gates still hold, the selected phase row can be reset with `x` after
-confirmation. The reset removes that orphan launch, persists the phase as
-`pending`, then lets derived readiness promote it to `ready`; if readiness
-cannot be derived, the mutation is rejected and the record is left unchanged.
+When `await-session` or `ended-session` is recoverable and predecessor gates
+still hold, the selected phase row can be reset with `x` after confirmation or
+with `wtui flow phase reset`. The reset removes the stale latest launch and
+matching latest-launch sessions, persists the phase as `pending`, then lets
+derived readiness promote it to `ready`; if readiness cannot be derived, the
+mutation is rejected and the record is left unchanged. Preserved attached
+session history on the merged logical phase must already be ended; any live or
+unknown-status session must finish before reset is allowed. Session mismatches
+are higher priority than `ended-session` and must be resolved instead of reset.

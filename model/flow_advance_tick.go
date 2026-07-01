@@ -184,26 +184,52 @@ func (m Model) handleAutoAdvanceStatusExpired(msg AutoAdvanceStatusExpiredMsg) M
 
 func (m Model) seedAutoAdvanceSnapshot(flows []flowstore.FlowRecord) Model {
 	if len(m.autoAdvanceSnapshot) != 0 {
-		seen := make(map[string]struct{}, len(m.autoAdvanceSnapshot))
-		for _, record := range m.autoAdvanceSnapshot {
+		seen := make(map[string]int, len(m.autoAdvanceSnapshot))
+		for i, record := range m.autoAdvanceSnapshot {
 			if record.FlowID != "" {
-				seen[record.FlowID] = struct{}{}
+				seen[record.FlowID] = i
 			}
 		}
 		for _, record := range flows {
 			if record.FlowID == "" {
 				continue
 			}
-			if _, ok := seen[record.FlowID]; ok {
+			if i, ok := seen[record.FlowID]; ok {
+				if autoAdvanceDisplayRecordRefreshesBaseline(m.autoAdvanceSnapshot[i], record) {
+					m.autoAdvanceSnapshot[i] = cloneFlowRecord(record)
+				}
 				continue
 			}
 			m.autoAdvanceSnapshot = append(m.autoAdvanceSnapshot, cloneFlowRecord(record))
-			seen[record.FlowID] = struct{}{}
+			seen[record.FlowID] = len(m.autoAdvanceSnapshot) - 1
 		}
 		return m
 	}
 	m.autoAdvanceSnapshot = cloneFlowRecords(flows)
 	return m
+}
+
+func autoAdvanceDisplayRecordRefreshesBaseline(previous, current flowstore.FlowRecord) bool {
+	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
+	for _, phase := range previous.Phases {
+		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
+			previousByPhaseID[phaseID] = phase
+		}
+	}
+	for _, phase := range current.Phases {
+		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+		if phaseID == "" || phase.Status != flowstore.PhaseRunning {
+			continue
+		}
+		previousPhase, ok := previousByPhaseID[phaseID]
+		if !ok {
+			continue
+		}
+		if previousPhase.Status == flowstore.PhaseCompleted || previousPhase.Status == flowstore.PhaseSkipped {
+			return true
+		}
+	}
+	return false
 }
 
 func autoAdvanceStatusEvents(previous []flowstore.FlowRecord, launched []autoAdvanceLaunchedPhase, current []flowstore.FlowRecord) []string {
