@@ -371,6 +371,69 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 	}
 }
 
+func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	failLaunchUpdate := true
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			if failLaunchUpdate {
+				return flowstore.FlowRecord{}, errors.New("store unavailable")
+			}
+			updates = append(updates, update)
+			return current, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+	m.autoAdvanceInFlight = 1
+
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	if cmd == nil {
+		t.Fatal("auto-advance should queue launch command before async failure")
+	}
+	failed := false
+	raw := cmd()
+	if batch, ok := raw.(tea.BatchMsg); ok {
+		for _, subcmd := range batch {
+			if msg, ok := subcmd().(ActionFailedMsg); ok {
+				failed = true
+				m, _ = updateFlowRefreshTest(m, msg)
+				break
+			}
+		}
+	} else if msg, ok := raw.(ActionFailedMsg); ok {
+		failed = true
+		m, _ = updateFlowRefreshTest(m, msg)
+	}
+	if !failed {
+		t.Fatal("queued auto-advance command should report ActionFailedMsg")
+	}
+	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want previous running edge restored", m.autoAdvanceSnapshot)
+	}
+
+	failLaunchUpdate = false
+	m.autoAdvanceInFlight = 2
+	m, cmd = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates after async failure = %#v, want retried implementation auto launch", updates)
+	}
+}
+
 func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
 	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,

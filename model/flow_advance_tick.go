@@ -143,6 +143,21 @@ func autoAdvanceSnapshotAfterResult(previous, current []flowstore.FlowRecord, re
 	return snapshot
 }
 
+func (m Model) restoreAutoAdvanceRetrySnapshot(record flowstore.FlowRecord) Model {
+	if record.FlowID == "" {
+		return m
+	}
+	prior := cloneFlowRecord(record)
+	for i, current := range m.autoAdvanceSnapshot {
+		if current.FlowID == record.FlowID {
+			m.autoAdvanceSnapshot[i] = prior
+			return m
+		}
+	}
+	m.autoAdvanceSnapshot = append(m.autoAdvanceSnapshot, prior)
+	return m
+}
+
 func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -238,13 +253,19 @@ func flowTitleForStatus(record flowstore.FlowRecord) string {
 	return title
 }
 
+func cloneFlowRecord(record flowstore.FlowRecord) flowstore.FlowRecord {
+	out := record
+	out.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	return out
+}
+
 func cloneFlowRecords(records []flowstore.FlowRecord) []flowstore.FlowRecord {
 	if len(records) == 0 {
 		return nil
 	}
 	out := append([]flowstore.FlowRecord(nil), records...)
 	for i := range out {
-		out[i].Phases = append([]flowstore.FlowPhase(nil), out[i].Phases...)
+		out[i] = cloneFlowRecord(out[i])
 	}
 	return out
 }
