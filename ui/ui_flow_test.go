@@ -696,10 +696,13 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 	if strings.Contains(bar, "n: new flow") {
 		t.Fatalf("active Flow status bar should not expose new flow, got %q", bar)
 	}
-	for _, want := range []string{"enter: phases", "g: launch next", "h: headless on", "o: open", "y: copy path"} {
+	for _, want := range []string{"enter: phases", "g: launch next", "h: headless on", "o: open", "c: copy id", "y: copy path"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("active Flow status bar missing %q, got %q", want, bar)
 		}
+	}
+	if strings.Contains(bar, "c: code") {
+		t.Fatalf("active Flow status bar should not expose c: code, got %q", bar)
 	}
 }
 
@@ -768,6 +771,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"enter  phases",
 		"g      launch next",
 		"o      open",
+		"c      copy id",
 		"y      copy path",
 		"d      delete",
 		"h      headless on",
@@ -831,6 +835,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		"enter  phases",
 		"g      launch next",
 		"o      open",
+		"c      copy id",
 		"y      copy path",
 		"h      headless on",
 		"m      auto: on",
@@ -987,7 +992,7 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 
 func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
-		Width:                    120,
+		Width:                    240,
 		Mode:                     ModeFlows,
 		ActivePane:               1,
 		RepoSelected:             true,
@@ -996,15 +1001,84 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 		FlowPlanLinked:           true,
 		FlowHeadless:             true,
 	})
-	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "y: copy path"} {
+	for _, want := range []string{"enter: phases", "h: headless on", "o: open", "c: copy id", "y: copy path"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("expected selected flow hint %q, got %q", want, bar)
 		}
 	}
-	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase"} {
+	for _, notWant := range []string{"x: phases", "a: launch phase", "i: embed phase", "c: code"} {
 		if strings.Contains(bar, notWant) {
 			t.Fatalf("selected flow hint should not include %q, got %q", notWant, bar)
 		}
+	}
+}
+
+func TestStatusBar_FlowsModeShowsFlowIDCopyHintWithoutWorktreePath(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        240,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		RepoSelected: true,
+		FlowSelected: true,
+		FlowHeadless: true,
+	})
+	if !strings.Contains(bar, "c: copy id") {
+		t.Fatalf("selected flow without worktree path should expose copy id, got %q", bar)
+	}
+	for _, notWant := range []string{"c: code", "y: copy path"} {
+		if strings.Contains(bar, notWant) {
+			t.Fatalf("selected flow without worktree path should not include %q, got %q", notWant, bar)
+		}
+	}
+}
+
+func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:   0,
+		Width:      180,
+		Height:     12,
+		Mode:       ModeFlows,
+		ActivePane: 1,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Compact selected flow",
+			Status: flowstore.StatusInProgress,
+		}},
+		FlowSelected:         0,
+		FlowHeadless:         true,
+		FlowAutoModeSelected: true,
+	})
+
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"enter  phases", "c      copy id", "h      headless on"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("compact selected Flow pane missing %q:\n%s", want, pane)
+		}
+	}
+	if strings.Contains(pane, "n      new flow") {
+		t.Fatalf("compact selected Flow pane should prioritize selected-flow actions over new-flow shortcut:\n%s", pane)
+	}
+}
+
+func TestStatusBar_ActiveFlowsModeShowsFlowIDCopyHint(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:                    240,
+		Mode:                     ModeActiveFlows,
+		ActiveFlows:              true,
+		ActivePane:               1,
+		RepoSelected:             true,
+		FlowSelected:             true,
+		FlowWorktreePathSelected: true,
+		FlowHeadless:             true,
+	})
+	for _, want := range []string{"c: copy id", "y: copy path"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("active flows selected flow hint missing %q, got %q", want, bar)
+		}
+	}
+	if strings.Contains(bar, "c: code") {
+		t.Fatalf("active flows selected flow should not include c: code, got %q", bar)
 	}
 }
 
@@ -1276,12 +1350,12 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 	})
 
 	pane := shortcutPaneText(view)
-	for _, want := range []string{"enter  phases", "g      launch next", "h      headless off", "y      copy path"} {
+	for _, want := range []string{"enter  phases", "g      launch next", "h      headless off", "c      copy id", "y      copy path"} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("launchable selected Flow phase shortcut pane missing %q:\n%s", want, pane)
 		}
 	}
-	for _, notWant := range []string{"enter  launch phase", "x      phases", "a      launch phase", "i      embed phase", "y      copy id"} {
+	for _, notWant := range []string{"enter  launch phase", "x      phases", "a      launch phase", "i      embed phase", "c      code"} {
 		if strings.Contains(pane, notWant) {
 			t.Fatalf("launchable selected Flow phase shortcut pane should not include %q:\n%s", notWant, pane)
 		}

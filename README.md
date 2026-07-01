@@ -102,7 +102,7 @@ filter matches, or a load failure with details in the status bar.
 | `f` | Fetch with `--prune` (worktrees and branches views) |
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
-| `c` | Open VSCode at worktree path |
+| `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
 | `x` | Show/hide sessions for the selected worktree (worktrees view), expand/collapse plan phase rows, or reset a selected `await-session` Flow phase after confirmation |
 | `y` | Copy hash to clipboard (history/reflog view), selected agent session ID (sessions view), plan Markdown path (plans view), or selected Flow worktree path (flows view) |
 | `r` | Resume selected agent session (sessions view; CLI agents embed in-pane) or selected attached Flow phase session (flows view) |
@@ -356,8 +356,9 @@ the phase list. Press
 canonical phase order. This action
 uses the selected Flow, so a highlighted pending phase row can still launch an
 earlier ready sibling, and nothing is persisted when no phase is launchable.
-Press `y` to copy the selected Flow worktree path from either a Flow row or one
-of its expanded phase rows. Press `r` on an expanded phase row with an
+Press `c` to copy the selected Flow ID, and press `y` to copy the selected Flow
+worktree path, from either a Flow row or one of its expanded phase rows. Press
+`r` on an expanded phase row with an
 attached provider session to resume that session; CLI resumes are recorded as a
 fresh Flow phase launch attempt, while `codex-app` resumes navigate to the
 existing app thread without extra launch tracking. Press `m` on a Flow row or
@@ -380,8 +381,9 @@ Browse active Flow records across all repos. This view hides merged Flow records
 moving focus to the left repo pane temporarily filters the visible active rows to
 the selected repo, and returning focus to the middle pane restores the global
 list. Normal Flow actions, phase launches, attached-session resumes, auto-mode
-toggles, linked-PR opening with `p`, and embedded Flow terminals work from the
-visible active Flow rows.
+toggles, linked-PR opening with `p`, `c` Flow ID copy, `y` worktree path copy,
+and embedded Flow terminals work from the visible active Flow rows and their
+expanded phase rows.
 
 Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded

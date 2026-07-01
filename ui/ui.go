@@ -1313,6 +1313,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			if !sp.FlowPhaseSelected && sp.FlowPlanLinked {
 				actions = append(actions, shortcutHint{Key: "o", Label: "open"})
 			}
+			actions = append(actions, shortcutHint{Key: "c", Label: "copy id"})
 			if sp.FlowPRTargetSelected {
 				actions = append(actions, shortcutHint{Key: "p", Label: "open PR"})
 			}
@@ -1400,6 +1401,9 @@ func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	}
 	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
 		sections = withoutShortcutKeys(sections, "D", "n", "f5")
+	}
+	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && sp.FlowSelected && height <= 12 {
+		sections = withoutShortcutKey(sections, "n")
 	}
 	if height < 20 {
 		return withoutShortcutKey(sections, "f5")

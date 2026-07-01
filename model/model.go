@@ -104,6 +104,7 @@ type Model struct {
 	readPlan                   func(string) (string, error)
 	planMarkdownPath           func(string) (string, error)
 	copyToClipboard            func(string) error
+	openCode                   func(string) error
 	openURL                    func(string) error
 	pageText                   func(string) (actions.TerminalLaunchSpec, error)
 	editFile                   func(string) (actions.TerminalLaunchSpec, error)
@@ -190,6 +191,7 @@ type Options struct {
 	ReadPlan                 func(string) (string, error)
 	PlanMarkdownPath         func(planID string) (string, error)
 	CopyToClipboard          func(text string) error
+	OpenCode                 func(path string) error
 	OpenURL                  func(url string) error
 	PageText                 func(body string) (actions.TerminalLaunchSpec, error)
 	EditFile                 func(path string) (actions.TerminalLaunchSpec, error)
@@ -329,6 +331,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if copyToClipboard == nil {
 		copyToClipboard = actions.CopyToClipboard
 	}
+	openCode := opts.OpenCode
+	if openCode == nil {
+		openCode = actions.OpenVSCode
+	}
 	openURL := opts.OpenURL
 	if openURL == nil {
 		openURL = actions.OpenURL
@@ -448,6 +454,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readPlan:                 readPlan,
 		planMarkdownPath:         planMarkdownPath,
 		copyToClipboard:          copyToClipboard,
+		openCode:                 openCode,
 		openURL:                  openURL,
 		pageText:                 pageText,
 		editFile:                 editFile,

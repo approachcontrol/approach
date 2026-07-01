@@ -507,6 +507,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "t":
 		return m.handleOpenTerminal()
 	case "c":
+		if m.flowSurfaceVisible() {
+			return m.handleCopyFlowID()
+		}
 		return m.handleOpenCode()
 	case "q", "ctrl+c", "esc":
 		return m.handleEmbeddedTerminalQuitPrefix()
@@ -599,6 +602,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenSelectedFlowPR()
 	case "y":
 		return m.handleCopyFlowWorktreePath()
+	case "c":
+		return m.handleCopyFlowID()
 	case "r":
 		return m.handleResumeFlowPhaseSession()
 	case "E":
@@ -2255,7 +2260,7 @@ func (m Model) handleOpenTerminal() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleOpenCode() (tea.Model, tea.Cmd) {
-	return m.openAtPath(actions.OpenVSCode)
+	return m.openAtPath(m.openCode)
 }
 
 func (m Model) pageBody(body string) (Model, tea.Cmd) {
