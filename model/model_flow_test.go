@@ -4520,10 +4520,12 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 	valid := flowWithIssueTarget("flow-1", issueURL)
 	incomplete := valid
 	incomplete.Issue.URL = ""
+	var terminalInputTerm *fakeEmbeddedTerminal
 
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, openURL func(string) error) model.Model
+		check func(t *testing.T, m model.Model)
 	}{
 		{
 			name: "no selected Flow",
@@ -4544,6 +4546,41 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 				return selectFlowPhaseByID(t, m, "implementation")
 			},
 		},
+		{
+			name: "Flow terminal input forwards i",
+			setup: func(t *testing.T, openURL func(string) error) model.Model {
+				fakeTerm := &fakeEmbeddedTerminal{state: "running"}
+				terminalInputTerm = fakeTerm
+				m := model.NewWithOptions(testRepos(), model.Options{
+					AgentCommand: "codex",
+					OpenURL:      openURL,
+					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+						return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+					},
+					StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+						return fakeTerm, nil
+					},
+				})
+				m = flowsInRightPane(t, m, []flowstore.FlowRecord{valid})
+				m = selectFlowPhaseByID(t, m, "implementation")
+				m, cmd := update(m, flowLaunchKey())
+				if cmd == nil {
+					t.Fatal("g should prepare an embedded Flow launch")
+				}
+				m, _ = update(m, cmd())
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+				return m
+			},
+			check: func(t *testing.T, m model.Model) {
+				if terminalInputTerm == nil {
+					t.Fatal("terminal input test did not capture fake terminal")
+				}
+				if !slices.Equal(terminalInputTerm.writes, []string{"i"}) {
+					t.Fatalf("terminal input writes = %#v, want i", terminalInputTerm.writes)
+				}
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var opened []string
@@ -4557,6 +4594,9 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 			}
 			if len(opened) != 0 {
 				t.Fatalf("opened URLs = %#v, want none", opened)
+			}
+			if tc.check != nil {
+				tc.check(t, m)
 			}
 		})
 	}

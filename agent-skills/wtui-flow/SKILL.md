@@ -115,7 +115,7 @@ wtui flow issue set \
   --url "https://github.com/owner/repo/issues/123" \
   "${FLOW_STATE_ARGS[@]}"
 ```
-5. Complete or block the Flow phase with `wtui flow phase complete` or
+6. Complete or block the Flow phase with `wtui flow phase complete` or
    `wtui flow phase block`.
 
 ```bash

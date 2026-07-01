@@ -286,6 +286,6 @@ func flowPlanPrompt(flow flowstore.FlowRecord, templates FlowPromptTemplates) st
 	b.WriteString(flow.Instructions)
 	b.WriteString("\n\nProduce a plan only; do not start coding in this phase.")
 	b.WriteString("\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.")
-	b.WriteString("\nIf the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL.")
+	b.WriteString("\nIf the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.")
 	return ensureFlowPhaseDoneInstruction(b.String(), "")
 }

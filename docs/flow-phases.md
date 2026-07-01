@@ -86,7 +86,7 @@ Additional rules:
 
 ## Derived readiness
 
-The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetIssue`, `SetPR`,
+The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetPR`,
 `AddPhaseLaunchID`, and `ResetAwaitingSessionPhase`) re-derive readiness with
 `refreshPhaseReadiness`, regardless of graph shape. Loads and the remaining
 mutations normalize only records containing a `plan-review` phase — the
@@ -160,7 +160,7 @@ previous PR status, clears that terminal metadata, marks the Merge phase
   strings were added, removed, or renamed. Existing Flow JSON needs no
   migration.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
-  `AddChildPhase`, `SetIssue`, `SetPR`, `AddPhaseLaunchID`,
+  `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
   `ResetAwaitingSessionPhase`) re-derive readiness for any graph, and records
   containing a `plan-review` phase (the standard graph) are additionally
   normalized on load, so records written before a gate rule existed converge to

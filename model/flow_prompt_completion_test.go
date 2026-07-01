@@ -20,7 +20,7 @@ func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
 		"",
 		"Produce a plan only; do not start coding in this phase.",
 		"Create and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.",
-		"If the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL.",
+		"If the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.",
 		"",
 		model.FlowPhaseDoneInstructionForTest(),
 	}, "\n")
