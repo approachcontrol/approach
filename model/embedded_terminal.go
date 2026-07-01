@@ -665,9 +665,7 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 		if m.terminalPrefixActive {
 			switch key {
 			case "tab":
-				m.flowFocus = flowFocusList
-				m.terminalPrefixActive = false
-				return m, nil, true
+				return m.cyclePaneFocusForward(), nil, true
 			case "left":
 				return m.cycleEmbeddedTerminalForScope(scope, -1), nil, true
 			case "right":
