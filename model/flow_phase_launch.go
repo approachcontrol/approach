@@ -498,7 +498,7 @@ func newDeferredAutoFlowLaunchKey(flowID, phaseID string) (deferredAutoFlowLaunc
 	return deferredAutoFlowLaunchKey{FlowID: flowID, PhaseID: phaseID}, true
 }
 
-func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, phase flowstore.FlowPhase, retryPhaseID string) (Model, tea.Cmd) {
+func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, phase flowstore.FlowPhase, retryPhaseID string) (Model, tea.Cmd, bool) {
 	target, ok, next, statusCmd := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
 		Record:     record,
 		Phase:      phase,
@@ -507,7 +507,7 @@ func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, 
 	})
 	m = next
 	if !ok {
-		return m, statusCmd
+		return m, statusCmd, false
 	}
 	m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
 		FlowTitle: record.Title,
@@ -515,7 +515,7 @@ func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, 
 	})
 	target.AutoAdvanceRetryFlowID = record.FlowID
 	target.AutoAdvanceRetryPhaseID = retryPhaseID
-	return m, next.prepareFlowPhaseLaunch(target)
+	return m, next.prepareFlowPhaseLaunch(target), true
 }
 
 func (m Model) prepareDeferredAutoFlowPhaseLaunchesFrom(records []flowstore.FlowRecord) (Model, tea.Cmd) {
@@ -550,9 +550,13 @@ func (m Model) prepareDeferredAutoFlowPhaseLaunchesFrom(records []flowstore.Flow
 		}
 		if phase, ok := nextAutoLaunchPhase(record); ok {
 			var cmd tea.Cmd
-			m, cmd = m.prepareAutoFlowPhaseLaunchForRecord(record, phase, key.PhaseID)
+			var prepared bool
+			m, cmd, prepared = m.prepareAutoFlowPhaseLaunchForRecord(record, phase, key.PhaseID)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
+			}
+			if !prepared {
+				m.deferredAutoFlowLaunches[key] = struct{}{}
 			}
 		}
 	}

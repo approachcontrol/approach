@@ -459,6 +459,47 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	}
 }
 
+func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	key := deferredAutoFlowLaunchKey{FlowID: "flow-1", PhaseID: "plan-review"}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{current}
+	m.deferredAutoFlowLaunches = map[deferredAutoFlowLaunchKey]struct{}{key: {}}
+	m.autoAdvanceInFlight = 1
+
+	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	if _, ok := m.deferredAutoFlowLaunches[key]; !ok {
+		t.Fatalf("deferredAutoFlowLaunches = %#v, want retry preserved after preflight failure", m.deferredAutoFlowLaunches)
+	}
+	if m.status.Source != statusFlowAutoAdvance || !strings.Contains(m.status.Text, "choose codex") {
+		t.Fatalf("status = %#v, want auto-advance preflight guidance", m.status)
+	}
+
+	m.agentCommand = "codex"
+	m.autoAdvanceInFlight = 2
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "implementation" {
+		t.Fatalf("deferred auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates after deferred preflight fix = %#v, want implementation auto launch", updates)
+	}
+	if len(m.deferredAutoFlowLaunches) != 0 {
+		t.Fatalf("deferredAutoFlowLaunches after launch = %#v, want empty", m.deferredAutoFlowLaunches)
+	}
+}
+
 func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
 	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,
