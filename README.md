@@ -98,7 +98,7 @@ filter matches, or a load failure with details in the status bar.
 | `V` | Choose and persist the startup default view (`1` through `9`) |
 | `a` | Launch the selected coding agent in the selected worktree, or launch the selected plan or plan phase |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
-| `p` | Prune stale worktree — requires destructive mode (worktrees view) |
+| `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
 | `u` | Unlock a locked worktree (worktrees view) |
 | `f` | Fetch with `--prune` (worktrees and branches views) |
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
@@ -349,6 +349,7 @@ worktrees, branches, checked-out code, linked plans, sessions, transcripts, or
 active embedded terminals. Expanded phase rows cannot be deleted with this
 action. On a Flow row or an expanded phase row, `enter` expands or collapses
 the phase list. Press
+`p` on a Flow row with linked PR metadata to open the PR in the browser. Press
 `g` to launch the first launchable phase in the selected Flow's
 canonical phase order. This action
 uses the selected Flow, so a highlighted pending phase row can still launch an
@@ -377,7 +378,8 @@ Browse active Flow records across all repos. This view hides merged Flow records
 moving focus to the left repo pane temporarily filters the visible active rows to
 the selected repo, and returning focus to the middle pane restores the global
 list. Normal Flow actions, phase launches, attached-session resumes, auto-mode
-toggles, and embedded Flow terminals work from the visible active Flow rows.
+toggles, linked-PR opening with `p`, and embedded Flow terminals work from the
+visible active Flow rows.
 
 Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
