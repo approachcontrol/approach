@@ -947,6 +947,9 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 }
 
 func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
+	if err := validateCodexAppModel(ctx); err != nil {
+		return TerminalLaunchSpec{}, err
+	}
 	if goos != "darwin" {
 		return TerminalLaunchSpec{}, fmt.Errorf("codex-app launch is only supported on macOS")
 	}
@@ -957,6 +960,14 @@ func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, er
 	cmd := exec.Command("open", launchURL)
 	cmd.Env = envWithoutPrefix("WTUI_")
 	return TerminalLaunchSpec{Cmd: cmd}, nil
+}
+
+func validateCodexAppModel(ctx AgentLaunchContext) error {
+	model := agent.NormalizeModel(ctx.Model)
+	if model != "" && model != agent.ModelDefault {
+		return fmt.Errorf("model cannot be set for codex-app launch")
+	}
+	return nil
 }
 
 // resumeSessionIDForLaunch trims a resume session ID and rejects resume
@@ -971,9 +982,8 @@ func resumeSessionIDForLaunch(raw string) (string, error) {
 }
 
 func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
-	model := agent.NormalizeModel(ctx.Model)
-	if model != "" && model != agent.ModelDefault {
-		return "", fmt.Errorf("model cannot be set for codex-app launch")
+	if err := validateCodexAppModel(ctx); err != nil {
+		return "", err
 	}
 	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
 	if err != nil {
