@@ -75,7 +75,7 @@ plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_pa
 
 [flow_prompts]
 plan = "Produce a plan only for: {instructions}"
-implementation = "Implement {plan_path} in {worktree_path}, then use the commit skill before completing."
+implementation = "Implement {plan_path} in {worktree_path} for issue {issue_number}, then use the commit skill before completing."
 review_loop = "Use review-loop for {branch}; use commit if revisions are made."
 pr_creation = "Use ship for {branch}; record PR metadata for flow {flow_id}."
 autoreview = "Autoreview {pr_url}; use ship when fixes require commits or pushes."
@@ -255,8 +255,9 @@ blank template resets that key by removing the config override.
 Supported Flow placeholders are `{flow_id}`, `{flow_title}`,
 `{instructions}`, `{phase_id}`, `{phase_title}`, `{plan_id}`, `{plan_path}`,
 `{plan_body}`, `{repo_path}`, `{worktree_path}`, `{branch}`, `{commit}`,
-`{base_ref}`, `{pr_provider}`, `{pr_number}`, `{pr_url}`, `{pr_head}`,
-`{pr_base}`, and `{pr_status}`. Standard Plan Review, Implementation, Review
+`{base_ref}`, `{issue_provider}`, `{issue_number}`, `{issue_url}`,
+`{pr_provider}`, `{pr_number}`, `{pr_url}`, `{pr_head}`, `{pr_base}`, and
+`{pr_status}`. Standard Plan Review, Implementation, Review
 Loop, PR Creation, Autoreview, and Merge launches do not pre-read the linked
 plan body, so `{plan_body}` is empty for those built-in phase types unless a
 future phase path explicitly supplies it.
@@ -441,6 +442,7 @@ wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
 wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
     --phase-id ID --title TITLE --order N [--state-root PATH]
 wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
+wtui flow issue set --flow-id ID --provider github --number N --url URL [--state-root PATH]
 wtui flow pr set --flow-id ID --provider github --number N --url URL \
     --head HEAD_BRANCH --base BASE_BRANCH [--status STATUS] [--state-root PATH]
 ```
@@ -534,6 +536,11 @@ GitHub PRs and validates the provider, absolute http(s) URL, positive PR
 number, required head/base branches, and that the head branch matches the Flow
 branch. Autoreview stays pending when PR Creation is complete but this PR target
 metadata is missing.
+
+The Plan phase can record an optional GitHub issue reference with
+`wtui flow issue set`. The command stores provider, positive issue number, and
+an absolute GitHub issue URL so wtui can show the Issue column and open it with
+the `i` shortcut.
 
 The flow state root is resolved as: `--state-root` >
 `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >

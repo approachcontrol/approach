@@ -2731,6 +2731,253 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 	}
 }
 
+func TestStoreSetIssuePersistsMetadata(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Issue metadata",
+		Instructions: "record the issue",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/issue-metadata",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	later := now.Add(time.Minute)
+	store, err = flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return later },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	updated, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID:   record.FlowID,
+		Provider: "github",
+		Number:   123,
+		URL:      "https://github.com/brian-bell/wtui/issues/123",
+	})
+	if err != nil {
+		t.Fatalf("SetIssue() error = %v", err)
+	}
+
+	if updated.Issue.Provider != "github" ||
+		updated.Issue.Number != 123 ||
+		updated.Issue.URL != "https://github.com/brian-bell/wtui/issues/123" {
+		t.Fatalf("Issue metadata = %#v", updated.Issue)
+	}
+	if updated.UpdatedAt != later {
+		t.Fatalf("UpdatedAt = %s, want %s", updated.UpdatedAt, later)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Issue != updated.Issue {
+		t.Fatalf("Read().Issue = %#v, want %#v", read.Issue, updated.Issue)
+	}
+}
+
+func TestStoreSetIssueIdempotent(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Issue metadata",
+		Instructions: "record the issue",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/issue-metadata",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	update := flowstore.IssueUpdate{
+		FlowID:   record.FlowID,
+		Provider: "github",
+		Number:   123,
+		URL:      "https://github.com/brian-bell/wtui/issues/123",
+	}
+	record, err = store.SetIssue(update)
+	if err != nil {
+		t.Fatalf("SetIssue() error = %v", err)
+	}
+
+	later := now.Add(time.Minute)
+	store, err = flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return later },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	same, err := store.SetIssue(update)
+	if err != nil {
+		t.Fatalf("SetIssue() second call error = %v", err)
+	}
+	if same.UpdatedAt != record.UpdatedAt {
+		t.Fatalf("UpdatedAt changed on idempotent SetIssue: %s, want %s", same.UpdatedAt, record.UpdatedAt)
+	}
+}
+
+func TestStoreReadLegacyFlowWithoutIssue(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260607T120000Z-legacy-issue-flow"
+	meta := filepath.Join(root, "flows", flowID, "meta.json")
+	if err := os.MkdirAll(filepath.Dir(meta), 0o700); err != nil {
+		t.Fatalf("create legacy flow dir: %v", err)
+	}
+	legacy := map[string]any{
+		"schema_version": 1,
+		"flow_id":        flowID,
+		"title":          "Legacy issue flow",
+		"instructions":   "older record",
+		"status":         flowstore.StatusPending,
+		"repo_path":      filepath.Join(root, "repo"),
+		"merge":          map[string]any{"status": flowstore.MergePending},
+		"phases": []map[string]any{
+			{
+				"phase_id":   "plan",
+				"title":      "Plan",
+				"kind":       "plan",
+				"status":     flowstore.PhaseReady,
+				"order":      1,
+				"created_at": time.Now().UTC(),
+				"updated_at": time.Now().UTC(),
+			},
+		},
+		"created_at": time.Now().UTC(),
+		"updated_at": time.Now().UTC(),
+	}
+	data, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal legacy record: %v", err)
+	}
+	if err := os.WriteFile(meta, data, 0o600); err != nil {
+		t.Fatalf("write legacy meta.json: %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.Issue != (flowstore.Issue{}) {
+		t.Fatalf("Issue = %#v, want zero value", read.Issue)
+	}
+	if flowstore.HasIssueTarget(read.Issue) {
+		t.Fatalf("HasIssueTarget(%#v) = true, want false", read.Issue)
+	}
+}
+
+func TestHasIssueTargetRequiresValidGitHubIssue(t *testing.T) {
+	valid := flowstore.Issue{
+		Provider: "github",
+		Number:   123,
+		URL:      "https://github.com/brian-bell/wtui/issues/123",
+	}
+	if !flowstore.HasIssueTarget(valid) {
+		t.Fatalf("HasIssueTarget(valid) = false, want true")
+	}
+	for _, tc := range []struct {
+		name  string
+		issue flowstore.Issue
+	}{
+		{name: "provider", issue: flowstore.Issue{Provider: "gitlab", Number: 123, URL: valid.URL}},
+		{name: "number", issue: flowstore.Issue{Provider: "github", Number: 0, URL: valid.URL}},
+		{name: "url", issue: flowstore.Issue{Provider: "github", Number: 123, URL: "https://github.com/brian-bell/wtui/pull/123"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if flowstore.HasIssueTarget(tc.issue) {
+				t.Fatalf("HasIssueTarget(%#v) = true, want false", tc.issue)
+			}
+		})
+	}
+}
+
+func TestStoreSetIssueValidatesMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update flowstore.IssueUpdate
+		want   string
+	}{
+		{
+			name:   "provider",
+			update: flowstore.IssueUpdate{Provider: "gitlab", Number: 1, URL: "https://github.com/brian-bell/wtui/issues/1"},
+			want:   "unsupported issue provider",
+		},
+		{
+			name:   "number",
+			update: flowstore.IssueUpdate{Provider: "github", Number: 0, URL: "https://github.com/brian-bell/wtui/issues/1"},
+			want:   "issue number must be positive",
+		},
+		{
+			name:   "url",
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "not-a-url"},
+			want:   "issue URL must be an absolute http(s) URL",
+		},
+		{
+			name:   "url host",
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://example.com/brian-bell/wtui/issues/1"},
+			want:   "GitHub issue URL must use github.com",
+		},
+		{
+			name:   "url number",
+			update: flowstore.IssueUpdate{Provider: "github", Number: 2, URL: "https://github.com/brian-bell/wtui/issues/1"},
+			want:   "GitHub issue URL number",
+		},
+		{
+			name:   "url pull path",
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1"},
+			want:   "GitHub issue URL must have /owner/repo/issues/number path",
+		},
+		{
+			name:   "url extra path",
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/issues/1/comments"},
+			want:   "GitHub issue URL must have /owner/repo/issues/number path",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.Create(flowstore.FlowRecord{
+				Title:        "Issue validation",
+				Instructions: "validate issue metadata",
+				RepoPath:     filepath.Join(root, "repo"),
+				Branch:       "flow/issue",
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			tc.update.FlowID = record.FlowID
+			_, err = store.SetIssue(tc.update)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SetIssue() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestStoreSetPhaseSkippedPRCreationDoesNotUngateAutoreview(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

@@ -26,6 +26,7 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 		"wtui flow phase restart",
 		"wtui flow phase set",
 		"wtui flow plan set",
+		"wtui flow issue set",
 		"wtui flow pr set",
 		"wtui plan save",
 		"wtui plan phase set",
@@ -82,6 +83,9 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
 		t.Fatal("skill and CLI should both expose flow plan set")
+	}
+	if !strings.Contains(skill, "wtui flow issue set") || !strings.Contains(flowCLI, "runFlowIssueSet") {
+		t.Fatal("skill and CLI should both expose flow issue set")
 	}
 	if !strings.Contains(skill, "wtui flow pr set") || !strings.Contains(flowCLI, "runFlowPRSet") {
 		t.Fatal("skill and CLI should both expose flow pr set")
@@ -649,6 +653,7 @@ func commandFunctionName(commandParts []string) (string, bool) {
 		"flow phase restart":         "runFlowPhaseRestart",
 		"flow phase add-child":       "runFlowPhaseAddChild",
 		"flow plan set":              "runFlowPlanSet",
+		"flow issue set":             "runFlowIssueSet",
 		"flow pr set":                "runFlowPRSet",
 		"flow merge set":             "runFlowMergeSet",
 		"plan save":                  "runPlanSave",

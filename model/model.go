@@ -767,6 +767,7 @@ func (m Model) View() string {
 	if flowSelected >= 0 && flowSelected < len(flows) {
 		flowAutoModeSelected = flows[flowSelected].AutoMode
 	}
+	_, flowIssueTargetSelected := m.selectedFlowIssue()
 	_, flowPRTargetSelected := m.selectedFlowPR()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
 	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows))
@@ -857,6 +858,7 @@ func (m Model) View() string {
 		SelectedFlowPhaseID:          m.currentSelectedFlowPhaseID(),
 		FlowHeadless:                 m.flowHeadless,
 		FlowAutoModeSelected:         flowAutoModeSelected,
+		FlowIssueTargetSelected:      flowIssueTargetSelected,
 		FlowPRTargetSelected:         flowPRTargetSelected,
 		FlowAgentLabel:               m.flowAgentShortcutLabel(),
 		FlowModel:                    m.flowModelLabel(),
@@ -1510,6 +1512,20 @@ func (m Model) selectedFlowPR() (flowstore.PullRequest, bool) {
 		return flowstore.PullRequest{}, false
 	}
 	return record.PR, true
+}
+
+func (m Model) selectedFlowIssue() (flowstore.Issue, bool) {
+	if !m.flowSurfaceVisible() {
+		return flowstore.Issue{}, false
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
+		return flowstore.Issue{}, false
+	}
+	record, ok := m.selectedFlow()
+	if !ok || !flowstore.HasIssueTarget(record.Issue) {
+		return flowstore.Issue{}, false
+	}
+	return record.Issue, true
 }
 
 func (m Model) selectedPlanID() string {

@@ -281,6 +281,11 @@ func (m Model) builtInPromptTemplatePreview(target promptTemplateTarget) string 
 		BaseRef:      "{base_ref}",
 		PlanID:       "{plan_id}",
 		PlanPath:     "{plan_path}",
+		Issue: flowstore.Issue{
+			Provider: "{issue_provider}",
+			Number:   123,
+			URL:      "{issue_url}",
+		},
 		PR: flowstore.PullRequest{
 			Provider:   "{pr_provider}",
 			Number:     123,

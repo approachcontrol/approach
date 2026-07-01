@@ -110,6 +110,9 @@ predecessor satisfies its downstream gate:
   `wtui flow pr set` (provider, positive number, valid URL, head/base
   branches). Completion alone does not unlock Autoreview; a skipped PR
   Creation never unlocks it.
+- **Plan**: may record optional GitHub issue metadata with
+  `wtui flow issue set` when the task references an issue. Issue metadata is
+  informational and does not gate downstream phases.
 - **Implementation children**: every child phase under Implementation must be
   `completed` or `skipped` with notes before phases after Implementation can
   become ready.

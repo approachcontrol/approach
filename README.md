@@ -110,7 +110,7 @@ filter matches, or a load failure with details in the status bar.
 | `s` | Page selected agent session summary (sessions view) |
 | `o` | Page selected session transcript (sessions view), selected plan Markdown (plans view), or linked plan body (flows view) |
 | `e` | Edit selected plan Markdown (plans view) |
-| `i` | Alias for plan implementation launch |
+| `i` | Alias for plan implementation launch, or open the linked GitHub issue (flows and active flows views, when issue metadata exists) |
 | `D` | Toggle destructive mode |
 | `tab` | Cycle pane focus forward; with a Flow terminal open, cycles repo pane → Flow list → terminal |
 | `bksp` | Switch focus to left pane |
@@ -333,10 +333,12 @@ skill dirs for use across repos. v1 has no TUI plan deletion.
 ### Flows view (mode 8)
 
 Browse persisted Flow records for the selected repo. Rows show status, branch
-or worktree basename, phase progress plus the current phase state, linked plan
-ID when present, PR number or label, updated date, and title. Use `/` to filter
-by title, instructions, status, branch, worktree basename, plan metadata, PR
-metadata, phase titles/statuses/summaries, and linked session metadata. Press
+or worktree basename, phase progress plus the current phase state, optional
+Issue reference, linked plan ID when present, PR number or label, updated date,
+and title. The column order is Status, Branch, Phase, Issue, Plan, PR, Updated,
+Title. Use `/` to filter by title, instructions, status, branch, worktree
+basename, plan metadata, issue metadata, PR metadata,
+phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow with one form for title, multiline instructions, and
 optional base ref plus Headless and Plan Now checkboxes; use `alt+enter` for
 instruction newlines. Plan Now is checked by default and immediately launches
@@ -352,6 +354,8 @@ worktrees, branches, checked-out code, linked plans, sessions, transcripts, or
 active embedded terminals. Expanded phase rows cannot be deleted with this
 action. On a Flow row or an expanded phase row, `enter` expands or collapses
 the phase list. Press
+`i` on a Flow row with linked GitHub issue metadata to open the issue in the
+browser. Press
 `p` on a Flow row with linked PR metadata to open the PR in the browser. Press
 `g` to launch the first launchable phase in the selected Flow's
 canonical phase order. This action
@@ -386,9 +390,9 @@ Browse active Flow records across all repos. This view hides merged Flow records
 moving focus to the left repo pane temporarily filters the visible active rows to
 the selected repo, and returning focus to the middle pane restores the global
 list. Normal Flow actions, phase launches, attached-session resumes, auto-mode
-toggles, linked-PR opening with `p`, `c` Flow ID copy, `y` worktree path copy,
-and embedded Flow terminals work from the visible active Flow rows and their
-expanded phase rows.
+toggles, linked-issue opening with `i`, linked-PR opening with `p`, `c` Flow ID
+copy, `y` worktree path copy, and embedded Flow terminals work from the visible
+active Flow rows and their expanded phase rows.
 
 Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
@@ -465,6 +469,12 @@ wtui flow read --flow-id "$FLOW_ID"
 
 # Link a saved plan artifact back to a flow.
 wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+
+# Record optional GitHub issue metadata when the task references an issue.
+wtui flow issue set --flow-id "$FLOW_ID" \
+  --provider github \
+  --number 123 \
+  --url "https://github.com/owner/repo/issues/123"
 
 # Record common phase outcomes without hand-assembling --status. These commands
 # print JSON with the updated phase and the next actionable phase state. For
@@ -606,7 +616,7 @@ plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_pa
 default_view = 8
 
 [flow_prompts]
-implementation = "Implement {plan_path} from {worktree_path}, then use the commit skill before completing."
+implementation = "Implement {plan_path} from {worktree_path} for issue {issue_number}, then use the commit skill before completing."
 pr_creation = "Use the ship skill for {branch}, then record PR metadata for flow {flow_id}."
 
 [sessions]

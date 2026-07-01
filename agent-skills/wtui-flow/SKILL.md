@@ -86,7 +86,7 @@ or a merge was recorded unless the corresponding command succeeded.
 The current Flow CLI exposes `create`, `list`, `read`, `phase complete`,
 `phase block`, `phase needs-attention`, `phase restart`, `phase set`,
 `phase add-child`,
-`plan set`, `pr set`, and `merge set`. Record merge metadata with
+`plan set`, `issue set`, `pr set`, and `merge set`. Record merge metadata with
 `wtui flow merge set`; do not claim a merge was recorded unless that structured
 command succeeds.
 
@@ -97,8 +97,25 @@ Goal: produce a saved wtui plan artifact.
 1. Read the flow.
 2. Save or update the plan through `wtui plan save`.
 3. Link the saved plan artifact back to the Flow with `wtui flow plan set`.
-4. Record plan progress with `wtui plan phase set` when the plan has phases.
-5. Complete or block the Flow phase with `wtui flow phase complete` or
+4. If the task references a GitHub issue, link it with `wtui flow issue set`.
+5. Record plan progress with `wtui plan phase set` when the plan has phases.
+
+When instructions give a full GitHub issue URL, use that URL directly. When
+instructions give only `#N`, derive
+`https://github.com/<owner>/<repo>/issues/<N>` only from an unambiguous GitHub
+`origin` remote in the worktree repository. If no GitHub origin can be
+established, do not persist a guessed issue URL; mention the ambiguity in the
+Plan phase summary or notes instead.
+
+```bash
+wtui flow issue set \
+  --flow-id "$WTUI_FLOW_ID" \
+  --provider github \
+  --number 123 \
+  --url "https://github.com/owner/repo/issues/123" \
+  "${FLOW_STATE_ARGS[@]}"
+```
+6. Complete or block the Flow phase with `wtui flow phase complete` or
    `wtui flow phase block`.
 
 ```bash

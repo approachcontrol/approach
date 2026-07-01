@@ -27,13 +27,14 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
+		"Usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]",
 		"wtui flow read --flow-id",
 		"wtui flow phase complete --flow-id",
 		"wtui flow phase block --flow-id",
 		"wtui flow phase needs-attention --flow-id",
 		"wtui flow phase restart --flow-id",
 		"wtui flow phase set --flow-id",
+		"wtui flow issue set --flow-id",
 		"wtui flow pr set --flow-id",
 		"wtui flow merge set --flow-id",
 	})
@@ -169,6 +170,39 @@ func TestRunFlowPRSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	})
 }
 
+func TestRunFlowIssueHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "issue", args: []string{"wtui", "flow", "issue", "--help"}},
+		{name: "issue set", args: []string{"wtui", "flow", "issue", "set", "--help"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := run(tc.args, noScanDeps(t, runDeps{
+				loadConfig: func() (config.Config, error) {
+					t.Fatal("loadConfig should not run for flow issue help")
+					return config.Config{}, nil
+				},
+				stdout: &stdout,
+			}))
+			if err != nil {
+				t.Fatalf("run returned error: %v", err)
+			}
+			if strings.Contains(stdout.String(), "flag: help requested") {
+				t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
+			}
+			requireContainsAll(t, stdout.String(), []string{
+				"Usage: wtui flow issue set [flags]",
+				"--number N",
+				"--url URL",
+				"wtui flow issue set --flow-id",
+			})
+		})
+	}
+}
+
 func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -263,7 +297,8 @@ func TestRunFlowUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "phaze"; did you mean "phase"?`,
-		"Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]",
+		"Usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]",
+		"issue set",
 	})
 }
 
@@ -290,6 +325,7 @@ func TestRunFlowNestedSetSubcommandsSuggestSet(t *testing.T) {
 		args []string
 	}{
 		{name: "plan", args: []string{"wtui", "flow", "plan", "sete"}},
+		{name: "issue", args: []string{"wtui", "flow", "issue", "sete"}},
 		{name: "pr", args: []string{"wtui", "flow", "pr", "sete"}},
 		{name: "merge", args: []string{"wtui", "flow", "merge", "sete"}},
 	} {
@@ -605,6 +641,99 @@ func TestRunFlowPRSetValidatesRequiredInputs(t *testing.T) {
 			name: "branch mismatch",
 			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--url", "https://github.com/brian-bell/wtui/pull/115", "--head", "feature/other", "--base", "main", "--state-root", root},
 			want: "must match flow branch",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args, noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunFlowIssueSetPrintsJSONRecord(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "Issue metadata",
+		"--instructions", "link an issue",
+		"--repo-path", repoPath,
+		"--branch", "flow/issue-metadata",
+		"--json",
+		"--state-root", root,
+	})
+
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "issue", "set",
+		"--flow-id", created.FlowID,
+		"--provider", "github",
+		"--number", "123",
+		"--url", "https://github.com/brian-bell/wtui/issues/123",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var updated flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if updated.Issue.Provider != "github" ||
+		updated.Issue.Number != 123 ||
+		updated.Issue.URL != "https://github.com/brian-bell/wtui/issues/123" {
+		t.Fatalf("Issue metadata = %#v", updated.Issue)
+	}
+
+	stdout.Reset()
+	err = run([]string{"wtui", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+		noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("flow read returned error: %v", err)
+	}
+	var read flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &read); err != nil {
+		t.Fatalf("read output is not JSON record: %v\n%s", err, stdout.String())
+	}
+	if read.Issue != updated.Issue {
+		t.Fatalf("read issue = %#v, want %#v", read.Issue, updated.Issue)
+	}
+}
+
+func TestRunFlowIssueSetValidatesRequiredInputs(t *testing.T) {
+	root := t.TempDir()
+	created := mustRunFlow(t, []string{
+		"wtui", "flow", "create",
+		"--title", "Issue validation",
+		"--instructions", "validate input",
+		"--repo-path", filepath.Join(root, "repo"),
+		"--branch", "flow/issue-validation",
+		"--json",
+		"--state-root", root,
+	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing flow id",
+			args: []string{"wtui", "flow", "issue", "set", "--provider", "github", "--number", "123", "--url", "https://github.com/brian-bell/wtui/issues/123", "--state-root", root},
+			want: "requires --flow-id",
+		},
+		{
+			name: "missing number",
+			args: []string{"wtui", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--url", "https://github.com/brian-bell/wtui/issues/123", "--state-root", root},
+			want: "requires positive --number",
+		},
+		{
+			name: "missing url",
+			args: []string{"wtui", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "123", "--state-root", root},
+			want: "requires --url",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

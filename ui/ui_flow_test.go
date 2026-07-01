@@ -28,6 +28,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 			Branch:       "flow/add-flow-mode",
 			WorktreePath: "/dev/wtui-worktrees/flow-add-flow-mode",
 			PlanID:       "plan-1",
+			Issue:        flowstore.Issue{Number: 456, URL: "https://github.com/brian-bell/wtui/issues/456"},
 			PR:           flowstore.PullRequest{Number: 123, URL: "https://github.com/brian-bell/wtui/pull/123"},
 			UpdatedAt:    time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
 			Phases: []flowstore.FlowPhase{
@@ -39,17 +40,51 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 		FlowSelected: 0,
 	})
 
-	for _, want := range []string{"[8] flows", "Status", "Branch", "Phase", "Plan", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "plan-1", "#123", "2026-06-07", "Add Flow mode"} {
+	for _, want := range []string{"[8] flows", "Status", "Branch", "Phase", "Issue", "Plan", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "#456", "plan-1", "#123", "2026-06-07", "Add Flow mode"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("flows view missing %q:\n%s", want, view)
 		}
 	}
+	header := ansi.Strip(lineContaining(view, "Status"))
+	if strings.Index(header, "Phase") > strings.Index(header, "Issue") || strings.Index(header, "Issue") > strings.Index(header, "Plan") {
+		t.Fatalf("flows header should order Phase, Issue, Plan:\n%s", header)
+	}
 	if strings.Contains(view, "Review loop") {
 		t.Fatalf("flow phase detail rows should be collapsed by default:\n%s", view)
 	}
-	header := lineContaining(view, "Status")
 	if strings.Contains(header, "Repo") {
 		t.Fatalf("normal flows header should not include active-flows Repo column:\n%s", header)
+	}
+}
+
+func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    230,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:    "flow-1",
+			Title:     "Flow without issue",
+			Status:    flowstore.StatusInProgress,
+			Branch:    "flow/no-issue",
+			PlanID:    "plan-1",
+			UpdatedAt: time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
+			Phases:    []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted}},
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+	})
+
+	row := ansi.Strip(lineContaining(view, "Flow without issue"))
+	for _, want := range []string{"flow/no-issue", "1/1", "-", "plan-1"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("flows row missing %q:\n%s", want, row)
+		}
+	}
+	if !strings.Contains(row, "1/1 plan:completed                  -         plan-1") {
+		t.Fatalf("flows row should order Phase, Issue, Plan:\n%s", row)
 	}
 }
 
@@ -934,6 +969,49 @@ func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 			pane := shortcutPaneText(Render(params))
 			if !strings.Contains(pane, "p      open PR") {
 				t.Fatalf("Flow shortcut pane missing open PR hint:\n%s", pane)
+			}
+		})
+	}
+}
+
+func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
+	base := RenderParams{
+		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:     0,
+		Width:        180,
+		Height:       28,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		FlowSelected: 0,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Flow with issue",
+			Status: flowstore.StatusInProgress,
+			Issue: flowstore.Issue{
+				Provider: "github",
+				Number:   123,
+				URL:      "https://github.com/brian-bell/wtui/issues/123",
+			},
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
+		}},
+		FlowIssueTargetSelected: true,
+	}
+
+	for _, tt := range []struct {
+		name string
+		mut  func(*RenderParams)
+	}{
+		{name: "flows"},
+		{name: "active flows", mut: func(p *RenderParams) { p.ActiveFlows = true }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			params := base
+			if tt.mut != nil {
+				tt.mut(&params)
+			}
+			pane := shortcutPaneText(Render(params))
+			if !strings.Contains(pane, "i      open issue") {
+				t.Fatalf("Flow shortcut pane missing open issue hint:\n%s", pane)
 			}
 		})
 	}
