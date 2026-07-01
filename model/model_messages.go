@@ -1261,15 +1261,27 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 	return m
 }
 
-func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
+func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 	m = m.restoreAutoAdvanceRetrySnapshot(msg.AutoAdvanceRetryRecord)
+	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
+	autoAdvanceFailure := autoAdvanceRetry || msg.AutoAdvanceRetryRecord.FlowID != ""
 	if msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != "" {
 		m = m.deferAutoFlowPhaseLaunch(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceRetryPhaseID)
 	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusOther, msg.Err)
+		return m, nil
 	}
-	return m
+	if !autoAdvanceFailure {
+		return m, nil
+	}
+	title := flowTitleForStatus(msg.AutoAdvanceRetryRecord)
+	if strings.TrimSpace(title) == "" {
+		title = msg.AutoAdvanceRetryFlowID
+	}
+	var statusCmd tea.Cmd
+	m, statusCmd = m.setAutoAdvanceStatus("Flow " + title + ": " + msg.Err)
+	return m, statusCmd
 }
 
 func (m Model) handleCommitResult(msg CommitResultMsg) Model {

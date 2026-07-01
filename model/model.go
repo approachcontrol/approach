@@ -1424,11 +1424,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next := m.handleFetchError(msg)
 		return next.finishFlowRefreshFetch(msg.Mode, msg.ListRequest)
 	case ActionFailedMsg:
-		next := m.handleActionFailed(msg)
+		next, statusCmd := m.handleActionFailed(msg)
 		if next.flowSurfaceVisible() && (next.activeFlowSurfaceVisible() || next.isCurrentRepo(msg.RepoPath)) {
-			return next.startFlowSurfaceFetch()
+			var refreshCmd tea.Cmd
+			next, refreshCmd = next.startFlowSurfaceFetch()
+			return next, batchNonNil(statusCmd, refreshCmd)
 		}
-		return next, nil
+		return next, statusCmd
 	}
 	return m, nil
 }

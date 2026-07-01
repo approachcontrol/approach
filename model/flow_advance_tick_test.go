@@ -396,6 +396,33 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 	}
 }
 
+func TestModel_AutoAdvanceActionFailureSetsStatusOffRepo(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m.mode = ui.ModeWorktrees
+
+	m, cmd := updateFlowRefreshTest(m, ActionFailedMsg{
+		RepoPath:               "/dev/bravo",
+		Err:                    "failed to mark flow phase running: store unavailable",
+		AutoAdvanceRetryRecord: previous,
+	})
+	if cmd == nil {
+		t.Fatal("off-repo auto-advance failure should schedule status expiry")
+	}
+	if m.status.Source != statusFlowAutoAdvance ||
+		m.status.Text != "Flow Bravo Flow: failed to mark flow phase running: store unavailable" {
+		t.Fatalf("status = %#v, want off-repo auto-advance failure", m.status)
+	}
+	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].FlowID != "flow-1" ||
+		m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want previous running edge restored", m.autoAdvanceSnapshot)
+	}
+}
+
 func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,
@@ -562,6 +589,54 @@ func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testin
 	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" {
 		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)
+	}
+}
+
+func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testing.T) {
+	existing := autoAdvanceTestFlow("flow-1", "/dev/alpha", true, map[string]string{
+		"plan":        flowstore.PhaseCompleted,
+		"plan-review": flowstore.PhaseRunning,
+	})
+	newRunning := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	newCompleted := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		StartupMode:  ui.ModeActiveFlows,
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return newCompleted, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{existing}
+
+	m, _ = updateFlowRefreshTest(m, ActiveFlowResultMsg{
+		Flows:       []flowstore.FlowRecord{existing, newRunning},
+		ListRequest: m.ListRequest(ui.ModeActiveFlows),
+	})
+	if len(m.autoAdvanceSnapshot) != 2 {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want existing baseline plus new display flow", m.autoAdvanceSnapshot)
+	}
+
+	m.autoAdvanceInFlight = 1
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{
+		Flows:   []flowstore.FlowRecord{existing, newCompleted},
+		Request: 1,
+	})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowID != "flow-2" || launch.LaunchContext.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch context = %#v, want flow-2 implementation", launch.LaunchContext)
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates = %#v, want implementation auto launch", updates)

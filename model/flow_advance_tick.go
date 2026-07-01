@@ -184,6 +184,22 @@ func (m Model) handleAutoAdvanceStatusExpired(msg AutoAdvanceStatusExpiredMsg) M
 
 func (m Model) seedAutoAdvanceSnapshot(flows []flowstore.FlowRecord) Model {
 	if len(m.autoAdvanceSnapshot) != 0 {
+		seen := make(map[string]struct{}, len(m.autoAdvanceSnapshot))
+		for _, record := range m.autoAdvanceSnapshot {
+			if record.FlowID != "" {
+				seen[record.FlowID] = struct{}{}
+			}
+		}
+		for _, record := range flows {
+			if record.FlowID == "" {
+				continue
+			}
+			if _, ok := seen[record.FlowID]; ok {
+				continue
+			}
+			m.autoAdvanceSnapshot = append(m.autoAdvanceSnapshot, cloneFlowRecord(record))
+			seen[record.FlowID] = struct{}{}
+		}
 		return m
 	}
 	m.autoAdvanceSnapshot = cloneFlowRecords(flows)
