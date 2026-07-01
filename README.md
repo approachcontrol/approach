@@ -512,8 +512,9 @@ marks the Flow phase `needs_attention` and reports the persistence error.
 Repeating `completed` for an already-completed Flow phase preserves that
 completed state even if the linked-plan sync later fails.
 The TUI-owned manual merge shortcut still treats linked-plan sync failure as
-recoverable: it clears terminal merge metadata, marks the Merge phase
-`needs_attention`, and keeps the Flow visible for repair.
+recoverable: it restores the previous PR status, clears terminal merge
+metadata, marks the Merge phase `needs_attention`, and keeps the Flow visible
+for repair.
 
 Child implementation phases gate downstream readiness in phase order: review
 loop and PR creation remain pending until required implementation children are

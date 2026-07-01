@@ -892,7 +892,7 @@ func flowManualMergeEligible(record flowstore.FlowRecord) bool {
 		return false
 	}
 	switch merge.Status {
-	case flowstore.PhaseReady, flowstore.PhaseRunning:
+	case flowstore.PhaseReady:
 		return true
 	case flowstore.PhaseCompleted:
 		return record.Merge.Status == flowstore.MergePending || record.Merge.Status == flowstore.MergeMerged
@@ -920,6 +920,7 @@ func (m Model) markFlowManuallyMergedCmd(repoPath string, record flowstore.FlowR
 			return FlowManualMergeSetFailedMsg{
 				RepoPath: repoPath,
 				FlowID:   record.FlowID,
+				Flow:     flow,
 				Err:      fmt.Sprintf("failed to mark Flow as merged: %v", err),
 			}
 		}

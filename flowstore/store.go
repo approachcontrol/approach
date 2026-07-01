@@ -723,6 +723,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if summary == "" {
 		summary = fmt.Sprintf("Marked GitHub PR #%d as manually merged at %s.", record.PR.Number, merge.Commit)
 	}
+	previousPRStatus := record.PR.Status
 	phase.Status = PhaseCompleted
 	phase.Outcome = MergeMerged
 	phase.Summary = summary
@@ -743,6 +744,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		if failedIndex := phaseIndexByID(record.Phases, failedPhase.PhaseID); failedIndex >= 0 {
 			record.Phases[failedIndex] = failedPhase
 		}
+		record.PR.Status = previousPRStatus
 		record.Merge = Merge{Status: MergePending}
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
@@ -750,7 +752,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		if writeErr := s.write(record); writeErr != nil {
 			return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
 		}
-		return FlowRecord{}, err
+		return record, err
 	}
 	return record, nil
 }
@@ -1479,7 +1481,7 @@ func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update Manual
 	mergedAt := update.MergedAt.UTC()
 	merge := Merge{Status: MergeMerged, Commit: commit, MergedAt: &mergedAt}
 	switch phase.Status {
-	case PhaseReady, PhaseRunning:
+	case PhaseReady:
 		if err := validatePhaseUpdate(phase, PhaseUpdate{
 			FlowID:  update.FlowID,
 			PhaseID: "merge",
@@ -1493,7 +1495,7 @@ func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update Manual
 			return Merge{}, fmt.Errorf("manual merge metadata differs from existing merge metadata")
 		}
 	default:
-		return Merge{}, fmt.Errorf("manual merge requires merge phase ready, running, or completed; merge is %s", phase.Status)
+		return Merge{}, fmt.Errorf("manual merge requires merge phase ready or completed; merge is %s", phase.Status)
 	}
 	return merge, nil
 }

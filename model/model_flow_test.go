@@ -1536,6 +1536,67 @@ func TestModel_ShiftMManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 	}
 }
 
+func TestModel_ShiftMManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	flow.Phases[len(flow.Phases)-1].Status = flowstore.PhaseRunning
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			called = true
+			return actions.PullRequestMerge{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on running merge phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() == ui.OverlayConfirm {
+		t.Fatalf("M on running merge phase opened confirmation %q", m.ConfirmPrompt())
+	}
+	if called {
+		t.Fatal("LookupPRMerge should not run when merge phase is running")
+	}
+}
+
+func TestModel_ShiftMManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	recovered := flow
+	recovered.Phases = append([]flowstore.FlowPhase(nil), flow.Phases...)
+	recovered.Phases[len(recovered.Phases)-1].Status = flowstore.PhaseNeedsAttention
+	recovered.Phases[len(recovered.Phases)-1].Notes = "sync linked plan phase: missing plan"
+	recovered.Merge = flowstore.Merge{Status: flowstore.MergePending}
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
+		},
+		MarkFlowManualMerge: func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error) {
+			return recovered, errors.New("sync linked plan phase: missing plan")
+		},
+	}), []flowstore.FlowRecord{flow})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("confirming manual merge should return command")
+	}
+	m, _ = update(m, cmd())
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() length = %d, want 1", len(got))
+	}
+	mergePhase := phaseByID(got[0], "merge")
+	if mergePhase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(mergePhase.Notes, "missing plan") {
+		t.Fatalf("manual merge failure did not replace recovered flow state: %#v", got[0])
+	}
+	if strings.Contains(m.View(), "M      mark merged") {
+		t.Fatalf("recovered needs_attention Flow should not advertise manual merge:\n%s", m.View())
+	}
+}
+
 func TestModel_ShiftMManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)

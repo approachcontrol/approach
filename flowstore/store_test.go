@@ -3017,15 +3017,26 @@ func TestStoreMarkManualMergeValidatesEligibility(t *testing.T) {
 		mergedAt    time.Time
 		mergeStatus string
 		skipAutoRev bool
+		mutate      func(*flowstore.FlowRecord)
 		want        string
 	}{
 		{name: "missing PR", commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseReady, want: "requires existing PR metadata"},
 		{name: "missing commit", withPR: true, mergedAt: mergedAt, mergeStatus: flowstore.PhaseReady, want: "requires merge commit"},
 		{name: "missing timestamp", withPR: true, commit: "abc123", mergeStatus: flowstore.PhaseReady, want: "requires merge timestamp"},
 		{name: "predecessors incomplete", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhasePending, skipAutoRev: true, want: "requires satisfied predecessors"},
-		{name: "blocked merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseBlocked, want: "requires merge phase ready, running, or completed"},
-		{name: "needs attention merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseNeedsAttention, want: "requires merge phase ready, running, or completed"},
-		{name: "skipped merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseSkipped, want: "requires merge phase ready, running, or completed"},
+		{name: "running merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseRunning, want: "requires merge phase ready or completed"},
+		{name: "blocked merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseBlocked, want: "requires merge phase ready or completed"},
+		{name: "needs attention merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseNeedsAttention, want: "requires merge phase ready or completed"},
+		{name: "skipped merge", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseSkipped, want: "requires merge phase ready or completed"},
+		{name: "invalid PR provider", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseReady, mutate: func(record *flowstore.FlowRecord) {
+			record.PR.Provider = "gitlab"
+		}, want: "requires existing PR metadata"},
+		{name: "invalid PR number", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseReady, mutate: func(record *flowstore.FlowRecord) {
+			record.PR.Number = 0
+		}, want: "requires existing PR metadata"},
+		{name: "invalid PR URL", withPR: true, commit: "abc123", mergedAt: mergedAt, mergeStatus: flowstore.PhaseReady, mutate: func(record *flowstore.FlowRecord) {
+			record.PR.URL = "not-a-url"
+		}, want: "requires existing PR metadata"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -3043,6 +3054,12 @@ func TestStoreMarkManualMergeValidatesEligibility(t *testing.T) {
 						}
 					}
 				}
+				if err := writeFlowRecordForTest(root, record); err != nil {
+					t.Fatalf("write test flow: %v", err)
+				}
+			}
+			if tc.mutate != nil {
+				tc.mutate(&record)
 				if err := writeFlowRecordForTest(root, record); err != nil {
 					t.Fatalf("write test flow: %v", err)
 				}
@@ -3067,6 +3084,47 @@ func TestStoreMarkManualMergeValidatesEligibility(t *testing.T) {
 	}
 }
 
+func TestStoreMarkManualMergeCollapsesDuplicateMergePhases(t *testing.T) {
+	root := t.TempDir()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := mustCreateManualMergeFlow(t, store, root, true, true)
+	record.Phases = append(record.Phases, flowstore.FlowPhase{
+		PhaseID: " Merge ",
+		Title:   "Legacy duplicate merge",
+		Status:  flowstore.PhaseBlocked,
+		Notes:   "legacy duplicate should collapse",
+	})
+	if err := writeFlowRecordForTest(root, record); err != nil {
+		t.Fatalf("write test flow: %v", err)
+	}
+
+	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
+		FlowID:   record.FlowID,
+		Commit:   "0123456789abcdef",
+		MergedAt: mergedAt,
+	})
+	if err != nil {
+		t.Fatalf("MarkManualMerge() error = %v", err)
+	}
+
+	var mergeRows int
+	for _, phase := range updated.Phases {
+		if strings.EqualFold(strings.TrimSpace(phase.PhaseID), "merge") {
+			mergeRows++
+			if phase.PhaseID != "merge" || phase.Status != flowstore.PhaseCompleted {
+				t.Fatalf("collapsed merge phase = %#v", phase)
+			}
+		}
+	}
+	if mergeRows != 1 {
+		t.Fatalf("merge phase rows = %d, want 1 in %#v", mergeRows, updated.Phases)
+	}
+}
+
 func TestStoreMarkManualMergeLinkedPlanSyncFailureKeepsFlowRecoverable(t *testing.T) {
 	root := t.TempDir()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
@@ -3084,13 +3142,16 @@ func TestStoreMarkManualMergeLinkedPlanSyncFailureKeepsFlowRecoverable(t *testin
 		t.Fatalf("SetStartMetadata() error = %v", err)
 	}
 
-	_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
+	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
 	if err == nil || !strings.Contains(err.Error(), "sync linked plan phase") {
 		t.Fatalf("MarkManualMerge() error = %v, want sync failure", err)
+	}
+	if updated.FlowID != record.FlowID {
+		t.Fatalf("MarkManualMerge() returned flow ID %q, want recovered record", updated.FlowID)
 	}
 	read, err := store.Read(record.FlowID)
 	if err != nil {
@@ -3102,6 +3163,9 @@ func TestStoreMarkManualMergeLinkedPlanSyncFailureKeepsFlowRecoverable(t *testin
 	}
 	if read.Merge.Status != flowstore.MergePending || read.Merge.Commit != "" || read.Merge.MergedAt != nil {
 		t.Fatalf("merge metadata after sync failure = %#v, want pending", read.Merge)
+	}
+	if read.PR.Status != "open" {
+		t.Fatalf("PR status after sync failure = %q, want open", read.PR.Status)
 	}
 	if read.Status == flowstore.StatusMerged {
 		t.Fatalf("flow status after sync failure = %q, want recoverable non-merged", read.Status)

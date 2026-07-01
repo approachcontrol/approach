@@ -442,8 +442,9 @@ marks the Flow phase `needs_attention` and reports the persistence error.
 Repeating `completed` for an already-completed Flow phase preserves that
 completed state even if the linked-plan sync later fails.
 The TUI-owned manual merge shortcut still treats linked-plan sync failure as
-recoverable: terminal merge metadata is cleared, the Merge phase is marked
-`needs_attention`, and the Flow stays visible.
+recoverable: the previous PR status is restored, terminal merge metadata is
+cleared, the Merge phase is marked `needs_attention`, and the Flow stays
+visible.
 
 Flow IDs use the same safe single-path-segment shape as plans:
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use

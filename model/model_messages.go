@@ -317,6 +317,7 @@ type FlowManualMergeSetMsg struct {
 type FlowManualMergeSetFailedMsg struct {
 	RepoPath string
 	FlowID   string
+	Flow     flowstore.FlowRecord
 	Err      string
 }
 
@@ -1385,6 +1386,9 @@ func (m Model) handleFlowManualMergeSetFailed(msg FlowManualMergeSetFailedMsg) M
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "failed to mark Flow as merged"
+	}
+	if msg.Flow.FlowID != "" {
+		m = m.replaceFlowRecord(msg.Flow)
 	}
 	return m.setStatus(statusOther, errText)
 }
