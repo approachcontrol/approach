@@ -42,6 +42,7 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 		NewLaunchID:      func() string { return "launch-1" },
 		SessionStateRoot: "/state/wtui/sessions/v1",
 		AgentCommand:     "codex",
+		Model:            "gpt-5.5",
 		ReasoningEffort:  "high",
 	}
 
@@ -76,6 +77,7 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	}
 	ctx := result.Context
 	if ctx.Command != "codex" ||
+		ctx.Model != "gpt-5.5" ||
 		ctx.ReasoningEffort != "high" ||
 		ctx.LaunchID != "launch-1" ||
 		ctx.RepoPath != record.RepoPath ||

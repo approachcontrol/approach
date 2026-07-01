@@ -325,6 +325,8 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 	}
 	return model.Options{
 		AgentCommand:          cfg.Agent.Command,
+		CodexModel:            cfg.Agent.CodexModel,
+		ClaudeModel:           cfg.Agent.ClaudeModel,
 		CodexReasoningEffort:  cfg.Agent.CodexReasoningEffort,
 		ClaudeReasoningEffort: cfg.Agent.ClaudeReasoningEffort,
 		StartupMode:           startupMode,
@@ -368,6 +370,9 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		},
 		SaveAgentReasoningEffort: func(command, effort string) error {
 			return config.SaveAgentReasoningEffort(command, effort)
+		},
+		SaveAgentModel: func(command, model string) error {
+			return config.SaveAgentModel(command, model)
 		},
 		SaveDefaultView: func(mode ui.Mode) error {
 			number, ok := model.ViewNumber(mode)

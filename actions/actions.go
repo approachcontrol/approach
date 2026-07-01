@@ -660,6 +660,7 @@ type AgentLaunchContext struct {
 	FlowPhaseTerminal bool
 	Embedded          bool
 	Headless          bool
+	Model             string
 	ReasoningEffort   string
 	// InitialPrompt is canonical launch metadata. It is delivered either as a
 	// provider argv or by embedded PTY prefill, depending on launch mode.
@@ -913,7 +914,16 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 			return nil, nil, fmt.Errorf("reasoning effort cannot be set for session resume")
 		}
 	}
-	args := agentLaunchArgs(command, resumeSessionID, ctx.Headless, reasoningEffort, agentLaunchArgsOptions{
+	model := agent.NormalizeModel(ctx.Model)
+	if model != "" && model != agent.ModelDefault {
+		if err := agent.ValidateModel(command, model); err != nil {
+			return nil, nil, err
+		}
+		if resumeSessionID != "" {
+			return nil, nil, fmt.Errorf("model cannot be set for session resume")
+		}
+	}
+	args := agentLaunchArgs(command, resumeSessionID, ctx.Headless, model, reasoningEffort, agentLaunchArgsOptions{
 		embedded:   ctx.Embedded,
 		streamJSON: UsesStreamJSONOutput(ctx),
 	})
@@ -952,6 +962,9 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 }
 
 func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, error) {
+	if err := validateCodexAppModel(ctx); err != nil {
+		return TerminalLaunchSpec{}, err
+	}
 	if goos != "darwin" {
 		return TerminalLaunchSpec{}, fmt.Errorf("codex-app launch is only supported on macOS")
 	}
@@ -962,6 +975,14 @@ func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, er
 	cmd := exec.Command("open", launchURL)
 	cmd.Env = envWithoutPrefix("WTUI_")
 	return TerminalLaunchSpec{Cmd: cmd}, nil
+}
+
+func validateCodexAppModel(ctx AgentLaunchContext) error {
+	model := agent.NormalizeModel(ctx.Model)
+	if model != "" && model != agent.ModelDefault {
+		return fmt.Errorf("model cannot be set for codex-app launch")
+	}
+	return nil
 }
 
 // resumeSessionIDForLaunch trims a resume session ID and rejects resume
@@ -976,6 +997,9 @@ func resumeSessionIDForLaunch(raw string) (string, error) {
 }
 
 func codexAppLaunchURL(ctx AgentLaunchContext) (string, error) {
+	if err := validateCodexAppModel(ctx); err != nil {
+		return "", err
+	}
 	resumeSessionID, err := resumeSessionIDForLaunch(ctx.ResumeSessionID)
 	if err != nil {
 		return "", err
@@ -1151,12 +1175,15 @@ type agentLaunchArgsOptions struct {
 	streamJSON bool
 }
 
-func agentLaunchArgs(command, resumeSessionID string, headless bool, reasoningEffort string, opts agentLaunchArgsOptions) []string {
+func agentLaunchArgs(command, resumeSessionID string, headless bool, model string, reasoningEffort string, opts agentLaunchArgsOptions) []string {
 	switch command {
 	case "codex":
 		hookCommand := wtuiSessionHookCommand("codex")
 		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
 		args := []string{"--config", hookConfig}
+		if model != "" && model != agent.ModelDefault {
+			args = append(args, "--model", model)
+		}
 		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
 			args = append(args, "--config", "model_reasoning_effort="+reasoningEffort)
 		}
@@ -1174,6 +1201,9 @@ func agentLaunchArgs(command, resumeSessionID string, headless bool, reasoningEf
 		hookCommand := wtuiSessionHookCommand("claude")
 		settings := claudeSessionHookSettings(hookCommand)
 		args := []string{"--settings", settings}
+		if model != "" && model != agent.ModelDefault {
+			args = append(args, "--model", model)
+		}
 		if reasoningEffort != "" && reasoningEffort != agent.ReasoningEffortDefault {
 			args = append(args, "--effort", reasoningEffort)
 		}

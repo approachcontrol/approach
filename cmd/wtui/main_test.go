@@ -396,6 +396,8 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 	opts := modelOptionsFromConfig(config.Config{
 		Agent: config.AgentConfig{
 			Command:               "codex",
+			CodexModel:            "gpt-5.5",
+			ClaudeModel:           "claude-sonnet-5",
 			CodexReasoningEffort:  "high",
 			ClaudeReasoningEffort: "max",
 		},
@@ -404,8 +406,14 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 	if opts.CodexReasoningEffort != "high" || opts.ClaudeReasoningEffort != "max" {
 		t.Fatalf("reasoning efforts = codex %q claude %q, want high/max", opts.CodexReasoningEffort, opts.ClaudeReasoningEffort)
 	}
+	if opts.CodexModel != "gpt-5.5" || opts.ClaudeModel != "claude-sonnet-5" {
+		t.Fatalf("models = codex %q claude %q, want gpt-5.5/claude-sonnet-5", opts.CodexModel, opts.ClaudeModel)
+	}
 	if opts.SaveAgentReasoningEffort == nil {
 		t.Fatal("SaveAgentReasoningEffort should be wired")
+	}
+	if opts.SaveAgentModel == nil {
+		t.Fatal("SaveAgentModel should be wired")
 	}
 }
 

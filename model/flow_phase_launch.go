@@ -57,12 +57,13 @@ type FlowPhaseLauncher struct {
 	NewLaunchID          func() string
 	SessionStateRoot     string
 	AgentCommand         string
+	Model                string
 	ReasoningEffort      string
 	PromptTemplates      FlowPromptTemplates
 }
 
 func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
-	command, reasoningEffort := m.flowLaunchAgentSettings()
+	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return FlowPhaseLauncher{
 		CurrentRepoPath:      m.currentRepoPath,
 		PlanMarkdownPath:     m.planMarkdownPath,
@@ -71,6 +72,7 @@ func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 		NewLaunchID:          newLaunchID,
 		SessionStateRoot:     m.sessionStateRoot,
 		AgentCommand:         command,
+		Model:                model,
 		ReasoningEffort:      reasoningEffort,
 		PromptTemplates:      m.flowPromptTemplates,
 	}
@@ -149,6 +151,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 	command := agent.Normalize(l.AgentCommand)
 	ctx := actions.AgentLaunchContext{
 		Command:          command,
+		Model:            l.model(command),
 		ReasoningEffort:  l.reasoningEffort(command),
 		LaunchID:         req.LaunchID,
 		RepoPath:         req.RepoPath,
@@ -191,6 +194,15 @@ func (l FlowPhaseLauncher) reasoningEffort(command string) string {
 	switch command {
 	case agent.CommandCodex, agent.CommandClaude:
 		return l.ReasoningEffort
+	default:
+		return ""
+	}
+}
+
+func (l FlowPhaseLauncher) model(command string) string {
+	switch command {
+	case agent.CommandCodex, agent.CommandClaude:
+		return l.Model
 	default:
 		return ""
 	}

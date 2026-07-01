@@ -1111,6 +1111,7 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:          "claude",
+		ClaudeModel:           "claude-sonnet-5",
 		ClaudeReasoningEffort: "max",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
@@ -1143,6 +1144,7 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		t.Fatalf("auto launch update = %#v", launchUpdate)
 	}
 	if launch.LaunchContext.Command != "claude" ||
+		launch.LaunchContext.Model != "claude-sonnet-5" ||
 		launch.LaunchContext.ReasoningEffort != "max" ||
 		launch.LaunchContext.FlowID != "flow-1" ||
 		launch.LaunchContext.FlowPhaseID != "implementation" ||
@@ -3198,6 +3200,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 	launchAgentRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:          "claude",
+		ClaudeModel:           "claude-sonnet-5",
 		ClaudeReasoningEffort: "max",
 		SessionStateRoot:      "/state/wtui/sessions/v1",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -3244,8 +3247,8 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 	if started.FlowPhaseID != "implementation" || launchUpdate.PhaseID != "implementation" {
 		t.Fatalf("g launched %#v with update %#v, want first launchable implementation", started, launchUpdate)
 	}
-	if started.Command != "claude" || started.ReasoningEffort != "max" {
-		t.Fatalf("Flow phase launch agent settings = command %q effort %q, want claude/max", started.Command, started.ReasoningEffort)
+	if started.Command != "claude" || started.Model != "claude-sonnet-5" || started.ReasoningEffort != "max" {
+		t.Fatalf("Flow phase launch agent settings = command %q model %q effort %q, want claude/claude-sonnet-5/max", started.Command, started.Model, started.ReasoningEffort)
 	}
 	if !started.Embedded || !started.Headless || !started.FlowLaunchTracked {
 		t.Fatalf("Flow launch should be embedded, headless, and tracked: %#v", started)
@@ -5123,6 +5126,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:         "codex",
+		CodexModel:           "gpt-5.5",
 		CodexReasoningEffort: "high",
 		SessionStateRoot:     "/state/wtui",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -5175,6 +5179,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		started.Branch != "flow/resume-sessions" ||
 		started.Commit != "abc123" ||
 		started.SessionStateRoot != "/state/wtui" ||
+		started.Model != "" ||
 		started.ReasoningEffort != "" ||
 		!started.Embedded ||
 		started.Headless ||

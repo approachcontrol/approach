@@ -21,6 +21,14 @@ const (
 	ReasoningEffortMax     = "max"
 )
 
+const (
+	ModelDefault       = "default"
+	ModelGPT55         = "gpt-5.5"
+	ModelClaudeOpus48  = "claude-opus-4-8"
+	ModelClaudeSonnet5 = "claude-sonnet-5"
+	ModelClaudeFable5  = "claude-fable-5"
+)
+
 func Normalize(command string) string {
 	return strings.ToLower(strings.TrimSpace(command))
 }
@@ -48,6 +56,10 @@ func NormalizeReasoningEffort(effort string) string {
 	return strings.ToLower(strings.TrimSpace(effort))
 }
 
+func NormalizeModel(model string) string {
+	return strings.ToLower(strings.TrimSpace(model))
+}
+
 func ReasoningEffortChoices(command string) []string {
 	switch Normalize(command) {
 	case CommandCodex:
@@ -56,6 +68,19 @@ func ReasoningEffortChoices(command string) []string {
 		return []string{ReasoningEffortDefault, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax}
 	case CommandCodexApp:
 		return []string{ReasoningEffortDefault}
+	default:
+		return nil
+	}
+}
+
+func ModelChoices(command string) []string {
+	switch Normalize(command) {
+	case CommandCodex:
+		return []string{ModelDefault, ModelGPT55}
+	case CommandClaude:
+		return []string{ModelDefault, ModelClaudeOpus48, ModelClaudeSonnet5, ModelClaudeFable5}
+	case CommandCodexApp:
+		return []string{ModelDefault}
 	default:
 		return nil
 	}
@@ -76,4 +101,21 @@ func ValidateReasoningEffort(command, effort string) error {
 		}
 	}
 	return fmt.Errorf("unsupported reasoning effort %q for %s", effort, command)
+}
+
+func ValidateModel(command, model string) error {
+	command = Normalize(command)
+	if err := Validate(command); err != nil {
+		return err
+	}
+	model = NormalizeModel(model)
+	if model == "" {
+		return nil
+	}
+	for _, choice := range ModelChoices(command) {
+		if model == choice {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported model %q for %s", model, command)
 }

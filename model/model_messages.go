@@ -355,6 +355,17 @@ type AgentSetFailedMsg struct {
 	Err     string
 }
 
+type AgentModelSetMsg struct {
+	Command string
+	Model   string
+}
+
+type AgentModelSetFailedMsg struct {
+	Command string
+	Model   string
+	Err     string
+}
+
 type AgentReasoningEffortSetMsg struct {
 	Command string
 	Effort  string
@@ -996,6 +1007,23 @@ func (m Model) handleAgentSetFailed(msg AgentSetFailedMsg) Model {
 func (m Model) handleAgentReasoningEffortSet(msg AgentReasoningEffortSetMsg) Model {
 	m = m.withReasoningEffort(msg.Command, msg.Effort)
 	m = m.clearStatus(statusOther)
+	return m
+}
+
+func (m Model) handleAgentModelSet(msg AgentModelSetMsg) Model {
+	m = m.withModel(msg.Command, msg.Model)
+	m = m.clearStatus(statusOther)
+	return m
+}
+
+func (m Model) handleAgentModelSetFailed(msg AgentModelSetFailedMsg) Model {
+	// Keep the selection usable for this session even when persistence fails.
+	m = m.withModel(msg.Command, msg.Model)
+	errText := msg.Err
+	if errText == "" {
+		errText = "Unable to persist model"
+	}
+	m = m.setStatus(statusOther, errText)
 	return m
 }
 

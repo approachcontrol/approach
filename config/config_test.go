@@ -47,6 +47,8 @@ default_view = 8
 [agent]
 command = "codex"
 plan_prompt = "Implement {title} from {plan_path}"
+codex_model = " GPT-5.5 "
+claude_model = "claude-fable-5"
 codex_reasoning_effort = " HIGH "
 claude_reasoning_effort = "max"
 
@@ -108,6 +110,12 @@ timeout_seconds = 300
 	}
 	if cfg.Agent.PlanPrompt != "Implement {title} from {plan_path}" {
 		t.Fatalf("expected agent plan prompt to parse, got %q", cfg.Agent.PlanPrompt)
+	}
+	if cfg.Agent.CodexModel != "gpt-5.5" {
+		t.Fatalf("expected normalized codex model gpt-5.5, got %q", cfg.Agent.CodexModel)
+	}
+	if cfg.Agent.ClaudeModel != "claude-fable-5" {
+		t.Fatalf("expected claude model claude-fable-5, got %q", cfg.Agent.ClaudeModel)
 	}
 	if cfg.Agent.CodexReasoningEffort != "high" {
 		t.Fatalf("expected normalized codex reasoning effort high, got %q", cfg.Agent.CodexReasoningEffort)
@@ -438,6 +446,42 @@ func TestLoadFrom_RejectsInvalidReasoningEfforts(t *testing.T) {
 	}
 }
 
+func TestLoadFrom_RejectsInvalidModels(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "codex claude model",
+			body: "[agent]\ncodex_model = \"claude-sonnet-5\"\n",
+			want: "unsupported model",
+		},
+		{
+			name: "claude unknown",
+			body: "[agent]\nclaude_model = \"turbo\"\n",
+			want: "unsupported model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := config.LoadFrom(path)
+			if err == nil {
+				t.Fatal("expected invalid model error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %q, got %q", tt.want, err.Error())
+			}
+		})
+	}
+}
+
 func TestSaveAgentCommand_WritesCodexApp(t *testing.T) {
 	xdg := t.TempDir()
 	err := config.SaveAgentCommand("codex-app",
@@ -655,6 +699,121 @@ func TestSaveAgentReasoningEffort_RejectsUnsupportedEffort(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported reasoning effort") {
 		t.Fatalf("expected unsupported effort error, got %q", err.Error())
+	}
+}
+
+func TestSaveAgentModel_CreatesMissingConfig(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveAgentModel("codex", "gpt-5.5",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentModel returned error: %v", err)
+	}
+
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `codex_model = "gpt-5.5"`) {
+		t.Fatalf("expected codex model in saved config, got:\n%s", raw)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Agent.CodexModel != "gpt-5.5" {
+		t.Fatalf("expected saved codex model gpt-5.5, got %q", cfg.Agent.CodexModel)
+	}
+}
+
+func TestSaveAgentModel_UpdatesExistingAgentSection(t *testing.T) {
+	xdg := t.TempDir()
+	path := filepath.Join(xdg, "wtui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := "# keep me\n[agent]\n# keep agent note\ncommand = \"claude\"\nclaude_model = \"claude-opus-4-8\"\n\n[scan]\nroot = \"/src\"\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SaveAgentModel("claude", "claude-sonnet-5",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentModel returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"# keep me", "# keep agent note", `command = "claude"`, `claude_model = "claude-sonnet-5"`, `root = "/src"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "codex_model") {
+		t.Fatalf("claude save should not add codex model key, got:\n%s", text)
+	}
+}
+
+func TestSaveAgentModel_PersistsEmptyAsDefault(t *testing.T) {
+	xdg := t.TempDir()
+	err := config.SaveAgentModel("claude", "",
+		config.WithGetenv(func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		}),
+		config.WithHomeDir(func() (string, error) {
+			return t.TempDir(), nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentModel returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(xdg, "wtui", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `claude_model = "default"`) {
+		t.Fatalf("expected default claude model in saved config, got:\n%s", raw)
+	}
+}
+
+func TestSaveAgentModel_RejectsUnsupportedModel(t *testing.T) {
+	err := config.SaveAgentModel("codex", "claude-sonnet-5",
+		config.WithGetenv(func(string) string { return t.TempDir() }),
+		config.WithHomeDir(func() (string, error) { return t.TempDir(), nil }),
+	)
+	if err == nil {
+		t.Fatal("expected unsupported model error")
+	}
+	if !strings.Contains(err.Error(), "unsupported model") {
+		t.Fatalf("expected unsupported model error, got %q", err.Error())
 	}
 }
 
