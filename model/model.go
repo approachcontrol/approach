@@ -636,7 +636,7 @@ func (m Model) flowModelLabel() string {
 	case agent.CommandCodex, agent.CommandClaude:
 		return fmt.Sprintf("model: %s", modelDisplay(m.ModelFor(command)))
 	case agent.CommandCodexApp:
-		return "app default"
+		return "model: app"
 	default:
 		return ""
 	}
@@ -648,7 +648,7 @@ func (m Model) flowReasoningEffortLabel() string {
 	case agent.CommandCodex, agent.CommandClaude:
 		return fmt.Sprintf("effort: %s", reasoningEffortDisplay(m.ReasoningEffortFor(command)))
 	case agent.CommandCodexApp:
-		return "app default"
+		return "effort: app"
 	default:
 		return ""
 	}

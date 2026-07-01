@@ -872,7 +872,7 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 		want      string
 		wantNoKey string
 	}{
-		{name: "codex app", agent: "codex-app", effort: "app default", want: "A      codex-app\nE      app default"},
+		{name: "codex app", agent: "codex-app", effort: "effort: app", want: "A      codex-app\nE      effort: app"},
 		{name: "unset", agent: "choose agent", effort: "", want: "A      choose agent", wantNoKey: "E"},
 		{name: "missing agent label", effort: "effort: high", want: "A      choose agent", wantNoKey: "E"},
 	}

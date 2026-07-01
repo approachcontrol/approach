@@ -3877,11 +3877,33 @@ func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	}
 }
 
+func TestModel_FlowModelPickerOpensFromLeftPane(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartupMode:  ui.ModeFlows,
+	})
+	if m.ActivePane() != 0 {
+		t.Fatalf("test setup active pane = %d, want left pane", m.ActivePane())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("expected nil cmd opening model picker, got %T", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected model select overlay from left pane, got %d", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("codex model picker did not open from left pane:\n%s", view)
+	}
+}
+
 func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 	tests := []struct {
 		name       string
 		options    model.Options
 		wantAgent  string
+		wantModel  string
 		wantEffort string
 		notWant    []string
 	}{
@@ -3896,8 +3918,9 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			name:       "codex app",
 			options:    model.Options{AgentCommand: "codex-app"},
 			wantAgent:  "A      codex-app",
-			wantEffort: "E      app default",
-			notWant:    []string{"E      codex-app default"},
+			wantModel:  "M      model: app",
+			wantEffort: "E      effort: app",
+			notWant:    []string{"M      app default", "E      app default", "E      codex-app default"},
 		},
 		{
 			name:       "claude",
@@ -3925,8 +3948,15 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 				t.Fatalf("Flow shortcuts missing agent label %q:\n%s", tt.wantAgent, view)
 			}
 			if tt.wantEffort != "" {
+				modelIndex := -1
+				if tt.wantModel != "" {
+					modelIndex = strings.Index(view, tt.wantModel)
+					if modelIndex < 0 || agentIndex > modelIndex {
+						t.Fatalf("Flow shortcuts should group agent before model %q:\n%s", tt.wantModel, view)
+					}
+				}
 				effortIndex := strings.Index(view, tt.wantEffort)
-				if effortIndex < 0 || agentIndex > effortIndex {
+				if effortIndex < 0 || agentIndex > effortIndex || (modelIndex >= 0 && modelIndex > effortIndex) {
 					t.Fatalf("Flow shortcuts should group agent before effort %q:\n%s", tt.wantEffort, view)
 				}
 			}

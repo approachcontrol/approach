@@ -98,6 +98,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSetAgent()
 	}
 
+	if key == "M" && m.flowSurfaceVisible() {
+		return m.handleSetModel()
+	}
+
+	if key == "E" && m.flowSurfaceVisible() {
+		return m.handleSetReasoningEffort()
+	}
+
 	if key == "V" {
 		return m.handleSetDefaultView()
 	}
