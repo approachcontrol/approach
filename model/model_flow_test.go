@@ -3628,6 +3628,58 @@ func TestModel_HeadlessFlowLaunchFromTerminalInputReturnsFocusToList(t *testing.
 	}
 }
 
+func TestModel_AutoHeadlessFlowLaunchPreservesTerminalFocus(t *testing.T) {
+	terms := []*fakeEmbeddedTerminal{
+		{state: "running"},
+		{state: "running"},
+	}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if starts >= len(terms) {
+				t.Fatalf("unexpected embedded terminal start %d", starts+1)
+			}
+			term := terms[starts]
+			starts++
+			return term, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-selected",
+		Status:       flowstore.StatusInProgress,
+	}})
+
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:     "codex",
+		FlowID:      "flow-1",
+		FlowPhaseID: "implementation",
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(terms[0].writes) != 1 || terms[0].writes[0] != "z" {
+		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", terms[0].writes)
+	}
+
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:        "codex",
+		FlowID:         "flow-1",
+		FlowPhaseID:    "review-loop",
+		Headless:       true,
+		FlowAutoLaunch: true,
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(terms[0].writes) != 2 || terms[0].writes[1] != "y" {
+		t.Fatalf("auto headless Flow launch should preserve focused terminal input, writes = %#v", terms[0].writes)
+	}
+	if len(terms[1].writes) != 0 {
+		t.Fatalf("auto headless Flow launch should not focus the new terminal, got writes %#v", terms[1].writes)
+	}
+}
+
 func TestModel_GWithFocusedFlowTerminalWritesInputWithoutLaunchingPhase(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	addLaunchRan := false

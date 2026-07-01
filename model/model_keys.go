@@ -2236,6 +2236,9 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 	if !m.flowSurfaceVisible() {
 		return m
 	}
+	if ctx.FlowAutoLaunch {
+		return m
+	}
 	if ctx.Headless {
 		m.flowFocus = flowFocusList
 		m.terminalPrefixActive = false
