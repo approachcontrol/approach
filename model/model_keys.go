@@ -1920,6 +1920,10 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 		m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
 		return m, nil
 	}
+	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseLatestLaunchEnded(phase) {
+		m = m.setStatus(statusOther, "Flow phase has an ended session and cannot be resumed")
+		return m, nil
+	}
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
 		m = m.setStatus(statusOther, "Flow phase has missing session id")
 		return m, nil

@@ -59,6 +59,41 @@ func TestPhaseAwaitingSessionReportsNewestLaunchWithoutAttachedSession(t *testin
 	}
 }
 
+func TestPhaseLatestLaunchEndedIgnoresOlderLiveSessions(t *testing.T) {
+	phase := flowstore.FlowPhase{
+		LaunchIDs: []string{"launch-old", "launch-new"},
+		Sessions: []flowstore.Session{
+			{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+			{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-new", Status: "ended"},
+		},
+	}
+
+	if !flowstore.PhaseLatestLaunchEnded(phase) {
+		t.Fatal("PhaseLatestLaunchEnded() = false, want true for ended latest launch")
+	}
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(flowstore.FlowPhase{
+		Status:    flowstore.PhaseRunning,
+		LaunchIDs: phase.LaunchIDs,
+		Sessions:  phase.Sessions,
+	}); ok || reason != "" {
+		t.Fatalf("RecoverableRunningPhaseResetReason() = %q, %v; want not recoverable with older live session", reason, ok)
+	}
+}
+
+func TestPhaseLatestLaunchEndedRejectsMixedLatestSessions(t *testing.T) {
+	phase := flowstore.FlowPhase{
+		LaunchIDs: []string{"launch-new"},
+		Sessions: []flowstore.Session{
+			{Provider: "codex", SessionID: "codex-ended", LaunchID: "launch-new", Status: "ended"},
+			{Provider: "claude", SessionID: "claude-live", LaunchID: "launch-new", Status: "running"},
+		},
+	}
+
+	if flowstore.PhaseLatestLaunchEnded(phase) {
+		t.Fatal("PhaseLatestLaunchEnded() = true, want false for mixed latest launch sessions")
+	}
+}
+
 func TestPhaseSessionLaunchMismatch(t *testing.T) {
 	tests := []struct {
 		name  string

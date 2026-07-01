@@ -6136,6 +6136,41 @@ func TestModel_RKeyOnRunningEndedSessionFlowPhaseDoesNotResume(t *testing.T) {
 	}
 }
 
+func TestModel_RKeyOnRunningEndedLatestSessionDoesNotResumeWhenOlderSessionIsLive(t *testing.T) {
+	launchRan := false
+	flow := flowWithEndedRunningImplementation()
+	flow.Phases[2].LaunchIDs = []string{"launch-old", "launch-ended"}
+	flow.Phases[2].Sessions = append([]flowstore.Session{
+		{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+	}, flow.Phases[2].Sessions...)
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			launchRan = true
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	if strings.Contains(m.View(), "r      resume") {
+		t.Fatalf("running ended latest session should not advertise resume:\n%s", m.View())
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("running ended latest session should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("launcher ran for running ended latest session")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "ended session") || strings.Contains(got, "reset it to ready") {
+		t.Fatalf("status = %q, want non-resumable ended session guidance", got)
+	}
+}
+
 func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testing.T) {
 	var started actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{

@@ -2091,6 +2091,40 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T)
 	}
 }
 
+func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSession(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   10,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Ended latest session with live older session",
+			Status:       flowstore.StatusInProgress,
+			Branch:       "flow/ended-session",
+			WorktreePath: "/dev/wtui-worktrees/flow-ended-session",
+			Phases: []flowstore.FlowPhase{{
+				PhaseID:   "implementation",
+				Title:     "Implementation",
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-old", "launch-new"},
+				Sessions: []flowstore.Session{
+					{Provider: "claude", SessionID: "claude-old", LaunchID: "launch-old", Status: "last_seen"},
+					{Provider: "codex", SessionID: "codex-new", LaunchID: "launch-new", Status: "ended"},
+				},
+			}},
+		}},
+		ActivePane:     1,
+		FlowSelected:   0,
+		ExpandedFlowID: "flow-1",
+	})
+
+	if !strings.Contains(view, "implementation:ended-session") {
+		t.Fatalf("running phase with ended latest session should render ended-session:\n%s", view)
+	}
+}
+
 func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

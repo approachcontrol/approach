@@ -53,6 +53,26 @@ func PhaseAwaitingSession(phase FlowPhase) bool {
 	return true
 }
 
+// PhaseLatestLaunchEnded reports whether the newest phase launch attached only
+// ended session records. It ignores older launch history.
+func PhaseLatestLaunchEnded(phase FlowPhase) bool {
+	latestLaunchID := LatestPhaseLaunchID(phase)
+	if latestLaunchID == "" {
+		return false
+	}
+	foundLatestSession := false
+	for _, session := range phase.Sessions {
+		if session.LaunchID != latestLaunchID {
+			continue
+		}
+		foundLatestSession = true
+		if !sessionEnded(session) {
+			return false
+		}
+	}
+	return foundLatestSession
+}
+
 // RecoverableRunningPhaseResetReason reports whether a running phase can be
 // reset by wtui-owned stale-session recovery.
 func RecoverableRunningPhaseResetReason(phase FlowPhase) (string, bool) {
