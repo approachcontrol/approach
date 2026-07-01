@@ -464,6 +464,11 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
 		}
+	case "p":
+		if m.flowSurfaceVisible() {
+			return m.handleOpenSelectedFlowPR()
+		}
+		return m.handlePrune()
 	case "o":
 		if m.mode == ui.ModeSessions {
 			return m.handleEnter()
@@ -503,8 +508,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenAgent()
 	case "d":
 		return m.handleDelete()
-	case "p":
-		return m.handlePrune()
 	case "u":
 		return m.handleUnlock()
 	case "f":
@@ -571,6 +574,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleToggleFlowAutoMode()
 	case "M":
 		return m.handleMarkFlowManuallyMerged()
+	case "p":
+		return m.handleOpenSelectedFlowPR()
 	case "y":
 		return m.handleCopyFlowWorktreePath()
 	case "r":

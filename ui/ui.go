@@ -293,6 +293,7 @@ type RenderParams struct {
 	SelectedFlowPhaseID          string
 	FlowHeadless                 bool
 	FlowAutoModeSelected         bool
+	FlowPRTargetSelected         bool
 	FlowAgentLabel               string
 	FlowReasoningEffort          string
 	DefaultViewLabel             string
@@ -463,10 +464,12 @@ func renderApplication(p RenderParams) string {
 	flowPlanLinked := false
 	flowWorktreePathSelected := false
 	flowAutoModeSelected := false
+	flowPRTargetSelected := false
 	if flowSelected {
 		flowPlanLinked = strings.TrimSpace(p.Flows[p.FlowSelected].PlanID) != ""
 		flowWorktreePathSelected = strings.TrimSpace(p.Flows[p.FlowSelected].WorktreePath) != ""
 		flowAutoModeSelected = p.FlowAutoModeSelected
+		flowPRTargetSelected = p.FlowPRTargetSelected
 	}
 	worktreeSessionSelected := p.Mode == ModeWorktrees && p.InlineWorktreeSessions && p.WorktreeSessionSelected >= 0 && p.WorktreeSessionSelected < len(p.WorktreeSessions)
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
@@ -478,9 +481,13 @@ func renderApplication(p RenderParams) string {
 		flowDeletableSelected = false
 		flowWorktreePathSelected = false
 		flowAutoModeSelected = false
+		flowPRTargetSelected = false
 	}
 	planPhaseSelected := selectedPlanPhaseID != ""
 	flowPhaseSelected := selectedFlowPhaseID != ""
+	if flowPhaseSelected {
+		flowPRTargetSelected = false
+	}
 	status := statusBarParams{
 		Width:                        p.Width,
 		Mode:                         p.Mode,
@@ -517,6 +524,7 @@ func renderApplication(p RenderParams) string {
 		FlowDeletableSelected:        flowDeletableSelected,
 		FlowWorktreePathSelected:     flowWorktreePathSelected,
 		FlowPlanLinked:               flowPlanLinked,
+		FlowPRTargetSelected:         flowPRTargetSelected,
 		FlowHeadless:                 p.FlowHeadless,
 		FlowAutoModeSelected:         flowAutoModeSelected,
 		FlowAgentLabel:               p.FlowAgentLabel,
@@ -795,6 +803,7 @@ type statusBarParams struct {
 	FlowDeletableSelected        bool
 	FlowWorktreePathSelected     bool
 	FlowPlanLinked               bool
+	FlowPRTargetSelected         bool
 	FlowHeadless                 bool
 	FlowAutoModeSelected         bool
 	FlowAgentLabel               string
@@ -1309,6 +1318,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 			}
 			if !sp.FlowPhaseSelected && sp.FlowPlanLinked {
 				actions = append(actions, shortcutHint{Key: "o", Label: "open"})
+			}
+			if sp.FlowPRTargetSelected {
+				actions = append(actions, shortcutHint{Key: "p", Label: "open PR"})
 			}
 			if sp.FlowWorktreePathSelected {
 				actions = append(actions, shortcutHint{Key: "y", Label: "copy path"})
