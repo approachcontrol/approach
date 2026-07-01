@@ -488,8 +488,9 @@ confirmed reset back to derived `ready` only when no running or starting
 embedded Flow terminal is attached to that same Flow phase. `wtui flow phase
 reset` performs the same persisted recovery from the CLI. The reset removes the
 stale latest launch attempt, removes sessions tied to that launch, persists the
-phase as `pending`, and lets wtui derive `ready`. Live attached sessions and
-session mismatches are rejected; agents still cannot set `ready` directly.
+phase as `pending`, and lets wtui derive `ready`. Any non-ended attached
+session on the merged logical phase and any session mismatch are rejected;
+agents still cannot set `ready` directly.
 
 The Plan Review phase gates Implementation. Plan Review completion must use
 `--outcome approved` or `--outcome approved_with_concerns`; the latter requires

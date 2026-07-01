@@ -189,6 +189,16 @@ func TestRecoverableRunningPhaseResetReasonClassifiesLatestLaunchOnly(t *testing
 			},
 		},
 		{
+			name: "older live session rejects newer orphan launch",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-old", "launch-new"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "running"},
+				},
+			},
+		},
+		{
 			name: "session mismatch is not recoverable",
 			phase: flowstore.FlowPhase{
 				Status:    flowstore.PhaseRunning,

@@ -361,7 +361,20 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 			return actions.AgentLaunchWithOptions(ctx, launchOpts)
 		},
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
-			return sessionStore.MarkLaunchEnded(ctx.LaunchID, time.Now().UTC())
+			endedAt := time.Now().UTC()
+			if err := sessionStore.MarkLaunchEnded(ctx.LaunchID, endedAt); err != nil {
+				return err
+			}
+			if ctx.FlowID == "" || ctx.FlowPhaseID == "" {
+				return nil
+			}
+			_, err := flowStore.MarkPhaseLaunchEnded(flowstore.PhaseLaunchEndUpdate{
+				FlowID:   ctx.FlowID,
+				PhaseID:  ctx.FlowPhaseID,
+				LaunchID: ctx.LaunchID,
+				EndedAt:  endedAt,
+			})
+			return err
 		},
 		BootstrapHookForRepo: bootstrapHookResolver(cfg),
 		RunBootstrapHook:     actions.RunBootstrapHook,

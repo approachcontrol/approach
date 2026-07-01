@@ -56,16 +56,22 @@ func PhaseAwaitingSession(phase FlowPhase) bool {
 // RecoverableRunningPhaseResetReason reports whether a running phase can be
 // reset by wtui-owned stale-session recovery.
 func RecoverableRunningPhaseResetReason(phase FlowPhase) (string, bool) {
+	return recoverableRunningPhaseResetReasonForLaunch(phase, LatestPhaseLaunchID(phase))
+}
+
+func recoverableRunningPhaseResetReasonForLaunch(phase FlowPhase, latestLaunchID string) (string, bool) {
 	if phase.Status != PhaseRunning || PhaseSessionLaunchMismatch(phase) {
 		return "", false
 	}
-	latestLaunchID := LatestPhaseLaunchID(phase)
 	if latestLaunchID == "" {
 		return "", false
 	}
 	foundLatestSession := false
 	for _, session := range phase.Sessions {
 		if session.LaunchID != latestLaunchID {
+			if !sessionEnded(session) {
+				return "", false
+			}
 			continue
 		}
 		foundLatestSession = true

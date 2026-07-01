@@ -452,9 +452,10 @@ the selected phase row exposes `x reset ready`. Confirming the prompt removes
 the newest stale launch attempt, removes ended session records tied to that
 launch, persists the phase as `pending`, and lets wtui derive the phase back to
 `ready`. `wtui flow phase reset` performs the same recovery from the CLI. Live
-attached sessions and session launch mismatches are rejected. This is wtui
-recovery for an abandoned launch attempt or ended provider session, not a new
-agent transition; `ready` still cannot be set through `wtui flow phase set`.
+or unknown-status attached sessions anywhere on the merged logical phase, and
+session launch mismatches, are rejected. This is wtui recovery for an abandoned
+launch attempt or ended provider session, not a new agent transition; `ready`
+still cannot be set through `wtui flow phase set`.
 
 Flows are task-centric workflow records stored beside sessions and plans under
 `<sessions root>/flows/<flow-id>/meta.json`. The TUI can create a new Flow and

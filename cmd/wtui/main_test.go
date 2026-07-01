@@ -504,6 +504,74 @@ func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
 	}
 }
 
+func TestModelOptionsFromConfigFinalizeAgentSessionMarksFlowSessionEnded(t *testing.T) {
+	sessionStore, planStore, flowStore := testArtifactStores(t)
+	record, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Title:        "Finalize Flow session",
+		Instructions: "mark attached sessions ended",
+		RepoPath:     filepath.Join(sessionStore.Root(), "repo"),
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseRunning,
+			Order:     1,
+			LaunchIDs: []string{"launch-1"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = flowStore.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{Provider: "codex", SessionID: "codex-1", LaunchID: "launch-1", Status: "last_seen"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession() error = %v", err)
+	}
+	if err := sessionStore.Upsert(sessions.SessionRecord{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "codex-1",
+		LaunchID:     "launch-1",
+		Status:       "last_seen",
+		FlowID:       record.FlowID,
+		FlowPhaseID:  "implementation",
+		WorktreePath: filepath.Join(sessionStore.Root(), "repo"),
+	}); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+	opts := modelOptionsFromConfig(config.Config{}, nil, sessionStore, planStore, flowStore)
+
+	if err := opts.FinalizeAgentSession(actions.AgentLaunchContext{
+		Command:     "codex",
+		LaunchID:    "launch-1",
+		FlowID:      record.FlowID,
+		FlowPhaseID: "implementation",
+	}); err != nil {
+		t.Fatalf("FinalizeAgentSession() error = %v", err)
+	}
+
+	read, err := flowStore.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := phaseByID(read, "implementation")
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); !ok || reason != flowstore.PhaseResetReasonEndedSession {
+		t.Fatalf("RecoverableRunningPhaseResetReason() = %q, %v; want ended-session", reason, ok)
+	}
+	if phase.Sessions[0].Status != "ended" || phase.Sessions[0].EndedAt.IsZero() {
+		t.Fatalf("Flow session not finalized: %#v", phase.Sessions[0])
+	}
+	reset, err := flowStore.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: record.FlowID, PhaseID: "implementation"})
+	if err != nil {
+		t.Fatalf("ResetRecoverableRunningPhase() error = %v", err)
+	}
+	if got := phaseByID(reset, "implementation").Status; got != flowstore.PhaseReady {
+		t.Fatalf("implementation status after reset = %q, want ready", got)
+	}
+}
+
 func testArtifactStores(t *testing.T) (*sessions.Store, *planstore.Store, *flowstore.Store) {
 	t.Helper()
 	root := t.TempDir()

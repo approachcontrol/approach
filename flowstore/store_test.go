@@ -1008,6 +1008,7 @@ func TestStoreResetAwaitingSessionPhaseReturnsRunningOrphanToReady(t *testing.T)
 			Provider:  "codex",
 			SessionID: "session-old",
 			LaunchID:  "launch-old",
+			Status:    "ended",
 		},
 	})
 	if err != nil {
@@ -1319,7 +1320,7 @@ func TestStoreResetAwaitingSessionPhaseCollapsesDuplicateRows(t *testing.T) {
 				PhaseID: "Step-1", Title: "Step 1", Status: flowstore.PhaseCompleted, Order: 2,
 				LaunchIDs: []string{"launch-old", "launch-orphan"},
 				Sessions: []flowstore.Session{
-					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old"},
+					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"},
 					{Provider: "claude", SessionID: "session-orphan", LaunchID: "launch-orphan", Status: "ended"},
 				},
 			},
@@ -1381,7 +1382,7 @@ func TestStoreResetRecoverableRunningPhaseRemovesEndedSessionMergedFromDuplicate
 				PhaseID: "Step-1", Title: "Step 1", Status: flowstore.PhaseCompleted, Order: 2,
 				LaunchIDs: []string{"launch-old", "launch-ended"},
 				Sessions: []flowstore.Session{
-					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old"},
+					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"},
 					{Provider: "claude", SessionID: "session-ended", LaunchID: "launch-ended", Status: "ended"},
 				},
 			},
@@ -1414,6 +1415,267 @@ func TestStoreResetRecoverableRunningPhaseRemovesEndedSessionMergedFromDuplicate
 	}
 	if len(survivor.Sessions) != 1 || survivor.Sessions[0].SessionID != "session-old" {
 		t.Fatalf("survivor sessions = %#v, want older session preserved", survivor.Sessions)
+	}
+}
+
+func TestStoreResetRecoverableRunningPhaseRejectsLiveSessionMergedFromDuplicateRow(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicate-live-reset",
+		Title:        "Duplicate live reset",
+		Instructions: "do not discard live session history from duplicate rows",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+			{
+				PhaseID:   "Step-1",
+				Title:     "Step 1",
+				Status:    flowstore.PhaseCompleted,
+				Order:     2,
+				LaunchIDs: []string{"launch-live"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-live", LaunchID: "launch-live", Status: "running"},
+				},
+			},
+			{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-live"}},
+			{PhaseID: "omega", Title: "Omega", Status: flowstore.PhasePending, Order: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: record.FlowID, PhaseID: "step-1"})
+	if err == nil || !strings.Contains(err.Error(), "requires latest launch without a live attached session") {
+		t.Fatalf("ResetRecoverableRunningPhase() error = %v, want live session rejection", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if len(read.Phases) != len(record.Phases) {
+		t.Fatalf("phase rows changed after rejected reset: %#v", read.Phases)
+	}
+	for i := range read.Phases {
+		if read.Phases[i].PhaseID != record.Phases[i].PhaseID ||
+			read.Phases[i].Status != record.Phases[i].Status ||
+			strings.Join(read.Phases[i].LaunchIDs, ",") != strings.Join(record.Phases[i].LaunchIDs, ",") ||
+			len(read.Phases[i].Sessions) != len(record.Phases[i].Sessions) {
+			t.Fatalf("phase %d changed after rejected reset: before=%#v after=%#v", i, record.Phases[i], read.Phases[i])
+		}
+	}
+}
+
+func TestStoreResetRecoverableRunningPhaseRejectsOtherLiveLaunchMergedFromDuplicateRow(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicate-other-live-reset",
+		Title:        "Duplicate other live reset",
+		Instructions: "do not reset while any duplicate-row launch is live",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+			{
+				PhaseID:   "Step-1",
+				Title:     "Step 1",
+				Status:    flowstore.PhaseCompleted,
+				Order:     2,
+				LaunchIDs: []string{"launch-live"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-live", LaunchID: "launch-live", Status: "running"},
+				},
+			},
+			{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-stale"}},
+			{PhaseID: "omega", Title: "Omega", Status: flowstore.PhasePending, Order: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: record.FlowID, PhaseID: "step-1"})
+	if err == nil || !strings.Contains(err.Error(), "requires latest launch without a live attached session") {
+		t.Fatalf("ResetRecoverableRunningPhase() error = %v, want duplicate live launch rejection", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if len(read.Phases) != len(record.Phases) {
+		t.Fatalf("phase rows changed after rejected reset: %#v", read.Phases)
+	}
+	for i := range read.Phases {
+		if read.Phases[i].PhaseID != record.Phases[i].PhaseID ||
+			read.Phases[i].Status != record.Phases[i].Status ||
+			strings.Join(read.Phases[i].LaunchIDs, ",") != strings.Join(record.Phases[i].LaunchIDs, ",") ||
+			len(read.Phases[i].Sessions) != len(record.Phases[i].Sessions) {
+			t.Fatalf("phase %d changed after rejected reset: before=%#v after=%#v", i, record.Phases[i], read.Phases[i])
+		}
+	}
+}
+
+func TestStoreMarkPhaseLaunchEndedUpdatesAttachedFlowSession(t *testing.T) {
+	root := t.TempDir()
+	endedAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := mustCreateFlow(t, store, "Finalize attached Flow session")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-1"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{Provider: "codex", SessionID: "session-1", LaunchID: "launch-1", Status: "last_seen"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession() error = %v", err)
+	}
+
+	record, err = store.MarkPhaseLaunchEnded(flowstore.PhaseLaunchEndUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "implementation",
+		LaunchID: "launch-1",
+		EndedAt:  endedAt,
+	})
+	if err != nil {
+		t.Fatalf("MarkPhaseLaunchEnded() error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "implementation")
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); !ok || reason != flowstore.PhaseResetReasonEndedSession {
+		t.Fatalf("RecoverableRunningPhaseResetReason() = %q, %v; want ended-session", reason, ok)
+	}
+	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" || !phase.Sessions[0].EndedAt.Equal(endedAt) {
+		t.Fatalf("session = %#v, want ended at %s", phase.Sessions, endedAt)
+	}
+}
+
+func TestStoreMarkPhaseLaunchEndedUpdatesSessionMergedFromDuplicateRow(t *testing.T) {
+	root := t.TempDir()
+	endedAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicate-finalize",
+		Title:        "Duplicate finalize",
+		Instructions: "mark duplicate-row sessions ended",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+			{
+				PhaseID:   "Step-1",
+				Title:     "Step 1",
+				Status:    flowstore.PhaseCompleted,
+				Order:     2,
+				LaunchIDs: []string{"launch-1"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-1", LaunchID: "launch-1", Status: "last_seen"},
+				},
+			},
+			{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-1"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err = store.MarkPhaseLaunchEnded(flowstore.PhaseLaunchEndUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "step-1",
+		LaunchID: "launch-1",
+		EndedAt:  endedAt,
+	})
+	if err != nil {
+		t.Fatalf("MarkPhaseLaunchEnded() error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "step-1")
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); !ok || reason != flowstore.PhaseResetReasonEndedSession {
+		t.Fatalf("RecoverableRunningPhaseResetReason() = %q, %v; want ended-session", reason, ok)
+	}
+	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" || !phase.Sessions[0].EndedAt.Equal(endedAt) {
+		t.Fatalf("session = %#v, want ended duplicate-row session", phase.Sessions)
+	}
+}
+
+func TestStoreMarkPhaseLaunchEndedNoopsWhenLaunchHasNoAttachedSession(t *testing.T) {
+	root := t.TempDir()
+	endedAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "duplicate-finalize-noop",
+		Title:        "Duplicate finalize noop",
+		Instructions: "do not rewrite unmatched launch finalization",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseCompleted, Order: 1},
+			{
+				PhaseID:   "Step-1",
+				Title:     "Step 1",
+				Status:    flowstore.PhaseCompleted,
+				Order:     2,
+				LaunchIDs: []string{"launch-old"},
+				Sessions: []flowstore.Session{
+					{Provider: "codex", SessionID: "session-old", LaunchID: "launch-old", Status: "ended"},
+				},
+			},
+			{PhaseID: "step-1", Title: "Step 1", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	before, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("Marshal(before) error = %v", err)
+	}
+
+	updated, err := store.MarkPhaseLaunchEnded(flowstore.PhaseLaunchEndUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "step-1",
+		LaunchID: "launch-orphan",
+		EndedAt:  endedAt,
+	})
+	if err != nil {
+		t.Fatalf("MarkPhaseLaunchEnded() error = %v", err)
+	}
+	after, err := json.Marshal(updated)
+	if err != nil {
+		t.Fatalf("Marshal(after) error = %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("MarkPhaseLaunchEnded changed unmatched launch record:\nbefore=%s\nafter=%s", before, after)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	persisted, err := json.Marshal(read)
+	if err != nil {
+		t.Fatalf("Marshal(read) error = %v", err)
+	}
+	if string(persisted) != string(before) {
+		t.Fatalf("MarkPhaseLaunchEnded persisted changes for unmatched launch:\nbefore=%s\nafter=%s", before, persisted)
 	}
 }
 

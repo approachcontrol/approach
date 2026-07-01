@@ -86,10 +86,10 @@ Additional rules:
   session attached to the latest launch has `status: ended` or a non-zero
   `ended_at`. The reset removes the newest stale launch attempt, removes
   sessions tied to that launch, persists the phase as `pending`, and re-derives
-  readiness. Live latest sessions, mixed live/ended latest sessions, session
-  launch mismatches, and unsatisfied predecessor gates are rejected. The TUI
-  reset is unavailable while a running or starting embedded Flow terminal is
-  attached to the same Flow phase.
+  readiness. Any non-ended attached session on the merged logical phase,
+  session launch mismatches, and unsatisfied predecessor gates are rejected.
+  The TUI reset is unavailable while a running or starting embedded Flow
+  terminal is attached to the same Flow phase.
 
 ## Derived readiness
 
@@ -191,5 +191,7 @@ still hold, the selected phase row can be reset with `x` after confirmation or
 with `wtui flow phase reset`. The reset removes the stale latest launch and
 matching latest-launch sessions, persists the phase as `pending`, then lets
 derived readiness promote it to `ready`; if readiness cannot be derived, the
-mutation is rejected and the record is left unchanged. Session mismatches are
-higher priority than `ended-session` and must be resolved instead of reset.
+mutation is rejected and the record is left unchanged. Preserved attached
+session history on the merged logical phase must already be ended; any live or
+unknown-status session must finish before reset is allowed. Session mismatches
+are higher priority than `ended-session` and must be resolved instead of reset.

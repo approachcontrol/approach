@@ -273,6 +273,14 @@ type PhaseResetUpdate struct {
 	PhaseID string
 }
 
+// PhaseLaunchEndUpdate records that a tracked Flow launch has ended.
+type PhaseLaunchEndUpdate struct {
+	FlowID   string
+	PhaseID  string
+	LaunchID string
+	EndedAt  time.Time
+}
+
 // SessionAttachUpdate attaches a captured provider session to a Flow phase.
 type SessionAttachUpdate struct {
 	FlowID  string
@@ -956,6 +964,19 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
+		selectedPhase := record.Phases[phaseIndex]
+		if selectedPhase.Status != PhaseRunning {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires running recoverable phase; %s is %s", selectedPhase.PhaseID, selectedPhase.Status)
+		}
+		removedLaunchID := LatestPhaseLaunchID(selectedPhase)
+		if removedLaunchID == "" {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires a latest launch id")
+		}
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		phaseIndex = phaseIndexByID(record.Phases, update.PhaseID)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
 		phase := record.Phases[phaseIndex]
 		if phase.Status != PhaseRunning {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires running recoverable phase; %s is %s", phase.PhaseID, phase.Status)
@@ -966,27 +987,17 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		if !PhasePredecessorsSatisfied(record, phase.PhaseID) {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires satisfied predecessors for %s", phase.PhaseID)
 		}
-		if _, ok := RecoverableRunningPhaseResetReason(phase); !ok {
+		if _, ok := recoverableRunningPhaseResetReasonForLaunch(phase, removedLaunchID); !ok {
 			return FlowRecord{}, fmt.Errorf("flow phase reset requires latest launch without a live attached session")
 		}
-		launchIDs, removedLaunchID, ok := removeLatestPhaseLaunchID(phase.LaunchIDs)
-		if !ok {
-			return FlowRecord{}, fmt.Errorf("flow phase reset requires a latest launch id")
-		}
-		phase.LaunchIDs = launchIDs
+		phase.LaunchIDs = removePhaseLaunchID(phase.LaunchIDs, removedLaunchID)
+		phase.Sessions = removePhaseSessionsForLaunchID(phase.Sessions, removedLaunchID)
 		phase.Status = PhasePending
 		phase.PhaseID = update.PhaseID
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
-		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
-		if resetIndex := phaseIndexByID(record.Phases, update.PhaseID); resetIndex >= 0 {
-			resetPhase := record.Phases[resetIndex]
-			resetPhase.LaunchIDs = removePhaseLaunchID(resetPhase.LaunchIDs, removedLaunchID)
-			resetPhase.Sessions = removePhaseSessionsForLaunchID(resetPhase.Sessions, removedLaunchID)
-			if PhaseSessionLaunchMismatch(resetPhase) {
-				return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
-			}
-			record.Phases[resetIndex] = resetPhase
+		if PhaseSessionLaunchMismatch(phase) {
+			return FlowRecord{}, fmt.Errorf("flow phase reset requires attached sessions to match phase launch ids")
 		}
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
@@ -997,18 +1008,6 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
-}
-
-func removeLatestPhaseLaunchID(values []string) ([]string, string, bool) {
-	for i := len(values) - 1; i >= 0; i-- {
-		if values[i] == "" {
-			continue
-		}
-		out := append([]string(nil), values[:i]...)
-		out = append(out, values[i+1:]...)
-		return out, values[i], true
-	}
-	return values, "", false
 }
 
 func removePhaseSessionsForLaunchID(values []Session, target string) []Session {
@@ -1037,6 +1036,57 @@ func removePhaseLaunchID(values []string, target string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+// MarkPhaseLaunchEnded mirrors launch finalization into Flow-attached session
+// metadata so recovery labels and reset eligibility do not depend on a later
+// provider hook.
+func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	requestedPhaseID := strings.TrimSpace(update.PhaseID)
+	update.PhaseID = artifacts.NormalizePhaseID(update.PhaseID)
+	if update.PhaseID == "" {
+		return FlowRecord{}, fmt.Errorf("phase id is required")
+	}
+	launchID := strings.TrimSpace(update.LaunchID)
+	if launchID == "" {
+		return FlowRecord{}, fmt.Errorf("launch id is required")
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		original := record
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		phaseIndex = phaseIndexByID(record.Phases, update.PhaseID)
+		if phaseIndex < 0 {
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+		}
+		phase := record.Phases[phaseIndex]
+		changed := false
+		for i := range phase.Sessions {
+			if phase.Sessions[i].LaunchID != launchID {
+				continue
+			}
+			phase.Sessions[i].Status = "ended"
+			if phase.Sessions[i].EndedAt.IsZero() {
+				phase.Sessions[i].EndedAt = update.EndedAt
+			}
+			changed = true
+		}
+		if !changed {
+			return original, nil
+		}
+		phase.PhaseID = update.PhaseID
+		phase.UpdatedAt = now
+		record.Phases[phaseIndex] = phase
+		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
+		record.UpdatedAt = now
+		return record, nil
+	})
 }
 
 // AttachSession records a provider session against a phase. Re-attaching the
