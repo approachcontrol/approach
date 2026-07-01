@@ -344,11 +344,12 @@ is set. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row or expanded
 phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
-launchable phase for the selected Flow. Press `y` to copy the selected Flow
-worktree path from either a Flow row or one of its expanded phase rows. Press
-`m` to toggle per-Flow auto mode. New Flow records start with auto mode on, and
-the toggle is persisted on each Flow. Flows created before this field existed
-remain manual until auto mode is toggled on. When auto mode is on, completed
+launchable phase for the selected Flow. Press `c` to copy the selected Flow ID,
+and press `y` to copy the selected Flow worktree path, from either a Flow row or
+one of its expanded phase rows. Press `m` to toggle per-Flow auto mode. New Flow
+records start with auto mode on, and the toggle is persisted on each Flow. Flows
+created before this field existed remain manual until auto mode is toggled on.
+When auto mode is on, completed
 CLI phases running in an embedded Flow terminal advance only after the completed
 phase's terminal exits normally and auto-closes; terminal exit also triggers a
 Flow refresh so newly persisted completion state is discovered without waiting
@@ -358,8 +359,8 @@ The active flows pane (mode `9`) shows active Flows across all repos and hides
 merged Flow records. Moving focus to the left repo pane temporarily filters the
 visible active rows to the selected repo, and returning focus to the middle pane
 restores the global list. It supports the same Flow actions, phase launches,
-attached-session resumes, auto-mode toggles, and embedded Flow terminal
-management as the flows pane.
+attached-session resumes, auto-mode toggles, `c` Flow ID copy, `y` worktree path
+copy, and embedded Flow terminal management as the flows pane.
 Headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in an embedded terminal
 inside the flows pane. Press `h` to choose the CLI command mode: headless runs

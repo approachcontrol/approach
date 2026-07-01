@@ -1758,6 +1758,22 @@ func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m Model) handleCopyFlowID() (tea.Model, tea.Cmd) {
+	if !m.flowSurfaceVisible() {
+		return m, nil
+	}
+	flowID := m.selectedFlowID()
+	if strings.TrimSpace(flowID) == "" {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := m.copyToClipboard(flowID); err != nil {
+			return ClipboardResultMsg{Err: err.Error()}
+		}
+		return ClipboardResultMsg{}
+	}
+}
+
 func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeSessions {
 		return m, nil

@@ -3791,6 +3791,144 @@ func TestModel_YKeyDoesNothingWhenSelectedFlowWorktreePathIsBlank(t *testing.T) 
 	}
 }
 
+func TestModel_CKeyCopiesSelectedFlowID(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID: "flow-1",
+		Title:  "Copy flow ID",
+		Status: flowstore.StatusInProgress,
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("expected flow ID copy command")
+	}
+	_ = cmd()
+	if got := copied[len(copied)-1]; got != "flow-1" {
+		t.Fatalf("copied Flow ID = %q, want flow-1", got)
+	}
+}
+
+func TestModel_CKeyCopiesParentFlowIDFromSelectedPhaseRow(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("expected selected phase to copy parent Flow ID")
+	}
+	_ = cmd()
+	if got := copied[len(copied)-1]; got != "flow-1" {
+		t.Fatalf("copied selected phase parent Flow ID = %q, want flow-1", got)
+	}
+}
+
+func TestModel_CKeyCopiesSelectedActiveFlowID(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{{
+		FlowID: "active-flow",
+		Title:  "Copy active Flow ID",
+		Status: flowstore.StatusInProgress,
+	}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("expected active Flow ID copy command")
+	}
+	_ = cmd()
+	if got := copied[len(copied)-1]; got != "active-flow" {
+		t.Fatalf("copied active Flow ID = %q, want active-flow", got)
+	}
+}
+
+func TestModel_CKeyCopiesParentActiveFlowIDFromSelectedPhaseRow(t *testing.T) {
+	var copied []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(text string) error {
+			copied = append(copied, text)
+			return nil
+		},
+	})
+	flow := flowWithPhaseDetails()
+	flow.FlowID = "active-flow"
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("expected selected active Flow phase to copy parent Flow ID")
+	}
+	_ = cmd()
+	if got := copied[len(copied)-1]; got != "active-flow" {
+		t.Fatalf("copied selected active Flow phase parent Flow ID = %q, want active-flow", got)
+	}
+}
+
+func TestModel_CKeyDoesNothingWhenSelectedFlowIDIsBlank(t *testing.T) {
+	copied := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		CopyToClipboard: func(string) error {
+			copied = true
+			return nil
+		},
+	})
+
+	m = flowsInRightPane(t, m, nil)
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+		t.Fatalf("empty Flow pane returned copy command %T, want nil", cmd)
+	}
+
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID: "  ",
+		Title:  "Blank flow ID",
+		Status: flowstore.StatusInProgress,
+	}})
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+		t.Fatalf("blank Flow ID returned copy command %T, want nil", cmd)
+	}
+	if copied {
+		t.Fatal("blank Flow ID should not copy to clipboard")
+	}
+}
+
+func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{
+		RepoPath: "/dev/alpha",
+		Worktrees: []gitquery.Worktree{{
+			Path:       "/dev/alpha",
+			BranchName: "main",
+		}},
+	})
+
+	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd == nil {
+		t.Fatal("expected non-flow c key to keep open-code command path")
+	}
+}
+
 func TestModel_ExpandedFlowArrowKeysSelectPhaseRows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
