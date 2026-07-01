@@ -424,6 +424,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleSetReasoningEffort()
 		}
+	case "M":
+		if m.flowSurfaceVisible() {
+			return m.handleSetModel()
+		}
 	case "i":
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
@@ -571,6 +575,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleResumeFlowPhaseSession()
 	case "E":
 		return m.handleSetReasoningEffort()
+	case "M":
+		return m.handleSetModel()
 	case "x":
 		return m.handleResetSelectedFlowPhase()
 	case "d":
@@ -1005,6 +1011,61 @@ func (m Model) handleSetReasoningEffort() (tea.Model, tea.Cmd) {
 		func(value string) tea.Cmd { return m.setReasoningEffort(command, value) },
 	)
 	return m, nil
+}
+
+func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
+	command := agent.Normalize(m.agentCommand)
+	if command == "" {
+		m = m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before setting model")
+		return m, nil
+	}
+	if command == agent.CommandCodexApp {
+		m = m.setStatus(statusOther, "Codex App uses app default model")
+		return m, nil
+	}
+	if err := agent.Validate(command); err != nil {
+		m = m.setStatus(statusOther, err.Error())
+		return m, nil
+	}
+	items := modelSelectItems(command)
+	m.modal = modal.OpenSelectWithLayout(
+		fmt.Sprintf("Choose %s model", command),
+		items,
+		selectedModelIndex(command, m.ModelFor(command)),
+		modal.Layout{Width: 38, Height: len(items) + 3, Placement: modal.PlacementCenter},
+		func(value string) tea.Cmd { return m.setModel(command, value) },
+	)
+	return m, nil
+}
+
+func modelSelectItems(command string) []modal.SelectItem {
+	choices := agent.ModelChoices(command)
+	items := make([]modal.SelectItem, 0, len(choices))
+	for _, choice := range choices {
+		items = append(items, modal.SelectItem{Label: choice, Value: choice})
+	}
+	return items
+}
+
+func selectedModelIndex(command, model string) int {
+	model = modelDisplay(model)
+	for i, choice := range agent.ModelChoices(command) {
+		if choice == model {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) setModel(command, selectedModel string) tea.Cmd {
+	command = agent.Normalize(command)
+	selectedModel = agent.NormalizeModel(selectedModel)
+	return func() tea.Msg {
+		if err := m.saveAgentModel(command, selectedModel); err != nil {
+			return AgentModelSetFailedMsg{Command: command, Model: selectedModel, Err: err.Error()}
+		}
+		return AgentModelSetMsg{Command: command, Model: selectedModel}
+	}
 }
 
 func reasoningEffortSelectItems(command string) []modal.SelectItem {
@@ -1876,6 +1937,7 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:          m.agentCommand,
+		Model:            m.launchModelFor(m.agentCommand),
 		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
@@ -2186,6 +2248,7 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 	}
 	return actions.AgentLaunchContext{
 		Command:          m.agentCommand,
+		Model:            m.launchModelFor(m.agentCommand),
 		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,

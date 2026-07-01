@@ -81,6 +81,8 @@ type Model struct {
 	pendingBranchSelection     string
 	pendingWorktreeSelection   string
 	agentCommand               string
+	codexModel                 string
+	claudeModel                string
 	codexReasoningEffort       string
 	claudeReasoningEffort      string
 	defaultView                ui.Mode
@@ -107,6 +109,7 @@ type Model struct {
 	pageText                   func(string) (actions.TerminalLaunchSpec, error)
 	editFile                   func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                  func(string) error
+	saveAgentModel             func(string, string) error
 	saveAgentReasoningEffort   func(string, string) error
 	saveDefaultView            func(ui.Mode) error
 	savePromptTemplate         func(string, string, string) error
@@ -166,6 +169,8 @@ type visibleRepoFetchState struct {
 // simple for tests.
 type Options struct {
 	AgentCommand             string
+	CodexModel               string
+	ClaudeModel              string
 	CodexReasoningEffort     string
 	ClaudeReasoningEffort    string
 	StartupMode              ui.Mode
@@ -192,6 +197,7 @@ type Options struct {
 	PageText                 func(body string) (actions.TerminalLaunchSpec, error)
 	EditFile                 func(path string) (actions.TerminalLaunchSpec, error)
 	SaveAgentCommand         func(string) error
+	SaveAgentModel           func(string, string) error
 	SaveAgentReasoningEffort func(string, string) error
 	SaveDefaultView          func(ui.Mode) error
 	SavePromptTemplate       func(section, key, value string) error
@@ -220,6 +226,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgentReasoningEffort := opts.SaveAgentReasoningEffort
 	if saveAgentReasoningEffort == nil {
 		saveAgentReasoningEffort = func(string, string) error { return nil }
+	}
+	saveAgentModel := opts.SaveAgentModel
+	if saveAgentModel == nil {
+		saveAgentModel = func(string, string) error { return nil }
 	}
 	saveDefaultView := opts.SaveDefaultView
 	if saveDefaultView == nil {
@@ -420,6 +430,8 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		mode:                     initialMode,
 		defaultView:              initialMode,
 		agentCommand:             agent.Normalize(opts.AgentCommand),
+		codexModel:               agent.NormalizeModel(opts.CodexModel),
+		claudeModel:              agent.NormalizeModel(opts.ClaudeModel),
 		codexReasoningEffort:     agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
 		claudeReasoningEffort:    agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
 		planPromptTemplate:       opts.PlanPromptTemplate,
@@ -445,6 +457,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		pageText:                 pageText,
 		editFile:                 editFile,
 		saveAgent:                saveAgent,
+		saveAgentModel:           saveAgentModel,
 		saveAgentReasoningEffort: saveAgentReasoningEffort,
 		saveDefaultView:          saveDefaultView,
 		savePromptTemplate:       savePromptTemplate,
@@ -583,6 +596,26 @@ func (m Model) ReasoningEffortFor(command string) string {
 	}
 }
 
+func (m Model) ModelFor(command string) string {
+	switch agent.Normalize(command) {
+	case agent.CommandCodex:
+		return m.codexModel
+	case agent.CommandClaude:
+		return m.claudeModel
+	default:
+		return ""
+	}
+}
+
+func (m Model) launchModelFor(command string) string {
+	switch agent.Normalize(command) {
+	case agent.CommandCodex, agent.CommandClaude:
+		return m.ModelFor(command)
+	default:
+		return ""
+	}
+}
+
 func (m Model) launchReasoningEffortFor(command string) string {
 	switch agent.Normalize(command) {
 	case agent.CommandCodex, agent.CommandClaude:
@@ -592,9 +625,21 @@ func (m Model) launchReasoningEffortFor(command string) string {
 	}
 }
 
-func (m Model) flowLaunchAgentSettings() (string, string) {
+func (m Model) flowLaunchAgentSettings() (string, string, string) {
 	command := agent.Normalize(m.agentCommand)
-	return command, m.launchReasoningEffortFor(command)
+	return command, m.launchModelFor(command), m.launchReasoningEffortFor(command)
+}
+
+func (m Model) flowModelLabel() string {
+	command := agent.Normalize(m.agentCommand)
+	switch command {
+	case agent.CommandCodex, agent.CommandClaude:
+		return fmt.Sprintf("model: %s", modelDisplay(m.ModelFor(command)))
+	case agent.CommandCodexApp:
+		return "app default"
+	default:
+		return ""
+	}
 }
 
 func (m Model) flowReasoningEffortLabel() string {
@@ -624,6 +669,25 @@ func reasoningEffortDisplay(effort string) string {
 		return agent.ReasoningEffortDefault
 	}
 	return effort
+}
+
+func modelDisplay(model string) string {
+	model = agent.NormalizeModel(model)
+	if model == "" {
+		return agent.ModelDefault
+	}
+	return model
+}
+
+func (m Model) withModel(command, model string) Model {
+	model = agent.NormalizeModel(model)
+	switch agent.Normalize(command) {
+	case agent.CommandCodex:
+		m.codexModel = model
+	case agent.CommandClaude:
+		m.claudeModel = model
+	}
+	return m
 }
 
 func (m Model) withReasoningEffort(command, effort string) Model {
@@ -758,6 +822,7 @@ func (m Model) View() string {
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowAgentLabel:              m.flowAgentShortcutLabel(),
+		FlowModel:                   m.flowModelLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
 		DefaultViewLabel:            ViewChoiceLabel(m.defaultView),
 		FlowNextLaunchReady:         m.selectedFlowHasLaunchablePhase(),
@@ -1217,6 +1282,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentSet(msg), nil
 	case AgentSetFailedMsg:
 		return m.handleAgentSetFailed(msg), nil
+	case AgentModelSetMsg:
+		return m.handleAgentModelSet(msg), nil
+	case AgentModelSetFailedMsg:
+		return m.handleAgentModelSetFailed(msg), nil
 	case AgentReasoningEffortSetMsg:
 		return m.handleAgentReasoningEffortSet(msg), nil
 	case AgentReasoningEffortSetFailedMsg:

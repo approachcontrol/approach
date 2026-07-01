@@ -712,12 +712,13 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 		Mode:                ModeFlows,
 		ActivePane:          1,
 		FlowAgentLabel:      "codex",
+		FlowModel:           "model: gpt-5.5",
 		FlowReasoningEffort: "effort: high",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "A      codex\nE      effort: high") {
-		t.Fatalf("flows shortcut pane should group agent before reasoning effort:\n%s", pane)
+	if !strings.Contains(pane, "A      codex\nM      model: gpt-5.5\nE      effort: high") {
+		t.Fatalf("flows shortcut pane should group agent before model and reasoning effort:\n%s", pane)
 	}
 	if strings.Contains(pane, "A      set agent") {
 		t.Fatalf("flows shortcut pane should not show generic set-agent label:\n%s", pane)
@@ -1309,12 +1310,14 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 		ActivePane:          1,
 		RepoSelected:        true,
 		FlowAgentLabel:      "codex",
+		FlowModel:           "model: gpt-5.5",
 		FlowReasoningEffort: "effort: high",
 	})
 	agentIndex := strings.Index(bar, "A: codex")
+	modelIndex := strings.Index(bar, "M: model: gpt-5.5")
 	effortIndex := strings.Index(bar, "E: effort: high")
-	if agentIndex < 0 || effortIndex < 0 || agentIndex > effortIndex {
-		t.Fatalf("Flow footer should group agent before effort, got %q", bar)
+	if agentIndex < 0 || modelIndex < 0 || effortIndex < 0 || agentIndex > modelIndex || modelIndex > effortIndex {
+		t.Fatalf("Flow footer should group agent before model before effort, got %q", bar)
 	}
 	if strings.Contains(bar, "A: set agent") || strings.Contains(bar, "E: codex effort: high") {
 		t.Fatalf("Flow footer should not show generic or duplicated labels, got %q", bar)

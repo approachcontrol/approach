@@ -18,6 +18,7 @@ type FlowStartRequest struct {
 	Instructions        string
 	BaseRef             string
 	AgentCommand        string
+	Model               string
 	ReasoningEffort     string
 	SessionStateRoot    string
 	FlowPromptTemplates FlowPromptTemplates
@@ -154,6 +155,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	}
 	result.LaunchContext = actions.AgentLaunchContext{
 		Command:          req.AgentCommand,
+		Model:            req.Model,
 		ReasoningEffort:  req.ReasoningEffort,
 		LaunchID:         launchID,
 		RepoPath:         req.RepoPath,

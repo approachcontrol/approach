@@ -87,6 +87,7 @@ filter matches, or a load failure with details in the status bar.
 | `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows / active flows |
 | `←`/`→`/`l` | Switch views in the right pane, wrapping between worktrees and active flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
 | `h` | Switch to the previous view outside flows view; toggle Flow headless/interactive command mode in flows view |
+| `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
@@ -391,13 +392,15 @@ Creating a new Flow has its own default-on Headless checkbox for the initial
 Plan launch; uncheck it for an interactive initial Plan launch. That checkbox
 is ignored when Plan Now is off and does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
-launches all use the configured agent and that agent's configured effort. Press
-`E` to choose the selected CLI agent's reasoning effort; the shortcut pane shows
-the current value. Codex CLI launches use `--config
-model_reasoning_effort=<effort>`, Claude launches use `--effort <effort>`, and
-session resumes do not receive effort flags. `codex-app` always uses the
-external deep-link route and keeps app-side/default reasoning. Embedded headless output
-is readable terminal text, not raw JSON events: `codex exec` streams its progress
+launches all use the configured agent and that agent's configured model and
+effort. Press `M` to choose the selected CLI agent's model; press `E` to choose
+its reasoning effort. The shortcut pane shows the current values. Codex CLI
+launches use `--model <model>` and `--config
+model_reasoning_effort=<effort>`; Claude launches use `--model <model>` and
+`--effort <effort>`. Session resumes do not receive model or effort flags.
+`codex-app` always uses the external deep-link route and keeps app-side/default
+model and reasoning. Embedded headless output is readable terminal text, not raw
+JSON events: `codex exec` streams its progress
 directly, while `claude --print` is run with `--output-format stream-json
 --include-partial-messages` and wtui translates those events into readable lines
 (thinking, tool calls and results, the final answer streamed token-by-token, and
@@ -579,6 +582,8 @@ max_depth = 2
 
 [agent]
 command = "codex"
+codex_model = "gpt-5.5"
+claude_model = "claude-sonnet-5"
 codex_reasoning_effort = "high"
 claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
@@ -608,7 +613,10 @@ for compatibility. The same root is resolved to an absolute path when used as
 the parent directory for left-pane repo creation.
 `[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
 configure provider-specific effort for new CLI agent launches; empty or
-`default` keeps provider defaults. `[ui].default_view` accepts `1` through `9`
+`default` keeps provider defaults. `[agent].codex_model` supports `default` and
+`gpt-5.5`; `[agent].claude_model` supports `default`, `claude-opus-4-8`,
+`claude-sonnet-5`, and `claude-fable-5`. Empty or `default` omits the model
+override and keeps provider defaults. `[ui].default_view` accepts `1` through `9`
 and controls the startup view; omitting it keeps the built-in Flows default.
 `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while

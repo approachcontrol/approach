@@ -25,6 +25,7 @@ exist:
 | Plan editor command | `[editor].command` | `EDITOR` | unset |
 | Terminal command | `TERMINAL` | `[terminal].command` | platform fallback |
 | Coding agent | none | `[agent].command` | unset |
+| Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
 | Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
 | Startup default view | none | `[ui].default_view` | flows view (`8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
@@ -66,6 +67,8 @@ default_view = 8
 
 [agent]
 command = "codex"
+codex_model = "gpt-5.5"
+claude_model = "claude-sonnet-5"
 codex_reasoning_effort = "high"
 claude_reasoning_effort = "max"
 plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
@@ -208,6 +211,8 @@ value immediately, creating the config file if needed.
 | Key | Type | Description |
 |-----|------|-------------|
 | `command` | string | Supported values: `codex`, `codex-app`, or `claude`. |
+| `codex_model` | string | Optional Codex CLI model for new launches. Supported values: `default`, `gpt-5.5`. Empty or `default` omits the Codex override and keeps provider defaults. |
+| `claude_model` | string | Optional Claude Code model for new launches. Supported values: `default`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-fable-5`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `codex_reasoning_effort` | string | Optional Codex CLI reasoning effort for new launches. Supported values: `default`, `minimal`, `low`, `medium`, `high`, `xhigh`. Empty or `default` omits the Codex override and keeps provider defaults. |
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
@@ -216,12 +221,13 @@ Press `F2` in normal TUI views to open the prompt-template editor. The editor
 can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
 preview the built-in prompt.
 
-In the flows pane, `E` opens a provider-specific reasoning-effort picker for
-the selected CLI agent and persists the corresponding key. New Codex CLI
-launches use `--config model_reasoning_effort=<effort>`; new Claude Code
-launches use `--effort <effort>`. Session resumes do not receive effort flags.
-`codex-app` launches keep app-side/default reasoning because the current deep
-link path cannot carry a verified effort setting.
+In the flows pane, `M` opens a provider-specific model picker for the selected
+CLI agent and persists the corresponding key. `E` opens the reasoning-effort
+picker. New Codex CLI launches use `--model <model>` and `--config
+model_reasoning_effort=<effort>`; new Claude Code launches use
+`--model <model>` and `--effort <effort>`. Session resumes do not receive model
+or effort flags. `codex-app` launches keep app-side/default model and reasoning
+because the current deep-link path cannot carry verified provider settings.
 
 ### `[flow_prompts]`
 
@@ -370,12 +376,12 @@ mode so you can review or edit it before pressing enter. Headless launches keep
 focus on the Flow list. Creating a new Flow has its own default-on Headless
 checkbox for the initial Plan launch; uncheck it for an interactive initial
 Plan launch. That checkbox does not change the selected-phase `h` setting.
-Press `E` to choose the configured CLI agent's reasoning effort for future
-launches; the shortcut pane shows the current value. Manual phase
-launches, auto-launched phases, and new Flow Plan launches all use the
-configured agent and that agent's configured effort.
+Press `M` to choose the configured CLI agent's model and `E` to choose its
+reasoning effort for future launches; the shortcut pane shows the current
+values. Manual phase launches, auto-launched phases, and new Flow Plan launches
+all use the configured agent and that agent's configured model and effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses
-app-side/default reasoning. Press `r` to resume an attached
+app-side/default model and reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` switches focus between the Flow list and

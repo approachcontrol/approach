@@ -294,6 +294,7 @@ type RenderParams struct {
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
 	FlowAgentLabel              string
+	FlowModel                   string
 	FlowReasoningEffort         string
 	DefaultViewLabel            string
 	FlowNextLaunchReady         bool
@@ -519,6 +520,7 @@ func renderApplication(p RenderParams) string {
 		FlowHeadless:                p.FlowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
 		FlowAgentLabel:              p.FlowAgentLabel,
+		FlowModel:                   p.FlowModel,
 		FlowReasoningEffort:         p.FlowReasoningEffort,
 		DefaultViewLabel:            p.DefaultViewLabel,
 		FlowNextLaunchReady:         p.FlowNextLaunchReady,
@@ -796,6 +798,7 @@ type statusBarParams struct {
 	FlowHeadless                bool
 	FlowAutoModeSelected        bool
 	FlowAgentLabel              string
+	FlowModel                   string
 	FlowReasoningEffort         string
 	DefaultViewLabel            string
 	FlowNextLaunchReady         bool
@@ -1321,6 +1324,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	}
 	agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
 	flowAgentControls = append(flowAgentControls, shortcutHint{Key: "A", Label: agentLabel})
+	if modelLabel := flowModelShortcutLabel(sp.FlowModel); agentConfigured && modelLabel != "" {
+		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "M", Label: modelLabel})
+	}
 	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {
 		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "E", Label: effortLabel})
 	}
@@ -1353,6 +1359,11 @@ func shortcutsMuted(sp statusBarParams) bool {
 }
 
 func flowReasoningEffortShortcutLabel(value string) string {
+	value = strings.TrimSpace(value)
+	return value
+}
+
+func flowModelShortcutLabel(value string) string {
 	value = strings.TrimSpace(value)
 	return value
 }
@@ -1566,16 +1577,19 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	coreActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "d", "m")
 	coreActionsWithAutoWithoutSafety := footerHintsForKeys(hints, "h", "enter", "g", "d", "m")
 	selectedActionsWithAuto := footerHintsForKeys(hints, "D", "h", "enter", "g", "x", "o", "y", "d", "r", "m")
-	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "E", "f", "F")
-	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
-	actionsWithoutAgentAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "f", "F")
+	actions := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "M", "E", "f", "F")
+	actionsWithoutEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "M", "f", "F")
+	actionsWithoutModelAndEffort := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "A", "f", "F")
+	actionsWithoutAgentAndPreferences := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "x", "o", "y", "d", "r", "m", "f", "F")
 
 	for _, parts := range [][]string{
 		appendParts(base, upDown, arrow, actions),
 		appendParts(base, upDown, arrow, actionsWithoutEffort),
+		appendParts(base, upDown, arrow, actionsWithoutModelAndEffort),
 		appendParts(base, arrow, actionsWithoutEffort),
-		appendParts(base, upDown, arrow, actionsWithoutAgentAndEffort),
-		appendParts(base, arrow, actionsWithoutAgentAndEffort),
+		appendParts(base, arrow, actionsWithoutModelAndEffort),
+		appendParts(base, upDown, arrow, actionsWithoutAgentAndPreferences),
+		appendParts(base, arrow, actionsWithoutAgentAndPreferences),
 		appendParts(base, arrow, selectedActionsWithAuto),
 		appendParts(compactBase, selectedActionsWithAuto),
 		appendParts(base, arrow, coreActionsWithAuto),
