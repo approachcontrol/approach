@@ -4825,6 +4825,68 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 	}
 }
 
+func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "codex-session-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		CWD:          "/dev/alpha-worktrees/feat",
+		Branch:       "feature/api",
+	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("embedded session resume should schedule terminal repaint ticks")
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab from session terminal returned cmd %T, want nil", cmd)
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("tab from session terminal active pane = %d, want left pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("tab from session terminal should not write to PTY: %#v", fakeTerm.writes)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if m.Selected() != 1 {
+		t.Fatalf("j in left pane selected repo = %d, want 1", m.Selected())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("left pane key should not write to session terminal: %#v", fakeTerm.writes)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab back to session terminal returned cmd %T, want nil", cmd)
+	}
+	if m.ActivePane() != 1 {
+		t.Fatalf("second tab active pane = %d, want right pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 0 {
+		t.Fatalf("tab back to session terminal should not write to PTY: %#v", fakeTerm.writes)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if cmd != nil {
+		t.Fatalf("backspace after returning to session terminal returned cmd %T, want nil", cmd)
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x7f" {
+		t.Fatalf("backspace after returning to session terminal writes = %#v, want delete byte", fakeTerm.writes)
+	}
+}
+
 func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")

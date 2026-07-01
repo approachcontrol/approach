@@ -110,8 +110,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePromptTemplates()
 	}
 
-	if key == "tab" && m.activePane == 0 {
-		m = m.togglePrimaryPaneFocus()
+	if key == "tab" {
+		m = m.cyclePaneFocusForward()
 		return m, nil
 	}
 
@@ -438,12 +438,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleResetSelectedFlowPhase()
 		}
-	case "tab":
-		if m.flowSurfaceVisible() && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
-			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = true
-			return m, nil
-		}
 	case "g":
 		if m.flowSurfaceVisible() {
 			return m.handleLaunchNextFlowPhase()
@@ -464,6 +458,11 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
 		}
+	case "p":
+		if m.flowSurfaceVisible() {
+			return m.handleOpenSelectedFlowPR()
+		}
+		return m.handlePrune()
 	case "o":
 		if m.mode == ui.ModeSessions {
 			return m.handleEnter()
@@ -499,8 +498,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenAgent()
 	case "d":
 		return m.handleDelete()
-	case "p":
-		return m.handlePrune()
 	case "u":
 		return m.handleUnlock()
 	case "f":
@@ -542,6 +539,45 @@ func (m Model) togglePrimaryPaneFocus() Model {
 	return m
 }
 
+func (m Model) cyclePaneFocusForward() Model {
+	if !m.flowSurfaceVisible() {
+		if m.activePane == 0 {
+			m.activePane = 1
+			return m
+		}
+		m.activePane = 0
+		if m.mode == ui.ModePlans {
+			m = m.clearSelectedPlanPhase()
+		}
+		return m
+	}
+
+	if m.activePane == 0 {
+		m.activePane = 1
+		m.flowFocus = flowFocusList
+		m.terminalPrefixActive = false
+		if m.activeFlowSurfaceVisible() {
+			m = m.syncActiveFlowsFromCache()
+		}
+		return m.syncActiveFlowTerminalToSelectedFlow()
+	}
+
+	if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) && m.flowFocus != flowFocusTerminal {
+		m.flowFocus = flowFocusTerminal
+		m.terminalPrefixActive = true
+		return m
+	}
+
+	m.activePane = 0
+	m.flowFocus = flowFocusList
+	m.terminalPrefixActive = false
+	m = m.clearSelectedFlowPhase()
+	if m.activeFlowSurfaceVisible() {
+		return m.syncActiveFlowsFromCache()
+	}
+	return m
+}
+
 func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "up", "k":
@@ -554,12 +590,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleHorizontalNavigation(1)
 	case "h":
 		return m.handleToggleFlowHeadless()
-	case "tab":
-		if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
-			m.flowFocus = flowFocusTerminal
-			m.terminalPrefixActive = true
-			return m, nil
-		}
 	case "g":
 		return m.handleLaunchNextFlowPhase()
 	case "enter":
@@ -568,6 +598,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleOpenFlowPlanText()
 	case "m":
 		return m.handleToggleFlowAutoMode()
+	case "p":
+		return m.handleOpenSelectedFlowPR()
 	case "y":
 		return m.handleCopyFlowWorktreePath()
 	case "c":

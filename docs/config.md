@@ -379,8 +379,9 @@ configured agent and that agent's configured effort.
 app-side/default reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
-While a Flow terminal is open, `tab` switches focus between the Flow list and
-terminal. Manually tabbing into Flow terminal focus starts in wtui command mode:
+While a Flow terminal is open, `tab` cycles focus through the repo pane, Flow
+list, and Flow terminal. Manually tabbing into Flow terminal focus starts in
+wtui command mode:
 `left`/`right` cycles Flow terminals, `1`-`9` switches by number, `d` detaches to
 tmux when available, `x` closes, `q`/`esc` quits, unknown ordinary keys do not
 pass through to the PTY, and `ctrl+]` sends a literal `ctrl+]`; `i` enters

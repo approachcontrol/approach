@@ -520,6 +520,21 @@ func CopyToClipboard(text string) error {
 	return cmd.Run()
 }
 
+// OpenURL opens an absolute http(s) URL in the system browser.
+func OpenURL(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if err := validateBrowserURL(rawURL); err != nil {
+		return err
+	}
+	spec, err := selectBrowserCommand(runtime.GOOS, exec.LookPath)
+	if err != nil {
+		return err
+	}
+	args := append([]string(nil), spec.args...)
+	args = append(args, rawURL)
+	return exec.Command(spec.name, args...).Run()
+}
+
 // PageText builds an interactive pager command for read-only text views.
 func PageText(body string) (TerminalLaunchSpec, error) {
 	return pageText(body, exec.LookPath)
@@ -1747,6 +1762,38 @@ func selectClipboardCommand(goos string, lookPath lookPathFunc) (commandSpec, er
 	}
 
 	return commandSpec{}, fmt.Errorf("clipboard copy is not supported on %s", goos)
+}
+
+func validateBrowserURL(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return fmt.Errorf("browser URL cannot be empty")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse browser URL: %w", err)
+	}
+	if !parsed.IsAbs() || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("browser URL must be an absolute http(s) URL")
+	}
+	return nil
+}
+
+func selectBrowserCommand(goos string, lookPath lookPathFunc) (commandSpec, error) {
+	switch goos {
+	case "darwin":
+		if !commandExists("open", lookPath) {
+			return commandSpec{}, errors.New("browser command open not found")
+		}
+		return commandSpec{name: "open"}, nil
+	case "linux":
+		if !commandExists("xdg-open", lookPath) {
+			return commandSpec{}, errors.New("browser command xdg-open not found")
+		}
+		return commandSpec{name: "xdg-open"}, nil
+	default:
+		return commandSpec{}, fmt.Errorf("browser opening is not supported on %s", goos)
+	}
 }
 
 // WorktreeSessionName returns a tmux/Zellij-safe session name derived from
