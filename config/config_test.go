@@ -282,18 +282,18 @@ func TestLoadFromRejectsRelativeSessionsRoot(t *testing.T) {
 	}
 }
 
-func TestLoadFrom_RejectsUnknownBootstrapFields(t *testing.T) {
+func TestLoadFrom_AllowsUnknownBootstrapFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[bootstrap]\ntimeout = 120\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[bootstrap]\ntimeout_seconds = 120\ntimeout = 300\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := config.LoadFrom(path)
-	if err == nil {
-		t.Fatal("expected unknown bootstrap field error")
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "strict mode") {
-		t.Fatalf("expected strict decoder error, got %q", err.Error())
+	if cfg.Bootstrap.TimeoutSeconds != 120 {
+		t.Fatalf("expected known bootstrap timeout to parse, got %d", cfg.Bootstrap.TimeoutSeconds)
 	}
 }
 
@@ -1379,18 +1379,18 @@ func TestSaveAgentCommand_UpdatesExistingFallbackConfig(t *testing.T) {
 	}
 }
 
-func TestLoadFrom_RejectsUnknownAgentFields(t *testing.T) {
+func TestLoadFrom_AllowsUnknownAgentFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[agent]\ncmd = \"codex\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[agent]\ncommand = \"codex\"\nfuture_model = \"gpt-next\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := config.LoadFrom(path)
-	if err == nil {
-		t.Fatal("expected unknown agent field error")
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "strict mode") {
-		t.Fatalf("expected strict decoder error, got %q", err.Error())
+	if cfg.Agent.Command != "codex" {
+		t.Fatalf("expected known agent command to parse, got %q", cfg.Agent.Command)
 	}
 }
 
@@ -1422,21 +1422,18 @@ func TestLoadFrom_ReportsMalformedConfigWithPath(t *testing.T) {
 	}
 }
 
-func TestLoadFrom_RejectsUnknownFields(t *testing.T) {
+func TestLoadFrom_AllowsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[scan]\nroto = \"~/src\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[scan]\nmax_depth = 1\nroto = \"~/src\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := config.LoadFrom(path)
-	if err == nil {
-		t.Fatal("expected unknown field error")
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), path) {
-		t.Fatalf("expected error to include path %q, got %q", path, err.Error())
-	}
-	if !strings.Contains(err.Error(), "strict mode") {
-		t.Fatalf("expected strict decoder error, got %q", err.Error())
+	if cfg.Scan.MaxDepth != 1 {
+		t.Fatalf("expected known scan max_depth to parse, got %d", cfg.Scan.MaxDepth)
 	}
 }
 

@@ -168,7 +168,6 @@ func loadPath(path string, opts loadOptions) (Config, bool, error) {
 func parseConfigData(path string, data []byte, opts loadOptions) (Config, error) {
 	cfg := defaultConfig()
 	decoder := toml.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
