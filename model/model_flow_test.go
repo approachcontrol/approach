@@ -6062,6 +6062,53 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *
 	}
 }
 
+func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderLiveSession(t *testing.T) {
+	launchRan := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launchRan = true
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			launchRan = true
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		Title:        "Await latest with live older session",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/await-latest-live",
+		WorktreePath: "/dev/alpha-worktrees/flow-await-latest-live",
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Title:     "Implementation",
+			Status:    flowstore.PhaseRunning,
+			LaunchIDs: []string{"launch-old", "launch-new"},
+			Sessions: []flowstore.Session{
+				{Provider: "codex", SessionID: "codex-old", LaunchID: "launch-old", Status: "last_seen"},
+			},
+		}},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if strings.Contains(m.View(), "r      resume") {
+		t.Fatalf("awaiting latest session with older live session should not advertise resume:\n%s", m.View())
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Fatalf("awaiting latest session should not launch, got %T", cmd)
+	}
+	if launchRan {
+		t.Fatal("launch ran for stale Flow phase session")
+	}
+	if got := m.TransientError(); !strings.Contains(got, "awaiting session") {
+		t.Fatalf("status = %q, want awaiting session", got)
+	}
+}
+
 func TestModel_RKeyOnRunningEndedSessionFlowPhaseDoesNotResume(t *testing.T) {
 	launchRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
