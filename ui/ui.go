@@ -1343,8 +1343,7 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 	}
 	agentLabel, agentConfigured := flowAgentShortcut(sp.FlowAgentLabel)
 	flowAgentControls = append(flowAgentControls, shortcutHint{Key: "A", Label: agentLabel})
-	selectedTopLevelFlowRow := sp.ActivePane == 1 && sp.FlowSelected && !sp.FlowPhaseSelected
-	if modelLabel := flowModelShortcutLabel(sp.FlowModel); agentConfigured && modelLabel != "" && !selectedTopLevelFlowRow {
+	if modelLabel := flowModelShortcutLabel(sp.FlowModel); agentConfigured && modelLabel != "" {
 		flowAgentControls = append(flowAgentControls, shortcutHint{Key: "M", Label: modelLabel})
 	}
 	if effortLabel := flowReasoningEffortShortcutLabel(sp.FlowReasoningEffort); agentConfigured && effortLabel != "" {

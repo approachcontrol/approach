@@ -1630,10 +1630,11 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	}
 }
 
-func TestModel_ShiftMManualMergeNoopsOnSelectedFlowRow(t *testing.T) {
+func TestModel_ShiftMOpensModelPickerOnSelectedFlowRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
 	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
 		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
 			called = true
 			return actions.PullRequestMerge{}, nil
@@ -1645,8 +1646,11 @@ func TestModel_ShiftMManualMergeNoopsOnSelectedFlowRow(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("M on selected Flow row returned command %T, want nil", cmd)
 	}
-	if m.Overlay() == ui.OverlayConfirm {
-		t.Fatalf("M on selected Flow row opened confirmation %q", m.ConfirmPrompt())
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("M on selected Flow row overlay = %d, want model select", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("M on selected Flow row did not open model picker:\n%s", view)
 	}
 	if called {
 		t.Fatal("LookupPRMerge should not run for uppercase M on selected Flow row")

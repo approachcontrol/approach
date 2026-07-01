@@ -731,7 +731,7 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	}
 }
 
-func TestRender_FlowsModeHidesModelShortcutOnSelectedFlowRow(t *testing.T) {
+func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected:       0,
@@ -746,8 +746,8 @@ func TestRender_FlowsModeHidesModelShortcutOnSelectedFlowRow(t *testing.T) {
 	})
 
 	pane := shortcutPaneText(view)
-	if strings.Contains(pane, "M      model: gpt-5.5") {
-		t.Fatalf("selected Flow row should hide model shortcut:\n%s", pane)
+	if !strings.Contains(pane, "M      model: gpt-5.5") {
+		t.Fatalf("selected Flow row should expose model shortcut:\n%s", pane)
 	}
 	if !strings.Contains(pane, "A      codex") {
 		t.Fatalf("selected Flow row should keep agent shortcut:\n%s", pane)
@@ -1558,7 +1558,7 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 	}
 }
 
-func TestStatusBar_FlowsModeFooterHidesModelOnSelectedFlowRow(t *testing.T) {
+func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowRow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:          180,
 		Mode:           ModeFlows,
@@ -1568,8 +1568,8 @@ func TestStatusBar_FlowsModeFooterHidesModelOnSelectedFlowRow(t *testing.T) {
 		FlowAgentLabel: "codex",
 		FlowModel:      "model: gpt-5.5",
 	})
-	if strings.Contains(bar, "M: model: gpt-5.5") {
-		t.Fatalf("selected Flow row should hide model shortcut, got %q", bar)
+	if !strings.Contains(bar, "M: model: gpt-5.5") {
+		t.Fatalf("selected Flow row should expose model shortcut, got %q", bar)
 	}
 	if !strings.Contains(bar, "A: codex") {
 		t.Fatalf("selected Flow row should keep agent shortcut, got %q", bar)

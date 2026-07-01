@@ -99,7 +99,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "M" && m.flowSurfaceVisible() {
-		return m.handleFlowModelPicker()
+		return m.handleSetModel()
 	}
 
 	if key == "E" && m.flowSurfaceVisible() {
@@ -434,7 +434,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "M":
 		if m.flowSurfaceVisible() {
-			return m.handleFlowModelPicker()
+			return m.handleSetModel()
 		}
 	case "i":
 		if m.mode == ui.ModePlans {
@@ -623,7 +623,7 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "E":
 		return m.handleSetReasoningEffort()
 	case "M":
-		return m.handleFlowModelPicker()
+		return m.handleSetModel()
 	case "x":
 		return m.handleResetSelectedFlowPhase()
 	case "d":
@@ -1163,17 +1163,6 @@ func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
 		func(value string) tea.Cmd { return m.setModel(command, value) },
 	)
 	return m, nil
-}
-
-func (m Model) handleFlowModelPicker() (tea.Model, tea.Cmd) {
-	if m.flowModelPickerSuppressedForSelectedFlowRow() {
-		return m, nil
-	}
-	return m.handleSetModel()
-}
-
-func (m Model) flowModelPickerSuppressedForSelectedFlowRow() bool {
-	return m.flowSurfaceVisible() && m.activePane == 1 && m.currentSelectedFlowPhaseID() == "" && m.selectedFlowID() != ""
 }
 
 func modelSelectItems(command string) []modal.SelectItem {
