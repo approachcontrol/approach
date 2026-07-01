@@ -105,6 +105,59 @@ func TestSelectClipboardCommand_LinuxReportsMissingTools(t *testing.T) {
 	}
 }
 
+func TestSelectBrowserCommand_DarwinUsesOpen(t *testing.T) {
+	spec, err := selectBrowserCommand("darwin", fakeLookPath("open"))
+	if err != nil {
+		t.Fatalf("selectBrowserCommand returned error: %v", err)
+	}
+	assertSpec(t, spec, "open", nil)
+}
+
+func TestSelectBrowserCommand_LinuxUsesXDGOpen(t *testing.T) {
+	spec, err := selectBrowserCommand("linux", fakeLookPath("xdg-open"))
+	if err != nil {
+		t.Fatalf("selectBrowserCommand returned error: %v", err)
+	}
+	assertSpec(t, spec, "xdg-open", nil)
+}
+
+func TestSelectBrowserCommandReportsUnsupportedOrMissingTools(t *testing.T) {
+	tests := []struct {
+		name string
+		goos string
+		want string
+	}{
+		{name: "linux missing xdg-open", goos: "linux", want: "xdg-open"},
+		{name: "windows unsupported", goos: "windows", want: "not supported"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := selectBrowserCommand(tt.goos, fakeLookPath())
+			if err == nil {
+				t.Fatal("expected browser command error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %q, got %q", tt.want, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidateBrowserURLRequiresAbsoluteHTTPURL(t *testing.T) {
+	tests := []string{"", "   ", "github.com/brian-bell/wtui/pull/123", "ftp://github.com/brian-bell/wtui/pull/123"}
+	for _, input := range tests {
+		t.Run(strconv.Quote(input), func(t *testing.T) {
+			if err := validateBrowserURL(input); err == nil {
+				t.Fatal("expected invalid browser URL error")
+			}
+		})
+	}
+
+	if err := validateBrowserURL("https://github.com/brian-bell/wtui/pull/123"); err != nil {
+		t.Fatalf("validateBrowserURL returned error: %v", err)
+	}
+}
+
 func TestTerminalLaunch_UsesMultiplexerBeforeTerminal(t *testing.T) {
 	env := fakeGetenv(map[string]string{
 		"TMUX":     "/tmp/tmux.sock",

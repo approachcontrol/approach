@@ -843,6 +843,93 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 	}
 }
 
+func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
+	base := RenderParams{
+		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:     0,
+		Width:        180,
+		Height:       28,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		FlowSelected: 0,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Flow with PR",
+			Status: flowstore.StatusInProgress,
+			PR: flowstore.PullRequest{
+				Provider:   "github",
+				Number:     123,
+				URL:        "https://github.com/brian-bell/wtui/pull/123",
+				HeadBranch: "flow/add-pr-shortcut",
+				BaseBranch: "main",
+			},
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
+		}},
+		FlowPRTargetSelected: true,
+	}
+
+	for _, tt := range []struct {
+		name string
+		mut  func(*RenderParams)
+	}{
+		{name: "flows"},
+		{name: "active flows", mut: func(p *RenderParams) { p.ActiveFlows = true }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			params := base
+			if tt.mut != nil {
+				tt.mut(&params)
+			}
+			pane := shortcutPaneText(Render(params))
+			if !strings.Contains(pane, "p      open PR") {
+				t.Fatalf("Flow shortcut pane missing open PR hint:\n%s", pane)
+			}
+		})
+	}
+}
+
+func TestRender_FlowShortcutPaneHidesOpenPRWithoutTopLevelPRTarget(t *testing.T) {
+	base := RenderParams{
+		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:     0,
+		Width:        180,
+		Height:       28,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		FlowSelected: 0,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "flow-1",
+			Title:  "Flow without PR",
+			Status: flowstore.StatusInProgress,
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
+		}},
+	}
+
+	for _, tt := range []struct {
+		name string
+		mut  func(*RenderParams)
+	}{
+		{name: "missing PR metadata"},
+		{name: "selected phase row", mut: func(p *RenderParams) {
+			p.FlowPRTargetSelected = true
+			p.ExpandedFlowID = "flow-1"
+			p.SelectedFlowPhaseID = "implementation"
+		}},
+		{name: "active flows missing PR metadata", mut: func(p *RenderParams) { p.ActiveFlows = true }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			params := base
+			if tt.mut != nil {
+				tt.mut(&params)
+			}
+			pane := shortcutPaneText(Render(params))
+			if strings.Contains(pane, "p      open PR") {
+				t.Fatalf("Flow shortcut pane should hide open PR hint:\n%s", pane)
+			}
+		})
+	}
+}
+
 func shortcutSectionTitles(pane string) []string {
 	known := map[string]bool{
 		"Actions":  true,

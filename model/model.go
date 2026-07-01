@@ -104,6 +104,7 @@ type Model struct {
 	readPlan                   func(string) (string, error)
 	planMarkdownPath           func(string) (string, error)
 	copyToClipboard            func(string) error
+	openURL                    func(string) error
 	pageText                   func(string) (actions.TerminalLaunchSpec, error)
 	editFile                   func(string) (actions.TerminalLaunchSpec, error)
 	saveAgent                  func(string) error
@@ -189,6 +190,7 @@ type Options struct {
 	ReadPlan                 func(string) (string, error)
 	PlanMarkdownPath         func(planID string) (string, error)
 	CopyToClipboard          func(text string) error
+	OpenURL                  func(url string) error
 	PageText                 func(body string) (actions.TerminalLaunchSpec, error)
 	EditFile                 func(path string) (actions.TerminalLaunchSpec, error)
 	SaveAgentCommand         func(string) error
@@ -327,6 +329,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if copyToClipboard == nil {
 		copyToClipboard = actions.CopyToClipboard
 	}
+	openURL := opts.OpenURL
+	if openURL == nil {
+		openURL = actions.OpenURL
+	}
 	pageText := opts.PageText
 	if pageText == nil {
 		pageText = actions.PageText
@@ -442,6 +448,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		readPlan:                 readPlan,
 		planMarkdownPath:         planMarkdownPath,
 		copyToClipboard:          copyToClipboard,
+		openURL:                  openURL,
 		pageText:                 pageText,
 		editFile:                 editFile,
 		saveAgent:                saveAgent,
@@ -668,6 +675,7 @@ func (m Model) View() string {
 	if flowSelected >= 0 && flowSelected < len(flows) {
 		flowAutoModeSelected = flows[flowSelected].AutoMode
 	}
+	_, flowPRTargetSelected := m.selectedFlowPRURL()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
 	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows))
 	if len(repos) == 0 {
@@ -757,6 +765,7 @@ func (m Model) View() string {
 		SelectedFlowPhaseID:         m.currentSelectedFlowPhaseID(),
 		FlowHeadless:                m.flowHeadless,
 		FlowAutoModeSelected:        flowAutoModeSelected,
+		FlowPRTargetSelected:        flowPRTargetSelected,
 		FlowAgentLabel:              m.flowAgentShortcutLabel(),
 		FlowReasoningEffort:         m.flowReasoningEffortLabel(),
 		DefaultViewLabel:            ViewChoiceLabel(m.defaultView),
@@ -1185,6 +1194,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.setStatus(statusOther, msg.Err)
 		}
 		return m, nil
+	case OpenURLResultMsg:
+		if msg.Err != "" {
+			m = m.setStatus(statusOther, msg.Err)
+		}
+		return m, nil
 	case TerminalResultMsg:
 		if msg.Err != "" {
 			m = m.setStatus(statusOther, msg.Err)
@@ -1378,6 +1392,20 @@ func (m Model) selectedFlowID() string {
 		return ""
 	}
 	return record.FlowID
+}
+
+func (m Model) selectedFlowPRURL() (string, bool) {
+	if !m.flowSurfaceVisible() {
+		return "", false
+	}
+	if _, ok := m.selectedFlowPhase(); ok {
+		return "", false
+	}
+	record, ok := m.selectedFlow()
+	if !ok || !flowstore.HasPRTarget(record.PR) {
+		return "", false
+	}
+	return record.PR.URL, true
 }
 
 func (m Model) selectedPlanID() string {

@@ -327,6 +327,10 @@ type ClipboardResultMsg struct {
 	Err string
 }
 
+type OpenURLResultMsg struct {
+	Err string
+}
+
 type TerminalResultMsg struct {
 	Err string
 }
@@ -1755,6 +1759,19 @@ func (m Model) handleCopyFlowWorktreePath() (tea.Model, tea.Cmd) {
 			return ClipboardResultMsg{Err: err.Error()}
 		}
 		return ClipboardResultMsg{}
+	}
+}
+
+func (m Model) handleOpenSelectedFlowPR() (tea.Model, tea.Cmd) {
+	prURL, ok := m.selectedFlowPRURL()
+	if !ok {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := m.openURL(prURL); err != nil {
+			return OpenURLResultMsg{Err: err.Error()}
+		}
+		return OpenURLResultMsg{}
 	}
 }
 
