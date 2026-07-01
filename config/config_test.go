@@ -1437,6 +1437,21 @@ func TestLoadFrom_AllowsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadFrom_AllowsUnknownSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[future]\nenabled = true\n[scan]\nmax_depth = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Scan.MaxDepth != 1 {
+		t.Fatalf("expected known scan max_depth to parse, got %d", cfg.Scan.MaxDepth)
+	}
+}
+
 func TestLoadFrom_ReportsUnreadableConfigWithPath(t *testing.T) {
 	path := t.TempDir()
 
