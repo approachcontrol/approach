@@ -4458,6 +4458,139 @@ func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
 	}
 }
 
+func TestModel_IKeyOpensSelectedFlowIssue(t *testing.T) {
+	const issueURL = "https://github.com/brian-bell/wtui/issues/123"
+	var opened []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		OpenURL: func(url string) error {
+			opened = append(opened, url)
+			return nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithIssueTarget("flow-1", issueURL)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("i on selected Flow with issue target should return open command")
+	}
+	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 0 || m.SelectedFlowPhaseID() != "" || m.Overlay() != ui.OverlayNone {
+		t.Fatalf("i changed Flow selection state: mode=%v selected=%d phase=%q overlay=%v", m.Mode(), m.FlowSelected(), m.SelectedFlowPhaseID(), m.Overlay())
+	}
+	msg, ok := cmd().(model.OpenURLResultMsg)
+	if !ok {
+		t.Fatalf("open issue command returned %T, want OpenURLResultMsg", msg)
+	}
+	if msg.Err != "" || msg.Label != "Opened issue #123 in browser" {
+		t.Fatalf("open issue command returned %#v, want success label", msg)
+	}
+	if got := opened; !slices.Equal(got, []string{issueURL}) {
+		t.Fatalf("opened URLs = %#v, want %q", got, issueURL)
+	}
+}
+
+func TestModel_IKeyOpensSelectedActiveFlowIssue(t *testing.T) {
+	const issueURL = "https://github.com/brian-bell/wtui/issues/123"
+	var opened []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		OpenURL: func(url string) error {
+			opened = append(opened, url)
+			return nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flowWithIssueTarget("flow-1", issueURL)})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd == nil {
+		t.Fatal("i on selected Active Flow with issue target should return open command")
+	}
+	msg, ok := cmd().(model.OpenURLResultMsg)
+	if !ok {
+		t.Fatalf("open active Flow issue command returned %T, want OpenURLResultMsg", msg)
+	}
+	if msg.Err != "" || msg.Label != "Opened issue #123 in browser" {
+		t.Fatalf("open active Flow issue command returned %#v, want success label", msg)
+	}
+	if got := opened; !slices.Equal(got, []string{issueURL}) {
+		t.Fatalf("opened URLs = %#v, want %q", got, issueURL)
+	}
+}
+
+func TestModel_IKeyFlowIssueGuards(t *testing.T) {
+	const issueURL = "https://github.com/brian-bell/wtui/issues/123"
+	valid := flowWithIssueTarget("flow-1", issueURL)
+	incomplete := valid
+	incomplete.Issue.URL = ""
+
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, openURL func(string) error) model.Model
+	}{
+		{
+			name: "no selected Flow",
+			setup: func(t *testing.T, openURL func(string) error) model.Model {
+				return flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), nil)
+			},
+		},
+		{
+			name: "incomplete issue metadata",
+			setup: func(t *testing.T, openURL func(string) error) model.Model {
+				return flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{incomplete})
+			},
+		},
+		{
+			name: "selected phase row",
+			setup: func(t *testing.T, openURL func(string) error) model.Model {
+				m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{OpenURL: openURL}), []flowstore.FlowRecord{valid})
+				return selectFlowPhaseByID(t, m, "implementation")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var opened []string
+			m := tc.setup(t, func(url string) error {
+				opened = append(opened, url)
+				return nil
+			})
+			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+			if cmd != nil {
+				t.Fatalf("i returned command %T, want nil", cmd)
+			}
+			if len(opened) != 0 {
+				t.Fatalf("opened URLs = %#v, want none", opened)
+			}
+		})
+	}
+}
+
+func TestModel_FlowFilterMatchesIssueMetadata(t *testing.T) {
+	m := model.New(testRepos())
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
+		flowWithIssueTarget("flow-1", "https://github.com/brian-bell/wtui/issues/123"),
+		{
+			FlowID: "flow-2",
+			Title:  "Unrelated flow",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/unrelated",
+		},
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range "#123" {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	view := m.View()
+	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
+		t.Fatalf("filtered flows = %#v, want only flow-1", got)
+	}
+	if !strings.Contains(view, "#123") {
+		t.Fatalf("issue filter should keep matching Flow:\n%s", view)
+	}
+	if strings.Contains(view, "Unrelated flow") {
+		t.Fatalf("issue filter should hide non-matching Flow:\n%s", view)
+	}
+}
+
 func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
 	const prURL = "https://github.com/brian-bell/wtui/pull/123"
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -4701,6 +4834,25 @@ func flowWithPullRequestTarget(flowID, prURL string) flowstore.FlowRecord {
 			HeadBranch: "flow/add-pr-shortcut",
 			BaseBranch: "main",
 			Status:     "open",
+		},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
+		},
+	}
+}
+
+func flowWithIssueTarget(flowID, issueURL string) flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:       flowID,
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/" + flowID,
+		Title:        "Flow with issue",
+		Status:       flowstore.StatusInProgress,
+		Branch:       "flow/add-issue-shortcut",
+		Issue: flowstore.Issue{
+			Provider: "github",
+			Number:   123,
+			URL:      issueURL,
 		},
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},

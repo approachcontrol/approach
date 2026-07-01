@@ -440,6 +440,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
+		if m.flowSurfaceVisible() {
+			return m.handleOpenSelectedFlowIssue()
+		}
 	case "x":
 		if m.mode == ui.ModeWorktrees {
 			return m.handleToggleWorktreeSessions()
@@ -612,6 +615,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleMarkFlowManuallyMerged()
 	case "a":
 		return m.handleToggleFlowAutoMode()
+	case "i":
+		return m.handleOpenSelectedFlowIssue()
 	case "p":
 		return m.handleOpenSelectedFlowPR()
 	case "y":

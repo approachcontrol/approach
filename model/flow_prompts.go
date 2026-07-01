@@ -64,6 +64,9 @@ func renderFlowPromptTemplate(template string, record flowstore.FlowRecord, phas
 		"{branch}", record.Branch,
 		"{commit}", record.Commit,
 		"{base_ref}", record.BaseRef,
+		"{issue_provider}", record.Issue.Provider,
+		"{issue_number}", issueNumberPlaceholder(record.Issue.Number),
+		"{issue_url}", record.Issue.URL,
 		"{pr_provider}", record.PR.Provider,
 		"{pr_number}", prNumberPlaceholder(record.PR.Number),
 		"{pr_url}", record.PR.URL,
@@ -72,6 +75,13 @@ func renderFlowPromptTemplate(template string, record flowstore.FlowRecord, phas
 		"{pr_status}", record.PR.Status,
 	)
 	return replacer.Replace(template)
+}
+
+func issueNumberPlaceholder(number int) string {
+	if number == 0 {
+		return ""
+	}
+	return strconv.Itoa(number)
 }
 
 func prNumberPlaceholder(number int) string {
@@ -252,6 +262,14 @@ func writeFlowChangeMetadata(b *strings.Builder, record flowstore.FlowRecord) {
 	b.WriteString(record.Branch)
 	b.WriteString("\nStart commit: ")
 	b.WriteString(record.Commit)
+	if flowstore.HasIssueTarget(record.Issue) {
+		b.WriteString("\nIssue: ")
+		b.WriteString(record.Issue.Provider)
+		b.WriteString(" #")
+		b.WriteString(strconv.Itoa(record.Issue.Number))
+		b.WriteString(" ")
+		b.WriteString(record.Issue.URL)
+	}
 }
 
 func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {

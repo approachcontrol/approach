@@ -305,6 +305,8 @@ func flowSearchText(record flowstore.FlowRecord) string {
 		filepath.Base(record.WorktreePath),
 		record.PlanID,
 		record.PlanPath,
+		record.Issue.Provider,
+		record.Issue.URL,
 		record.PR.URL,
 		record.PR.HeadBranch,
 		record.PR.BaseBranch,
@@ -316,6 +318,9 @@ func flowSearchText(record flowstore.FlowRecord) string {
 	}
 	if record.PR.Number > 0 {
 		parts = append(parts, fmt.Sprintf("#%d", record.PR.Number))
+	}
+	if record.Issue.Number > 0 {
+		parts = append(parts, fmt.Sprintf("#%d", record.Issue.Number))
 	}
 	for _, phase := range record.Phases {
 		parts = append(parts, phase.Title, phase.Status, phase.Summary)

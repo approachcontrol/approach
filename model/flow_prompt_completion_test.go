@@ -20,6 +20,7 @@ func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
 		"",
 		"Produce a plan only; do not start coding in this phase.",
 		"Create and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.",
+		"If the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL.",
 		"",
 		model.FlowPhaseDoneInstructionForTest(),
 	}, "\n")
@@ -91,8 +92,13 @@ func TestFlowPromptTemplatesAppendPhaseDoneInstruction(t *testing.T) {
 			BaseBranch: "main",
 			Status:     "open",
 		},
+		Issue: flowstore.Issue{
+			Provider: "github",
+			Number:   123,
+			URL:      "https://github.com/brian-bell/wtui/issues/123",
+		},
 	}
-	template := "Custom {phase_id} for {flow_id}: {plan_path} at {worktree_path}; keep {unknown}"
+	template := "Custom {phase_id} for {flow_id}: {plan_path} at {worktree_path}; issue {issue_provider}#{issue_number} {issue_url}; keep {unknown}"
 	tests := []struct {
 		name      string
 		phase     flowstore.FlowPhase
@@ -120,11 +126,36 @@ func TestFlowPromptTemplatesAppendPhaseDoneInstruction(t *testing.T) {
 			want = strings.ReplaceAll(want, "{flow_id}", record.FlowID)
 			want = strings.ReplaceAll(want, "{plan_path}", record.PlanPath)
 			want = strings.ReplaceAll(want, "{worktree_path}", record.WorktreePath)
+			want = strings.ReplaceAll(want, "{issue_provider}", record.Issue.Provider)
+			want = strings.ReplaceAll(want, "{issue_number}", "123")
+			want = strings.ReplaceAll(want, "{issue_url}", record.Issue.URL)
 			want += "\n\n" + model.FlowPhaseDoneInstructionForTest()
 			if got != want {
 				t.Fatalf("templated prompt = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestFlowPhasePromptIncludesIssueMetadata(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Instructions: "Build the requested change.",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-issue",
+		Branch:       "flow/issue",
+		Commit:       "abc123",
+		Issue: flowstore.Issue{
+			Provider: "github",
+			Number:   123,
+			URL:      "https://github.com/brian-bell/wtui/issues/123",
+		},
+	}
+
+	got := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation"}, "", "", model.FlowPromptTemplates{})
+
+	if !strings.Contains(got, "Issue: github #123 https://github.com/brian-bell/wtui/issues/123") {
+		t.Fatalf("prompt should include linked issue metadata:\n%s", got)
 	}
 }
 

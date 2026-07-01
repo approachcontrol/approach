@@ -124,6 +124,13 @@ type PullRequest struct {
 	Status     string `json:"status,omitempty"`
 }
 
+// Issue stores agent-reported issue metadata.
+type Issue struct {
+	Provider string `json:"provider,omitempty"`
+	Number   int    `json:"number,omitempty"`
+	URL      string `json:"url,omitempty"`
+}
+
 // PRUpdate records metadata for the pull request created by a Flow.
 type PRUpdate struct {
 	FlowID     string
@@ -133,6 +140,14 @@ type PRUpdate struct {
 	HeadBranch string
 	BaseBranch string
 	Status     string
+}
+
+// IssueUpdate records metadata for the issue referenced by a Flow.
+type IssueUpdate struct {
+	FlowID   string
+	Provider string
+	Number   int
+	URL      string
 }
 
 // MergeUpdate records metadata for the merge that completed or blocked a Flow.
@@ -181,6 +196,7 @@ type FlowRecord struct {
 	Commit        string      `json:"commit,omitempty"`
 	PlanID        string      `json:"plan_id,omitempty"`
 	PlanPath      string      `json:"plan_path,omitempty"`
+	Issue         Issue       `json:"issue,omitempty"`
 	PR            PullRequest `json:"pr,omitempty"`
 	Merge         Merge       `json:"merge,omitempty"`
 	AutoMode      bool        `json:"auto_mode,omitempty"`
@@ -667,6 +683,25 @@ func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
 		record.PR = pr
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
+		return record, nil
+	})
+}
+
+// SetIssue validates and persists the issue metadata reported by an agent.
+func (s *Store) SetIssue(update IssueUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		issue, err := validateIssueUpdate(update)
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		if record.Issue == issue {
+			return record, nil
+		}
+		record.Issue = issue
+		record.UpdatedAt = now
 		return record, nil
 	})
 }
@@ -1375,6 +1410,19 @@ func HasPRTarget(pr PullRequest) bool {
 		validateGitHubPRURL(parsed, pr.Number) == nil
 }
 
+// HasIssueTarget reports whether issue metadata contains enough target context
+// to open the issue in a browser.
+func HasIssueTarget(issue Issue) bool {
+	if strings.ToLower(strings.TrimSpace(issue.Provider)) != "github" || issue.Number <= 0 {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(issue.URL))
+	return err == nil &&
+		parsed.Host != "" &&
+		(parsed.Scheme == "https" || parsed.Scheme == "http") &&
+		validateGitHubIssueURL(parsed, issue.Number) == nil
+}
+
 func validatePRUpdate(record FlowRecord, update PRUpdate) (PullRequest, error) {
 	provider := strings.ToLower(strings.TrimSpace(update.Provider))
 	if provider != "github" {
@@ -1416,6 +1464,29 @@ func validatePRUpdate(record FlowRecord, update PRUpdate) (PullRequest, error) {
 	}, nil
 }
 
+func validateIssueUpdate(update IssueUpdate) (Issue, error) {
+	provider := strings.ToLower(strings.TrimSpace(update.Provider))
+	if provider != "github" {
+		return Issue{}, fmt.Errorf("unsupported issue provider %q", update.Provider)
+	}
+	if update.Number <= 0 {
+		return Issue{}, fmt.Errorf("issue number must be positive")
+	}
+	issueURL := strings.TrimSpace(update.URL)
+	parsed, err := url.Parse(issueURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return Issue{}, fmt.Errorf("issue URL must be an absolute http(s) URL")
+	}
+	if err := validateGitHubIssueURL(parsed, update.Number); err != nil {
+		return Issue{}, err
+	}
+	return Issue{
+		Provider: provider,
+		Number:   update.Number,
+		URL:      issueURL,
+	}, nil
+}
+
 func validateGitHubPRURL(parsed *url.URL, number int) error {
 	host := strings.ToLower(parsed.Hostname())
 	if host != "github.com" && host != "www.github.com" {
@@ -1431,6 +1502,25 @@ func validateGitHubPRURL(parsed *url.URL, number int) error {
 	}
 	if urlNumber != number {
 		return fmt.Errorf("GitHub PR URL number %d must match PR number %d", urlNumber, number)
+	}
+	return nil
+}
+
+func validateGitHubIssueURL(parsed *url.URL, number int) error {
+	host := strings.ToLower(parsed.Hostname())
+	if host != "github.com" && host != "www.github.com" {
+		return fmt.Errorf("GitHub issue URL must use github.com")
+	}
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "issues" {
+		return fmt.Errorf("GitHub issue URL must have /owner/repo/issues/number path")
+	}
+	urlNumber, err := strconv.Atoi(parts[3])
+	if err != nil || urlNumber <= 0 {
+		return fmt.Errorf("GitHub issue URL must have numeric issue number")
+	}
+	if urlNumber != number {
+		return fmt.Errorf("GitHub issue URL number %d must match issue number %d", urlNumber, number)
 	}
 	return nil
 }

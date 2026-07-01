@@ -22,7 +22,7 @@ func runFlow(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]")
+		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -35,12 +35,14 @@ func runFlow(args []string, deps runDeps) error {
 		return runFlowPhase(args[3:], deps)
 	case "plan":
 		return runFlowPlan(args[3:], deps)
+	case "issue":
+		return runFlowIssue(args[3:], deps)
 	case "pr":
 		return runFlowPR(args[3:], deps)
 	case "merge":
 		return runFlowMerge(args[3:], deps)
 	default:
-		return unknownCommandError(args[2], []string{"create", "list", "read", "phase", "plan", "pr", "merge"}, flowHelpText)
+		return unknownCommandError(args[2], []string{"create", "list", "read", "phase", "plan", "issue", "pr", "merge"}, flowHelpText)
 	}
 }
 
@@ -48,7 +50,7 @@ func printFlowHelp(w io.Writer) {
 	io.WriteString(w, flowHelpText)
 }
 
-const flowHelpText = `Usage: wtui flow <create|list|read|phase|plan|pr|merge> [flags]
+const flowHelpText = `Usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]
 
 Create and update task-centric Flow records under the wtui agent-artifact root.
 
@@ -64,6 +66,7 @@ Commands:
   phase set        Advance a Flow phase with explicit status.
   phase add-child  Add or update an implementation child phase.
   plan set         Link a saved plan artifact to a Flow.
+  issue set        Record GitHub issue metadata.
   pr set           Record pull request metadata.
   merge set        Record merge metadata.
 
@@ -76,6 +79,7 @@ Examples:
   wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
   wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
   wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
   wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
 
@@ -857,6 +861,100 @@ Common flags:
 
 Example:
   wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+`)
+}
+
+func runFlowIssue(args []string, deps runDeps) error {
+	if len(args) == 1 && isHelpArg(args[0]) {
+		printFlowIssueHelp(deps.stdout)
+		return nil
+	}
+	if len(args) < 1 {
+		return fmt.Errorf("usage: wtui flow issue set [flags]")
+	}
+	if args[0] != "set" {
+		return unknownCommandError(args[0], []string{"set"}, flowIssueHelpText)
+	}
+	return runFlowIssueSet(args[1:], deps)
+}
+
+func printFlowIssueHelp(w io.Writer) {
+	io.WriteString(w, flowIssueHelpText)
+}
+
+const flowIssueHelpText = `Usage: wtui flow issue set [flags]
+
+Record GitHub issue metadata for a Flow.
+
+Required flags:
+  --flow-id FLOW_ID
+  --number N
+  --url URL
+
+Common flags:
+  --provider PROVIDER
+  --state-root PATH
+
+Example:
+  wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
+`
+
+func runFlowIssueSet(args []string, deps runDeps) error {
+	flags := flag.NewFlagSet("flow issue set", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() { printFlowIssueSetHelp(deps.stdout) }
+	flowID := flags.String("flow-id", "", "flow id")
+	provider := flags.String("provider", "github", "issue provider")
+	number := flags.Int("number", 0, "issue number")
+	issueURL := flags.String("url", "", "issue URL")
+	stateRoot := flags.String("state-root", "", "artifact state root")
+	if help, err := parseCommandFlags(flags, args); help || err != nil {
+		if help {
+			return nil
+		}
+		return err
+	}
+	if *flowID == "" {
+		return fmt.Errorf("flow issue set requires --flow-id")
+	}
+	if *number <= 0 {
+		return fmt.Errorf("flow issue set requires positive --number")
+	}
+	if *issueURL == "" {
+		return fmt.Errorf("flow issue set requires --url")
+	}
+	store, err := newFlowStore(*stateRoot, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID:   *flowID,
+		Provider: *provider,
+		Number:   *number,
+		URL:      *issueURL,
+	})
+	if err != nil {
+		return err
+	}
+	return writeFlowJSON(deps.stdout, record)
+}
+
+func printFlowIssueSetHelp(w io.Writer) {
+	io.WriteString(w, `Usage: wtui flow issue set [flags]
+
+Record GitHub issue metadata for a Flow.
+
+Required flags:
+  --flow-id FLOW_ID
+  --number N
+  --url URL
+
+Common flags:
+  --provider PROVIDER
+  --state-root PATH
+
+Example:
+  wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
 `)
 }
 

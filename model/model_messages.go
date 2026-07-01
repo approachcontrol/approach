@@ -1854,6 +1854,19 @@ func (m Model) handleOpenSelectedFlowPR() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m Model) handleOpenSelectedFlowIssue() (tea.Model, tea.Cmd) {
+	issue, ok := m.selectedFlowIssue()
+	if !ok {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := m.openURL(issue.URL); err != nil {
+			return OpenURLResultMsg{Err: err.Error()}
+		}
+		return OpenURLResultMsg{Label: fmt.Sprintf("Opened issue #%d in browser", issue.Number)}
+	}
+}
+
 func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {
 	if m.mode != ui.ModeSessions {
 		return m, nil
