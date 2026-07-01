@@ -85,13 +85,14 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 
 	previous := cloneFlowRecords(m.autoAdvanceSnapshot)
 	current := cloneFlowRecords(msg.Flows)
-	m.autoAdvanceSnapshot = current
 	m.autoAdvanceLaunchedPhases = nil
 
 	var cmds []tea.Cmd
 	var autoCmd tea.Cmd
-	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previous, current)
+	var retryEdges []deferredAutoFlowLaunchKey
+	m, autoCmd, retryEdges = m.prepareAutoFlowPhaseLaunch(previous, current)
 	cmds = append(cmds, autoCmd)
+	m.autoAdvanceSnapshot = autoAdvanceSnapshotAfterResult(previous, current, retryEdges)
 
 	var deferredCmd tea.Cmd
 	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom(m.autoAdvanceSnapshot)
@@ -109,6 +110,37 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	m, tickCmd = m.finishAutoAdvanceFetch(msg.Request)
 	cmds = append(cmds, tickCmd)
 	return m, batchNonNil(cmds...)
+}
+
+func autoAdvanceSnapshotAfterResult(previous, current []flowstore.FlowRecord, retryEdges []deferredAutoFlowLaunchKey) []flowstore.FlowRecord {
+	if len(retryEdges) == 0 {
+		return current
+	}
+	retryFlowIDs := make(map[string]struct{}, len(retryEdges))
+	for _, edge := range retryEdges {
+		if edge.FlowID != "" {
+			retryFlowIDs[edge.FlowID] = struct{}{}
+		}
+	}
+	if len(retryFlowIDs) == 0 {
+		return current
+	}
+	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previous))
+	for _, record := range previous {
+		if record.FlowID != "" {
+			previousByFlowID[record.FlowID] = record
+		}
+	}
+	snapshot := cloneFlowRecords(current)
+	for i, record := range snapshot {
+		if _, retry := retryFlowIDs[record.FlowID]; !retry {
+			continue
+		}
+		if prior, ok := previousByFlowID[record.FlowID]; ok {
+			snapshot[i] = prior
+		}
+	}
+	return snapshot
 }
 
 func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {

@@ -128,7 +128,7 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		},
 	})
 
-	_, cmd := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	_, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want auto-launch command")
 	}
@@ -170,7 +170,7 @@ func TestFlowPhaseLaunchCoordinatorClearsSuppressedAutoLaunchWithoutRelaunch(t *
 	})
 	m = m.suppressAutoFlowPhaseLaunch("flow-1", "plan-review", "source-launch")
 
-	m, cmd := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T for suppressed source phase", cmd)
 	}
@@ -214,7 +214,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
 	}}
 
-	m, cmd := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T while source terminal was running", cmd)
 	}

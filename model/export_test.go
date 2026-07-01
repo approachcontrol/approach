@@ -61,7 +61,7 @@ func AutoAdvanceLaunchCommandForTest(m Model, flows []flowstore.FlowRecord) (Mod
 	m.autoAdvanceLaunchedPhases = nil
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
-	m, cmd = m.prepareAutoFlowPhaseLaunch(previous, current)
+	m, cmd, _ = m.prepareAutoFlowPhaseLaunch(previous, current)
 	cmds = append(cmds, cmd)
 	m, cmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom(m.autoAdvanceSnapshot)
 	cmds = append(cmds, cmd)

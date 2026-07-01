@@ -327,6 +327,50 @@ func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.
 	}
 }
 
+func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+	m.autoAdvanceInFlight = 1
+
+	m, cmd := updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
+	if cmd == nil {
+		t.Fatal("preflight failure should still reschedule the auto-advance tick")
+	}
+	if len(updates) != 0 {
+		t.Fatalf("launch updates after preflight failure = %#v, want none", updates)
+	}
+	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want previous running edge preserved", m.autoAdvanceSnapshot)
+	}
+
+	m.agentCommand = "codex"
+	m.autoAdvanceInFlight = 2
+	m, cmd = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 2})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "implementation" {
+		t.Fatalf("auto-advance launch phase = %q, want implementation", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
+		t.Fatalf("launch updates after config fix = %#v, want implementation auto launch", updates)
+	}
+}
+
 func TestModel_AutoAdvancePrimesSnapshotWithoutStartupLaunch(t *testing.T) {
 	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,

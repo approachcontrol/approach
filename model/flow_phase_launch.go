@@ -307,7 +307,7 @@ func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
 	return PlanLaunchRequestedMsg{LaunchContext: result.Context}
 }
 
-func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd) {
+func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []deferredAutoFlowLaunchKey) {
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previousFlows))
 	for _, record := range previousFlows {
 		if record.FlowID != "" {
@@ -315,6 +315,7 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 		}
 	}
 	var cmds []tea.Cmd
+	var retryEdges []deferredAutoFlowLaunchKey
 	for _, record := range currentFlows {
 		if !record.AutoMode || record.FlowID == "" {
 			continue
@@ -353,9 +354,11 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 		m, cmd = m.prepareAutoFlowPhaseLaunchForRecord(record, phase)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
+		} else if key, ok := newDeferredAutoFlowLaunchKey(record.FlowID, completedPhase.PhaseID); ok {
+			retryEdges = append(retryEdges, key)
 		}
 	}
-	return m, batchNonNil(cmds...)
+	return m, batchNonNil(cmds...), retryEdges
 }
 
 type deferredAutoFlowLaunchKey struct {
