@@ -99,7 +99,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "M" && m.flowSurfaceVisible() {
-		return m.handleFlowModelOrManualMerge()
+		return m.handleSetModel()
 	}
 
 	if key == "E" && m.flowSurfaceVisible() {
@@ -434,7 +434,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "M":
 		if m.flowSurfaceVisible() {
-			return m.handleFlowModelOrManualMerge()
+			return m.handleSetModel()
 		}
 	case "i":
 		if m.mode == ui.ModePlans {
@@ -494,7 +494,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleMoveWorktree()
 		}
 		if m.flowSurfaceVisible() {
-			return m.handleToggleFlowAutoMode()
+			return m.handleMarkFlowManuallyMerged()
 		}
 	case "N":
 		if m.mode == ui.ModeWorktrees {
@@ -505,7 +505,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleImplementPlan()
 		}
 		if m.flowSurfaceVisible() {
-			return m, nil
+			return m.handleToggleFlowAutoMode()
 		}
 		return m.handleOpenAgent()
 	case "d":
@@ -609,6 +609,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "o":
 		return m.handleOpenFlowPlanText()
 	case "m":
+		return m.handleMarkFlowManuallyMerged()
+	case "a":
 		return m.handleToggleFlowAutoMode()
 	case "p":
 		return m.handleOpenSelectedFlowPR()
@@ -621,7 +623,7 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 	case "E":
 		return m.handleSetReasoningEffort()
 	case "M":
-		return m.handleFlowModelOrManualMerge()
+		return m.handleSetModel()
 	case "x":
 		return m.handleResetSelectedFlowPhase()
 	case "d":
@@ -1161,16 +1163,6 @@ func (m Model) handleSetModel() (tea.Model, tea.Cmd) {
 		func(value string) tea.Cmd { return m.setModel(command, value) },
 	)
 	return m, nil
-}
-
-func (m Model) handleFlowModelOrManualMerge() (tea.Model, tea.Cmd) {
-	if _, _, ok := m.selectedManualMergeFlow(); ok {
-		return m.handleMarkFlowManuallyMerged()
-	}
-	if _, ok := m.selectedFlow(); ok {
-		return m, nil
-	}
-	return m.handleSetModel()
 }
 
 func modelSelectItems(command string) []modal.SelectItem {

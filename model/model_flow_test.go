@@ -1391,7 +1391,7 @@ func flowLaunchKey() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}
 }
 
-func TestModel_MKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
+func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	updated := flow
 	updated.AutoMode = true
@@ -1404,9 +1404,9 @@ func TestModel_MKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
-		t.Fatal("m on selected Flow row should persist auto-mode toggle")
+		t.Fatal("a on selected Flow row should persist auto-mode toggle")
 	}
 	m, follow := update(m, cmd())
 	if follow != nil {
@@ -1423,7 +1423,7 @@ func TestModel_MKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	}
 }
 
-func TestModel_MKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testing.T) {
+func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	flow.AutoMode = true
 	updated := flow
@@ -1438,9 +1438,9 @@ func TestModel_MKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testi
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "implementation")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
-		t.Fatal("m on selected Flow phase should persist auto-mode toggle")
+		t.Fatal("a on selected Flow phase should persist auto-mode toggle")
 	}
 	m, follow := update(m, cmd())
 	if follow != nil {
@@ -1457,7 +1457,7 @@ func TestModel_MKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testi
 	}
 }
 
-func TestModel_MKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
+func TestModel_AKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SetFlowAutoMode: func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
@@ -1466,9 +1466,9 @@ func TestModel_MKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
-		t.Fatal("m on selected Flow row should return persistence command")
+		t.Fatal("a on selected Flow row should return persistence command")
 	}
 	m, _ = update(m, cmd())
 	if got := m.TransientError(); !strings.Contains(got, "failed to set Flow auto mode") || !strings.Contains(got, "state root locked") {
@@ -1479,7 +1479,7 @@ func TestModel_MKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 	}
 }
 
-func TestModel_MKeyFlowAutoModeNoopsWithoutSelectedFlow(t *testing.T) {
+func TestModel_AKeyFlowAutoModeNoopsWithoutSelectedFlow(t *testing.T) {
 	called := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SetFlowAutoMode: func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
@@ -1489,16 +1489,85 @@ func TestModel_MKeyFlowAutoModeNoopsWithoutSelectedFlow(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, nil)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd != nil {
-		t.Fatalf("m without selected Flow returned command %T, want nil", cmd)
+		t.Fatalf("a without selected Flow returned command %T, want nil", cmd)
 	}
 	if called {
 		t.Fatal("SetFlowAutoMode should not be called without a selected Flow")
 	}
 }
 
-func TestModel_ShiftMMarksSelectedFlowAsManuallyMerged(t *testing.T) {
+func TestModel_AKeyTogglesFlowAutoModeFromActiveFlowRow(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	updated := flow
+	updated.AutoMode = true
+	var calls []flowstore.AutoModeUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowAutoMode: func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, update)
+			return updated, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("a on selected active Flow row should persist auto-mode toggle")
+	}
+	m, follow := update(m, cmd())
+	if follow != nil {
+		t.Fatalf("auto-mode result returned follow-up command %T, want nil", follow)
+	}
+	if len(calls) != 1 || calls[0].FlowID != "flow-1" || !calls[0].Enabled {
+		t.Fatalf("auto-mode calls = %#v, want enable flow-1", calls)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || !got[0].AutoMode {
+		t.Fatalf("active Flows = %#v, want auto mode enabled", got)
+	}
+}
+
+func TestModel_AKeyTogglesFlowAutoModeFromActiveFlowPhaseRowAndPreservesSelection(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.AutoMode = true
+	updated := flow
+	updated.AutoMode = false
+	var calls []flowstore.AutoModeUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowAutoMode: func(update flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, update)
+			return updated, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "implementation" {
+		t.Fatalf("selected active Flow phase = %q, want implementation", got)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("a on selected active Flow phase should persist auto-mode toggle")
+	}
+	m, follow := update(m, cmd())
+	if follow != nil {
+		t.Fatalf("auto-mode result returned follow-up command %T, want nil", follow)
+	}
+	if len(calls) != 1 || calls[0].FlowID != "flow-1" || calls[0].Enabled {
+		t.Fatalf("auto-mode calls = %#v, want disable flow-1", calls)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].AutoMode {
+		t.Fatalf("active Flows = %#v, want auto mode disabled", got)
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "implementation" {
+		t.Fatalf("selected active Flow phase = %q, want preserved implementation", got)
+	}
+}
+
+func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	updated := flow
@@ -1525,7 +1594,7 @@ func TestModel_ShiftMMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	if cmd != nil {
 		t.Fatalf("opening manual merge confirmation returned command %T, want nil", cmd)
 	}
@@ -1561,7 +1630,52 @@ func TestModel_ShiftMMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	}
 }
 
-func TestModel_ShiftMManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
+func TestModel_ShiftMOpensModelPickerOnSelectedFlowRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			called = true
+			return actions.PullRequestMerge{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected Flow row returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("M on selected Flow row overlay = %d, want model select", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("M on selected Flow row did not open model picker:\n%s", view)
+	}
+	if called {
+		t.Fatal("LookupPRMerge should not run for uppercase M on selected Flow row")
+	}
+}
+
+func TestModel_ShiftMOpensModelPickerOnSelectedFlowPhaseRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+	m = selectFlowPhaseByID(t, m, "merge")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected Flow phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("M on selected Flow phase overlay = %d, want model select", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("M on selected Flow phase did not open model picker:\n%s", view)
+	}
+}
+
+func TestModel_MKeyManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	called := false
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -1573,19 +1687,49 @@ func TestModel_ShiftMManualMergeNoopsOnSelectedPhaseRow(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m = selectFlowPhaseByID(t, m, "merge")
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	if cmd != nil {
-		t.Fatalf("M on selected phase returned command %T, want nil", cmd)
+		t.Fatalf("m on selected phase returned command %T, want nil", cmd)
 	}
 	if m.Overlay() == ui.OverlayConfirm {
-		t.Fatalf("M on selected phase opened confirmation %q", m.ConfirmPrompt())
+		t.Fatalf("m on selected phase opened confirmation %q", m.ConfirmPrompt())
 	}
 	if called {
 		t.Fatal("LookupPRMerge should not run for selected phase row")
 	}
 }
 
-func TestModel_ShiftMManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
+func TestModel_MKeyManualMergeNoopsOnActiveFlowPhaseRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			called = true
+			return actions.PullRequestMerge{}, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "merge"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "merge" {
+		t.Fatalf("selected active Flow phase = %q, want merge", got)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if cmd != nil {
+		t.Fatalf("m on selected active Flow phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() == ui.OverlayConfirm {
+		t.Fatalf("m on selected active Flow phase opened confirmation %q", m.ConfirmPrompt())
+	}
+	if called {
+		t.Fatal("LookupPRMerge should not run for selected active Flow phase row")
+	}
+}
+
+func TestModel_MKeyManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	flow.Phases[len(flow.Phases)-1].Status = flowstore.PhaseRunning
 	called := false
@@ -1597,19 +1741,19 @@ func TestModel_ShiftMManualMergeNoopsWhenMergePhaseRunning(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	if cmd != nil {
-		t.Fatalf("M on running merge phase returned command %T, want nil", cmd)
+		t.Fatalf("m on running merge phase returned command %T, want nil", cmd)
 	}
 	if m.Overlay() == ui.OverlayConfirm {
-		t.Fatalf("M on running merge phase opened confirmation %q", m.ConfirmPrompt())
+		t.Fatalf("m on running merge phase opened confirmation %q", m.ConfirmPrompt())
 	}
 	if called {
 		t.Fatal("LookupPRMerge should not run when merge phase is running")
 	}
 }
 
-func TestModel_ShiftMManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
+func TestModel_MKeyManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	recovered := flow
@@ -1626,7 +1770,7 @@ func TestModel_ShiftMManualMergeFailureReplacesRecoveredFlowState(t *testing.T) 
 		},
 	}), []flowstore.FlowRecord{flow})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Fatal("confirming manual merge should return command")
@@ -1641,12 +1785,12 @@ func TestModel_ShiftMManualMergeFailureReplacesRecoveredFlowState(t *testing.T) 
 	if mergePhase.Status != flowstore.PhaseNeedsAttention || !strings.Contains(mergePhase.Notes, "missing plan") {
 		t.Fatalf("manual merge failure did not replace recovered flow state: %#v", got[0])
 	}
-	if strings.Contains(m.View(), "M      mark merged") {
+	if strings.Contains(m.View(), "m      mark merged") {
 		t.Fatalf("recovered needs_attention Flow should not advertise manual merge:\n%s", m.View())
 	}
 }
 
-func TestModel_ShiftMManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
+func TestModel_MKeyManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T) {
 	flow := manualMergeEligibleFlow()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	merged := flow
@@ -1662,7 +1806,7 @@ func TestModel_ShiftMManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T)
 		},
 	}), []flowstore.FlowRecord{flow})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
 		t.Fatal("confirming manual merge should return command")
@@ -1671,6 +1815,53 @@ func TestModel_ShiftMManualMergeRemovesMergedRecordFromActiveFlows(t *testing.T)
 
 	if strings.Contains(m.View(), "Manual merge Flow") {
 		t.Fatalf("merged Flow should be filtered from active view:\n%s", m.View())
+	}
+}
+
+func TestModel_ShiftMManualMergeNoopsOnActiveFlowRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	called := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			called = true
+			return actions.PullRequestMerge{}, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected active Flow row returned command %T, want nil", cmd)
+	}
+	if m.Overlay() == ui.OverlayConfirm {
+		t.Fatalf("M on selected active Flow row opened confirmation %q", m.ConfirmPrompt())
+	}
+	if called {
+		t.Fatal("LookupPRMerge should not run for uppercase M on selected active Flow row")
+	}
+}
+
+func TestModel_ShiftMOpensModelPickerOnSelectedActiveFlowPhaseRow(t *testing.T) {
+	flow := manualMergeEligibleFlow()
+	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "merge"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "merge" {
+		t.Fatalf("selected active Flow phase = %q, want merge", got)
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	if cmd != nil {
+		t.Fatalf("M on selected active Flow phase returned command %T, want nil", cmd)
+	}
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("M on selected active Flow phase overlay = %d, want model select", m.Overlay())
+	}
+	if view := m.View(); !strings.Contains(view, "Choose codex model") {
+		t.Fatalf("M on selected active Flow phase did not open model picker:\n%s", view)
 	}
 }
 
@@ -3911,7 +4102,7 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 }
 
 func TestModel_LegacyFlowShortcutsDoNotToggleOrLaunch(t *testing.T) {
-	for _, key := range []rune{'x', 'a', 'i'} {
+	for _, key := range []rune{'x', 'i'} {
 		t.Run(string(key), func(t *testing.T) {
 			addLaunchRan := false
 			launchAgentRan := false
@@ -7525,10 +7716,20 @@ func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 
 func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	autoModeCalled := false
+	manualMergeLookupCalled := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		SetFlowAutoMode: func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error) {
+			autoModeCalled = true
+			return flowstore.FlowRecord{}, nil
+		},
+		LookupPRMerge: func(int, string) (actions.PullRequestMerge, error) {
+			manualMergeLookupCalled = true
+			return actions.PullRequestMerge{}, nil
 		},
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
@@ -7563,6 +7764,22 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 		t.Fatalf("status = %q, want unknown terminal command", got)
 	}
 
+	for _, key := range []rune{'a', 'm', 'M'} {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if m.Overlay() != ui.OverlayNone {
+			t.Fatalf("terminal command-mode %c opened overlay %d", key, m.Overlay())
+		}
+		if len(fakeTerm.writes) != 0 {
+			t.Fatalf("terminal command-mode %c should not write to PTY: %#v", key, fakeTerm.writes)
+		}
+	}
+	if autoModeCalled {
+		t.Fatal("terminal command mode should not toggle Flow auto mode")
+	}
+	if manualMergeLookupCalled {
+		t.Fatal("terminal command mode should not start manual merge lookup")
+	}
+
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
 	if m.Overlay() != ui.OverlayNone {
@@ -7578,6 +7795,22 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 	}
 	if len(fakeTerm.writes) != 2 || fakeTerm.writes[1] != "V" {
 		t.Fatalf("terminal input-mode V writes = %#v, want E then V", fakeTerm.writes)
+	}
+
+	for _, key := range []rune{'a', 'm', 'M'} {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if m.Overlay() != ui.OverlayNone {
+			t.Fatalf("terminal input-mode %c opened overlay %d", key, m.Overlay())
+		}
+	}
+	if !slices.Equal(fakeTerm.writes, []string{"E", "V", "a", "m", "M"}) {
+		t.Fatalf("terminal input-mode writes = %#v, want E, V, a, m, M", fakeTerm.writes)
+	}
+	if autoModeCalled {
+		t.Fatal("terminal input mode should not toggle Flow auto mode")
+	}
+	if manualMergeLookupCalled {
+		t.Fatal("terminal input mode should not start manual merge lookup")
 	}
 }
 

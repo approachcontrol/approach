@@ -731,6 +731,51 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:       0,
+		Width:          180,
+		Height:         28,
+		Mode:           ModeFlows,
+		ActivePane:     1,
+		Flows:          []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress}},
+		FlowSelected:   0,
+		FlowAgentLabel: "codex",
+		FlowModel:      "model: gpt-5.5",
+	})
+
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "M      model: gpt-5.5") {
+		t.Fatalf("selected Flow row should expose model shortcut:\n%s", pane)
+	}
+	if !strings.Contains(pane, "A      codex") {
+		t.Fatalf("selected Flow row should keep agent shortcut:\n%s", pane)
+	}
+}
+
+func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected:            0,
+		Width:               180,
+		Height:              28,
+		Mode:                ModeFlows,
+		ActivePane:          1,
+		Flows:               []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress, Phases: []flowstore.FlowPhase{{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseReady}}}},
+		FlowSelected:        0,
+		ExpandedFlowID:      "flow-1",
+		SelectedFlowPhaseID: "merge",
+		FlowAgentLabel:      "codex",
+		FlowModel:           "model: gpt-5.5",
+	})
+
+	pane := shortcutPaneText(view)
+	if !strings.Contains(pane, "M      model: gpt-5.5") {
+		t.Fatalf("selected Flow phase should expose model shortcut:\n%s", pane)
+	}
+}
+
 func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
@@ -776,7 +821,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"y      copy path",
 		"d      delete",
 		"h      headless on",
-		"m      auto: on",
+		"a      auto: on",
 		"A      codex",
 		"E      effort: high",
 		"bksp   pane",
@@ -839,7 +884,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 		"c      copy id",
 		"y      copy path",
 		"h      headless on",
-		"m      auto: on",
+		"a      auto: on",
 		"A      codex",
 		"E      effort: high",
 	} {
@@ -1043,7 +1088,7 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 		FlowManualMergeReadySelected: true,
 	}
 	flowRow := renderStatusBarWithState(base)
-	if !strings.Contains(flowRow, "M: mark merged") {
+	if !strings.Contains(flowRow, "m: mark merged") {
 		t.Fatalf("eligible Flow row should expose manual merge shortcut, got %q", flowRow)
 	}
 
@@ -1151,7 +1196,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 		FlowSelected:         true,
 		FlowAutoModeSelected: false,
 	})
-	if !strings.Contains(flowRow, "m: auto: off") {
+	if !strings.Contains(flowRow, "a: auto: off") {
 		t.Fatalf("selected Flow row should expose auto-mode off toggle, got %q", flowRow)
 	}
 
@@ -1164,7 +1209,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 		FlowPhaseSelected:    true,
 		FlowAutoModeSelected: true,
 	})
-	if !strings.Contains(phaseRow, "m: auto: on") {
+	if !strings.Contains(phaseRow, "a: auto: on") {
 		t.Fatalf("selected Flow phase should expose auto-mode on toggle, got %q", phaseRow)
 	}
 }
@@ -1178,7 +1223,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 		FlowSelected:         true,
 		FlowAutoModeSelected: false,
 	})
-	if !strings.Contains(flowRow, "m: auto: off") {
+	if !strings.Contains(flowRow, "a: auto: off") {
 		t.Fatalf("compact selected Flow row should keep auto-mode off toggle, got %q", flowRow)
 	}
 
@@ -1191,7 +1236,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 		FlowPhaseSelected:    true,
 		FlowAutoModeSelected: true,
 	})
-	if !strings.Contains(phaseRow, "m: auto: on") {
+	if !strings.Contains(phaseRow, "a: auto: on") {
 		t.Fatalf("compact selected Flow phase should keep auto-mode on toggle, got %q", phaseRow)
 	}
 }
@@ -1510,6 +1555,40 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 	}
 	if strings.Contains(bar, "A: set agent") || strings.Contains(bar, "E: codex effort: high") {
 		t.Fatalf("Flow footer should not show generic or duplicated labels, got %q", bar)
+	}
+}
+
+func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowRow(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:          180,
+		Mode:           ModeFlows,
+		ActivePane:     1,
+		RepoSelected:   true,
+		FlowSelected:   true,
+		FlowAgentLabel: "codex",
+		FlowModel:      "model: gpt-5.5",
+	})
+	if !strings.Contains(bar, "M: model: gpt-5.5") {
+		t.Fatalf("selected Flow row should expose model shortcut, got %q", bar)
+	}
+	if !strings.Contains(bar, "A: codex") {
+		t.Fatalf("selected Flow row should keep agent shortcut, got %q", bar)
+	}
+}
+
+func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowPhaseRow(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:             180,
+		Mode:              ModeFlows,
+		ActivePane:        1,
+		RepoSelected:      true,
+		FlowSelected:      true,
+		FlowPhaseSelected: true,
+		FlowAgentLabel:    "codex",
+		FlowModel:         "model: gpt-5.5",
+	})
+	if !strings.Contains(bar, "M: model: gpt-5.5") {
+		t.Fatalf("selected Flow phase should expose model shortcut, got %q", bar)
 	}
 }
 

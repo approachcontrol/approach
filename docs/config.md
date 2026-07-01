@@ -221,9 +221,10 @@ Press `F2` in normal TUI views to open the prompt-template editor. The editor
 can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
 preview the built-in prompt.
 
-In the flows pane, `M` opens a provider-specific model picker for the selected
-CLI agent and persists the corresponding key. `E` opens the reasoning-effort
-picker. New Codex CLI launches use `--model <model>` and `--config
+In the flows pane, `M` opens a provider-specific model picker and persists the
+corresponding key for the selected CLI agent. `E` opens the reasoning-effort
+picker. New Codex CLI launches use
+`--model <model>` and `--config
 model_reasoning_effort=<effort>`; new Claude Code launches use
 `--model <model>` and `--effort <effort>`. Session resumes do not receive model
 or effort flags. `codex-app` launches keep app-side/default model and reasoning
@@ -352,10 +353,10 @@ phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
 the linked plan body from the selected Flow. Press `g` to launch the first
 launchable phase for the selected Flow. Press `c` to copy the selected Flow ID,
 and press `y` to copy the selected Flow worktree path, from either a Flow row or
-one of its expanded phase rows. Press `m` to toggle per-Flow auto mode. New Flow
+one of its expanded phase rows. Press `a` to toggle per-Flow auto mode. New Flow
 records start with auto mode on, and the toggle is persisted on each Flow. Flows
 created before this field existed remain manual until auto mode is toggled on.
-Press `M` on an eligible Flow row to mark a recorded GitHub PR as already
+Press `m` on an eligible Flow row to mark a recorded GitHub PR as already
 merged; wtui verifies the PR with `gh`, records the existing merge commit and
 timestamp, completes the Merge phase, and does not launch a Merge phase agent.
 When auto mode is on, completed
@@ -381,9 +382,10 @@ focus on the Flow list. Creating a new Flow has its own default-on Headless
 checkbox for the initial Plan launch; uncheck it for an interactive initial
 Plan launch. That checkbox does not change the selected-phase `h` setting.
 Press `M` to choose the configured CLI agent's model and `E` to choose its
-reasoning effort for future launches; the shortcut pane shows the current
-values. Manual phase launches, auto-launched phases, and new Flow Plan launches
-all use the configured agent and that agent's configured model and effort.
+reasoning effort for future launches; the
+shortcut pane shows the current values. Manual phase launches, auto-launched
+phases, and new Flow Plan launches all use the configured agent and that
+agent's configured model and effort.
 `codex-app` remains URL/deep-link based, launches externally, and uses
 app-side/default model and reasoning. Press `r` to resume an attached
 provider session from the selected phase row; CLI resumes open in runtime-only
