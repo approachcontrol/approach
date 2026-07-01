@@ -493,7 +493,7 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, m.Init()())
+	m, _ = update(m, initWorktreeResult(t, m))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-smoke")})
 	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -553,7 +553,7 @@ func TestModel_CreateTagThenAgentLaunchUsesNoBranchMetadata(t *testing.T) {
 	mustGit(t, dir, "tag", "v1.0.0")
 
 	m = inRightPane(m)
-	m, _ = update(m, m.Init()())
+	m, _ = update(m, initWorktreeResult(t, m))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v1.0.0")})
 	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -848,7 +848,7 @@ func TestModel_CombinedCleanupForceDeleteSucceedsAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "checkout", base)
 
 	m = inWorktreesMode(m)
-	m, _ = update(m, m.Init()()) // load real worktrees
+	m, _ = update(m, initWorktreeResult(t, m)) // load real worktrees
 
 	// Simulate the "feat" worktree having been removed → "Also delete branch?".
 	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: dir, BranchName: "feat"})
