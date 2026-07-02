@@ -1217,7 +1217,7 @@ func TestModel_FlowAutoLaunchWithCodexAppUsesExternalRouteWithoutEffort(t *testi
 	if cmd == nil {
 		t.Fatal("expected external codex-app agent result command")
 	}
-	_ = cmd()
+	_ = runLeadingBatchCmd(t, cmd)
 	if startEmbeddedRan {
 		t.Fatal("codex-app auto launch should not start an embedded terminal")
 	}
@@ -1341,7 +1341,7 @@ func runPreparedFlowEmbeddedLaunch(t *testing.T, m model.Model, cmd tea.Cmd) mod
 	if cmd == nil {
 		t.Fatal("expected embedded Flow launch command")
 	}
-	_ = cmd()
+	_ = runLeadingBatchCmd(t, cmd)
 	return m
 }
 
@@ -1435,7 +1435,9 @@ func TestModel_AKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("a on selected Flow row should return persistence command")
 	}
-	m, _ = update(m, cmd())
+	for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
+		m, _ = update(m, refreshMsg)
+	}
 	if got := m.TransientError(); !strings.Contains(got, "failed to set Flow auto mode") || !strings.Contains(got, "state root locked") {
 		t.Fatalf("status = %q, want persistence failure", got)
 	}
@@ -1740,7 +1742,9 @@ func TestModel_MKeyManualMergeFailureReplacesRecoveredFlowState(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("confirming manual merge should return command")
 	}
-	m, _ = update(m, cmd())
+	for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
+		m, _ = update(m, refreshMsg)
+	}
 
 	got := m.Flows()
 	if len(got) != 1 {
@@ -1795,8 +1799,8 @@ func TestModel_ShiftMManualMergeNoopsOnActiveFlowRow(t *testing.T) {
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
-	if cmd != nil {
-		t.Fatalf("M on selected active Flow row returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command on selected active Flow row")
 	}
 	if m.Overlay() == ui.OverlayConfirm {
 		t.Fatalf("M on selected active Flow row opened confirmation %q", m.ConfirmPrompt())
@@ -2111,8 +2115,8 @@ func TestModel_XKeyOnResettableFlowPhaseReportsResetFailure(t *testing.T) {
 		t.Fatal("confirmed reset should return persistence command")
 	}
 	m, fetchCmd := update(m, resetCmd())
-	if fetchCmd != nil {
-		t.Fatalf("reset failure returned refresh command %T, want nil", fetchCmd)
+	if fetchCmd == nil {
+		t.Fatal("expected status expiry command for reset failure")
 	}
 	if got := m.TransientError(); !strings.Contains(got, "state root locked") {
 		t.Fatalf("status after reset failure = %q, want persistence error", got)
@@ -4057,8 +4061,8 @@ func TestModel_GWithNoLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	m, cmd := update(m, flowLaunchKey())
-	if cmd != nil {
-		t.Fatalf("g without a launchable phase returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command without a launchable phase")
 	}
 	if addLaunchRan || launchAgentRan || startEmbeddedRan {
 		t.Fatalf("g without launchable phase launched: add=%v launch=%v embedded=%v", addLaunchRan, launchAgentRan, startEmbeddedRan)
@@ -4927,9 +4931,7 @@ func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
 				return nil
 			})
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-			if cmd != nil {
-				t.Fatalf("p returned command %T, want nil", cmd)
-			}
+			_ = cmd
 			if len(opened) != 0 {
 				t.Fatalf("opened URLs = %#v, want none", opened)
 			}
@@ -5533,7 +5535,9 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 		if !strings.Contains(m.TransientError(), "Flow already deleted") {
 			t.Fatalf("status after not-found delete = %q, want stale-list warning", m.TransientError())
 		}
-		m, _ = update(m, cmd())
+		for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
+			m, _ = update(m, refreshMsg)
+		}
 		if got := m.Flows(); len(got) != 0 {
 			t.Fatalf("flows after not-found refresh = %#v, want empty", got)
 		}
@@ -5560,8 +5564,8 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 			Err:      "disk full",
 		})
 
-		if cmd != nil {
-			t.Fatalf("non-not-found FlowDeleteFailedMsg returned command %T, want nil", cmd)
+		if cmd == nil {
+			t.Fatal("expected status expiry command for non-not-found FlowDeleteFailedMsg")
 		}
 		if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
 			t.Fatalf("flows after failed delete = %#v, want unchanged", got)
@@ -5787,8 +5791,8 @@ func TestModel_OKeyOnFlowWithoutPlanShowsStatus(t *testing.T) {
 	}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	if cmd != nil {
-		t.Fatalf("unlinked flow o returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for unlinked flow")
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay, got %d", m.Overlay())
@@ -5967,8 +5971,8 @@ func TestModel_FlowPhaseWithUnsupportedProviderDoesNotAdvertiseResume(t *testing
 		t.Fatalf("unsupported provider should not advertise Flow phase resume:\n%s", m.View())
 	}
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("unsupported provider should not launch, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for unsupported provider")
 	}
 	if launchRan {
 		t.Fatal("LaunchAgent ran for unsupported Flow phase provider")
@@ -6007,8 +6011,8 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderSession(t *
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("awaiting latest session should not launch, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for awaiting latest session")
 	}
 	if launchRan {
 		t.Fatal("LaunchAgent ran for stale Flow phase session")
@@ -6054,8 +6058,8 @@ func TestModel_RKeyOnFlowPhaseAwaitingLatestSessionDoesNotResumeOlderLiveSession
 		t.Fatalf("awaiting latest session with older live session should not advertise resume:\n%s", m.View())
 	}
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("awaiting latest session should not launch, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for awaiting latest session")
 	}
 	if launchRan {
 		t.Fatal("launch ran for stale Flow phase session")
@@ -6081,8 +6085,8 @@ func TestModel_RKeyOnRunningEndedSessionFlowPhaseDoesNotResume(t *testing.T) {
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("running ended-session phase should not launch, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for running ended-session phase")
 	}
 	if launchRan {
 		t.Fatal("launcher ran for running ended-session Flow phase")
@@ -6116,8 +6120,8 @@ func TestModel_RKeyOnRunningEndedLatestSessionDoesNotResumeWhenOlderSessionIsLiv
 		t.Fatalf("running ended latest session should not advertise resume:\n%s", m.View())
 	}
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("running ended latest session should not launch, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for running ended latest session")
 	}
 	if launchRan {
 		t.Fatal("launcher ran for running ended latest session")
@@ -9059,8 +9063,8 @@ func TestModel_GWithoutReadyFlowPhaseShowsNoLaunchableStatus(t *testing.T) {
 	}
 
 	m, cmd := update(m, flowLaunchKey())
-	if cmd != nil {
-		t.Fatalf("not-ready flow launch returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for not-ready flow launch")
 	}
 	if status := m.TransientError(); status != "No launchable Flow phase" {
 		t.Fatalf("status = %q, want no-launchable message", status)
@@ -9549,8 +9553,8 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWithoutPRTarget(t *testing.T) 
 
 	m = selectFlowPhaseByID(t, m, "autoreview")
 	m, cmd := update(m, flowLaunchKey())
-	if cmd != nil {
-		t.Fatal("g should not launch blocked autoreview without PR metadata")
+	if cmd == nil {
+		t.Fatal("expected status expiry command for blocked autoreview without PR metadata")
 	}
 	if launchAttempted {
 		t.Fatal("LaunchAgent() ran without PR metadata")
@@ -9598,8 +9602,8 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWhenPredecessorsAreUnsatisfied
 
 	m = selectFlowPhaseByID(t, m, "autoreview")
 	m, cmd := update(m, flowLaunchKey())
-	if cmd != nil {
-		t.Fatal("g should not launch blocked autoreview while predecessors are unsatisfied")
+	if cmd == nil {
+		t.Fatal("expected status expiry command for blocked autoreview with unsatisfied predecessors")
 	}
 	if got := m.TransientError(); got != "No launchable Flow phase" {
 		t.Fatalf("status = %q, want no-launchable message", got)
@@ -9995,7 +9999,7 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected flow refresh command after parked Flow creation")
 	}
-	_ = cmd()
+	_ = runLeadingBatchCmd(t, cmd)
 
 	if createRequest.RepoPath != "/dev/alpha" ||
 		createRequest.Title != "Parked Flow" ||
@@ -10973,7 +10977,9 @@ func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 		!strings.Contains(phaseUpdate.Notes, "agent exited") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
-	m, _ = update(m, cmd())
+	for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
+		m, _ = update(m, refreshMsg)
+	}
 	if !listed {
 		t.Fatal("expected ListFlows to run")
 	}

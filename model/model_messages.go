@@ -132,17 +132,6 @@ type VisibleRepoFetchResultMsg struct {
 	Err         string
 }
 
-type VisibleRepoFetchStatusFadeMsg struct {
-	Request uint64
-	Text    string
-	Step    int
-}
-
-type VisibleRepoFetchStatusExpiredMsg struct {
-	Request uint64
-	Text    string
-}
-
 type promptTemplateEditRequestedMsg struct {
 	Value string
 }
@@ -551,30 +540,6 @@ func (m Model) isCurrentRepo(repoPath string) bool {
 	return ok && current == repoPath
 }
 
-func (m Model) setStatus(source statusSource, text string) Model {
-	m.status = statusError{Text: text, Source: source}
-	return m
-}
-
-func (m Model) setFetchStatus(msg FetchErrorMsg) Model {
-	m.status = statusError{Text: msg.Err, Source: statusFetch, FetchKind: msg.Kind, Mode: msg.Mode}
-	return m
-}
-
-func (m Model) clearStatus(source statusSource) Model {
-	if m.status.Source == source {
-		m.status = statusError{}
-	}
-	return m
-}
-
-func (m Model) clearFetchListStatus(mode ui.Mode) Model {
-	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == mode {
-		m.status = statusError{}
-	}
-	return m
-}
-
 func (m Model) isCurrentListRequest(mode ui.Mode, request uint64) bool {
 	if request == 0 {
 		return false
@@ -597,11 +562,6 @@ func (m Model) acceptActiveFlowResult(request uint64) (Model, bool) {
 		return m, false
 	}
 	return m.clearFetchListStatus(ui.ModeActiveFlows), true
-}
-
-func (m Model) clearAnyStatus() Model {
-	m.status = statusError{}
-	return m
 }
 
 func (m Model) visibleStatusText() string {
@@ -747,40 +707,15 @@ func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.
 	_, shouldRefresh := m.visibleRepoFetch.CapturedPaths[currentPath]
 	finalStatus := m.visibleRepoFetchFinalStatusText()
 	m.visibleRepoFetch = visibleRepoFetchState{}
-	m.visibleRepoFetchStatusSeq++
-	statusRequest := m.visibleRepoFetchStatusSeq
-	m = m.setStatus(statusGitMutation, finalStatus)
-	statusCmds := []tea.Cmd{
-		fadeVisibleRepoFetchStatus(statusRequest, finalStatus, 1),
-		fadeVisibleRepoFetchStatus(statusRequest, finalStatus, 2),
-		expireVisibleRepoFetchStatus(statusRequest, finalStatus),
-	}
+	m = m.setVisibleRepoFetchSummaryStatus(finalStatus)
+	statusCmds := append([]tea.Cmd(nil), m.pendingStatusCmds...)
+	m.pendingStatusCmds = nil
 	if currentOK && shouldRefresh {
 		var fetchCmd tea.Cmd
 		m, fetchCmd = m.startFetchForMode()
 		statusCmds = append([]tea.Cmd{fetchCmd}, statusCmds...)
 	}
 	return m, tea.Batch(statusCmds...)
-}
-
-func (m Model) handleVisibleRepoFetchStatusFade(msg VisibleRepoFetchStatusFadeMsg) Model {
-	if msg.Request == 0 || msg.Request != m.visibleRepoFetchStatusSeq {
-		return m
-	}
-	if m.status.Source == statusGitMutation && m.status.Text == msg.Text {
-		m.status.FadeStep = msg.Step
-	}
-	return m
-}
-
-func (m Model) handleVisibleRepoFetchStatusExpired(msg VisibleRepoFetchStatusExpiredMsg) Model {
-	if msg.Request == 0 || msg.Request != m.visibleRepoFetchStatusSeq {
-		return m
-	}
-	if m.status.Source == statusGitMutation && m.status.Text == msg.Text {
-		m.status = statusError{}
-	}
-	return m
 }
 
 func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea.Cmd) {

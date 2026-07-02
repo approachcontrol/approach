@@ -38,8 +38,8 @@ func TestModel_LeftPaneNReportsUnavailableWithoutRepoCreateRoot(t *testing.T) {
 	m := model.New(testRepos())
 
 	m, cmd := update(m, repoCreateKey("n"))
-	if cmd != nil {
-		t.Fatal("unavailable repo creation should not return command")
+	if cmd == nil {
+		t.Fatal("unavailable repo creation should return status expiry command")
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("Overlay() = %d, want none", m.Overlay())
@@ -149,7 +149,7 @@ func TestModel_RepoCreatedRefreshesAndSelectsNewRepo(t *testing.T) {
 	if refreshCmd == nil {
 		t.Fatal("repo creation success should start repo refresh")
 	}
-	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, refreshCmd))
 	m, _ = update(m, refreshMsg)
 
 	if got := m.Selected(); got != 1 {
@@ -185,7 +185,7 @@ func TestModel_RepoCreatedRefreshKeepsSelectedNewRepoVisible(t *testing.T) {
 		t.Fatal("repo creation should refresh repos")
 	}
 
-	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, refreshCmd))
 	m, _ = update(m, refreshMsg)
 
 	if got := m.Selected(); got != 24 {
@@ -223,7 +223,7 @@ func TestModel_RepoCreatedRefreshSelectsRelativeScanRepoFromAbsoluteDestination(
 		t.Fatal("repo creation should refresh repos")
 	}
 
-	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, refreshCmd))
 	m, _ = update(m, refreshMsg)
 
 	if got := m.Selected(); got != 1 {
@@ -331,7 +331,7 @@ func TestModel_RepoCreatePartialFailureRefreshesLocalRepo(t *testing.T) {
 		t.Fatalf("Overlay() = %d, want retry form", m.Overlay())
 	}
 
-	refreshMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, refreshCmd))
+	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, refreshCmd))
 	m, _ = update(m, refreshMsg)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
 

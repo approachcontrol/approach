@@ -885,12 +885,12 @@ func TestModel_AutoAdvanceStatusEventsExpireAndDoNotStompOtherStatus(t *testing.
 	if m.status.Source != statusFlowAutoAdvance || m.status.Text != "Flow Bravo Flow: needs attention" {
 		t.Fatalf("status = %#v, want needs attention auto-advance status", m.status)
 	}
-	seq := m.autoAdvanceStatusSeq
-	m = m.handleAutoAdvanceStatusExpired(AutoAdvanceStatusExpiredMsg{Seq: seq + 1, Text: m.status.Text})
+	seq := m.status.Seq
+	m = m.handleStatusExpired(StatusExpiredMsg{Seq: seq + 1})
 	if m.status.Text == "" {
 		t.Fatal("stale auto-advance status expiry should not clear status")
 	}
-	m = m.handleAutoAdvanceStatusExpired(AutoAdvanceStatusExpiredMsg{Seq: seq, Text: "Flow Bravo Flow: needs attention"})
+	m = m.handleStatusExpired(StatusExpiredMsg{Seq: seq})
 	if m.status.Text != "" {
 		t.Fatalf("status after matching expiry = %#v, want cleared", m.status)
 	}
