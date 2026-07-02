@@ -83,7 +83,7 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4` | Switch to the Git view / sessions / plans / flows (`5`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
+| `1`/`2`/`3`/`4` | Switch to the Git view / sessions / plans / flows outside Active Flows (`5`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `←`/`→` | Cycle git subviews with wrap inside the Git view (arrows never leave it); cycle Git, sessions, plans, and flows with wrap elsewhere, entering Git at its last-used subview. Active Flows is not in the arrow cycle. |
@@ -395,7 +395,8 @@ launch.
 ### Active Flows view (`ctrl+a`)
 
 Browse active Flow records across all repos. Press `ctrl+a` from any normal TUI
-view to open it, and press `ctrl+a` again to return to the previous view. This
+view to open it, and press `ctrl+a` again to return to the previous view; number
+keys and arrows do not leave Active Flows. This
 view hides merged Flow records; moving focus to the left repo pane temporarily
 filters the visible active rows to the selected repo, and returning focus to the
 middle pane restores the global list. Normal Flow actions, phase launches,

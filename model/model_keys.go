@@ -60,7 +60,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleActiveFlowsToggle()
 	}
 
-	if !m.searchActive && m.activePane == 1 && isNumberedModeKey(key) {
+	if !m.searchActive && m.activePane == 1 && m.mode != ui.ModeActiveFlows && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd

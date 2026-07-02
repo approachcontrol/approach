@@ -309,6 +309,24 @@ func TestTopLevelArrows_InertInsideActiveFlows(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 }
 
+func TestTopLevelNumberedKeys_InertInsideActiveFlows(t *testing.T) {
+	m := inRightPane(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	before := listRequests(m)
+
+	for _, key := range []rune{'1', '2', '3', '4', '5', '6', '7', '8', '9'} {
+		var cmd tea.Cmd
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if m.Mode() != ui.ModeActiveFlows {
+			t.Fatalf("%q in active flows mode = %d, want unchanged active flows", string(key), m.Mode())
+		}
+		if cmd != nil {
+			t.Fatalf("%q in active flows returned cmd %T, want nil", string(key), cmd)
+		}
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
 func TestTopLevelArrows_EnteringGitLandsOnLastUsedSubview(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, 'h') // history subview

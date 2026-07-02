@@ -103,7 +103,7 @@ func manualMergeEligibleFlow() flowstore.FlowRecord {
 	}
 }
 
-func TestModel_Key9ShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.T) {
+func TestModel_CtrlAShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.T) {
 	alpha := flowWithPhaseDetails()
 	alpha.FlowID = "alpha-flow"
 	alpha.Title = "Alpha Flow"
@@ -157,10 +157,10 @@ func TestModel_Key9ShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.T
 		t.Fatalf("normal Flows() cache = %#v, want original repo-scoped alpha flow", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	view = ansi.Strip(m.View())
 	if !strings.Contains(view, "worktrees") || strings.Contains(view, "Bravo Flow") {
-		t.Fatalf("view 1 should restore worktrees pane:\n%s", view)
+		t.Fatalf("ctrl+a should restore worktrees pane:\n%s", view)
 	}
 }
 
@@ -357,10 +357,10 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 		t.Fatalf("launch update = %#v, want active-two implementation", launched)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	view = ansi.Strip(m.View())
 	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 1 || !strings.Contains(view, "Merged Flow") {
-		t.Fatalf("normal Flow mode should retain merged selection after switching to view 8; selected=%d view:\n%s", m.FlowSelected(), view)
+		t.Fatalf("normal Flow mode should retain merged selection after toggling back; selected=%d view:\n%s", m.FlowSelected(), view)
 	}
 }
 
