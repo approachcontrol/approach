@@ -236,7 +236,7 @@ func autoAdvanceStatusEvents(previous []flowstore.FlowRecord, launched []autoAdv
 			switch {
 			case phase.Status == flowstore.PhaseNeedsAttention && previousPhase.Status != flowstore.PhaseNeedsAttention:
 				events = append(events, "Flow "+flowTitleForStatus(record)+": needs attention")
-			case phaseID == "merge" && phase.Status == flowstore.PhaseReady && previousPhase.Status != flowstore.PhaseReady:
+			case flowstore.SemanticKind(phase) == flowstore.KindMerge && phase.Status == flowstore.PhaseReady && previousPhase.Status != flowstore.PhaseReady:
 				events = append(events, "Flow "+flowTitleForStatus(record)+": ready to merge")
 			}
 		}

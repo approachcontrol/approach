@@ -61,6 +61,17 @@ const (
 	OutcomeBlocked              = "blocked"
 )
 
+const (
+	KindPlan                = "plan"
+	KindPlanReview          = "plan_review"
+	KindImplementation      = "implementation"
+	KindReviewLoop          = "review_loop"
+	KindPRCreation          = "pr_creation"
+	KindAutoreview          = "autoreview"
+	KindMerge               = "merge"
+	KindImplementationChild = "implementation_child"
+)
+
 // Store reads and writes flow records under an artifact root.
 type Store struct {
 	root        string
@@ -376,13 +387,16 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 		}
 		authoritativeEdges := graphHasAuthoritativeEdges(record.Phases)
 		record.Phases = backfillLinearDependsOnForCreate(record.Phases)
+		if err := validateUniqueMergePhaseKind(record.Phases); err != nil {
+			return FlowRecord{}, err
+		}
 		if authoritativeEdges {
 			if err := validatePhaseGraph(record.Phases); err != nil {
 				return FlowRecord{}, err
 			}
 		}
 	}
-	record = normalizeRecord(record)
+	record = normalizeRecord(record, false)
 	record.Status = DeriveStatus(record)
 	if err := s.write(record); err != nil {
 		return FlowRecord{}, err
@@ -448,9 +462,7 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	phase.UpdatedAt = now
 	record.Phases[phaseIndex] = phase
 	record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
-	if phase.PhaseID == "merge" && (phase.Status == PhaseRunning || phase.Status == PhaseSkipped) {
-		record.Merge = Merge{Status: MergePending}
-	}
+	record = resetMergePendingForActiveMergePhase(record, phase)
 	record.UpdatedAt = now
 	record = refreshPhaseReadiness(record, now)
 	record.Status = DeriveStatus(record)
@@ -512,9 +524,7 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
 		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
-		if phase.PhaseID == "merge" {
-			record.Merge = Merge{Status: MergePending}
-		}
+		record = resetMergePendingForActiveMergePhase(record, phase)
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		return record, nil
@@ -533,7 +543,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 		if parentIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("parent phase %q not found in flow %q", update.ParentPhaseID, update.FlowID)
 		}
-		if record.Phases[parentIndex].PhaseID != "implementation" {
+		if SemanticKind(record.Phases[parentIndex]) != KindImplementation {
 			return FlowRecord{}, fmt.Errorf("child phases can only be added under implementation")
 		}
 		childIndex := phaseIndexByID(record.Phases, update.PhaseID)
@@ -549,13 +559,13 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			child = record.Phases[childIndex]
 			if child.PhaseID == update.PhaseID &&
 				child.Title == strings.TrimSpace(update.Title) &&
-				child.Kind == "implementation_child" &&
+				child.Kind == KindImplementationChild &&
 				child.Order == update.Order {
 				return record, nil
 			}
 			child.PhaseID = update.PhaseID
 			child.Title = strings.TrimSpace(update.Title)
-			child.Kind = "implementation_child"
+			child.Kind = KindImplementationChild
 			child.Order = update.Order
 			child.UpdatedAt = now
 			record.Phases[childIndex] = child
@@ -568,7 +578,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			PhaseID:       update.PhaseID,
 			ParentPhaseID: update.ParentPhaseID,
 			Title:         strings.TrimSpace(update.Title),
-			Kind:          "implementation_child",
+			Kind:          KindImplementationChild,
 			Status:        PhasePending,
 			Order:         update.Order,
 			CreatedAt:     now,
@@ -677,7 +687,7 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	if _, err := planStore.ReadPlan(planID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if record.PlanID == planID && record.PlanPath == planPath {
 			return record, nil
 		}
@@ -713,7 +723,7 @@ func (s *Store) SetIssue(update IssueUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		issue, err := validateIssueUpdate(update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -732,7 +742,7 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		merge, err := validateMergeUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -761,7 +771,7 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(update.FlowID)
 	}
-	phaseIndex := phaseIndexByID(record.Phases, "merge")
+	phaseIndex := mergePhaseIndex(record)
 	if phaseIndex < 0 {
 		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
 	}
@@ -785,7 +795,6 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	phase.Status = PhaseCompleted
 	phase.Outcome = MergeMerged
 	phase.Summary = summary
-	phase.PhaseID = "merge"
 	phase.UpdatedAt = now
 	record.Phases[phaseIndex] = phase
 	record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
@@ -820,7 +829,7 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if record.AutoMode == update.Enabled {
 			return record, nil
 		}
@@ -842,7 +851,7 @@ func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error)
 	if strings.TrimSpace(update.PlanPath) != "" && !filepath.IsAbs(update.PlanPath) {
 		return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", update.PlanPath)
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if value := strings.TrimSpace(update.WorktreePath); value != "" {
 			record.WorktreePath = filepath.Clean(value)
 		}
@@ -942,9 +951,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		phase.UpdatedAt = now
 		record.Phases[phaseIndex] = phase
 		record.Phases = collapseDuplicatePhaseRows(record.Phases, phaseIndex)
-		if phase.PhaseID == "merge" && phase.Status == PhaseRunning {
-			record.Merge = Merge{Status: MergePending}
-		}
+		record = resetMergePendingForActiveMergePhase(record, phase)
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
@@ -957,11 +964,10 @@ func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
 	if phaseIndex >= 0 && phaseIndex < len(record.Phases) {
 		phase = record.Phases[phaseIndex]
 	}
-	phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
 	switch {
 	case !record.AutoMode:
 		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, errAutoLaunchOutdated)
-	case phaseID == "" || phaseID == "merge":
+	case artifacts.NormalizePhaseID(phase.PhaseID) == "" || SemanticKind(phase) == KindMerge:
 		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
 	case phase.Status != PhaseReady:
 		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, errAutoLaunchOutdated)
@@ -1086,7 +1092,7 @@ func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, e
 	if launchID == "" {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
@@ -1138,7 +1144,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 	if strings.TrimSpace(update.Session.SessionID) == "" {
 		return FlowRecord{}, fmt.Errorf("session id is required")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		// Attaching a session is metadata-only and never changes phase status,
 		// so prefer the row that matches the id exactly: when a legacy record
 		// still holds a stale duplicate ahead of the active row, collapsing
@@ -1193,12 +1199,20 @@ func (s *Store) Delete(flowID string) error {
 }
 
 func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, true, mutate)
+}
+
+func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, false, mutate)
+}
+
+func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	release, err := s.acquireFlowLock(flowID)
 	if err != nil {
 		return FlowRecord{}, err
 	}
 	defer release()
-	record, ok := s.readRecord(flowID)
+	record, ok := s.readRecordWithReadiness(flowID, selfHealOnRead)
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(flowID)
 	}
@@ -1206,7 +1220,7 @@ func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (Fl
 	if err != nil {
 		return FlowRecord{}, err
 	}
-	record = normalizeRecord(record)
+	record = normalizeRecordBase(record)
 	record.Status = DeriveStatus(record)
 	if err := s.write(record); err != nil {
 		return FlowRecord{}, err
@@ -1359,9 +1373,6 @@ func validateChildPhaseUpdate(update ChildPhaseUpdate) error {
 	if err := validatePhaseID(update.ParentPhaseID); err != nil {
 		return fmt.Errorf("invalid parent phase id: %w", err)
 	}
-	if update.ParentPhaseID != "implementation" {
-		return fmt.Errorf("child phases can only be added under implementation")
-	}
 	if err := validatePhaseID(update.PhaseID); err != nil {
 		return err
 	}
@@ -1398,7 +1409,7 @@ func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 		}
 		phase = record.Phases[i]
 		if !phaseSatisfiesDownstreamGate(record, phase) {
-			if phase.PhaseID == "plan-review" {
+			if SemanticKind(phase) == KindPlanReview {
 				failedPlanReview[i] = true
 			}
 			if phaseDependsOnPlanReviewFailure(record, graph, i, failedPlanReview) {
@@ -1471,7 +1482,8 @@ func shouldResetBlockedDownstreamPhase(phase FlowPhase, resetBlocked bool) bool 
 }
 
 func phaseSatisfiesDownstreamGate(record FlowRecord, phase FlowPhase) bool {
-	if phase.PhaseID == "plan-review" {
+	switch SemanticKind(phase) {
+	case KindPlanReview:
 		switch phase.Status {
 		case PhaseSkipped:
 			return strings.TrimSpace(phase.Notes) != ""
@@ -1480,14 +1492,56 @@ func phaseSatisfiesDownstreamGate(record FlowRecord, phase FlowPhase) bool {
 		default:
 			return false
 		}
-	}
-	if phase.PhaseID == "pr-creation" {
+	case KindPRCreation:
 		return phase.Status == PhaseCompleted && HasPRTarget(record.PR)
 	}
 	if phase.Status == PhaseSkipped {
 		return strings.TrimSpace(phase.Notes) != ""
 	}
 	return phase.Status == PhaseCompleted
+}
+
+// PhaseGateSatisfied reports whether phase satisfies the semantic gate that
+// unlocks downstream phases in the Flow graph.
+func PhaseGateSatisfied(record FlowRecord, phase FlowPhase) bool {
+	return phaseSatisfiesDownstreamGate(record, phase)
+}
+
+// SemanticKind returns the normalized semantic kind for a phase. Persisted kind
+// wins; otherwise default preset phase IDs are inferred for legacy records.
+func SemanticKind(phase FlowPhase) string {
+	if kind := strings.ToLower(strings.TrimSpace(phase.Kind)); kind != "" {
+		return kind
+	}
+	switch artifacts.NormalizePhaseID(phase.PhaseID) {
+	case "plan":
+		return KindPlan
+	case "plan-review":
+		return KindPlanReview
+	case "implementation":
+		return KindImplementation
+	case "review-loop":
+		return KindReviewLoop
+	case "pr-creation":
+		return KindPRCreation
+	case "autoreview":
+		return KindAutoreview
+	case "merge":
+		return KindMerge
+	default:
+		return ""
+	}
+}
+
+// FindPhaseByKind returns the first phase with the requested semantic kind.
+func FindPhaseByKind(record FlowRecord, kind string) (FlowPhase, bool) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	for _, phase := range OrderedPhases(record.Phases) {
+		if SemanticKind(phase) == kind {
+			return phase, true
+		}
+	}
+	return FlowPhase{}, false
 }
 
 // PhasePredecessorsSatisfied reports whether all graph prerequisites for
@@ -1647,14 +1701,14 @@ func validateMergeUpdate(record FlowRecord, update MergeUpdate) (Merge, error) {
 		if update.MergedAt.IsZero() {
 			return Merge{}, fmt.Errorf("merge status merged requires merge timestamp")
 		}
-		phaseIndex := phaseIndexByID(record.Phases, "merge")
+		phaseIndex := mergePhaseIndex(record)
 		if phaseIndex < 0 || record.Phases[phaseIndex].Status != PhaseCompleted {
 			return Merge{}, fmt.Errorf("merge status merged requires completed merge phase")
 		}
 		mergedAt := update.MergedAt.UTC()
 		return Merge{Status: MergeMerged, Commit: commit, MergedAt: &mergedAt}, nil
 	case MergeBlocked:
-		phaseIndex := phaseIndexByID(record.Phases, "merge")
+		phaseIndex := mergePhaseIndex(record)
 		if phaseIndex < 0 || record.Phases[phaseIndex].Status != PhaseBlocked || strings.TrimSpace(record.Phases[phaseIndex].Notes) == "" {
 			return Merge{}, fmt.Errorf("merge status blocked requires blocked merge phase notes")
 		}
@@ -1690,7 +1744,7 @@ func validateManualMergeUpdate(record FlowRecord, phase FlowPhase, update Manual
 	case PhaseReady:
 		if err := validatePhaseUpdate(phase, PhaseUpdate{
 			FlowID:  update.FlowID,
-			PhaseID: "merge",
+			PhaseID: phase.PhaseID,
 			Status:  PhaseCompleted,
 			Outcome: MergeMerged,
 		}); err != nil {
@@ -1721,7 +1775,7 @@ func mergeEqual(left, right Merge) bool {
 }
 
 func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {
-	if current.PhaseID != "plan-review" {
+	if SemanticKind(current) != KindPlanReview {
 		return nil
 	}
 	if current.Status == PhasePending && update.Status != PhaseSkipped {
@@ -1732,47 +1786,54 @@ func validatePlanReviewUpdate(current FlowPhase, update PhaseUpdate) error {
 	if outcome == "" {
 		switch update.Status {
 		case PhaseCompleted:
-			return fmt.Errorf("plan-review completed requires outcome approved or approved_with_concerns")
+			return fmt.Errorf("%s completed requires outcome approved or approved_with_concerns", reviewPhaseLabel(current))
 		case PhaseNeedsAttention:
-			return fmt.Errorf("plan-review needs_attention requires outcome changes_requested")
+			return fmt.Errorf("%s needs_attention requires outcome changes_requested", reviewPhaseLabel(current))
 		case PhaseBlocked:
-			return fmt.Errorf("plan-review blocked requires outcome blocked")
+			return fmt.Errorf("%s blocked requires outcome blocked", reviewPhaseLabel(current))
 		}
 		return nil
 	}
 	if update.Status == PhaseBlocked && outcome != OutcomeBlocked {
-		return fmt.Errorf("plan-review blocked requires outcome blocked")
+		return fmt.Errorf("%s blocked requires outcome blocked", reviewPhaseLabel(current))
 	}
 	switch outcome {
 	case OutcomeApproved:
 		if update.Status != PhaseCompleted {
-			return fmt.Errorf("plan-review outcome approved requires completed status")
+			return fmt.Errorf("%s outcome approved requires completed status", reviewPhaseLabel(current))
 		}
 	case OutcomeApprovedWithConcerns:
 		if update.Status != PhaseCompleted {
-			return fmt.Errorf("plan-review outcome approved_with_concerns requires completed status")
+			return fmt.Errorf("%s outcome approved_with_concerns requires completed status", reviewPhaseLabel(current))
 		}
 		if notes == "" {
-			return fmt.Errorf("plan-review approved_with_concerns requires notes")
+			return fmt.Errorf("%s approved_with_concerns requires notes", reviewPhaseLabel(current))
 		}
 	case OutcomeChangesRequested:
 		if update.Status != PhaseNeedsAttention {
-			return fmt.Errorf("plan-review outcome changes_requested requires needs_attention status")
+			return fmt.Errorf("%s outcome changes_requested requires needs_attention status", reviewPhaseLabel(current))
 		}
 		if notes == "" {
-			return fmt.Errorf("plan-review changes_requested requires notes")
+			return fmt.Errorf("%s changes_requested requires notes", reviewPhaseLabel(current))
 		}
 	case OutcomeBlocked:
 		if update.Status != PhaseBlocked {
-			return fmt.Errorf("plan-review blocked requires outcome blocked")
+			return fmt.Errorf("%s blocked requires outcome blocked", reviewPhaseLabel(current))
 		}
 		if notes == "" {
-			return fmt.Errorf("plan-review blocked requires notes")
+			return fmt.Errorf("%s blocked requires notes", reviewPhaseLabel(current))
 		}
 	default:
-		return fmt.Errorf("invalid plan-review outcome %q", outcome)
+		return fmt.Errorf("invalid %s outcome %q", reviewPhaseLabel(current), outcome)
 	}
 	return nil
+}
+
+func reviewPhaseLabel(phase FlowPhase) string {
+	if artifacts.NormalizePhaseID(phase.PhaseID) == "plan-review" {
+		return "plan-review"
+	}
+	return fmt.Sprintf("%s (%s)", phase.PhaseID, KindPlanReview)
 }
 
 // DeriveStatus computes the flow-level status from phase and merge state.
@@ -1827,13 +1888,13 @@ func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
 		title string
 		kind  string
 	}{
-		{"plan", "Plan", "plan"},
-		{"plan-review", "Plan Review", "plan_review"},
-		{"implementation", "Implementation", "implementation"},
-		{"review-loop", "Review loop", "review_loop"},
-		{"pr-creation", "PR creation", "pr_creation"},
-		{"autoreview", "Autoreview", "autoreview"},
-		{"merge", "Merge", "merge"},
+		{"plan", "Plan", KindPlan},
+		{"plan-review", "Plan Review", KindPlanReview},
+		{"implementation", "Implementation", KindImplementation},
+		{"review-loop", "Review loop", KindReviewLoop},
+		{"pr-creation", "PR creation", KindPRCreation},
+		{"autoreview", "Autoreview", KindAutoreview},
+		{"merge", "Merge", KindMerge},
 	}
 	phases := make([]FlowPhase, 0, len(specs))
 	for i, spec := range specs {
@@ -1886,6 +1947,10 @@ func (s *Store) write(record FlowRecord) error {
 }
 
 func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
+	return s.readRecordWithReadiness(flowID, true)
+}
+
+func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (FlowRecord, bool) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, false
 	}
@@ -1901,8 +1966,13 @@ func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
 	if record.FlowID != flowID || record.SchemaVersion != schemaVersion {
 		return FlowRecord{}, false
 	}
+	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
 	record.Phases = backfillLinearDependsOnFromRaw(record.Phases, presence)
-	record = normalizeRecord(record)
+	if selfHealOnRead {
+		record = normalizeRecord(record, selfHeal)
+	} else {
+		record = normalizeRecordBase(record)
+	}
 	record.Status = DeriveStatus(record)
 	return record, true
 }
@@ -1922,6 +1992,15 @@ func rawDependsOnPresence(data []byte) []rawDependsOnState {
 		}
 	}
 	return presence
+}
+
+func rawDependsOnPresentForTopLevel(phases []FlowPhase, presence []rawDependsOnState) bool {
+	for i, phase := range phases {
+		if phase.ParentPhaseID == "" && i < len(presence) && presence[i].Present {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) flowDir(flowID string) string {
@@ -1960,24 +2039,30 @@ func defaultTime(value, fallback time.Time) time.Time {
 	return value
 }
 
-func normalizeRecord(record FlowRecord) FlowRecord {
-	if record.Merge.Status == "" {
-		record.Merge.Status = MergePending
-	}
-	// Load-path normalization only: standard graphs (identified by a
-	// plan-review phase) self-heal here; phase-affecting mutations call
+func normalizeRecord(record FlowRecord, selfHeal bool) FlowRecord {
+	record = normalizeRecordBase(record)
+	// Load-path normalization only: edge-aware records and plan-review-kind
+	// records self-heal here; phase-affecting mutations call
 	// refreshPhaseReadiness explicitly for every graph shape.
-	if hasPhase(record, "plan-review") {
-		record = normalizePlanReviewOutcomes(record)
+	if selfHeal || hasPlanReviewKind(record) {
+		record = normalizeReviewOutcomes(record)
 		record = refreshPhaseReadiness(record, record.UpdatedAt)
 	}
 	return record
 }
 
-func normalizePlanReviewOutcomes(record FlowRecord) FlowRecord {
+func normalizeRecordBase(record FlowRecord) FlowRecord {
+	if record.Merge.Status == "" {
+		record.Merge.Status = MergePending
+	}
+	record.Phases = backfillPhaseKinds(record.Phases)
+	return record
+}
+
+func normalizeReviewOutcomes(record FlowRecord) FlowRecord {
 	for i := range record.Phases {
 		phase := record.Phases[i]
-		if phase.PhaseID != "plan-review" {
+		if SemanticKind(phase) != KindPlanReview {
 			continue
 		}
 		phase.Outcome = strings.TrimSpace(phase.Outcome)
@@ -1989,8 +2074,18 @@ func normalizePlanReviewOutcomes(record FlowRecord) FlowRecord {
 	return record
 }
 
-func hasPhase(record FlowRecord, phaseID string) bool {
-	return phaseIndexByID(record.Phases, phaseID) >= 0
+func backfillPhaseKinds(phases []FlowPhase) []FlowPhase {
+	for i := range phases {
+		if strings.TrimSpace(phases[i].Kind) == "" {
+			phases[i].Kind = SemanticKind(phases[i])
+		}
+	}
+	return phases
+}
+
+func hasPlanReviewKind(record FlowRecord) bool {
+	_, ok := FindPhaseByKind(record, KindPlanReview)
+	return ok
 }
 
 // collapseDuplicatePhaseRows keeps the row at keepIndex and drops every other
@@ -2064,4 +2159,20 @@ func phaseIndexByID(phases []FlowPhase, phaseID string) int {
 		}
 	}
 	return -1
+}
+
+func mergePhaseIndex(record FlowRecord) int {
+	for i, phase := range record.Phases {
+		if SemanticKind(phase) == KindMerge {
+			return i
+		}
+	}
+	return -1
+}
+
+func resetMergePendingForActiveMergePhase(record FlowRecord, phase FlowPhase) FlowRecord {
+	if SemanticKind(phase) == KindMerge && (phase.Status == PhaseRunning || phase.Status == PhaseSkipped) {
+		record.Merge = Merge{Status: MergePending}
+	}
+	return record
 }

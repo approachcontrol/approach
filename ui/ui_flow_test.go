@@ -2353,6 +2353,32 @@ func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 	}
 }
 
+func TestRender_FlowsModeShowsAutoreviewKindMissingPRMetadata(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Selected: 0,
+		Width:    240,
+		Height:   12,
+		Mode:     ModeFlows,
+		Flows: []flowstore.FlowRecord{{
+			FlowID: "missing-pr-flow",
+			Title:  "Needs PR metadata",
+			Status: flowstore.StatusInProgress,
+			Branch: "flow/missing-pr",
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "open-pr", Kind: flowstore.KindPRCreation, Title: "Open PR", Status: flowstore.PhaseCompleted},
+				{PhaseID: "second-review", Kind: flowstore.KindAutoreview, Title: "Second Review", Status: flowstore.PhasePending},
+			},
+		}},
+		ActivePane:   1,
+		FlowSelected: 0,
+	})
+
+	if !strings.Contains(view, "second-review:missing-pr") {
+		t.Fatalf("missing PR metadata view should key off autoreview kind:\n%s", view)
+	}
+}
+
 func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},

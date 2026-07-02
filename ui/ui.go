@@ -2954,7 +2954,7 @@ func flowPhaseState(record flowstore.FlowRecord, phase flowstore.FlowPhase) stri
 	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
 		return "missing-session-id"
 	}
-	if phase.PhaseID == "autoreview" && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
+	if flowstore.SemanticKind(phase) == flowstore.KindAutoreview && flowMissingPRTarget(record) && phaseCanReportMissingPR(phase) {
 		return "missing-pr"
 	}
 	return flowBasePhaseState(phase)
@@ -3050,7 +3050,7 @@ func flowMissingPRTarget(record flowstore.FlowRecord) bool {
 		return false
 	}
 	for _, phase := range record.Phases {
-		if phase.PhaseID == "pr-creation" && phase.Status == flowstore.PhaseCompleted {
+		if flowstore.SemanticKind(phase) == flowstore.KindPRCreation && phase.Status == flowstore.PhaseCompleted {
 			return true
 		}
 	}

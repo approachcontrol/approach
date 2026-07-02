@@ -64,6 +64,36 @@ func TestNextAutoLaunchPhaseSkipsDuplicateReadyRow(t *testing.T) {
 	}
 }
 
+func TestNextAutoLaunchPhaseSkipsMergeKindCustomID(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "ship", Kind: flowstore.KindMerge, Title: "Ship", DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 1},
+			{PhaseID: "verify", Kind: flowstore.KindImplementation, Title: "Verify", DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 2},
+		},
+	}
+
+	phase, ok := nextAutoLaunchPhase(record)
+	if !ok {
+		t.Fatal("nextAutoLaunchPhase() found no launchable phase")
+	}
+	if phase.PhaseID != "verify" {
+		t.Fatalf("nextAutoLaunchPhase() = %q, want verify", phase.PhaseID)
+	}
+}
+
+func TestFlowPhaseLaunchPreflightRequiresPlanForReviewKindCustomID(t *testing.T) {
+	launcher := FlowPhaseLauncher{AgentCommand: "codex"}
+	_, err := launcher.Preflight(FlowPhaseLaunchRequest{
+		Record: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha"},
+		Phase:  flowstore.FlowPhase{PhaseID: "design-review", Kind: flowstore.KindPlanReview},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Plan Review needs a linked plan") {
+		t.Fatalf("Preflight() error = %v, want linked-plan guard", err)
+	}
+}
+
 func TestSelectedFlowNextLaunchablePhaseSkipsDuplicateReadyRow(t *testing.T) {
 	record := flowstore.FlowRecord{
 		FlowID:   "flow-1",
