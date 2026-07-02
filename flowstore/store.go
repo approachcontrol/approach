@@ -341,6 +341,12 @@ func DefaultRoot() (string, error) {
 // New records always start with auto mode enabled; callers that need manual
 // mode should create the Flow, then opt out with SetAutoMode(false).
 func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
+	return s.CreateWithOptions(record, CreateOptions{})
+}
+
+// CreateWithOptions writes a new flow record, optionally seeding empty phase
+// lists from a preset instead of the default graph.
+func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRecord, error) {
 	if strings.TrimSpace(record.Title) == "" {
 		return FlowRecord{}, fmt.Errorf("flow title is required")
 	}
@@ -379,7 +385,14 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 	record.UpdatedAt = defaultTime(record.UpdatedAt, now)
 	record.AutoMode = true
 	if len(record.Phases) == 0 {
-		record.Phases = defaultPhases(record.CreatedAt, record.UpdatedAt)
+		preset := DefaultPreset()
+		if opts.Preset != nil {
+			preset = *opts.Preset
+		}
+		if err := validatePreset(preset); err != nil {
+			return FlowRecord{}, err
+		}
+		record.Phases = seedPhases(preset.Phases, record.CreatedAt, record.UpdatedAt)
 		record = refreshPhaseReadiness(record, now)
 	} else {
 		if err := validateDeclaredPhaseDependencies(record.Phases); err != nil {
@@ -1883,37 +1896,7 @@ func DeriveStatus(record FlowRecord) string {
 }
 
 func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
-	specs := []struct {
-		id    string
-		title string
-		kind  string
-	}{
-		{"plan", "Plan", KindPlan},
-		{"plan-review", "Plan Review", KindPlanReview},
-		{"implementation", "Implementation", KindImplementation},
-		{"review-loop", "Review loop", KindReviewLoop},
-		{"pr-creation", "PR creation", KindPRCreation},
-		{"autoreview", "Autoreview", KindAutoreview},
-		{"merge", "Merge", KindMerge},
-	}
-	phases := make([]FlowPhase, 0, len(specs))
-	for i, spec := range specs {
-		dependsOn := []string{}
-		if i > 0 {
-			dependsOn = []string{specs[i-1].id}
-		}
-		phases = append(phases, FlowPhase{
-			PhaseID:   spec.id,
-			Title:     spec.title,
-			Kind:      spec.kind,
-			DependsOn: dependsOn,
-			Status:    PhasePending,
-			Order:     i + 1,
-			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
-		})
-	}
-	return phases
+	return seedPhases(DefaultPreset().Phases, createdAt, updatedAt)
 }
 
 func (s *Store) generateID(title string) (string, error) {

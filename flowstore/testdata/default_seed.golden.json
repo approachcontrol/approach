@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "flow_id": "golden-default-seed",
+  "title": "Golden Default Seed",
+  "instructions": "capture the default phase seed",
+  "status": "pending",
+  "repo_path": "/repo",
+  "issue": {},
+  "pr": {},
+  "merge": {
+    "status": "pending"
+  },
+  "auto_mode": true,
+  "phases": [
+    {
+      "phase_id": "plan",
+      "title": "Plan",
+      "kind": "plan",
+      "depends_on": [],
+      "status": "ready",
+      "order": 1,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    },
+    {
+      "phase_id": "plan-review",
+      "title": "Plan Review",
+      "kind": "plan_review",
+      "depends_on": [
+        "plan"
+      ],
+      "status": "pending",
+      "order": 2,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    },
+    {
+      "phase_id": "implementation",
+      "title": "Implementation",
+      "kind": "implementation",
+      "depends_on": [
+        "plan-review"
+      ],
+      "status": "pending",
+      "order": 3,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    },
+    {
+      "phase_id": "review-loop",
+      "title": "Review loop",
+      "kind": "review_loop",
+      "depends_on": [
+        "implementation"
+      ],
+      "status": "pending",
+      "order": 4,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    },
+    {
+      "phase_id": "pr-creation",
+      "title": "PR creation",
+      "kind": "pr_creation",
+      "depends_on": [
+        "review-loop"
+      ],
+      "status": "pending",
+      "order": 5,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    },
+    {
+      "phase_id": "autoreview",
+      "title": "Autoreview",
+      "kind": "autoreview",
+      "depends_on": [
+        "pr-creation"
+      ],
+      "status": "pending",
+      "order": 6,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    },
+    {
+      "phase_id": "merge",
+      "title": "Merge",
+      "kind": "merge",
+      "depends_on": [
+        "autoreview"
+      ],
+      "status": "pending",
+      "order": 7,
+      "created_at": "2026-06-07T12:00:00Z",
+      "updated_at": "2026-06-07T12:00:00Z"
+    }
+  ],
+  "created_at": "2026-06-07T12:00:00Z",
+  "updated_at": "2026-06-07T12:00:00Z"
+}
