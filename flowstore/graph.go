@@ -63,14 +63,8 @@ func validatePhaseGraph(phases []FlowPhase) error {
 	if len(graph.topo) != len(phases) {
 		return fmt.Errorf("phase graph contains a cycle: %s", cycleDescription(phases, graph))
 	}
-	mergeCount := 0
-	for _, phase := range phases {
-		if SemanticKind(phase) == KindMerge {
-			mergeCount++
-		}
-	}
-	if mergeCount > 1 {
-		return fmt.Errorf("phase graph can include at most one merge phase")
+	if err := validateUniqueMergePhaseKind(phases); err != nil {
+		return err
 	}
 	topLevelCount := 0
 	rootCount := 0
@@ -85,6 +79,19 @@ func validatePhaseGraph(phases []FlowPhase) error {
 	}
 	if topLevelCount > 0 && rootCount == 0 {
 		return fmt.Errorf("phase graph must include at least one root phase")
+	}
+	return nil
+}
+
+func validateUniqueMergePhaseKind(phases []FlowPhase) error {
+	mergeCount := 0
+	for _, phase := range phases {
+		if SemanticKind(phase) == KindMerge {
+			mergeCount++
+		}
+	}
+	if mergeCount > 1 {
+		return fmt.Errorf("phase graph can include at most one merge phase")
 	}
 	return nil
 }

@@ -7772,6 +7772,57 @@ func TestModel_GFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNeedsAttention(t 
 	}
 }
 
+func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return nil, errors.New("pty unavailable")
+		},
+	})
+	flow := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-failure",
+		PlanID:       "plan-1",
+		PlanPath:     "/tmp/plan.md",
+		Title:        "Custom review failure",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "design-review", Title: "Design Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady},
+		},
+	}
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 50 && model.SelectedActiveFlowPhaseIDForTest(m) != "design-review"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "design-review" {
+		t.Fatalf("selected active Flow phase = %q, want design-review", got)
+	}
+
+	m, cmd := update(m, flowLaunchKey())
+	if cmd == nil {
+		t.Fatal("g should prepare an embedded launch")
+	}
+	m, _ = update(m, cmd())
+
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "design-review" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		phaseUpdate.Outcome != flowstore.OutcomeBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "pty unavailable") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+}
+
 func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *testing.T) {
 	tests := []struct {
 		name           string

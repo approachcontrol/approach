@@ -387,6 +387,9 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 		}
 		authoritativeEdges := graphHasAuthoritativeEdges(record.Phases)
 		record.Phases = backfillLinearDependsOnForCreate(record.Phases)
+		if err := validateUniqueMergePhaseKind(record.Phases); err != nil {
+			return FlowRecord{}, err
+		}
 		if authoritativeEdges {
 			if err := validatePhaseGraph(record.Phases); err != nil {
 				return FlowRecord{}, err

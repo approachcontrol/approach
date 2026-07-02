@@ -5824,6 +5824,27 @@ func TestGraphRejectsTwoMergeKindPhases(t *testing.T) {
 	}
 }
 
+func TestGraphRejectsTwoMergeKindPhasesWithoutExplicitEdges(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	_, err = store.Create(flowstore.FlowRecord{
+		Title:        "Two merges",
+		Instructions: "reject ambiguous merge phases",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, Status: flowstore.PhasePending, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "release", Title: "Release", Kind: flowstore.KindMerge, Status: flowstore.PhasePending, Order: 2, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "at most one merge phase") {
+		t.Fatalf("Create() error = %v, want single merge validation", err)
+	}
+}
+
 func TestAddChildPhaseUnderCustomImplementationID(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)

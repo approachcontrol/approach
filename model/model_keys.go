@@ -901,15 +901,6 @@ func flowManualMergeEligible(record flowstore.FlowRecord) bool {
 	}
 }
 
-func flowRecordByID(records []flowstore.FlowRecord, flowID string) (flowstore.FlowRecord, bool) {
-	for _, record := range records {
-		if record.FlowID == flowID {
-			return record, true
-		}
-	}
-	return flowstore.FlowRecord{}, false
-}
-
 func (m Model) markFlowManuallyMergedCmd(repoPath string, record flowstore.FlowRecord) tea.Cmd {
 	return func() tea.Msg {
 		merge, err := m.lookupPRMerge(record.PR.Number, record.PR.URL)
@@ -2312,14 +2303,9 @@ func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errT
 	}
 	status := flowstore.PhaseNeedsAttention
 	outcome := ""
-	if record, ok := flowRecordByID(m.flows.Items(), ctx.FlowID); ok {
-		if phase, ok := flowPhaseByID(record, ctx.FlowPhaseID); ok && flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
-			status = flowstore.PhaseBlocked
-			outcome = flowstore.OutcomeBlocked
-		} else if ctx.FlowPhaseID == "plan-review" {
-			status = flowstore.PhaseBlocked
-			outcome = flowstore.OutcomeBlocked
-		}
+	if _, phase, ok := m.flowPhaseByID(ctx.FlowID, ctx.FlowPhaseID); ok && flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
+		status = flowstore.PhaseBlocked
+		outcome = flowstore.OutcomeBlocked
 	} else if ctx.FlowPhaseID == "plan-review" {
 		status = flowstore.PhaseBlocked
 		outcome = flowstore.OutcomeBlocked
