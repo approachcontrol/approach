@@ -31,20 +31,9 @@ type AutoAdvanceResultMsg struct {
 	Request uint64
 }
 
-type AutoAdvanceStatusExpiredMsg struct {
-	Seq  uint64
-	Text string
-}
-
 func autoAdvanceTickCmd() tea.Cmd {
 	return tea.Tick(autoAdvanceTickInterval, func(time.Time) tea.Msg {
 		return autoAdvanceTickMsg{}
-	})
-}
-
-func expireAutoAdvanceStatus(seq uint64, text string) tea.Cmd {
-	return tea.Tick(3*time.Second, func(time.Time) tea.Msg {
-		return AutoAdvanceStatusExpiredMsg{Seq: seq, Text: text}
 	})
 }
 
@@ -155,30 +144,6 @@ func (m Model) restoreAutoAdvanceRetrySnapshot(record flowstore.FlowRecord) Mode
 		}
 	}
 	m.autoAdvanceSnapshot = append(m.autoAdvanceSnapshot, prior)
-	return m
-}
-
-func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return m, nil
-	}
-	if m.status.Text != "" && m.status.Source != statusFlowAutoAdvance {
-		return m, nil
-	}
-	m.autoAdvanceStatusSeq++
-	seq := m.autoAdvanceStatusSeq
-	m.status = statusError{Text: text, Source: statusFlowAutoAdvance}
-	return m, expireAutoAdvanceStatus(seq, text)
-}
-
-func (m Model) handleAutoAdvanceStatusExpired(msg AutoAdvanceStatusExpiredMsg) Model {
-	if msg.Seq == 0 || msg.Seq != m.autoAdvanceStatusSeq {
-		return m
-	}
-	if m.status.Source == statusFlowAutoAdvance && m.status.Text == msg.Text {
-		m.status = statusError{}
-	}
 	return m
 }
 

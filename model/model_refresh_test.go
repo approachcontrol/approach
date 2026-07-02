@@ -78,8 +78,8 @@ func TestModel_F5WithNoScannerReportsUnavailable(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
 
-	if cmd != nil {
-		t.Fatal("expected no command without refresh scanner")
+	if cmd == nil {
+		t.Fatal("expected status expiry command without refresh scanner")
 	}
 	if got := m.TransientError(); got != "refresh unavailable" {
 		t.Fatalf("TransientError() = %q, want refresh unavailable", got)
@@ -176,7 +176,7 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 	})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
-	scanMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, cmd))
+	scanMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, cmd))
 	m, followup := update(m, scanMsg)
 	if followup != nil {
 		t.Fatal("unchanged selected repo should not start a second post-scan fetch")
@@ -314,11 +314,11 @@ func TestModel_RepoRefreshKeepsFilterAndHandlesZeroVisibleRepos(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
-	scanMsg := repoRefreshResultFromBatch(t, runBatchCmd(t, cmd))
+	scanMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, cmd))
 	m, followup := update(m, scanMsg)
 
-	if followup != nil {
-		t.Fatal("zero visible repos should not fetch right pane")
+	if followup == nil {
+		t.Fatal("zero visible repos should return status expiry command")
 	}
 	if got := m.RepoSearch(); got != "zzz" {
 		t.Fatalf("RepoSearch() = %q, want preserved query zzz", got)

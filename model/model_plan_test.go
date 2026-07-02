@@ -604,8 +604,8 @@ func TestModel_IKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command without selected agent")
 	}
 	if !strings.Contains(m.View(), "Press A to choose") {
 		t.Fatal("expected unset-agent status")
@@ -678,8 +678,8 @@ func TestModel_IKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd on resolver error, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command on resolver error")
 	}
 	if !strings.Contains(m.View(), "bad plan path") {
 		t.Fatal("expected resolver error in status")
@@ -698,8 +698,8 @@ func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd for missing launch path, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for missing launch path")
 	}
 	if !strings.Contains(m.View(), "Cannot determine launch path for this plan") {
 		t.Fatal("expected missing launch path status")
@@ -729,8 +729,8 @@ func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 		t.Fatal("expected submit command")
 	}
 	m, launchCmd := update(m, cmd())
-	if launchCmd != nil {
-		t.Fatalf("expected nil cmd on launch error, got %T", launchCmd)
+	if launchCmd == nil {
+		t.Fatal("expected status expiry command on launch error")
 	}
 	if !strings.Contains(m.View(), "agent unavailable") {
 		t.Fatal("expected launch error in status")
@@ -834,8 +834,8 @@ func TestModel_EKeyPlanEditorErrorShowsStatus(t *testing.T) {
 	})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd on editor error, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command on editor error")
 	}
 	if !strings.Contains(m.View(), "editor unavailable") {
 		t.Fatal("expected editor error in status")
@@ -913,8 +913,8 @@ func TestModel_YKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd on resolver error, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command on resolver error")
 	}
 	if !strings.Contains(m.View(), "cannot resolve plan path") {
 		t.Fatal("expected resolver error in status")

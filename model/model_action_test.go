@@ -815,8 +815,8 @@ func TestModel_LeftPaneFKeyWithNoVisibleReposShowsStatus(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	if cmd != nil {
-		t.Fatal("expected no command when no repos are visible")
+	if cmd == nil {
+		t.Fatal("expected status expiry command when no repos are visible")
 	}
 	if !strings.Contains(m.View(), "No visible repos to fetch") {
 		t.Fatalf("expected no-visible-repos status, got:\n%s", m.View())
@@ -883,6 +883,7 @@ func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected one selected-repo refresh when batch completes")
 	}
+	requireBatchCommandCount(t, cmd, 4)
 }
 
 func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
@@ -898,7 +899,7 @@ func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
 		t.Fatalf("expected final success status before expiry, got:\n%s", m.View())
 	}
 
-	m, _ = update(m, model.VisibleRepoFetchStatusExpiredMsg{Request: 1, Text: "Fetched 3 visible repos"})
+	m, _ = update(m, model.StatusExpiredMsg{Seq: 1})
 	if strings.Contains(m.View(), "Fetched 3 visible repos") {
 		t.Fatalf("expected final success status to expire, got:\n%s", m.View())
 	}
@@ -917,7 +918,7 @@ func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
 		t.Fatalf("expected fresh status to start unfaded, got step %d", m.TransientErrorFadeStep())
 	}
 
-	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 1})
+	m, _ = update(m, model.StatusFadeMsg{Seq: 1, Step: 1})
 	if m.TransientErrorFadeStep() != 1 {
 		t.Fatalf("expected fade step 1, got %d", m.TransientErrorFadeStep())
 	}
@@ -925,7 +926,7 @@ func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
 		t.Fatalf("fade should keep status visible, got:\n%s", m.View())
 	}
 
-	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 2})
+	m, _ = update(m, model.StatusFadeMsg{Seq: 1, Step: 2})
 	if m.TransientErrorFadeStep() != 2 {
 		t.Fatalf("expected fade step 2, got %d", m.TransientErrorFadeStep())
 	}
@@ -940,7 +941,7 @@ func TestModel_VisibleRepoFetchFinalStatusStillClearsOnKeypress(t *testing.T) {
 	for _, msg := range runBatchCmd(t, cmd) {
 		m, _ = update(m, msg)
 	}
-	m, _ = update(m, model.VisibleRepoFetchStatusFadeMsg{Request: 1, Text: "Fetched 3 visible repos", Step: 1})
+	m, _ = update(m, model.StatusFadeMsg{Seq: 1, Step: 1})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if strings.Contains(m.View(), "Fetched 3 visible repos") {
@@ -959,7 +960,7 @@ func TestModel_VisibleRepoFetchStatusExpiryDoesNotClearNewerStatus(t *testing.T)
 	}
 	m, _ = update(m, model.GitFetchFailedMsg{RepoPath: "/dev/alpha", Err: "fetch failed: newer"})
 
-	m, _ = update(m, model.VisibleRepoFetchStatusExpiredMsg{Request: 1, Text: "Fetched 3 visible repos"})
+	m, _ = update(m, model.StatusExpiredMsg{Seq: 1})
 	view := m.View()
 	if !strings.Contains(view, "fetch failed: newer") {
 		t.Fatalf("expiry should not clear a newer git status, got:\n%s", view)
@@ -1272,6 +1273,49 @@ func runBatchCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
 		msgs = append(msgs, subcmd())
 	}
 	return msgs
+}
+
+func runLeadingBatchCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return runBatchCmd(t, batch[0])
+}
+
+func requireBatchCommandCount(t *testing.T, cmd tea.Cmd, wantAtLeast int) {
+	t.Helper()
+	requireBatchMsg(t, cmd, wantAtLeast)
+}
+
+func runLeadingBatchCmdWithCount(t *testing.T, cmd tea.Cmd, wantAtLeast int) []tea.Msg {
+	t.Helper()
+	batch := requireBatchMsg(t, cmd, wantAtLeast)
+	return runBatchCmd(t, batch[0])
+}
+
+func requireBatchMsg(t *testing.T, cmd tea.Cmd, wantAtLeast int) tea.BatchMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want batch", msg)
+	}
+	if len(batch) < wantAtLeast {
+		t.Fatalf("batch has %d command(s), want at least %d", len(batch), wantAtLeast)
+	}
+	return batch
 }
 
 // --- Branch diff (enter key) ---
@@ -2534,8 +2578,8 @@ func TestModel_NKeyInBranchesModeWithNoRepoIsNoOp(t *testing.T) {
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
-	if cmd != nil {
-		t.Errorf("expected nil cmd, got %T", cmd)
+	if cmd == nil {
+		t.Error("expected status expiry command")
 	}
 }
 
@@ -4077,8 +4121,8 @@ func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command without selected agent")
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay without agent, got %d", m.Overlay())
@@ -4094,8 +4138,8 @@ func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd for codex-app effort, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for codex-app effort")
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay for codex-app effort, got %d", m.Overlay())
@@ -4111,8 +4155,8 @@ func TestModel_FlowModelPickerReportsCodexAppDefault(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd for codex-app model, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for codex-app model")
 	}
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay for codex-app model, got %d", m.Overlay())
@@ -4290,8 +4334,8 @@ func TestModel_AKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command without selected agent")
 	}
 	if !strings.Contains(m.View(), "Press A to choose") {
 		t.Fatal("expected unset-agent status")
@@ -4310,8 +4354,8 @@ func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 	}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd when launch cannot be built, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command when launch cannot be built")
 	}
 	if !strings.Contains(m.View(), "agent unavailable") {
 		t.Fatal("expected launch build error in status bar")
@@ -4642,8 +4686,8 @@ func TestModel_SKeySessionSummaryPagerFailureShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	if cmd != nil {
-		t.Fatalf("pager construction failure should not return launch command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for pager construction failure")
 	}
 	if got := m.TransientError(); !strings.Contains(got, "less not found") {
 		t.Fatalf("status = %q, want pager failure", got)
@@ -5732,8 +5776,8 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("embedded start failure should not return command, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for embedded start failure")
 	}
 	if !strings.Contains(m.View(), "embedded start failed") {
 		t.Fatalf("expected embedded start failure in status:\n%s", m.View())
@@ -5867,8 +5911,8 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("expected no command for missing resume path, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for missing resume path")
 	}
 	if called {
 		t.Fatal("expected missing path not to call launcher")
@@ -5893,8 +5937,8 @@ func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if cmd != nil {
-		t.Fatalf("expected no command for blank session id, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for blank session id")
 	}
 	if called {
 		t.Fatal("expected blank session id not to call launcher")
@@ -5929,8 +5973,8 @@ func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
 	m, _ = update(m, cmd())
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd != nil {
-		t.Fatalf("expected no command for blank inline session id, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command for blank inline session id")
 	}
 	if called {
 		t.Fatal("expected blank inline session id not to call launcher")
@@ -6255,8 +6299,8 @@ func TestModel_ShiftNWithNoSelectedAgentShowsStatus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	if cmd != nil {
-		t.Fatalf("expected nil cmd without selected agent, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("expected status expiry command without selected agent")
 	}
 	if !strings.Contains(m.View(), "Press A to choose") {
 		t.Fatal("expected unset-agent status")

@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,8 +18,6 @@ import (
 // --- Fetch commands ---
 
 const visibleRepoFetchFailureNameLimit = 3
-const visibleRepoFetchStatusTTL = 3 * time.Second
-const visibleRepoFetchFadeStepDuration = 1 * time.Second
 
 func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	if m.activeFlowSurfaceVisible() {
@@ -304,18 +301,6 @@ func (m Model) replaceReposPreservingVisibleSelection(repos []scanner.Repo, prev
 	}
 	currentPath, _ := m.currentRepoPath()
 	return m.reflowRepos(), previousPath != currentPath, true
-}
-
-func expireVisibleRepoFetchStatus(request uint64, text string) tea.Cmd {
-	return tea.Tick(visibleRepoFetchStatusTTL, func(time.Time) tea.Msg {
-		return VisibleRepoFetchStatusExpiredMsg{Request: request, Text: text}
-	})
-}
-
-func fadeVisibleRepoFetchStatus(request uint64, text string, step int) tea.Cmd {
-	return tea.Tick(time.Duration(step)*visibleRepoFetchFadeStepDuration, func(time.Time) tea.Msg {
-		return VisibleRepoFetchStatusFadeMsg{Request: request, Text: text, Step: step}
-	})
 }
 
 func (m Model) canPull() bool {

@@ -76,8 +76,10 @@ type Model struct {
 	activeFlowsReturnMode      ui.Mode
 	destructive                bool
 	status                     statusError
+	statusSeq                  uint64
+	statusTimer                statusTimerFactory
+	pendingStatusCmds          []tea.Cmd
 	visibleRepoFetchSeq        uint64
-	visibleRepoFetchStatusSeq  uint64
 	visibleRepoFetch           visibleRepoFetchState
 	searchActive               bool
 	pendingBranchSelection     string
@@ -139,7 +141,6 @@ type Model struct {
 	autoAdvanceInFlight        uint64
 	autoAdvanceSnapshot        []flowstore.FlowRecord
 	autoAdvanceLaunchedPhases  []autoAdvanceLaunchedPhase
-	autoAdvanceStatusSeq       uint64
 	terminalPrefixActive       bool
 	terminalConfirmID          embeddedTerminalID
 	terminalConfirmScope       embeddedTerminalScope
@@ -157,11 +158,13 @@ const (
 	statusGitMutation
 	statusOther
 	statusFlowAutoAdvance
+	statusVisibleRepoFetchSummary
 )
 
 type statusError struct {
 	Text      string
 	Source    statusSource
+	Seq       uint64
 	FetchKind FetchKind
 	Mode      ui.Mode
 	FadeStep  int
@@ -926,7 +929,11 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
 	}
 	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == m.activeContentFetchMode() {
-		return "Could not load " + modeDataName(m.activeContentFetchMode()) + "; see status bar"
+		message := "Could not load " + modeDataName(m.activeContentFetchMode())
+		if m.status.Text != "" {
+			message += "; see status bar"
+		}
+		return message
 	}
 	if m.activeFlowSurfaceVisible() {
 		return "No active flows"
@@ -1157,7 +1164,15 @@ func (m Model) activeViewMatches(kind FetchKind, mode ui.Mode, request uint64) b
 
 // --- Update ---
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
+	defer func() {
+		modelNext, ok := next.(Model)
+		if !ok {
+			return
+		}
+		modelNext, cmd = modelNext.drainStatusCmds(cmd)
+		next = modelNext
+	}()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -1197,8 +1212,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startAutoAdvanceFetch()
 	case AutoAdvanceResultMsg:
 		return m.handleAutoAdvanceResult(msg)
-	case AutoAdvanceStatusExpiredMsg:
-		return m.handleAutoAdvanceStatusExpired(msg), nil
+	case StatusExpiredMsg:
+		return m.handleStatusExpired(msg), nil
+	case StatusFadeMsg:
+		return m.handleStatusFade(msg), nil
 	case BranchResultMsg:
 		return m.handleBranchResult(msg), nil
 	case StashResultMsg:
@@ -1233,10 +1250,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleGitFetchFailed(msg), nil
 	case VisibleRepoFetchResultMsg:
 		return m.handleVisibleRepoFetchResult(msg)
-	case VisibleRepoFetchStatusFadeMsg:
-		return m.handleVisibleRepoFetchStatusFade(msg), nil
-	case VisibleRepoFetchStatusExpiredMsg:
-		return m.handleVisibleRepoFetchStatusExpired(msg), nil
 	case RepoRefreshResultMsg:
 		return m.handleRepoRefreshResult(msg)
 	case RepoRefreshFailedMsg:
