@@ -230,16 +230,8 @@ func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.
 }
 
 func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		switch artifacts.NormalizePhaseID(phase.PhaseID) {
-		case "", "merge":
-			continue
-		}
-		if phase.Status == flowstore.PhaseReady {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
+	phase, _, ok := flowstore.FirstLaunchablePhase(record)
+	return phase, ok
 }
 
 func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {

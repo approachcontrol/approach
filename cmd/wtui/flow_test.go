@@ -1433,8 +1433,8 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 			prepare: func(t *testing.T, store *flowstore.Store, record flowstore.FlowRecord) flowstore.FlowRecord {
 				t.Helper()
 				record.Phases = []flowstore.FlowPhase{
-					{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhaseRunning, Order: 1},
-					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
+					{PhaseID: "alpha", Title: "Alpha", DependsOn: []string{}, Status: flowstore.PhaseRunning, Order: 1},
+					{PhaseID: "implementation", Title: "Implementation", DependsOn: []string{"alpha"}, Status: flowstore.PhaseRunning, Order: 2, LaunchIDs: []string{"launch-orphan"}},
 				}
 				if err := overwriteFlowRecord(t, root, record); err != nil {
 					t.Fatalf("overwriteFlowRecord() error = %v", err)

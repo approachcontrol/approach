@@ -5300,7 +5300,7 @@ func TestDependsOnNullCountsAsPresentEmpty(t *testing.T) {
   "repo_path": "` + filepath.Join(root, "repo") + `",
   "phases": [
     {"phase_id": "alpha", "title": "Alpha", "kind": "", "depends_on": null, "status": "ready", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
-    {"phase_id": "beta", "title": "Beta", "kind": "", "depends_on": [], "status": "ready", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+    {"phase_id": "beta", "title": "Beta", "kind": "", "depends_on": null, "status": "ready", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
   ],
   "created_at": "2026-01-01T00:00:00Z",
   "updated_at": "2026-01-01T00:00:00Z"
@@ -5319,6 +5319,9 @@ func TestDependsOnNullCountsAsPresentEmpty(t *testing.T) {
 	if got := phaseByID(t, read, "alpha").DependsOn; len(got) != 0 || got == nil {
 		t.Fatalf("alpha DependsOn = %#v, want explicit empty slice", got)
 	}
+	if got := phaseByID(t, read, "beta").DependsOn; len(got) != 0 || got == nil {
+		t.Fatalf("beta DependsOn = %#v, want explicit empty slice", got)
+	}
 	updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "alpha", Status: flowstore.PhaseCompleted})
 	if err != nil {
 		t.Fatalf("SetPhase(alpha completed) error = %v", err)
@@ -5326,12 +5329,59 @@ func TestDependsOnNullCountsAsPresentEmpty(t *testing.T) {
 	if got := phaseByID(t, updated, "beta").Status; got != flowstore.PhaseReady {
 		t.Fatalf("beta status = %q, want ready as independent root", got)
 	}
+	updated, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "alpha", Status: flowstore.PhaseRunning})
+	if err != nil {
+		t.Fatalf("SetPhase(alpha running) error = %v", err)
+	}
+	if got := phaseByID(t, updated, "beta").Status; got != flowstore.PhaseReady {
+		t.Fatalf("beta status = %q after alpha regression, want ready as independent root", got)
+	}
 	data, err := os.ReadFile(filepath.Join(flowDir, "meta.json"))
 	if err != nil {
 		t.Fatalf("ReadFile(meta.json) error = %v", err)
 	}
 	if strings.Contains(string(data), `"depends_on": null`) {
 		t.Fatalf("meta.json kept null depends_on:\n%s", data)
+	}
+}
+
+func TestExplicitEmptyDependsOnDefaultGraphMeansRoots(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260607T120000Z-explicit-default-roots"
+	flowDir := filepath.Join(root, "flows", flowID)
+	if err := os.MkdirAll(flowDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{
+  "schema_version": 1,
+  "flow_id": "` + flowID + `",
+  "title": "Explicit default roots",
+  "instructions": "explicit empty depends_on",
+  "status": "pending",
+  "repo_path": "` + filepath.Join(root, "repo") + `",
+  "phases": [
+    {"phase_id": "plan", "title": "Plan", "kind": "plan", "depends_on": [], "status": "running", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "plan-review", "title": "Plan Review", "kind": "plan_review", "depends_on": [], "status": "ready", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}`
+	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "plan-review").DependsOn; len(got) != 0 || got == nil {
+		t.Fatalf("plan-review DependsOn = %#v, want explicit empty slice", got)
+	}
+	if got := phaseByID(t, read, "plan-review").Status; got != flowstore.PhaseReady {
+		t.Fatalf("plan-review status = %q, want ready as explicit root", got)
 	}
 }
 
@@ -5510,6 +5560,77 @@ func TestCreateRejectsCyclicPhases(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsChildDeclaredDependencies(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	_, err = store.Create(flowstore.FlowRecord{
+		Title:        "Child dependency",
+		Instructions: "reject child edges",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			graphPhase(now, "implementation", flowstore.PhasePending, nil),
+			{
+				PhaseID:       "api",
+				ParentPhaseID: "implementation",
+				Title:         "api",
+				DependsOn:     []string{"implementation"},
+				Status:        flowstore.PhasePending,
+				Order:         1,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `child phase "api" cannot declare dependencies`) {
+		t.Fatalf("Create() error = %v, want child dependency rejection", err)
+	}
+}
+
+func TestCreateRejectsInvalidDeclaredDependenciesBeforeNormalization(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		dependsOn []string
+		want      string
+	}{
+		{
+			name:      "empty dependency",
+			dependsOn: []string{""},
+			want:      `phase "publish" has empty dependency`,
+		},
+		{
+			name:      "duplicate dependency",
+			dependsOn: []string{"root", " Root "},
+			want:      `phase "publish" has duplicate dependency " Root "`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			_, err = store.Create(flowstore.FlowRecord{
+				Title:        tc.name,
+				Instructions: "reject invalid dependency declarations",
+				RepoPath:     filepath.Join(root, "repo"),
+				Phases: []flowstore.FlowPhase{
+					graphPhase(now, "root", flowstore.PhasePending, []string{}),
+					graphPhase(now, "publish", flowstore.PhasePending, tc.dependsOn),
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Create() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestPhasePredecessorsSatisfiedDAG(t *testing.T) {
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	record := flowstore.FlowRecord{Phases: []flowstore.FlowPhase{
@@ -5541,6 +5662,69 @@ func TestDuplicateReadyRowNotLaunchEligible(t *testing.T) {
 	}
 	if !flowstore.PhaseLaunchEligible(record, 2) {
 		t.Fatalf("non-duplicate ready row reported ineligible")
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRejectsDuplicateReadyRow(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260607T120000Z-duplicate-launch", []flowstore.FlowPhase{
+		graphPhase(now, "Step-1", flowstore.PhaseCompleted, []string{}),
+		graphPhase(now, "step-1", flowstore.PhaseReady, []string{}),
+		graphPhase(now, "step-2", flowstore.PhaseReady, []string{"step-1"}),
+	})
+	writeFreshFlowRecordForTest(t, root, record)
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "step-1",
+		LaunchID:   "launch-duplicate",
+		AutoLaunch: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "not eligible") {
+		t.Fatalf("AddPhaseLaunchID(duplicate) error = %v, want not eligible", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "step-1"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseReady {
+		t.Fatalf("duplicate row after rejected launch = %#v, want unchanged ready without launch", got)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRejectsReadyPhaseWithUnsatisfiedDependency(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260607T120000Z-stale-ready-launch", []flowstore.FlowPhase{
+		graphPhase(now, "root", flowstore.PhaseRunning, []string{}),
+		graphPhase(now, "publish", flowstore.PhaseReady, []string{"root"}),
+	})
+	writeFreshFlowRecordForTest(t, root, record)
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "publish",
+		LaunchID:   "launch-stale-ready",
+		AutoLaunch: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "not eligible") {
+		t.Fatalf("AddPhaseLaunchID(stale ready) error = %v, want not eligible", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "publish"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseReady {
+		t.Fatalf("publish after rejected launch = %#v, want unchanged ready without launch", got)
 	}
 }
 

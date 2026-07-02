@@ -17,6 +17,9 @@ type phaseGraph struct {
 }
 
 func validatePhaseGraph(phases []FlowPhase) error {
+	if err := validateDeclaredPhaseDependencies(phases); err != nil {
+		return err
+	}
 	graph := buildPhaseGraph(phases)
 	topLevelIDs := make(map[string]string)
 	childIDs := make(map[string]string)
@@ -36,9 +39,6 @@ func validatePhaseGraph(phases []FlowPhase) error {
 	}
 	for idx, phase := range phases {
 		if phase.ParentPhaseID != "" {
-			if len(phase.DependsOn) > 0 {
-				return fmt.Errorf("child phase %q cannot declare dependencies", phase.PhaseID)
-			}
 			continue
 		}
 		for _, dep := range phase.DependsOn {
@@ -76,6 +76,29 @@ func validatePhaseGraph(phases []FlowPhase) error {
 	}
 	if topLevelCount > 0 && rootCount == 0 {
 		return fmt.Errorf("phase graph must include at least one root phase")
+	}
+	return nil
+}
+
+func validateDeclaredPhaseDependencies(phases []FlowPhase) error {
+	for _, phase := range phases {
+		if phase.ParentPhaseID != "" && len(phase.DependsOn) > 0 {
+			return fmt.Errorf("child phase %q cannot declare dependencies", phase.PhaseID)
+		}
+		if phase.ParentPhaseID != "" {
+			continue
+		}
+		seen := make(map[string]bool)
+		for _, dep := range phase.DependsOn {
+			normalized := artifacts.NormalizePhaseID(dep)
+			if normalized == "" {
+				return fmt.Errorf("phase %q has empty dependency", phase.PhaseID)
+			}
+			if seen[normalized] {
+				return fmt.Errorf("phase %q has duplicate dependency %q", phase.PhaseID, dep)
+			}
+			seen[normalized] = true
+		}
 	}
 	return nil
 }
@@ -368,31 +391,20 @@ func backfillLinearDependsOnForCreate(phases []FlowPhase) []FlowPhase {
 
 type rawDependsOnState struct {
 	Present bool
-	NonNull bool
 }
 
 func backfillLinearDependsOnFromRaw(phases []FlowPhase, presence []rawDependsOnState) []FlowPhase {
 	anyPresent := false
-	anyNonNull := false
 	for i, phase := range phases {
 		if phase.ParentPhaseID == "" && i < len(presence) && presence[i].Present {
 			anyPresent = true
-			if presence[i].NonNull {
-				anyNonNull = true
-			}
 		}
-	}
-	if anyPresent && !anyNonNull && !hasNonEmptyTopLevelDependsOn(phases) {
-		return backfillLinearDependsOn(phases)
 	}
 	if anyPresent {
-		if !hasNonEmptyTopLevelDependsOn(phases) && phaseIDsCompatibleWithDefaultSequence(phases) {
-			return backfillLinearDependsOn(phases)
-		}
 		return normalizeDependsOnValues(phases)
 	}
 	if !phaseIDsCompatibleWithDefaultSequence(phases) {
-		return normalizeDependsOnValues(phases)
+		return phases
 	}
 	return backfillLinearDependsOn(phases)
 }
@@ -490,6 +502,27 @@ func PhaseLaunchEligible(record FlowRecord, orderedIndex int) bool {
 	}
 	phase := ordered[orderedIndex]
 	if phase.Status != PhaseReady {
+		return false
+	}
+	if !allDependencyGatesSatisfied(FlowRecord{PR: record.PR, Phases: ordered}, graph, orderedIndex) {
+		return false
+	}
+	return artifacts.NormalizePhaseID(phase.PhaseID) != "merge"
+}
+
+func phaseLaunchEligibleAtIndex(record FlowRecord, phaseIndex int) bool {
+	if phaseIndex < 0 || phaseIndex >= len(record.Phases) {
+		return false
+	}
+	graph := buildPhaseGraph(record.Phases)
+	if !graph.released[phaseIndex] || graph.duplicateRows[phaseIndex] {
+		return false
+	}
+	phase := record.Phases[phaseIndex]
+	if phase.Status != PhaseReady {
+		return false
+	}
+	if !allDependencyGatesSatisfied(record, graph, phaseIndex) {
 		return false
 	}
 	return artifacts.NormalizePhaseID(phase.PhaseID) != "merge"

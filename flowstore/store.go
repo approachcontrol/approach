@@ -371,6 +371,9 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 		record.Phases = defaultPhases(record.CreatedAt, record.UpdatedAt)
 		record = refreshPhaseReadiness(record, now)
 	} else {
+		if err := validateDeclaredPhaseDependencies(record.Phases); err != nil {
+			return FlowRecord{}, err
+		}
 		authoritativeEdges := graphHasAuthoritativeEdges(record.Phases)
 		record.Phases = backfillLinearDependsOnForCreate(record.Phases)
 		if authoritativeEdges {
@@ -889,7 +892,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		}
 		phase := record.Phases[phaseIndex]
 		if update.AutoLaunch {
-			if err := validateAutoPhaseLaunch(record, phase); err != nil {
+			if err := validateAutoPhaseLaunch(record, phaseIndex); err != nil {
 				return FlowRecord{}, err
 			}
 		}
@@ -936,7 +939,11 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 	})
 }
 
-func validateAutoPhaseLaunch(record FlowRecord, phase FlowPhase) error {
+func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
+	var phase FlowPhase
+	if phaseIndex >= 0 && phaseIndex < len(record.Phases) {
+		phase = record.Phases[phaseIndex]
+	}
 	phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
 	switch {
 	case !record.AutoMode:
@@ -945,6 +952,8 @@ func validateAutoPhaseLaunch(record FlowRecord, phase FlowPhase) error {
 		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
 	case phase.Status != PhaseReady:
 		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, errAutoLaunchOutdated)
+	case !phaseLaunchEligibleAtIndex(record, phaseIndex):
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
 	default:
 		return nil
 	}
@@ -1894,10 +1903,9 @@ func rawDependsOnPresence(data []byte) []rawDependsOnState {
 	}
 	presence := make([]rawDependsOnState, len(raw.Phases))
 	for i, phase := range raw.Phases {
-		value, ok := phase["depends_on"]
+		_, ok := phase["depends_on"]
 		presence[i] = rawDependsOnState{
 			Present: ok,
-			NonNull: ok && string(value) != "null",
 		}
 	}
 	return presence
