@@ -5712,6 +5712,19 @@ func TestDuplicateReadyRowNotLaunchEligible(t *testing.T) {
 	}
 }
 
+func TestSelfDependencyNotLaunchEligible(t *testing.T) {
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	record := flowstore.FlowRecord{AutoMode: true, Phases: []flowstore.FlowPhase{
+		graphPhase(now, "self", flowstore.PhaseReady, []string{"self"}),
+	}}
+	if flowstore.PhaseLaunchEligible(record, 0) {
+		t.Fatalf("self-dependent ready row reported launch eligible")
+	}
+	if phase, idx, ok := flowstore.FirstLaunchablePhase(record); ok {
+		t.Fatalf("FirstLaunchablePhase() = (%#v, %d, true), want none", phase, idx)
+	}
+}
+
 func TestFirstLaunchablePhasePreservesPRMetadataForAutoreviewGate(t *testing.T) {
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	record := flowstore.FlowRecord{

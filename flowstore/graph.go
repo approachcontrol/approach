@@ -200,7 +200,8 @@ func buildPhaseGraph(phases []FlowPhase) phaseGraph {
 		}
 		if phase.ParentPhaseID == "" {
 			for _, dep := range phase.DependsOn {
-				if _, ok := firstTopLevelByID[artifacts.NormalizePhaseID(dep)]; !ok {
+				depIdx, ok := firstTopLevelByID[artifacts.NormalizePhaseID(dep)]
+				if !ok || depIdx == i {
 					invalid[i] = true
 				}
 			}
