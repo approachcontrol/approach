@@ -83,10 +83,11 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4`/`5` | Switch to the Git view / sessions / plans / flows / active flows (`6`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
+| `1`/`2`/`3`/`4` | Switch to the Git view / sessions / plans / flows outside Active Flows (`5`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
+| `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
-| `←`/`→` | Cycle git subviews with wrap inside the Git view (arrows never leave it); cycle the five top-level views with wrap elsewhere, entering Git at its last-used subview |
-| `l` | Alias for `→` in flows and active flows views (where `h` toggles Flow headless/interactive command mode); unbound elsewhere |
+| `←`/`→` | Cycle git subviews with wrap inside the Git view (arrows never leave it); cycle Git, sessions, plans, and flows with wrap elsewhere, entering Git at its last-used subview. Active Flows is not in the arrow cycle. |
+| `l` | Alias for `→` in flows view (where `h` toggles Flow headless/interactive command mode); unbound elsewhere |
 | `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
@@ -120,12 +121,12 @@ filter matches, or a load failure with details in the status bar.
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 The right pane header shows the top-level views: `1` git, `2` sessions, `3`
-plans, `4` flows, `5` active flows. While the Git view is active a second
-header row lists its subviews with their direct letter keys (`w` worktrees,
-`b` branches, `s` stashes, `h` history, `r` reflog); the active entries are
-bracketed. Entering the Git view lands on the last-used subview (worktrees on
-first entry), and each subview keeps its own cursor position and filter across
-switches. Press `V` to choose which view wtui opens on future
+plans, and `4` flows on the left, with `^a` active flows pinned to the right.
+While the Git view is active a second header row lists its subviews with their
+direct letter keys (`w` worktrees, `b` branches, `s` stashes, `h` history, `r`
+reflog); the active entries are bracketed. Entering the Git view lands on the
+last-used subview (worktrees on first entry), and each subview keeps its own
+cursor position and filter across switches. Press `V` to choose which view wtui opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
 `enter` or `tab` from the repo pane to focus the content pane. In the content
 pane, `tab` or `bksp` switches focus back to the left repo pane. Press `f2` from normal
@@ -391,15 +392,18 @@ auto-launch. Automation stops before Merge: if Autoreview completes and Merge
 becomes ready, wtui keeps auto mode on and requires the existing manual Merge
 launch.
 
-### Active Flows view (`5`)
+### Active Flows view (`ctrl+a`)
 
-Browse active Flow records across all repos. This view hides merged Flow records;
-moving focus to the left repo pane temporarily filters the visible active rows to
-the selected repo, and returning focus to the middle pane restores the global
-list. Normal Flow actions, phase launches, attached-session resumes, auto-mode
-toggles, linked-issue opening with `i`, linked-PR opening with `p`, `c` Flow ID
-copy, `y` worktree path copy, and embedded Flow terminals work from the visible
-active Flow rows and their expanded phase rows.
+Browse active Flow records across all repos. Press `ctrl+a` from any normal TUI
+view to open it, and press `ctrl+a` again to return to the previous view; number
+keys and arrows do not leave Active Flows. This
+view hides merged Flow records; moving focus to the left repo pane temporarily
+filters the visible active rows to the selected repo, and returning focus to the
+middle pane restores the global list. Normal Flow actions, phase launches,
+attached-session resumes, auto-mode toggles, linked-issue opening with `i`,
+linked-PR opening with `p`, `c` Flow ID copy, `y` worktree path copy, and
+embedded Flow terminals work from the visible active Flow rows and their
+expanded phase rows.
 
 Flow headless mode is on by default:
 selected CLI `codex` and `claude` phase launches run in a runtime-only embedded
@@ -662,9 +666,9 @@ override and keeps provider defaults. `[ui].default_view` accepts `1` through `9
 and controls the startup view; omitting it keeps the built-in Flows default.
 The config numbers keep their original meanings (`1` worktrees … `9` active
 flows) for compatibility and deliberately differ from the grouped keyboard
-keys, where `1` opens the Git view and `2`–`5` open sessions, plans, flows,
-and active flows. A git default (`1`–`5`) also seeds the Git view's sticky
-subview.
+keys, where `1` opens the Git view, `2`–`4` open sessions, plans, and flows,
+`ctrl+a` toggles active flows, and `5`–`9` are unbound. A git default (`1`–`5`)
+also seeds the Git view's sticky subview.
 `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while
 `[flow_prompts]` customizes Flow phase launch templates. wtui appends

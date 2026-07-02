@@ -89,16 +89,6 @@ func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 }
 
 func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
-	header := ansi.Strip(renderActiveFlowsHeader(80))
-	if !strings.Contains(header, "active flows") {
-		t.Fatalf("active-flow header missing lowercase title:\n%s", header)
-	}
-	for _, notWant := range []string{"F3", "Active flows", "current repo"} {
-		if strings.Contains(header, notWant) {
-			t.Fatalf("active-flow header should not contain %q:\n%s", notWant, header)
-		}
-	}
-
 	view := Render(RenderParams{
 		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
 		Selected:    0,
@@ -123,6 +113,12 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	}
 	if !strings.Contains(pane, "bksp   pane") {
 		t.Fatalf("active-flow shortcut pane should expose backspace pane hint:\n%s", pane)
+	}
+	if !strings.Contains(pane, "ctrl+a active flows") {
+		t.Fatalf("active-flow shortcut pane should expose ctrl+a toggle:\n%s", pane)
+	}
+	if strings.Contains(pane, "←/→") {
+		t.Fatalf("active-flow shortcut pane should not expose arrow view navigation:\n%s", pane)
 	}
 }
 
@@ -861,7 +857,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		"E      effort: high",
 		"bksp   pane",
 		"q/esc  quit",
-		"f5     refresh",
+		"ctrl+a active flows",
 	} {
 		if !strings.Contains(pane, want) {
 			t.Fatalf("Flow shortcut pane missing %q:\n%s", want, pane)

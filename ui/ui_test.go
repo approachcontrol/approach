@@ -4080,7 +4080,7 @@ func TestStatusBar_HidesArrowViewHintWhenLeftPaneActive(t *testing.T) {
 	}
 }
 
-func TestStatusBar_ShowsArrowViewHintForActiveFlows(t *testing.T) {
+func TestStatusBar_ActiveFlowsShowsToggleButNoArrowViewHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:        120,
 		Mode:         ModeActiveFlows,
@@ -4088,11 +4088,14 @@ func TestStatusBar_ShowsArrowViewHintForActiveFlows(t *testing.T) {
 		RepoSelected: true,
 		FlowSelected: true,
 	})
-	if !strings.Contains(bar, "←/→ view") {
-		t.Fatalf("active Flow status bar should advertise arrow view navigation, got %q", bar)
+	if strings.Contains(bar, "←/→ view") {
+		t.Fatalf("active Flow status bar should not advertise arrow view navigation, got %q", bar)
 	}
 	if !strings.Contains(bar, "bksp: pane") {
 		t.Fatalf("active Flow status bar should advertise backspace pane navigation, got %q", bar)
+	}
+	if !strings.Contains(bar, "ctrl+a: active flows") {
+		t.Fatalf("active Flow status bar should advertise ctrl+a toggle, got %q", bar)
 	}
 }
 

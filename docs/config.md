@@ -128,11 +128,11 @@ Stores user-interface preferences.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens the Git view, `2`–`5` open sessions/plans/flows/active flows, and `w`/`b`/`s`/`h`/`r` pick git subviews). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default. |
+| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens the Git view, `2`–`4` open sessions/plans/flows outside Active Flows, `ctrl+a` toggles active flows, `5`–`9` are unbound, and `w`/`b`/`s`/`h`/`r` pick git subviews). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default. |
 
 Press `V` in wtui to choose and persist this value from a picker. The picker
-changes future launches only; use the keyboard keys `1`–`5`, the `w`/`b`/`s`/`h`/`r`
-git subview letters, or arrows to switch the current view.
+changes future launches only; use the keyboard keys `1`–`4`, `ctrl+a`, the
+`w`/`b`/`s`/`h`/`r` git subview letters, or arrows to switch the current view.
 
 ### `[editor]`
 
@@ -368,9 +368,11 @@ phase's terminal exits normally and auto-closes; terminal exit also triggers a
 Flow refresh so newly persisted completion state is discovered without waiting
 for unrelated UI activity. Auto mode still skips non-completed outcomes and
 stops before Merge; Merge still requires a manual launch.
-The active flows pane (keyboard `5`) shows active Flows across all repos and hides
-merged Flow records. Moving focus to the left repo pane temporarily filters the
-visible active rows to the selected repo, and returning focus to the middle pane
+The active flows pane (`ctrl+a`) shows active Flows across all repos and hides
+merged Flow records. Pressing `ctrl+a` again from active flows returns to the
+previous view; number keys and arrows do not leave the pane. Moving focus to the
+left repo pane temporarily filters the visible active rows to the selected repo,
+and returning focus to the middle pane
 restores the global list. It supports the same Flow actions, phase launches,
 attached-session resumes, auto-mode toggles, `c` Flow ID copy, `y` worktree path
 copy, and embedded Flow terminal management as the flows pane.

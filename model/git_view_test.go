@@ -67,7 +67,6 @@ func TestTopLevelKeys_NumbersSelectTopLevelViews(t *testing.T) {
 		{'2', ui.ModeSessions},
 		{'3', ui.ModePlans},
 		{'4', ui.ModeFlows},
-		{'5', ui.ModeActiveFlows},
 		{'1', ui.ModeWorktrees},
 	}
 	m := inRightPane(model.New(testRepos()))
@@ -79,11 +78,11 @@ func TestTopLevelKeys_NumbersSelectTopLevelViews(t *testing.T) {
 	}
 }
 
-func TestTopLevelKeys_SixThroughNineAreSilentNoOps(t *testing.T) {
+func TestTopLevelKeys_FiveThroughNineAreSilentNoOps(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	before := listRequests(m)
 
-	for _, key := range []rune{'6', '7', '8', '9'} {
+	for _, key := range []rune{'5', '6', '7', '8', '9'} {
 		var cmd tea.Cmd
 		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
 		if m.Mode() != ui.ModeWorktrees {
@@ -123,6 +122,117 @@ func TestTopLevelKeys_GitKeyWhileInGitIsNoOp(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatalf("got cmd %T, want nil", cmd)
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
+func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		setup      func(model.Model) model.Model
+		wantReturn ui.Mode
+		wantFetch  ui.Mode
+	}{
+		{
+			name:       "sessions",
+			setup:      func(m model.Model) model.Model { return pressKey(m, '2') },
+			wantReturn: ui.ModeSessions,
+			wantFetch:  ui.ModeSessions,
+		},
+		{
+			name:       "plans",
+			setup:      func(m model.Model) model.Model { return pressKey(m, '3') },
+			wantReturn: ui.ModePlans,
+			wantFetch:  ui.ModePlans,
+		},
+		{
+			name:       "flows",
+			setup:      func(m model.Model) model.Model { return pressKey(m, '4') },
+			wantReturn: ui.ModeFlows,
+			wantFetch:  ui.ModeFlows,
+		},
+		{
+			name: "git subview",
+			setup: func(m model.Model) model.Model {
+				return pressKey(m, 's')
+			},
+			wantReturn: ui.ModeStashes,
+			wantFetch:  ui.ModeStashes,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := inRightPane(model.New(testRepos()))
+			m = tc.setup(m)
+
+			before := listRequests(m)
+			var cmd tea.Cmd
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			if m.Mode() != ui.ModeActiveFlows {
+				t.Fatalf("ctrl+a mode = %d, want active flows", m.Mode())
+			}
+			if cmd == nil {
+				t.Fatal("ctrl+a opening active flows returned nil command")
+			}
+			assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+
+			before = listRequests(m)
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			if m.Mode() != tc.wantReturn {
+				t.Fatalf("second ctrl+a mode = %d, want %d", m.Mode(), tc.wantReturn)
+			}
+			if cmd == nil {
+				t.Fatal("ctrl+a returning from active flows returned nil command")
+			}
+			assertOnlyListRequestChanged(t, before, m, tc.wantFetch)
+		})
+	}
+}
+
+func TestActiveFlowsToggle_FallsBackToFlowsWhenNoReturnModeRecorded(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeActiveFlows}))
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("ctrl+a from startup active flows mode = %d, want flows", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+a fallback returned nil command")
+	}
+	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
+}
+
+func TestActiveFlowsToggle_WorksFromLeftPane(t *testing.T) {
+	m := model.New(testRepos())
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+	if m.ActivePane() != 0 {
+		t.Fatalf("ctrl+a from left pane active pane = %d, want left pane preserved", m.ActivePane())
+	}
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("ctrl+a from left pane mode = %d, want active flows", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+a from left pane returned nil command")
+	}
+	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+}
+
+func TestActiveFlowsToggle_InertWhileSearchActive(t *testing.T) {
+	m := inRightPane(model.New(testRepos()))
+	m = pressKey(m, '/')
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("ctrl+a while searching mode = %d, want unchanged worktrees", m.Mode())
+	}
+	if cmd != nil {
+		t.Fatalf("ctrl+a while searching returned cmd %T, want nil", cmd)
 	}
 	assertListRequestsUnchanged(t, before, m)
 }
@@ -170,11 +280,51 @@ func TestTopLevelArrows_CycleTopLevelViewsWithWrap(t *testing.T) {
 		t.Fatalf("right from sessions mode = %d, want ModePlans", m.Mode())
 	}
 
-	m = pressKey(m, '5') // active flows
+	m = pressKey(m, '4') // flows
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
 	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("right from active flows mode = %d, want wrap to Git (worktrees)", m.Mode())
+		t.Fatalf("right from flows mode = %d, want wrap to Git (worktrees)", m.Mode())
 	}
+}
+
+func TestTopLevelArrows_InertInsideActiveFlows(t *testing.T) {
+	m := inRightPane(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	before := listRequests(m)
+
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyLeft},
+		{Type: tea.KeyRight},
+		{Type: tea.KeyRunes, Runes: []rune{'l'}},
+	} {
+		var cmd tea.Cmd
+		m, cmd = update(m, key)
+		if m.Mode() != ui.ModeActiveFlows {
+			t.Fatalf("%q in active flows mode = %d, want unchanged active flows", key.String(), m.Mode())
+		}
+		if cmd != nil {
+			t.Fatalf("%q in active flows returned cmd %T, want nil", key.String(), cmd)
+		}
+	}
+	assertListRequestsUnchanged(t, before, m)
+}
+
+func TestTopLevelNumberedKeys_InertInsideActiveFlows(t *testing.T) {
+	m := inRightPane(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	before := listRequests(m)
+
+	for _, key := range []rune{'1', '2', '3', '4', '5', '6', '7', '8', '9'} {
+		var cmd tea.Cmd
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if m.Mode() != ui.ModeActiveFlows {
+			t.Fatalf("%q in active flows mode = %d, want unchanged active flows", string(key), m.Mode())
+		}
+		if cmd != nil {
+			t.Fatalf("%q in active flows returned cmd %T, want nil", string(key), cmd)
+		}
+	}
+	assertListRequestsUnchanged(t, before, m)
 }
 
 func TestTopLevelArrows_EnteringGitLandsOnLastUsedSubview(t *testing.T) {
@@ -214,14 +364,14 @@ func TestRetiredKeys_HLInertInSessionsAndPlans(t *testing.T) {
 	}
 }
 
-func TestRetiredKeys_LInFlowsAliasesRightArrow(t *testing.T) {
+func TestRetiredKeys_LInFlowsAliasesRightArrowToGit(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, '4') // flows
 
 	m = pressKey(m, 'l')
 
-	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("l in flows mode = %d, want ModeActiveFlows (right alias)", m.Mode())
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("l in flows mode = %d, want wrap to ModeWorktrees (right alias)", m.Mode())
 	}
 }
 
