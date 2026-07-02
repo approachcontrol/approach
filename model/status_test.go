@@ -208,6 +208,25 @@ func TestExpiredListFetchStatusClearsOnUserAction(t *testing.T) {
 	}
 }
 
+func TestAutoAdvanceStatusDoesNotReplaceExpiredListFetchStatus(t *testing.T) {
+	m := New(nil)
+	m = m.setFetchStatus(FetchErrorMsg{Err: "fetch failed", Kind: FetchList, Mode: 2})
+	m = m.handleStatusExpired(StatusExpiredMsg{Seq: m.status.Seq})
+	seq := m.statusSeq
+
+	next, cmd := m.setAutoAdvanceStatus("Flow Alpha: implementation queued")
+
+	if cmd != nil {
+		t.Fatal("auto-advance should not schedule status over hidden fetch failure")
+	}
+	if next.status.Source != statusFetch || next.status.FetchKind != FetchList || next.status.Mode != 2 {
+		t.Fatalf("status = %#v, want expired fetch failure preserved", next.status)
+	}
+	if next.statusSeq != seq {
+		t.Fatalf("status sequence = %d, want unchanged %d", next.statusSeq, seq)
+	}
+}
+
 func TestStatusCommandDrainsFromUpdate(t *testing.T) {
 	m := New(nil)
 	next, cmd := m.Update(OpenURLResultMsg{Label: "Opened PR #1"})

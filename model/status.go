@@ -84,7 +84,7 @@ func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
-	if m.status.Text != "" && m.status.Source != statusFlowAutoAdvance {
+	if m.status.isSet() && m.status.Source != statusFlowAutoAdvance {
 		return m, nil
 	}
 	m = m.setStatusNow(statusFlowAutoAdvance, text)
