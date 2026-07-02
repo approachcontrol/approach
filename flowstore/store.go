@@ -92,6 +92,7 @@ type FlowPhase struct {
 	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
 	Title         string    `json:"title"`
 	Kind          string    `json:"kind"`
+	DependsOn     []string  `json:"depends_on"`
 	Status        string    `json:"status"`
 	Order         int       `json:"order"`
 	Outcome       string    `json:"outcome,omitempty"`
@@ -368,6 +369,15 @@ func (s *Store) Create(record FlowRecord) (FlowRecord, error) {
 	record.AutoMode = true
 	if len(record.Phases) == 0 {
 		record.Phases = defaultPhases(record.CreatedAt, record.UpdatedAt)
+		record = refreshPhaseReadiness(record, now)
+	} else {
+		authoritativeEdges := graphHasAuthoritativeEdges(record.Phases)
+		record.Phases = backfillLinearDependsOnForCreate(record.Phases)
+		if authoritativeEdges {
+			if err := validatePhaseGraph(record.Phases); err != nil {
+				return FlowRecord{}, err
+			}
+		}
 	}
 	record = normalizeRecord(record)
 	record.Status = DeriveStatus(record)
@@ -1347,24 +1357,30 @@ func validateChildPhaseUpdate(update ChildPhaseUpdate) error {
 
 func refreshPhaseReadiness(record FlowRecord, now time.Time) FlowRecord {
 	record.Phases = OrderedPhases(record.Phases)
-	predecessorsSatisfied := true
-	resetBlockedDownstream := false
-	for i := range record.Phases {
+	record.Phases = normalizeDependsOnValues(record.Phases)
+	graph := buildPhaseGraph(record.Phases)
+	failedPlanReview := make(map[int]bool)
+	for _, i := range graph.topo {
 		phase := record.Phases[i]
-		if predecessorsSatisfied && phase.Status == PhasePending {
+		dependenciesSatisfied := allDependencyGatesSatisfied(record, graph, i)
+		resetBlockedDownstream := phaseDependsOnPlanReviewFailure(record, graph, i, failedPlanReview)
+		if dependenciesSatisfied && phase.Status == PhasePending {
 			phase.Status = PhaseReady
 			phase.UpdatedAt = now
 			record.Phases[i] = phase
-		} else if !predecessorsSatisfied && shouldResetBlockedDownstreamPhase(phase, resetBlockedDownstream) {
+		} else if !dependenciesSatisfied && shouldResetBlockedDownstreamPhase(phase, resetBlockedDownstream) {
 			phase.Status = PhasePending
 			phase.Outcome = ""
 			phase.UpdatedAt = now
 			record.Phases[i] = phase
 		}
+		phase = record.Phases[i]
 		if !phaseSatisfiesDownstreamGate(record, phase) {
-			predecessorsSatisfied = false
 			if phase.PhaseID == "plan-review" {
-				resetBlockedDownstream = true
+				failedPlanReview[i] = true
+			}
+			if phaseDependsOnPlanReviewFailure(record, graph, i, failedPlanReview) {
+				failedPlanReview[i] = true
 			}
 		}
 	}
@@ -1452,18 +1468,16 @@ func phaseSatisfiesDownstreamGate(record FlowRecord, phase FlowPhase) bool {
 	return phase.Status == PhaseCompleted
 }
 
-// PhasePredecessorsSatisfied reports whether all phases before phaseID satisfy
-// the Flow gate rules used to derive downstream readiness.
+// PhasePredecessorsSatisfied reports whether all graph prerequisites for
+// phaseID satisfy the Flow gate rules used to derive downstream readiness.
 func PhasePredecessorsSatisfied(record FlowRecord, phaseID string) bool {
-	for _, phase := range OrderedPhases(record.Phases) {
-		if phase.PhaseID == phaseID {
-			return true
-		}
-		if !phaseSatisfiesDownstreamGate(record, phase) {
-			return false
-		}
+	ordered := backfillLinearDependsOnForCreate(OrderedPhases(record.Phases))
+	graph := buildPhaseGraph(ordered)
+	idx := phaseIndexByID(ordered, phaseID)
+	if idx < 0 || !graph.released[idx] {
+		return false
 	}
-	return false
+	return allDependencyGatesSatisfied(FlowRecord{PR: record.PR, Phases: ordered}, graph, idx)
 }
 
 // HasPRTarget reports whether PR metadata contains enough target context for
@@ -1801,15 +1815,16 @@ func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
 	}
 	phases := make([]FlowPhase, 0, len(specs))
 	for i, spec := range specs {
-		status := PhasePending
-		if i == 0 {
-			status = PhaseReady
+		dependsOn := []string{}
+		if i > 0 {
+			dependsOn = []string{specs[i-1].id}
 		}
 		phases = append(phases, FlowPhase{
 			PhaseID:   spec.id,
 			Title:     spec.title,
 			Kind:      spec.kind,
-			Status:    status,
+			DependsOn: dependsOn,
+			Status:    PhasePending,
 			Order:     i + 1,
 			CreatedAt: createdAt,
 			UpdatedAt: updatedAt,
@@ -1833,6 +1848,7 @@ func (s *Store) write(record FlowRecord) error {
 	if err := validateFlowID(record.FlowID); err != nil {
 		return err
 	}
+	record.Phases = normalizeDependsOnValues(record.Phases)
 	dir, err := artifacts.EnsureRecordDir(s.root, "flows", record.FlowID)
 	if err != nil {
 		return fmt.Errorf("secure flow directory: %w", err)
@@ -1855,6 +1871,7 @@ func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
 	if err != nil {
 		return FlowRecord{}, false
 	}
+	presence := rawDependsOnPresence(data)
 	var record FlowRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return FlowRecord{}, false
@@ -1862,9 +1879,28 @@ func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
 	if record.FlowID != flowID || record.SchemaVersion != schemaVersion {
 		return FlowRecord{}, false
 	}
+	record.Phases = backfillLinearDependsOnFromRaw(record.Phases, presence)
 	record = normalizeRecord(record)
 	record.Status = DeriveStatus(record)
 	return record, true
+}
+
+func rawDependsOnPresence(data []byte) []rawDependsOnState {
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	presence := make([]rawDependsOnState, len(raw.Phases))
+	for i, phase := range raw.Phases {
+		value, ok := phase["depends_on"]
+		presence[i] = rawDependsOnState{
+			Present: ok,
+			NonNull: ok && string(value) != "null",
+		}
+	}
+	return presence
 }
 
 func (s *Store) flowDir(flowID string) string {
