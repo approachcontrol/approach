@@ -57,13 +57,19 @@ func validatePreset(preset Preset) error {
 		if id == "" {
 			return fmt.Errorf("phase %d id is required", i+1)
 		}
+		if err := validatePhaseID(id); err != nil {
+			return err
+		}
 		title := strings.TrimSpace(spec.Title)
 		if title == "" {
 			return fmt.Errorf("phase %q title is required", id)
 		}
 		kind := strings.ToLower(strings.TrimSpace(spec.Kind))
-		if kind != "" && !knownPhaseKind(kind) {
-			return fmt.Errorf("unknown phase kind %q (valid kinds: %s)", spec.Kind, strings.Join(knownPhaseKinds(), ", "))
+		if kind == KindImplementationChild {
+			return fmt.Errorf("%s cannot be used in a preset", KindImplementationChild)
+		}
+		if kind != "" && !knownPresetPhaseKind(kind) {
+			return fmt.Errorf("unknown phase kind %q (valid kinds: %s)", spec.Kind, strings.Join(knownPresetPhaseKinds(), ", "))
 		}
 		phases = append(phases, FlowPhase{
 			PhaseID:   id,
@@ -94,16 +100,16 @@ func seedPhases(specs []PhaseSpec, createdAt, updatedAt time.Time) []FlowPhase {
 	return normalizeDependsOnValues(phases)
 }
 
-func knownPhaseKind(kind string) bool {
+func knownPresetPhaseKind(kind string) bool {
 	switch kind {
-	case KindPlan, KindPlanReview, KindImplementation, KindReviewLoop, KindPRCreation, KindAutoreview, KindMerge, KindImplementationChild:
+	case KindPlan, KindPlanReview, KindImplementation, KindReviewLoop, KindPRCreation, KindAutoreview, KindMerge:
 		return true
 	default:
 		return false
 	}
 }
 
-func knownPhaseKinds() []string {
+func knownPresetPhaseKinds() []string {
 	return []string{
 		KindPlan,
 		KindPlanReview,
@@ -112,6 +118,5 @@ func knownPhaseKinds() []string {
 		KindPRCreation,
 		KindAutoreview,
 		KindMerge,
-		KindImplementationChild,
 	}
 }

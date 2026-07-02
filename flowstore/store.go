@@ -384,6 +384,9 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	record.CreatedAt = defaultTime(record.CreatedAt, now)
 	record.UpdatedAt = defaultTime(record.UpdatedAt, now)
 	record.AutoMode = true
+	if opts.Preset != nil && len(record.Phases) > 0 {
+		return FlowRecord{}, fmt.Errorf("preset cannot be used with declared phases")
+	}
 	if len(record.Phases) == 0 {
 		preset := DefaultPreset()
 		if opts.Preset != nil {
