@@ -750,12 +750,12 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 		Mode:                ModeFlows,
 		ActivePane:          1,
 		FlowAgentLabel:      "codex",
-		FlowModel:           "model: gpt-5.5",
+		FlowModel:           "gpt-5.5",
 		FlowReasoningEffort: "effort: high",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "A      codex\nM      model: gpt-5.5\nE      effort: high") {
+	if !strings.Contains(pane, "A      codex\nM      gpt-5.5\nE      effort: high") {
 		t.Fatalf("flows shortcut pane should group agent before model and reasoning effort:\n%s", pane)
 	}
 	if strings.Contains(pane, "A      set agent") {
@@ -777,11 +777,11 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 		Flows:          []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress}},
 		FlowSelected:   0,
 		FlowAgentLabel: "codex",
-		FlowModel:      "model: gpt-5.5",
+		FlowModel:      "gpt-5.5",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "M      model: gpt-5.5") {
+	if !strings.Contains(pane, "M      gpt-5.5") {
 		t.Fatalf("selected Flow row should expose model shortcut:\n%s", pane)
 	}
 	if !strings.Contains(pane, "A      codex") {
@@ -802,11 +802,11 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) 
 		ExpandedFlowID:      "flow-1",
 		SelectedFlowPhaseID: "merge",
 		FlowAgentLabel:      "codex",
-		FlowModel:           "model: gpt-5.5",
+		FlowModel:           "gpt-5.5",
 	})
 
 	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "M      model: gpt-5.5") {
+	if !strings.Contains(pane, "M      gpt-5.5") {
 		t.Fatalf("selected Flow phase should expose model shortcut:\n%s", pane)
 	}
 }
@@ -1622,11 +1622,11 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 		ActivePane:          1,
 		RepoSelected:        true,
 		FlowAgentLabel:      "codex",
-		FlowModel:           "model: gpt-5.5",
+		FlowModel:           "gpt-5.5",
 		FlowReasoningEffort: "effort: high",
 	})
 	agentIndex := strings.Index(bar, "A: codex")
-	modelIndex := strings.Index(bar, "M: model: gpt-5.5")
+	modelIndex := strings.Index(bar, "M: gpt-5.5")
 	effortIndex := strings.Index(bar, "E: effort: high")
 	if agentIndex < 0 || modelIndex < 0 || effortIndex < 0 || agentIndex > modelIndex || modelIndex > effortIndex {
 		t.Fatalf("Flow footer should group agent before model before effort, got %q", bar)
@@ -1644,9 +1644,9 @@ func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowRow(t *testing.T) {
 		RepoSelected:   true,
 		FlowSelected:   true,
 		FlowAgentLabel: "codex",
-		FlowModel:      "model: gpt-5.5",
+		FlowModel:      "gpt-5.5",
 	})
-	if !strings.Contains(bar, "M: model: gpt-5.5") {
+	if !strings.Contains(bar, "M: gpt-5.5") {
 		t.Fatalf("selected Flow row should expose model shortcut, got %q", bar)
 	}
 	if !strings.Contains(bar, "A: codex") {
@@ -1663,9 +1663,9 @@ func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowPhaseRow(t *testing.T)
 		FlowSelected:      true,
 		FlowPhaseSelected: true,
 		FlowAgentLabel:    "codex",
-		FlowModel:         "model: gpt-5.5",
+		FlowModel:         "gpt-5.5",
 	})
-	if !strings.Contains(bar, "M: model: gpt-5.5") {
+	if !strings.Contains(bar, "M: gpt-5.5") {
 		t.Fatalf("selected Flow phase should expose model shortcut, got %q", bar)
 	}
 }

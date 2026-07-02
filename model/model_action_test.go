@@ -3908,30 +3908,40 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 	}{
 		{
 			name:       "codex",
-			options:    model.Options{AgentCommand: "codex", CodexReasoningEffort: "high"},
+			options:    model.Options{AgentCommand: "codex", CodexModel: "gpt-5.5", CodexReasoningEffort: "high"},
 			wantAgent:  "A      codex",
+			wantModel:  "M      gpt-5.5",
 			wantEffort: "E      effort: high",
-			notWant:    []string{"A      set agent", "E      codex effort: high"},
+			notWant:    []string{"A      set agent", "M      model: gpt-5.5", "E      codex effort: high"},
 		},
 		{
 			name:       "codex app",
 			options:    model.Options{AgentCommand: "codex-app"},
 			wantAgent:  "A      codex-app",
-			wantModel:  "M      model: app",
+			wantModel:  "M      app",
 			wantEffort: "E      effort: app",
-			notWant:    []string{"M      app default", "E      app default", "E      codex-app default"},
+			notWant:    []string{"M      model: app", "M      app default", "E      app default", "E      codex-app default"},
 		},
 		{
 			name:       "claude",
-			options:    model.Options{AgentCommand: "claude", ClaudeReasoningEffort: "max"},
+			options:    model.Options{AgentCommand: "claude", ClaudeModel: "claude-fable-5", ClaudeReasoningEffort: "max"},
 			wantAgent:  "A      claude",
+			wantModel:  "M      fable-5",
 			wantEffort: "E      effort: max",
-			notWant:    []string{"E      claude effort: max"},
+			notWant:    []string{"M      claude-fable-5", "M      model: fable-5", "E      claude effort: max"},
+		},
+		{
+			name:       "codex default model",
+			options:    model.Options{AgentCommand: "codex"},
+			wantAgent:  "A      codex",
+			wantModel:  "M      default",
+			wantEffort: "E      effort: default",
+			notWant:    []string{"M      model: default"},
 		},
 		{
 			name:      "unset",
 			wantAgent: "A      choose agent",
-			notWant:   []string{"E      choose agent", "E      effort:", "E      app default"},
+			notWant:   []string{"M      ", "E      choose agent", "E      effort:", "E      app default"},
 		},
 	}
 	for _, tt := range tests {
@@ -3946,14 +3956,14 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			if agentIndex < 0 {
 				t.Fatalf("Flow shortcuts missing agent label %q:\n%s", tt.wantAgent, view)
 			}
-			if tt.wantEffort != "" {
-				modelIndex := -1
-				if tt.wantModel != "" {
-					modelIndex = strings.Index(view, tt.wantModel)
-					if modelIndex < 0 || agentIndex > modelIndex {
-						t.Fatalf("Flow shortcuts should group agent before model %q:\n%s", tt.wantModel, view)
-					}
+			modelIndex := -1
+			if tt.wantModel != "" {
+				modelIndex = strings.Index(view, tt.wantModel)
+				if modelIndex < 0 || agentIndex > modelIndex {
+					t.Fatalf("Flow shortcuts should group agent before model %q:\n%s", tt.wantModel, view)
 				}
+			}
+			if tt.wantEffort != "" {
 				effortIndex := strings.Index(view, tt.wantEffort)
 				if effortIndex < 0 || agentIndex > effortIndex || (modelIndex >= 0 && modelIndex > effortIndex) {
 					t.Fatalf("Flow shortcuts should group agent before effort %q:\n%s", tt.wantEffort, view)
