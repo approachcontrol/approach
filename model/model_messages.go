@@ -708,14 +708,12 @@ func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.
 	finalStatus := m.visibleRepoFetchFinalStatusText()
 	m.visibleRepoFetch = visibleRepoFetchState{}
 	m = m.setVisibleRepoFetchSummaryStatus(finalStatus)
-	statusCmds := append([]tea.Cmd(nil), m.pendingStatusCmds...)
-	m.pendingStatusCmds = nil
 	if currentOK && shouldRefresh {
 		var fetchCmd tea.Cmd
 		m, fetchCmd = m.startFetchForMode()
-		statusCmds = append([]tea.Cmd{fetchCmd}, statusCmds...)
+		return m, fetchCmd
 	}
-	return m, tea.Batch(statusCmds...)
+	return m, nil
 }
 
 func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea.Cmd) {

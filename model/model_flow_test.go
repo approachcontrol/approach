@@ -1436,7 +1436,11 @@ func TestModel_AKeyFlowAutoModeFailureReportsStatus(t *testing.T) {
 		t.Fatal("a on selected Flow row should return persistence command")
 	}
 	for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
-		m, _ = update(m, refreshMsg)
+		var statusCmd tea.Cmd
+		m, statusCmd = update(m, refreshMsg)
+		if statusCmd == nil {
+			t.Fatal("expected status expiry command")
+		}
 	}
 	if got := m.TransientError(); !strings.Contains(got, "failed to set Flow auto mode") || !strings.Contains(got, "state root locked") {
 		t.Fatalf("status = %q, want persistence failure", got)
@@ -5535,7 +5539,7 @@ func TestModel_FlowDeleteFailureHandling(t *testing.T) {
 		if !strings.Contains(m.TransientError(), "Flow already deleted") {
 			t.Fatalf("status after not-found delete = %q, want stale-list warning", m.TransientError())
 		}
-		for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
+		for _, refreshMsg := range runLeadingBatchCmdWithCount(t, cmd, 2) {
 			m, _ = update(m, refreshMsg)
 		}
 		if got := m.Flows(); len(got) != 0 {
@@ -10977,7 +10981,7 @@ func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 		!strings.Contains(phaseUpdate.Notes, "agent exited") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
-	for _, refreshMsg := range runLeadingBatchCmd(t, cmd) {
+	for _, refreshMsg := range runLeadingBatchCmdWithCount(t, cmd, 2) {
 		m, _ = update(m, refreshMsg)
 	}
 	if !listed {

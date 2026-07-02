@@ -149,7 +149,7 @@ func TestModel_RepoCreatedRefreshesAndSelectsNewRepo(t *testing.T) {
 	if refreshCmd == nil {
 		t.Fatal("repo creation success should start repo refresh")
 	}
-	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmd(t, refreshCmd))
+	refreshMsg := repoRefreshResultFromBatch(t, runLeadingBatchCmdWithCount(t, refreshCmd, 2))
 	m, _ = update(m, refreshMsg)
 
 	if got := m.Selected(); got != 1 {

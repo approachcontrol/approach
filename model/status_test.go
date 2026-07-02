@@ -164,6 +164,17 @@ func TestSourceSpecificClearDoesNotClearNewerDifferentSource(t *testing.T) {
 	}
 }
 
+func TestSourceSpecificClearEmptyStatusDoesNotAdvanceSequence(t *testing.T) {
+	m := New(nil)
+	seq := m.statusSeq
+
+	m = m.clearStatus(statusGitMutation)
+
+	if m.statusSeq != seq {
+		t.Fatalf("status sequence = %d, want unchanged %d", m.statusSeq, seq)
+	}
+}
+
 func TestFetchStatusPreservesMetadataAndExpires(t *testing.T) {
 	m := New(nil)
 	m = m.setFetchStatus(FetchErrorMsg{Err: "fetch failed", Kind: FetchList, Mode: 2})

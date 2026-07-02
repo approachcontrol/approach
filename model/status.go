@@ -114,7 +114,7 @@ func (m Model) drainStatusCmds(cmd tea.Cmd) (Model, tea.Cmd) {
 }
 
 func (m Model) clearStatus(source statusSource) Model {
-	if m.status.Source == source {
+	if m.status.Text != "" && m.status.Source == source {
 		m.status = statusError{}
 		m = m.nextStatusSeq()
 	}

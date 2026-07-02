@@ -883,6 +883,7 @@ func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected one selected-repo refresh when batch completes")
 	}
+	requireBatchCommandCount(t, cmd, 4)
 }
 
 func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
@@ -1288,6 +1289,33 @@ func runLeadingBatchCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
 		return nil
 	}
 	return runBatchCmd(t, batch[0])
+}
+
+func requireBatchCommandCount(t *testing.T, cmd tea.Cmd, wantAtLeast int) {
+	t.Helper()
+	requireBatchMsg(t, cmd, wantAtLeast)
+}
+
+func runLeadingBatchCmdWithCount(t *testing.T, cmd tea.Cmd, wantAtLeast int) []tea.Msg {
+	t.Helper()
+	batch := requireBatchMsg(t, cmd, wantAtLeast)
+	return runBatchCmd(t, batch[0])
+}
+
+func requireBatchMsg(t *testing.T, cmd tea.Cmd, wantAtLeast int) tea.BatchMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want batch", msg)
+	}
+	if len(batch) < wantAtLeast {
+		t.Fatalf("batch has %d command(s), want at least %d", len(batch), wantAtLeast)
+	}
+	return batch
 }
 
 // --- Branch diff (enter key) ---
