@@ -22,7 +22,7 @@ func plansInRightPaneAtSize(t *testing.T, m model.Model, records []planstore.Pla
 	t.Helper()
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: records, ListRequest: m.ListRequest(ui.ModePlans)})
 	return m
 }

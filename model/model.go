@@ -30,6 +30,7 @@ type Model struct {
 	width                      int
 	height                     int
 	mode                       ui.Mode
+	lastGitMode                ui.Mode
 	rows                       pane.Pane[gitquery.BranchRow]
 	stashes                    pane.Pane[gitquery.Stash]
 	worktrees                  pane.Pane[gitquery.Worktree]
@@ -511,6 +512,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessionStateRoot:         opts.SessionStateRoot,
 		bootstrapHookForRepo:     bootstrapHookForRepo,
 		runBootstrapHook:         runBootstrapHook,
+	}
+	if ui.IsGitMode(m.mode) {
+		m.lastGitMode = m.mode
 	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeActiveFlows; mode++ {
 		m.listRequestSeq++

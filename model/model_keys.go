@@ -325,6 +325,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	if m.activeFlowSurfaceVisible() {
 		return m.handleActiveFlowSurfaceKey(key)
 	}
+	if next, cmd, handled := m.handleGitSubviewKey(key); handled {
+		return next, cmd
+	}
 	switch key {
 	case "up", "k":
 		return m.handleCursorUp()
@@ -338,77 +341,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.mode == ui.ModeFlows {
 			return m.handleToggleFlowHeadless()
 		}
-		if m.mode > ui.ModeWorktrees {
-			m.mode--
-			m = m.resetModeCursors()
-			return m.startFetchForMode()
-		}
 	case "l":
-		if m.mode < ui.ModeActiveFlows {
-			previousMode := m.mode
-			m.mode++
-			m = m.resetModeCursorsForSwitch(previousMode, m.mode)
-			if m.mode == ui.ModeFlows {
-				return m.startFlowsModeFetchWithRefreshTick()
-			}
-			if m.mode == ui.ModeActiveFlows {
-				return m.startActiveFlowsFetchWithRefreshTick()
-			}
-			return m.startFetchForMode()
-		}
-	case "1":
-		if m.mode != ui.ModeWorktrees {
-			m.mode = ui.ModeWorktrees
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeWorktrees)
-		}
-	case "2":
-		if m.mode != ui.ModeBranches {
-			m.mode = ui.ModeBranches
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeBranches)
-		}
-	case "3":
-		if m.mode != ui.ModeStashes {
-			m.mode = ui.ModeStashes
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeStashes)
-		}
-	case "4":
-		if m.mode != ui.ModeHistory {
-			m.mode = ui.ModeHistory
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeHistory)
-		}
-	case "5":
-		if m.mode != ui.ModeReflog {
-			m.mode = ui.ModeReflog
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeReflog)
-		}
-	case "6":
-		if m.mode != ui.ModeSessions {
-			m.mode = ui.ModeSessions
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModeSessions)
-		}
-	case "7":
-		if m.mode != ui.ModePlans {
-			m.mode = ui.ModePlans
-			m = m.resetModeCursors()
-			return m.startFetchMode(ui.ModePlans)
-		}
-	case "8":
-		if m.mode != ui.ModeFlows {
-			m.mode = ui.ModeFlows
-			m = m.resetModeCursors()
-			return m.startFlowsModeFetchWithRefreshTick()
-		}
-	case "9":
-		if m.mode != ui.ModeActiveFlows {
-			m.mode = ui.ModeActiveFlows
-			m = m.resetModeCursors()
-			return m.startActiveFlowsFetchWithRefreshTick()
+		if m.mode == ui.ModeFlows {
+			return m.handleHorizontalNavigation(1)
 		}
 	case "y":
 		if m.mode == ui.ModePlans {
@@ -646,12 +581,13 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	if m.activePane == 0 {
 		return m, nil
 	}
-	nextMode := modeAfterHorizontalNavigation(m.mode, direction)
+	nextMode := m.modeAfterHorizontalNavigation(direction)
 	if nextMode == m.mode {
 		return m, nil
 	}
 	previousMode := m.mode
 	m.mode = nextMode
+	m = m.rememberGitSubview()
 	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()
@@ -662,17 +598,28 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	return m.startFetchForMode()
 }
 
-func modeAfterHorizontalNavigation(current ui.Mode, direction int) ui.Mode {
-	if direction > 0 {
-		if current == ui.ModeActiveFlows {
+// modeAfterHorizontalNavigation steps the view for a left/right arrow press.
+// Inside the Git view the arrows cycle the five git subviews with wrap and
+// never spill into another top-level view; elsewhere they cycle the five
+// top-level views with wrap, entering Git at its last-used subview.
+func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
+	if ui.IsGitMode(m.mode) {
+		next := m.mode + ui.Mode(direction)
+		if next < ui.ModeWorktrees {
+			return ui.ModeReflog
+		}
+		if next > ui.ModeReflog {
 			return ui.ModeWorktrees
 		}
-		return current + 1
+		return next
 	}
-	if current == ui.ModeWorktrees {
-		return ui.ModeActiveFlows
+	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows, ui.ModeActiveFlows}
+	for i, stop := range stops {
+		if stop == m.mode {
+			return stops[(i+direction+len(stops))%len(stops)]
+		}
 	}
-	return current - 1
+	return m.mode
 }
 
 // --- Cursor navigation ---

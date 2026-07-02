@@ -596,7 +596,7 @@ func TestModel_ViewResultAfterModeSwitchIgnored(t *testing.T) {
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 
 	_, cmd := update(m, model.WorktreeDiffResultMsg{
 		RepoPath:     "/dev/alpha",
@@ -1202,7 +1202,7 @@ func TestModel_CKey_BareRepoHistory_NoCmd(t *testing.T) {
 	repo := scanner.Repo{Path: "/dev/project.git", DisplayName: "project.git", IsBare: true}
 	m := model.New([]scanner.Repo{repo})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd != nil {
@@ -1456,7 +1456,7 @@ func TestModel_EnterDoesNothingForCleanBranch(t *testing.T) {
 func modelInHistoryWithCommits() model.Model {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	return m
 }
@@ -1475,7 +1475,7 @@ func TestModel_EnterInHistoryFetchesCommitDiffWithoutOverlay(t *testing.T) {
 func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	// No commits loaded
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
@@ -1490,7 +1490,7 @@ func TestModel_CommitDiffResultStoresDiff(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	_, cmd := update(m, model.CommitDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
@@ -1558,7 +1558,7 @@ func TestModel_YKeyCopiesHashInHistoryMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd == nil {
@@ -1582,7 +1582,7 @@ func TestModel_YKeyNoOpInWorktreesMode(t *testing.T) {
 func TestModel_YKeyNoOpWithNoCommits(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for y key with no commits, got %T", cmd)
@@ -1641,7 +1641,7 @@ func TestModel_CKeyInHistoryFiresCmd(t *testing.T) {
 func TestModel_EnterOnStashFetchesDiffWithoutOverlay(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
@@ -1656,7 +1656,7 @@ func TestModel_StashDiffResultStoresDiff(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	_, cmd := update(m, model.StashDiffResultMsg{
@@ -1689,12 +1689,12 @@ func TestModel_StaleStashDiffDoesNotLaunchAfterModeChange(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	_, cmd := update(m, model.StashDiffResultMsg{RepoPath: "/dev/alpha", Index: 0, DiffRequest: 1, Diff: "stale stash diff"})
@@ -1708,7 +1708,7 @@ func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEscape})
@@ -1744,7 +1744,7 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
@@ -1783,7 +1783,7 @@ func TestModel_StashDiffFetchFailureMatchesFullIdentity(t *testing.T) {
 
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{newStash}})
@@ -1876,7 +1876,7 @@ func TestModel_DKeyWorksInDestructiveMode(t *testing.T) {
 func TestModel_DKeyNoOpInReadOnlyModeStashes(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m.Overlay() != ui.OverlayNone {
@@ -2230,9 +2230,9 @@ func TestModel_NKeyNoOpOutsideCreationModes(t *testing.T) {
 		key  rune
 		mode ui.Mode
 	}{
-		{name: "stashes", key: '3', mode: ui.ModeStashes},
-		{name: "history", key: '4', mode: ui.ModeHistory},
-		{name: "reflog", key: '5', mode: ui.ModeReflog},
+		{name: "stashes", key: 's', mode: ui.ModeStashes},
+		{name: "history", key: 'h', mode: ui.ModeHistory},
+		{name: "reflog", key: 'r', mode: ui.ModeReflog},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
@@ -2259,10 +2259,10 @@ func TestModel_PKeyNoOpOutsideWorktreesMode(t *testing.T) {
 		key  rune
 		mode ui.Mode
 	}{
-		{name: "branches", key: '2', mode: ui.ModeBranches},
-		{name: "stashes", key: '3', mode: ui.ModeStashes},
-		{name: "history", key: '4', mode: ui.ModeHistory},
-		{name: "reflog", key: '5', mode: ui.ModeReflog},
+		{name: "branches", key: 'b', mode: ui.ModeBranches},
+		{name: "stashes", key: 's', mode: ui.ModeStashes},
+		{name: "history", key: 'h', mode: ui.ModeHistory},
+		{name: "reflog", key: 'r', mode: ui.ModeReflog},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
@@ -2983,7 +2983,7 @@ func TestModel_ForceConfirmYExecutesForceAction(t *testing.T) {
 func TestModel_ConfirmDialogBlocksModeSwitch(t *testing.T) {
 	m := modelWithDeletableBranch()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	if m.Mode() != ui.ModeBranches {
 		t.Errorf("confirm dialog should block mode switch, mode changed to %d", m.Mode())
 	}
@@ -2995,7 +2995,7 @@ func modelInStashesWithStashes() model.Model {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m = enableDestructive(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	return m
 }
@@ -3014,7 +3014,7 @@ func TestModel_DKeyInStashesModeOpensConfirmDialog(t *testing.T) {
 func TestModel_DKeyInStashesModeWithNoStashesDoesNothing(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	// No stashes loaded
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m.Overlay() != ui.OverlayNone {
@@ -3670,7 +3670,7 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.PlanResultMsg{
 		RepoPath: "/dev/alpha",
 		Plans: []planstore.PlanRecord{{
@@ -3798,7 +3798,7 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
 	if cmd != nil {
@@ -3844,7 +3844,7 @@ func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
 	if cmd != nil {
@@ -3940,7 +3940,7 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			m := model.NewWithOptions(testRepos(), tt.options)
 			m = inRightPane(m)
 			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 12})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 			view := ansi.Strip(m.View())
 			agentIndex := strings.Index(view, tt.wantAgent)
@@ -3972,7 +3972,7 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "claude"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
 	if m.Overlay() != ui.OverlaySelect {
@@ -3989,7 +3989,7 @@ func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
@@ -4029,7 +4029,7 @@ func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
 	for range 2 {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -4050,7 +4050,7 @@ func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.
 func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
 	if cmd != nil {
@@ -4067,7 +4067,7 @@ func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
 func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex-app"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
 	if cmd != nil {
@@ -4084,7 +4084,7 @@ func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
 func TestModel_FlowModelPickerReportsCodexAppDefault(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex-app"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
 	if cmd != nil {
@@ -4432,7 +4432,7 @@ func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
 	})
 	m = inRightPane(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if m.Mode() != ui.ModeSessions {
 		t.Fatalf("mode = %d, want sessions", m.Mode())
 	}
@@ -4466,7 +4466,7 @@ func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if cmd == nil {
 		t.Fatal("expected initial sessions fetch")
 	}
@@ -4511,7 +4511,7 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4551,7 +4551,7 @@ func TestModel_OKeyOnSessionOpensTranscriptOverlay(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4573,7 +4573,7 @@ func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "first line\nsecond line\nthird line"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4591,7 +4591,7 @@ func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4612,7 +4612,7 @@ func TestModel_SKeySessionSummaryPagerFailureShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "summary"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4635,7 +4635,7 @@ func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Summary: "summary"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4661,6 +4661,7 @@ func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
 func TestModel_SKeySessionSummaryNoOpsOutsideSessionSelection(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // plans: s has no meaning here
 
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
 		t.Fatalf("expected s outside sessions to no-op, got %T", cmd)
@@ -4668,7 +4669,7 @@ func TestModel_SKeySessionSummaryNoOpsOutsideSessionSelection(t *testing.T) {
 	if m.Overlay() != ui.OverlayNone {
 		t.Fatalf("expected no overlay outside sessions, got %d", m.Overlay())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}); cmd != nil {
 		t.Fatalf("expected s with no selected session to no-op, got %T", cmd)
 	}
@@ -4686,7 +4687,7 @@ func TestModel_YKeyCopiesSelectedSessionID(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "raw-codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4718,7 +4719,7 @@ func TestModel_YKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
 		t.Fatalf("expected y outside copyable modes to no-op, got %T", cmd)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd != nil {
 		t.Fatalf("expected y with no selected session to no-op, got %T", cmd)
 	}
@@ -4734,7 +4735,7 @@ func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -4753,7 +4754,7 @@ func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "one", Summary: "one first\none second"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-2", RepoPath: "/dev/alpha", Branch: "two", Summary: "two first\ntwo second"},
@@ -4837,7 +4838,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderCodex,
@@ -4892,7 +4893,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 			})
 			m = inRightPane(m)
 			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 				Provider:     sessions.ProviderCodex,
 				SessionID:    "codex-session-1",
@@ -4930,7 +4931,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 		Provider:     sessions.ProviderCodex,
 		SessionID:    "codex-session-1",
@@ -5010,7 +5011,7 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5038,7 +5039,7 @@ func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderCodex,
@@ -5066,7 +5067,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5120,7 +5121,7 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5204,7 +5205,7 @@ func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Mo
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5226,7 +5227,7 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
@@ -5277,7 +5278,7 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
@@ -5318,7 +5319,7 @@ func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
@@ -5355,7 +5356,7 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/one", Branch: "feature/one"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/two", Branch: "feature/two"},
@@ -5423,7 +5424,7 @@ func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5449,7 +5450,7 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5482,7 +5483,7 @@ func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5525,7 +5526,7 @@ func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5550,7 +5551,7 @@ func TestModel_EmbeddedTerminalResizeSkipsExitedPTYs(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5577,7 +5578,7 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5612,7 +5613,7 @@ func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5638,7 +5639,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderClaude,
@@ -5694,7 +5695,7 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderCodex,
@@ -5727,7 +5728,7 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", CWD: "/dev/alpha/subdir"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5752,7 +5753,7 @@ func TestModel_RKeyUsesCodexAppPreferenceForCodexSessionResume(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "9a0c8d4e-1111-2222-3333-abcdefabcdef", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5781,7 +5782,7 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
 			Provider:     sessions.ProviderClaude,
@@ -5813,11 +5814,12 @@ func TestModel_RKeySessionResumeNoOpsOutsideSessionSelection(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // plans: r has no meaning here
 
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
 		t.Fatalf("expected r outside sessions to no-op, got %T", cmd)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
 		t.Fatalf("expected r with no selected session to no-op, got %T", cmd)
 	}
@@ -5835,7 +5837,7 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -5861,7 +5863,7 @@ func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderClaude, SessionID: "   ", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -6148,7 +6150,7 @@ func TestModel_StaleInlineWorktreeSessionResultIsIgnored(t *testing.T) {
 	}
 	staleMsg := cmd()
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, staleMsg)
 
 	if got := m.WorktreeSessions(); len(got) != 0 {
@@ -6162,7 +6164,7 @@ func TestModel_StaleInlineWorktreeSessionResultIsIgnored(t *testing.T) {
 func TestModel_SessionsFilterMatchesSessionFields(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/wtui-worktrees/sessions", Branch: "main", Model: "gpt-5", Status: "ended", Summary: "Implement capture"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Branch: "docs", Model: "opus", Status: "last_seen", Summary: "Write docs"},
@@ -6186,7 +6188,7 @@ func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -6559,7 +6561,7 @@ func TestModel_StaleWorktreeUnlockedMsgIgnored(t *testing.T) {
 func modelInReflogWithEntries() model.Model {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	return m
 }
@@ -6584,7 +6586,7 @@ func TestModel_YKeyCopiesHashInReflogMode(t *testing.T) {
 func TestModel_YKeyNoOpWithNoReflogs(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd != nil {
 		t.Errorf("expected nil cmd for y key with no reflogs, got %T", cmd)
@@ -6606,7 +6608,7 @@ func TestModel_ReflogDiffResultStoresDiff(t *testing.T) {
 	var paged []string
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	_, cmd := update(m, model.ReflogDiffResultMsg{RepoPath: "/dev/alpha", Hash: "abc1234", DiffRequest: 1, Diff: "diff --git a/f.txt"})
@@ -6689,7 +6691,7 @@ func TestModel_ReflogDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 func TestModel_EnterInReflogNoEntriesIsNoOp(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())

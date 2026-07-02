@@ -168,21 +168,21 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 		key   tea.KeyMsg
 	}{
 		{
-			name: "8",
+			name: "4",
 			setup: func(m Model) Model {
 				m.activePane = 1
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}},
+			key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}},
 		},
 		{
-			name: "l",
+			name: "left-arrow",
 			setup: func(m Model) Model {
 				m.activePane = 1
-				m.mode = ui.ModePlans
+				m.mode = ui.ModeActiveFlows
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}},
+			key: tea.KeyMsg{Type: tea.KeyLeft},
 		},
 		{
 			name: "right-arrow",
@@ -297,7 +297,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
 	m.activePane = 1
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
 	if cmd == nil {
 		t.Fatal("expected active Flow result to schedule refresh tick")
@@ -456,7 +456,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	})
 	m.activePane = 1
 	var activeCmd tea.Cmd
-	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	if activeCmd == nil {
 		t.Fatal("expected active Flow surface entry to fetch flows")
 	}
@@ -511,7 +511,7 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	}
 	m.activePane = 1
 
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	if cmd == nil {
 		t.Fatal("expected view 9 entry to supersede stale in-flight Flow fetch")
 	}
@@ -755,11 +755,11 @@ func TestModel_FlowRefreshTickIgnoresOldLoopAfterReenteringFlows(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{})
 	m.activePane = 1
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	oldGeneration := m.flowRefreshTickGen
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, cmd))
-	m, _ = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if m.flowRefreshTickGen == oldGeneration {
 		t.Fatal("re-entering flows should advance the refresh generation")
 	}

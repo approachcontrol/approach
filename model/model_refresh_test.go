@@ -331,7 +331,7 @@ func TestModel_RepoRefreshKeepsFilterAndHandlesZeroVisibleRepos(t *testing.T) {
 func TestModel_PlanResultPreservesSelectedPlanWhenResultsReorder(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.PlanResultMsg{
 		RepoPath: "/dev/alpha",
 		Plans: []planstore.PlanRecord{
@@ -365,7 +365,7 @@ func TestModel_PlanResultPreservesSelectedPlanWhenResultsReorder(t *testing.T) {
 func TestModel_FlowResultPreservesSelectedFlowWhenResultsReorder(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{
 		RepoPath: "/dev/alpha",
 		Flows: []flowstore.FlowRecord{
@@ -399,7 +399,7 @@ func TestModel_FlowResultPreservesSelectedFlowWhenResultsReorder(t *testing.T) {
 func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	stalePlanRequest := m.ListRequest(ui.ModePlans)
 	stalePlan := model.PlanResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -407,7 +407,7 @@ func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testin
 		Plans:       []planstore.PlanRecord{{PlanID: "stale-plan", RepoPath: "/dev/alpha", Title: "Stale"}},
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})

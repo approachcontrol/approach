@@ -134,6 +134,13 @@ const (
 	ModeActiveFlows
 )
 
+// IsGitMode reports whether mode is one of the five git-oriented subviews
+// grouped under the top-level Git view (worktrees, branches, stashes,
+// history, reflog).
+func IsGitMode(mode Mode) bool {
+	return mode >= ModeWorktrees && mode <= ModeReflog
+}
+
 const LeftPaneWidth = 30
 
 // ShortcutPaneWidth is the total width reserved for the right-hand keyboard
