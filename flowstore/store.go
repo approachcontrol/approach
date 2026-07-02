@@ -703,7 +703,7 @@ func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		pr, err := validatePRUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err

@@ -3193,6 +3193,77 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 	}
 }
 
+func TestStoreSetPRNormalizesLegacyPlanReviewApprovalBeforeRefresh(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Legacy PR metadata",
+		Instructions: "record the pull request for a legacy review outcome",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/legacy-pr-metadata",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for _, phaseID := range []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation"} {
+		update := flowstore.PhaseUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: phaseID,
+			Status:  flowstore.PhaseCompleted,
+		}
+		if phaseID == "plan-review" {
+			update.Outcome = flowstore.OutcomeApproved
+		}
+		record, err = store.SetPhase(update)
+		if err != nil {
+			t.Fatalf("SetPhase(%s completed) error = %v", phaseID, err)
+		}
+	}
+	for i := range record.Phases {
+		if record.Phases[i].PhaseID == "plan-review" {
+			record.Phases[i].Outcome = ""
+		}
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
+	if err := os.WriteFile(metaPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile(meta.json) error = %v", err)
+	}
+
+	updated, err := store.SetPR(flowstore.PRUpdate{
+		FlowID:     record.FlowID,
+		Provider:   "github",
+		Number:     116,
+		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		HeadBranch: "flow/legacy-pr-metadata",
+		BaseBranch: "main",
+		Status:     "open",
+	})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+
+	if got := phaseByID(t, updated, "plan-review").Outcome; got != flowstore.OutcomeApproved {
+		t.Fatalf("plan-review outcome after SetPR = %q, want legacy approved normalization", got)
+	}
+	if got := phaseByID(t, updated, "implementation").Status; got != flowstore.PhaseCompleted {
+		t.Fatalf("implementation status after SetPR = %q, want completed", got)
+	}
+	if got := phaseByID(t, updated, "autoreview").Status; got != flowstore.PhaseReady {
+		t.Fatalf("autoreview status after SetPR = %q, want ready", got)
+	}
+}
+
 func TestStoreSetIssuePersistsMetadata(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
