@@ -131,8 +131,8 @@ Stores user-interface preferences.
 | `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens the Git view, `2`–`5` open sessions/plans/flows/active flows, and `w`/`b`/`s`/`h`/`r` pick git subviews). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default. |
 
 Press `V` in wtui to choose and persist this value from a picker. The picker
-changes future launches only; use `1` through `9`, arrows, `h`, or `l` to switch
-the current view.
+changes future launches only; use the keyboard keys `1`–`5`, the `w`/`b`/`s`/`h`/`r`
+git subview letters, or arrows to switch the current view.
 
 ### `[editor]`
 
