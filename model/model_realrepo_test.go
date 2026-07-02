@@ -149,10 +149,10 @@ func TestModel_ModeFetchesProduceResultsAgainstRealRepo(t *testing.T) {
 		key  rune
 		want func(tea.Msg) bool
 	}{
-		{"branches", '2', func(m tea.Msg) bool { _, ok := m.(model.BranchResultMsg); return ok }},
-		{"stashes", '3', func(m tea.Msg) bool { _, ok := m.(model.StashResultMsg); return ok }},
-		{"history", '4', func(m tea.Msg) bool { _, ok := m.(model.CommitResultMsg); return ok }},
-		{"reflog", '5', func(m tea.Msg) bool { _, ok := m.(model.ReflogResultMsg); return ok }},
+		{"branches", 'b', func(m tea.Msg) bool { _, ok := m.(model.BranchResultMsg); return ok }},
+		{"stashes", 's', func(m tea.Msg) bool { _, ok := m.(model.StashResultMsg); return ok }},
+		{"history", 'h', func(m tea.Msg) bool { _, ok := m.(model.CommitResultMsg); return ok }},
+		{"reflog", 'r', func(m tea.Msg) bool { _, ok := m.(model.ReflogResultMsg); return ok }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,7 +199,7 @@ func TestModel_BranchDiffPayloadAgainstRealRepo(t *testing.T) {
 	writeFile(t, dir, "README.md", "hello\nchanged\n")
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // branches
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // branches
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd, got nil")
 	}
@@ -236,7 +236,7 @@ func TestModel_CreateBranchFromSelectedBranchAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "tag", "base", initial)
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if cmd == nil {
 		t.Fatal("expected branches fetch cmd")
 	}
@@ -326,7 +326,7 @@ func TestModel_StashDiffPayloadAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "stash")
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd, got nil")
 	}
@@ -352,7 +352,7 @@ func TestModel_CommitDiffPayloadAgainstRealRepo(t *testing.T) {
 	m, _ := setupModelRepo(t)
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}) // history
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}) // history
 	if cmd == nil {
 		t.Fatal("expected fetchCommits cmd, got nil")
 	}
@@ -381,7 +381,7 @@ func TestModel_ReflogDiffPayloadAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "commit", "-am", "second commit")
 
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}}) // reflog
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // reflog
 	if cmd == nil {
 		t.Fatal("expected fetchReflog cmd, got nil")
 	}
@@ -454,7 +454,7 @@ func TestModel_AgentLaunchFromBranchPaneIncludesCommit(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, branchCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, branchCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if branchCmd == nil {
 		t.Fatal("expected branch fetch command")
 	}

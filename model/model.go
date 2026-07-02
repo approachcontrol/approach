@@ -30,6 +30,7 @@ type Model struct {
 	width                      int
 	height                     int
 	mode                       ui.Mode
+	lastGitMode                ui.Mode
 	rows                       pane.Pane[gitquery.BranchRow]
 	stashes                    pane.Pane[gitquery.Stash]
 	worktrees                  pane.Pane[gitquery.Worktree]
@@ -511,6 +512,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		sessionStateRoot:         opts.SessionStateRoot,
 		bootstrapHookForRepo:     bootstrapHookForRepo,
 		runBootstrapHook:         runBootstrapHook,
+	}
+	if ui.IsGitMode(m.mode) {
+		m.lastGitMode = m.mode
 	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeActiveFlows; mode++ {
 		m.listRequestSeq++
@@ -2042,7 +2046,7 @@ func (m Model) reflowWorktreeSessions() Model {
 }
 
 func (m Model) reflowReflogs() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
+	contentHeight := m.height - ui.GitContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
@@ -2078,7 +2082,7 @@ func (m Model) reflowFlows() Model {
 }
 
 func (m Model) reflowCommits() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
+	contentHeight := m.height - ui.GitContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
@@ -2087,7 +2091,7 @@ func (m Model) reflowCommits() Model {
 }
 
 func (m Model) reflowBranches() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
+	contentHeight := m.height - ui.GitContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}

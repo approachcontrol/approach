@@ -148,11 +148,36 @@ func selectBravo(m model.Model) model.Model {
 	return m
 }
 
-// inBranchesMode switches to right pane and selects branches mode (mode 2).
+// inBranchesMode switches to right pane and selects the branches subview.
 func inBranchesMode(m model.Model) model.Model {
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	return m
+}
+
+// keyForMode returns the key that reaches mode from the startup worktrees
+// view: git subviews by their direct letters, other top-level views by number.
+func keyForMode(mode ui.Mode) rune {
+	switch mode {
+	case ui.ModeWorktrees:
+		return 'w'
+	case ui.ModeBranches:
+		return 'b'
+	case ui.ModeStashes:
+		return 's'
+	case ui.ModeHistory:
+		return 'h'
+	case ui.ModeReflog:
+		return 'r'
+	case ui.ModeSessions:
+		return '2'
+	case ui.ModePlans:
+		return '3'
+	case ui.ModeFlows:
+		return '4'
+	default:
+		return '5'
+	}
 }
 
 // --- Init & basics ---
@@ -356,7 +381,7 @@ func TestModel_WorktreeScrollFollowsCursor(t *testing.T) {
 	}
 	contentHeight := 3
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + contentHeight})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.WorktreeContentOverhead + contentHeight})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
@@ -391,8 +416,8 @@ func TestModel_ModeSwitchPreservesWorktreeCursors(t *testing.T) {
 		t.Fatalf("expected WorktreeSelected 2, got %d", m.WorktreeSelected())
 	}
 	// Switch away and back
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	if m.WorktreeSelected() != 2 {
 		t.Errorf("expected WorktreeSelected preserved at 2, got %d", m.WorktreeSelected())
 	}
@@ -400,17 +425,17 @@ func TestModel_ModeSwitchPreservesWorktreeCursors(t *testing.T) {
 
 func TestModel_SwitchToWorktreesModeFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
-	m = inBranchesMode(m) // switch to mode 2
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = inBranchesMode(m) // switch to the branches subview
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	if cmd == nil {
-		t.Fatal("expected fetchWorktrees cmd on switch to mode 1, got nil")
+		t.Fatal("expected fetchWorktrees cmd on switch to worktrees, got nil")
 	}
 }
 
 func TestModel_SwitchToBranchesFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd from switch to mode 2, got nil")
 	}
@@ -512,7 +537,7 @@ func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t 
 func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if m.Mode() != 3 {
 		t.Errorf("expected mode unchanged at 3, got %d", m.Mode())
@@ -525,7 +550,7 @@ func TestModel_TabDoesNotChangeMode(t *testing.T) {
 func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // right to left
 
 	if m.ActivePane() != 0 {
@@ -561,7 +586,7 @@ func TestModel_BackspaceFromRightPaneSwitchesToLeftAcrossModes(t *testing.T) {
 		t.Run(fmt.Sprintf("mode_%d_%s", tt.mode, tt.key.String()), func(t *testing.T) {
 			m := model.New(testRepos())
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(fmt.Sprint(int(tt.mode)))})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{keyForMode(tt.mode)}})
 			if m.ActivePane() != 1 || m.Mode() != tt.mode {
 				t.Fatalf("setup activePane=%d mode=%d, want right pane mode %d", m.ActivePane(), m.Mode(), tt.mode)
 			}
@@ -767,7 +792,7 @@ func TestModel_LeftPaneDownNavigatesRepos(t *testing.T) {
 func TestModel_LeftPaneDownFiresFetchInBranchMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // branches
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // branches
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // back to left pane
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil {
@@ -854,7 +879,7 @@ func TestModel_LeftPaneDownResetsRightPaneCursors(t *testing.T) {
 func TestModel_LeftPaneModeKeysAreNoOps(t *testing.T) {
 	m := model.New(testRepos())
 	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune{'2'}},
+		{Type: tea.KeyRunes, Runes: []rune{'b'}},
 		{Type: tea.KeyRunes, Runes: []rune{'h'}},
 		{Type: tea.KeyRunes, Runes: []rune{'l'}},
 	} {
@@ -940,7 +965,7 @@ func TestModel_LeftArrowFromLeftPaneAtFlowsIsNoOp(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
 		flow,
 		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
@@ -1258,7 +1283,7 @@ func TestModel_BackspaceOnEmptyItemFilterInputClearsFilter(t *testing.T) {
 	}
 }
 
-func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T) {
+func TestModel_RightPaneSearchIsPerSubviewAndEscapeClearsIt(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
@@ -1267,23 +1292,30 @@ func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T)
 		{Name: "bugfix"},
 	}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{
-		{Index: 0, Date: "2026-03-18", Message: "feature auth work"},
+		{Index: 0, Date: "2026-03-18", Message: "zebra work"},
 		{Index: 1, Date: "2026-03-18", Message: "bugfix stash"},
 	}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	for _, r := range "work" {
+	for _, r := range "auth" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	if m.ItemSearch() != "work" {
-		t.Fatalf("expected right-pane search to remain work after mode switch, got %q", m.ItemSearch())
+	if rows := m.Rows(); len(rows) != 1 || rows[0].Branch.Name != "feature/auth" {
+		t.Fatalf("expected branch filter to leave feature/auth, got %#v", rows)
 	}
-	stashes := m.Stashes()
-	if len(stashes) != 1 || stashes[0].Message != "feature auth work" {
-		t.Fatalf("expected shared filter to leave only feature auth work stash, got %#v", stashes)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if m.ItemSearch() != "" {
+		t.Fatalf("expected stashes to keep their own empty filter, got %q", m.ItemSearch())
+	}
+	if stashes := m.Stashes(); len(stashes) != 2 {
+		t.Fatalf("expected stashes unfiltered by the branch query, got %#v", stashes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if m.ItemSearch() != "auth" {
+		t.Fatalf("expected branch filter restored on subview re-entry, got %q", m.ItemSearch())
 	}
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
@@ -1293,12 +1325,10 @@ func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T)
 	if m.ItemSearch() != "" || m.SearchActive() {
 		t.Fatalf("expected right-pane filter cleared and inactive, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
 	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	view := m.View()
 	for _, name := range []string{"main", "feature/auth", "bugfix"} {
 		if !strings.Contains(view, name) {
-			t.Fatalf("clearing shared filter should restore branch %s", name)
+			t.Fatalf("clearing the filter should restore branch %s", name)
 		}
 	}
 }
@@ -1392,7 +1422,7 @@ func TestModel_UpDownNavigatesAllBranches(t *testing.T) {
 func TestModel_StashCursorWraps(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 	// Wrap backward from 0 to last
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
@@ -1413,7 +1443,7 @@ func TestModel_BranchScrollFollowsCursor(t *testing.T) {
 		branches[i] = gitquery.Branch{Name: fmt.Sprintf("branch-%d", i)}
 	}
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + 3}) // 3 content lines
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.GitContentOverhead + 3}) // 3 content lines
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
@@ -1544,9 +1574,9 @@ func TestModel_StashScrollFollowsCursor(t *testing.T) {
 	}
 	contentHeight := 3
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + contentHeight})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.StashContentOverhead + contentHeight})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
 
 	if m.StashScroll() != 0 {
@@ -1595,9 +1625,9 @@ func TestModel_StashScrollAccountsForLongMessages(t *testing.T) {
 	// 3 content lines → only ~1.5 stashes visible at a time
 	contentHeight := 3
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 50 + ui.LeftPaneWidth + 2, Height: ui.BranchContentOverhead + contentHeight})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 50 + ui.LeftPaneWidth + 2, Height: ui.StashContentOverhead + contentHeight})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
 
 	// Move to stash 2 (each takes 2 lines, so stash 2 starts at visual line 4)
@@ -1621,7 +1651,7 @@ func TestModel_StashCursorUsesStashViewportAtTinyHeight(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.StashContentOverhead})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -1638,12 +1668,12 @@ func TestModel_StashCursorUsesStashViewportAtTinyHeight(t *testing.T) {
 func TestModel_ModeSwitchOnKeyPress(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	if m.Mode() != 3 {
 		t.Errorf("expected mode 3 (stashes), got %d", m.Mode())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	if m.Mode() != 1 {
 		t.Errorf("expected mode 1 (worktrees), got %d", m.Mode())
 	}
@@ -1652,7 +1682,7 @@ func TestModel_ModeSwitchOnKeyPress(t *testing.T) {
 func TestModel_Key4SwitchesToHistoryMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	if m.Mode() != 4 {
 		t.Errorf("expected mode 4, got %d", m.Mode())
 	}
@@ -1661,7 +1691,7 @@ func TestModel_Key4SwitchesToHistoryMode(t *testing.T) {
 func TestModel_SwitchToHistoryFiresFetchCommits(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	if cmd == nil {
 		t.Fatal("expected fetchCommits cmd on switch to mode 4, got nil")
 	}
@@ -1672,34 +1702,34 @@ func TestModel_NumberKeysSwitchToCorrectModes(t *testing.T) {
 	m = inRightPane(m)
 
 	// Key 2 → ModeBranches
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if m.Mode() != 2 {
 		t.Errorf("key 2: expected mode 2 (ModeBranches), got %d", m.Mode())
 	}
 
 	// Key 3 → ModeStashes
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	if m.Mode() != 3 {
 		t.Errorf("key 3: expected mode 3 (ModeStashes), got %d", m.Mode())
 	}
 
 	// Key 4 → ModeHistory
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	if m.Mode() != 4 {
 		t.Errorf("key 4: expected mode 4 (ModeHistory), got %d", m.Mode())
 	}
 
-	// Key 1 → ModeWorktrees
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	// Key w → ModeWorktrees
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	if m.Mode() != 1 {
-		t.Errorf("key 1: expected mode 1 (ModeWorktrees), got %d", m.Mode())
+		t.Errorf("key w: expected mode 1 (ModeWorktrees), got %d", m.Mode())
 	}
 }
 
 func TestModel_Key5SwitchesToReflog(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if m.Mode() != 5 {
 		t.Errorf("expected mode 5 (reflog), got %d", m.Mode())
 	}
@@ -1708,7 +1738,7 @@ func TestModel_Key5SwitchesToReflog(t *testing.T) {
 func TestModel_Key6SwitchesToSessions(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if m.Mode() != ui.ModeSessions {
 		t.Errorf("expected sessions mode, got %d", m.Mode())
 	}
@@ -1728,7 +1758,7 @@ func TestModel_ModeSwitchPreservesSelection(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})                      // select bravo (left pane)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})                     // switch to right pane
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // mode 3 (stashes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
 	if m.Selected() != 1 {
 		t.Errorf("expected selection preserved at 1, got %d", m.Selected())
 	}
@@ -1753,33 +1783,20 @@ func TestModel_LeftFromBranchesSwitchesToWorktrees(t *testing.T) {
 	}
 }
 
-func TestModel_HLSwitchModes(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if m.Mode() != 2 {
-		t.Errorf("expected mode 2 (branches), got %d", m.Mode())
-	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if m.Mode() != 1 {
-		t.Errorf("expected mode 1 (worktrees), got %d", m.Mode())
-	}
-}
-
-func TestModel_RightCyclesThroughAllViewsAndWrapsToWorktrees(t *testing.T) {
+func TestModel_RightCyclesGitSubviewsAndWrapsToWorktrees(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("expected starting mode worktrees, got %d", m.Mode())
 	}
 
-	for want := ui.ModeBranches; want <= ui.ModeActiveFlows; want++ {
+	for want := ui.ModeBranches; want <= ui.ModeReflog; want++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
 		if m.Mode() != want {
 			t.Fatalf("mode after right = %d, want %d", m.Mode(), want)
 		}
 		if m.ActivePane() != 1 {
-			t.Fatalf("ActivePane() = %d, want right pane while moving through modes", m.ActivePane())
+			t.Fatalf("ActivePane() = %d, want right pane while moving through subviews", m.ActivePane())
 		}
 	}
 
@@ -1792,12 +1809,12 @@ func TestModel_RightCyclesThroughAllViewsAndWrapsToWorktrees(t *testing.T) {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
-		t.Fatal("right from flows produced nil cmd, want worktrees fetch")
+		t.Fatal("right from reflog produced nil cmd, want worktrees fetch")
 	}
 	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
 	msgs := runBatchCmd(t, cmd)
 	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
-		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
+		t.Fatalf("right from reflog command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
 	}
 }
 
@@ -1809,42 +1826,42 @@ func TestModel_NumberedModeSwitchClearsStatus(t *testing.T) {
 		t.Fatalf("TransientError() = %q, want operation failed", got)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if got := m.TransientError(); got != "" {
 		t.Fatalf("numbered mode switch left status %q, want cleared", got)
 	}
 }
 
-func TestModel_LeftCyclesBackThroughAllViewsAndWrapsToFlows(t *testing.T) {
+func TestModel_LeftCyclesTopLevelViewsIntoGitThenWrapsGitSubviews(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 
-	for want := ui.ModeFlows; want >= ui.ModeWorktrees; want-- {
+	for _, want := range []ui.Mode{ui.ModeFlows, ui.ModePlans, ui.ModeSessions, ui.ModeWorktrees} {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
 		if m.Mode() != want {
 			t.Fatalf("mode after left = %d, want %d", m.Mode(), want)
 		}
 		if m.ActivePane() != 1 {
-			t.Fatalf("ActivePane() = %d, want right pane while moving through modes", m.ActivePane())
+			t.Fatalf("ActivePane() = %d, want right pane while moving through views", m.ActivePane())
 		}
 	}
 
 	before := listRequests(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("Mode() = %d, want active flows after wrapping", m.Mode())
+	if m.Mode() != ui.ModeReflog {
+		t.Fatalf("Mode() = %d, want reflog: arrows wrap inside the Git view without spilling out", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
-		t.Fatal("left from worktrees produced nil cmd, want active flows fetch")
+		t.Fatal("left from worktrees produced nil cmd, want reflog fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeReflog)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
-		t.Fatalf("left from worktrees command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
+	if !hasListFetchForMode(msgs, ui.ModeReflog, m.ListRequest(ui.ModeReflog)) {
+		t.Fatalf("left from worktrees command messages = %#v, want reflog fetch for request %d", msgs, m.ListRequest(ui.ModeReflog))
 	}
 }
 
@@ -1859,8 +1876,8 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("Mode() = %d, want active flows after wrapping", m.Mode())
+	if m.Mode() != ui.ModeReflog {
+		t.Fatalf("Mode() = %d, want reflog after wrapping inside the Git view", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
@@ -1869,14 +1886,15 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 		t.Fatalf("WorktreeSelected() = %d, want preserved cursor 1", m.WorktreeSelected())
 	}
 	if cmd == nil {
-		t.Fatal("left from worktrees produced nil cmd, want active flows fetch")
+		t.Fatal("left from worktrees produced nil cmd, want reflog fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeReflog)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
-		t.Fatalf("left from worktrees command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
+	if !hasListFetchForMode(msgs, ui.ModeReflog, m.ListRequest(ui.ModeReflog)) {
+		t.Fatalf("left from worktrees command messages = %#v, want reflog fetch for request %d", msgs, m.ListRequest(ui.ModeReflog))
 	}
 
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	flow := flowWithPhaseDetails()
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
 		flow,
@@ -1887,40 +1905,45 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 	before = listRequests(m)
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees after wrapping", m.Mode())
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("Mode() = %d, want active flows after right from flows", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
-	if m.FlowSelected() != 0 || m.ExpandedFlowID() != "" {
-		t.Fatalf("flow state selected=%d expanded=%q, want reset after leaving flows", m.FlowSelected(), m.ExpandedFlowID())
-	}
 	if cmd == nil {
-		t.Fatal("right from flows produced nil cmd, want worktrees fetch")
+		t.Fatal("right from flows produced nil cmd, want active flows fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
 	msgs = runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
-		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
+	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
+		t.Fatalf("right from flows command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	if m.Mode() != ui.ModeReflog {
+		t.Fatalf("Mode() = %d, want reflog: Git re-entry lands on the last-used subview", m.Mode())
+	}
+	if m.FlowSelected() != 0 || m.ExpandedFlowID() != "" {
+		t.Fatalf("flow state selected=%d expanded=%q, want reset after leaving the flow surface", m.FlowSelected(), m.ExpandedFlowID())
 	}
 }
 
-func TestModel_HLClampAtModeEdges(t *testing.T) {
+func TestModel_HKeyOpensHistorySubviewAndLAliasesRightInFlows(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if m.ActivePane() != 1 || m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("h at worktrees activePane=%d mode=%d, want right pane worktrees", m.ActivePane(), m.Mode())
+	if m.ActivePane() != 1 || m.Mode() != ui.ModeHistory {
+		t.Fatalf("h at worktrees activePane=%d mode=%d, want right pane history", m.ActivePane(), m.Mode())
 	}
-	if cmd != nil {
-		t.Fatalf("h at worktrees produced cmd %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("h at worktrees produced nil cmd, want history fetch")
 	}
-	assertListRequestsUnchanged(t, before, m)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeHistory)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	before = listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	if m.ActivePane() != 1 || m.Mode() != ui.ModeActiveFlows {
@@ -1935,7 +1958,7 @@ func TestModel_HLClampAtModeEdges(t *testing.T) {
 func TestModel_RightFromStashesGoesToHistory(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})                     // history
 	if m.Mode() != 4 {
 		t.Errorf("expected mode 4, got %d", m.Mode())
@@ -1945,7 +1968,7 @@ func TestModel_RightFromStashesGoesToHistory(t *testing.T) {
 func TestModel_LeftFromHistoryGoesToStashes(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}) // history
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}) // history
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})                      // stashes
 	if m.Mode() != 3 {
 		t.Errorf("expected mode 3, got %d", m.Mode())
@@ -1970,8 +1993,8 @@ func TestModel_ModeSwitchViaArrowFiresFetch(t *testing.T) {
 func TestModel_SwitchToBranchesFiresFetchBranches(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if cmd == nil {
 		t.Fatal("expected fetch cmd on switch to mode 2, got nil")
 	}
@@ -1980,7 +2003,7 @@ func TestModel_SwitchToBranchesFiresFetchBranches(t *testing.T) {
 func TestModel_SwitchToStashesFiresFetchStashes(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	if cmd == nil {
 		t.Fatal("expected fetchStashes cmd on switch to mode 3, got nil")
 	}
@@ -2101,7 +2124,7 @@ func TestModel_StaleCommitResultDiscarded(t *testing.T) {
 func TestModel_CommitCursorWraps(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	// Wrap backward from 0 to last
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
@@ -2121,9 +2144,9 @@ func TestModel_CommitScrollFollowsCursor(t *testing.T) {
 		commits[i] = gitquery.Commit{Hash: fmt.Sprintf("abc%04d", i), Author: "test", Date: "now", Subject: fmt.Sprintf("commit %d", i)}
 	}
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + 3})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.GitContentOverhead + 3})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: commits})
 
 	// Move cursor past viewport
@@ -2135,10 +2158,10 @@ func TestModel_CommitScrollFollowsCursor(t *testing.T) {
 	}
 }
 
-func TestModel_ModeSwitchResetsCommitCursors(t *testing.T) {
+func TestModel_ModeSwitchPreservesCommitCursors(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -2146,17 +2169,17 @@ func TestModel_ModeSwitchResetsCommitCursors(t *testing.T) {
 		t.Fatalf("expected CommitSelected 2, got %d", m.CommitSelected())
 	}
 	// Switch away and back
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	if m.CommitSelected() != 0 {
-		t.Errorf("expected CommitSelected reset to 0, got %d", m.CommitSelected())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if m.CommitSelected() != 2 {
+		t.Errorf("expected CommitSelected preserved at 2, got %d", m.CommitSelected())
 	}
 }
 
 func TestModel_RepoSwitchClearsCommits(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 	if len(m.Commits()) != 3 {
 		t.Fatal("expected 3 commits")
@@ -2262,7 +2285,7 @@ func TestModel_ReflogResultUpdatesState(t *testing.T) {
 func TestModel_SwitchToReflogFiresFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if m.Mode() != 5 {
 		t.Fatalf("expected mode 5, got %d", m.Mode())
 	}
@@ -2283,7 +2306,7 @@ func TestModel_StaleReflogResultDiscarded(t *testing.T) {
 func TestModel_ReflogCursorWraps(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	// Wrap backward from 0 to last
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
@@ -2308,9 +2331,9 @@ func TestModel_ReflogScrollFollowsCursor(t *testing.T) {
 		})
 	}
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: ui.BranchContentOverhead + 3})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: ui.GitContentOverhead + 3})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: entries})
 	for i := 0; i < 10; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -2323,7 +2346,7 @@ func TestModel_ReflogScrollFollowsCursor(t *testing.T) {
 func TestModel_RepoSwitchClearsReflogs(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
 	if len(m.Reflogs()) != 3 {
 		t.Fatalf("expected 3 reflogs loaded, got %d", len(m.Reflogs()))

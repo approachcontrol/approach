@@ -25,7 +25,7 @@ func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecor
 	t.Helper()
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: records, ListRequest: m.ListRequest(ui.ModeFlows)})
 	return m
 }
@@ -55,7 +55,7 @@ func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstor
 	if m.ActivePane() == 0 {
 		m = inRightPane(m)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m, _ = update(m, model.ActiveFlowResultMsg{Flows: records, ListRequest: m.ListRequest(ui.ModeActiveFlows)})
 	return m
 }
@@ -130,7 +130,7 @@ func TestModel_Key9ShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.T
 		t.Fatalf("mode = %v, want worktrees before view 9", m.Mode())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	if cmd == nil {
 		t.Fatal("view 9 should start or continue a Flow refresh")
 	}
@@ -183,7 +183,7 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 24})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	result := activeFlowResultFromCommand(t, cmd)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
@@ -240,7 +240,7 @@ func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 18})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow fetch command")
 	}
@@ -275,10 +275,10 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 18})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, flowResultFromCommand(t, cmd))
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -357,7 +357,7 @@ func TestModel_ActiveFlowsUsesSeparateActiveFlowSelectionForActions(t *testing.T
 		t.Fatalf("launch update = %#v, want active-two implementation", launched)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	view = ansi.Strip(m.View())
 	if m.Mode() != ui.ModeFlows || m.FlowSelected() != 1 || !strings.Contains(view, "Merged Flow") {
 		t.Fatalf("normal Flow mode should retain merged selection after switching to view 8; selected=%d view:\n%s", m.FlowSelected(), view)
@@ -443,7 +443,7 @@ func TestModel_ActiveFlowsRightNavigationWrapsToWorktrees(t *testing.T) {
 func TestModel_ActiveFlowsLeftNavigationMovesToFlows(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	before := listRequests(m)
 
@@ -473,7 +473,7 @@ func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 			return model.FlowStartResult{}, nil
 		},
 	}), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	before := listRequests(m)
 
@@ -500,8 +500,8 @@ func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
 func TestModel_ActiveFlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -552,7 +552,7 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flowOne, flowTwo})
 	m, cmd := update(m, flowLaunchKey())
 	if cmd == nil {
@@ -626,7 +626,7 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -653,7 +653,7 @@ func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *te
 func TestModel_ActiveFlowsLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	before := listRequests(m)
@@ -790,7 +790,7 @@ func TestModel_ActiveFlowRefreshPreservesNormalFlowSelection(t *testing.T) {
 		Flows:       []flowstore.FlowRecord{activeOne, activeTwo},
 		ListRequest: m.ListRequest(ui.ModeActiveFlows),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("normal Flow selection after active refresh = %d, want preserved active-two", got)
 	}
@@ -958,7 +958,7 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 		},
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -2344,7 +2344,7 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 	})
 	m = inRightPane(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %d, want flows", m.Mode())
 	}
@@ -2379,15 +2379,15 @@ func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing
 	})
 	m = inRightPane(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if cmd == nil {
 		t.Fatal("expected flows fetch command")
 	}
 	request := m.ListRequest(ui.ModeFlows)
 	firstCmd := cmd
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if cmd == nil {
 		t.Fatal("expected second flows fetch command")
 	}
@@ -3526,7 +3526,7 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testi
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	request := m.ListRequest(ui.ModeFlows)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	if cmd == nil {
 		t.Fatal("switching to active flows returned nil command, want active flows fetch")
 	}
@@ -4136,10 +4136,10 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 		key  rune
 		mode ui.Mode
 	}{
-		{name: "worktrees", key: '1', mode: ui.ModeWorktrees},
-		{name: "branches", key: '2', mode: ui.ModeBranches},
-		{name: "plans", key: '7', mode: ui.ModePlans},
-		{name: "sessions", key: '6', mode: ui.ModeSessions},
+		{name: "worktrees", key: 'w', mode: ui.ModeWorktrees},
+		{name: "branches", key: 'b', mode: ui.ModeBranches},
+		{name: "plans", key: '3', mode: ui.ModePlans},
+		{name: "sessions", key: '2', mode: ui.ModeSessions},
 	}
 
 	for _, tc := range tests {
@@ -5207,7 +5207,7 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if cmd == nil {
 		t.Fatal("expected initial flows fetch")
 	}
@@ -5241,7 +5241,7 @@ func TestModel_StaleFlowResultIgnored(t *testing.T) {
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
 		{FlowID: "stale", RepoPath: "/dev/alpha", Title: "T", Status: flowstore.StatusPending},
@@ -5258,7 +5258,7 @@ func TestModel_FlowListErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if cmd == nil {
 		t.Fatal("expected flows fetch command")
 	}
@@ -5305,7 +5305,7 @@ func TestModel_ActiveFlowDeleteUsesVisibleFlowOverUnderlyingStash(t *testing.T) 
 	}
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{
 		RepoPath: "/dev/alpha",
 		Stashes: []gitquery.Stash{{
@@ -5363,7 +5363,7 @@ func TestModel_ActiveFlowActionFailureShowsCrossRepoErrorAndRefreshesGlobally(t 
 func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = flowsInRightPane(t, m, nil)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{
 		RepoPath: "/dev/alpha",
 		Stashes: []gitquery.Stash{{
@@ -5373,7 +5373,7 @@ func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testin
 		}},
 		ListRequest: m.ListRequest(ui.ModeStashes),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -5668,20 +5668,27 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_RightNavigationMovesFromFlowsToActiveFlowsWithoutChangingExistingModeNumbers(t *testing.T) {
+func TestModel_RightNavigationMovesFromFlowsToActiveFlowsUnderGroupedKeys(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
-	for _, key := range []rune{'1', '2', '3', '4', '5', '6', '7'} {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
-		if got := int(m.Mode()); got != int(key-'0') {
-			t.Fatalf("key %c set mode %d, want %c", key, got, key)
+	for _, tc := range []struct {
+		key  rune
+		want ui.Mode
+	}{
+		{'2', ui.ModeSessions},
+		{'3', ui.ModePlans},
+		{'1', ui.ModeWorktrees},
+	} {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+		if m.Mode() != tc.want {
+			t.Fatalf("key %c set mode %d, want %d", tc.key, m.Mode(), tc.want)
 		}
 	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	if m.Mode() != ui.ModeFlows || cmd == nil {
-		t.Fatalf("key 8 mode=%d cmd=%v, want flows fetch", m.Mode(), cmd)
+		t.Fatalf("key 4 mode=%d cmd=%v, want flows fetch", m.Mode(), cmd)
 	}
 	before := listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
@@ -5704,7 +5711,7 @@ func TestModel_RightNavigationMovesFromFlowsToActiveFlowsWithoutChangingExisting
 func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
 		FlowID:       "flow-1",
 		Title:        "Add Flow mode",
@@ -5731,7 +5738,7 @@ func TestModel_FlowSearchIncludesMergeMetadata(t *testing.T) {
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
 		FlowID: "flow-1",
 		Title:  "Merged flow",
@@ -7003,7 +7010,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	if view := m.View(); !strings.Contains(view, "flow output") {
 		t.Fatalf("running Flow terminal should render output before exit:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -7059,7 +7066,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	if tickBatch == nil {
 		t.Fatal("embedded launch should schedule repaint tick when no PTY is running")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -8598,7 +8605,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		t.Fatalf("Flow terminal should start with scope-local tab 1:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -8613,7 +8620,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		t.Fatalf("dismissed session terminal should be removed:\n%s", m.View())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	view := m.View()
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
@@ -8645,7 +8652,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -8672,7 +8679,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 		t.Fatalf("flow terminal state = %q, want running", flowTerm.State())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	view := m.View()
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
@@ -8831,7 +8838,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		m, _ = update(m, cmd())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/one", Branch: "feature/one"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/two", Branch: "feature/two"},
@@ -9772,7 +9779,7 @@ func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 
@@ -9881,7 +9888,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			})
 			m = inRightPane(m)
 			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 			m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
 			if cmd == nil {
@@ -9993,7 +10000,7 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", true, false)
 	if cmd == nil {
@@ -10068,7 +10075,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 	m, _ = update(m, model.AgentSetMsg{Command: " CLAUDE "})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Add Flow Mode", "Build the thing", "main", true)
 	if cmd == nil {
@@ -10125,7 +10132,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 			})
 			m = inRightPane(m)
 			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 			if cmd != nil {
 				t.Fatalf("h before new Flow launch returned command %T, want nil", cmd)
@@ -10193,7 +10200,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)
 	if cmd == nil {
@@ -10264,7 +10271,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 			m, cmd := submitNewFlowPromptsWithOptions(t, m, "Add Flow Mode", "Build\nthe thing", "main", headless)
 			if cmd == nil {
@@ -10340,7 +10347,7 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 			m = openNewFlowForm(t, m, "Cancel Flow", "Write the plan", "main")
 
 			m, cmd := update(m, key)
@@ -10389,7 +10396,7 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
 	if createCmd == nil {
@@ -10441,7 +10448,7 @@ func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "main")
 	if cmd == nil {
@@ -10492,7 +10499,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
 	if createCmd == nil {
@@ -10557,7 +10564,7 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, createCmd := submitNewFlowPromptsWithCreateOptions(t, m, "Stale Parked", "Plan later", "main", false, false)
 	if createCmd == nil {
@@ -10585,7 +10592,7 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 
@@ -10622,7 +10629,7 @@ func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "No Agent Parked", "Plan later", "main", false, false)
 	if cmd == nil {
@@ -10653,7 +10660,7 @@ func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -10688,7 +10695,7 @@ func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, createCmd := submitNewFlowPrompts(t, m, "Stale Failure", "Build the stale thing", "main")
 	if createCmd == nil {
@@ -10722,7 +10729,7 @@ func TestModel_NewFlowWorktreeFailureReportsStartFailure(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -10747,7 +10754,7 @@ func TestModel_NewFlowWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -10790,7 +10797,7 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -10846,7 +10853,7 @@ func TestModel_NewFlowCodexAppLaunchFailureMarksPlanNeedsAttention(t *testing.T)
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -10908,7 +10915,7 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	for i := 0; i < 9; i++ {
 		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
@@ -10973,7 +10980,7 @@ func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, model.AgentResultMsg{
 		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "plan"},
@@ -11008,7 +11015,7 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
 	m, cmd := update(m, model.AgentResultMsg{
 		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "plan"},

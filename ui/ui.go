@@ -134,6 +134,13 @@ const (
 	ModeActiveFlows
 )
 
+// IsGitMode reports whether mode is one of the five git-oriented subviews
+// grouped under the top-level Git view (worktrees, branches, stashes,
+// history, reflog).
+func IsGitMode(mode Mode) bool {
+	return mode >= ModeWorktrees && mode <= ModeReflog
+}
+
 const LeftPaneWidth = 30
 
 // ShortcutPaneWidth is the total width reserved for the right-hand keyboard
@@ -169,15 +176,20 @@ const RepoContentOverhead = 3
 // this constant so they stay in sync.
 const BranchContentOverhead = 5
 
+// GitContentOverhead is the number of rows consumed by chrome around the git
+// subview lists: the base right-pane chrome plus the grouped Git header's
+// extra subview row.
+const GitContentOverhead = BranchContentOverhead + 1
+
 // WorktreeContentOverhead is the number of rows consumed by chrome around the
-// worktree list. Currently identical to BranchContentOverhead (both share the
-// right-pane chrome: status bar + borders + mode header).
-const WorktreeContentOverhead = BranchContentOverhead
+// worktree list. Worktrees is a git subview, so it renders under the two-row
+// grouped Git header.
+const WorktreeContentOverhead = GitContentOverhead
 
 // StashContentOverhead is the number of rows consumed by chrome around the
-// stash list. Currently identical to BranchContentOverhead (both share the
-// right-pane chrome: status bar + borders + mode header).
-const StashContentOverhead = BranchContentOverhead
+// stash list. Stashes is a git subview, so it renders under the two-row
+// grouped Git header.
+const StashContentOverhead = GitContentOverhead
 
 // TableHeaderRows is the number of rows consumed by table headers inside
 // table-style right panes.
@@ -589,6 +601,12 @@ func renderApplication(p RenderParams) string {
 
 	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
 	rightContentHeight := p.Height - BranchContentOverhead
+	if IsGitMode(p.Mode) {
+		rightContentHeight = p.Height - GitContentOverhead
+	}
+	if rightContentHeight < 0 {
+		rightContentHeight = 0
+	}
 
 	// Hide cursor in right pane when left pane is active
 	branchSel := p.BranchSelected
@@ -643,7 +661,10 @@ func renderApplication(p RenderParams) string {
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
 
-	rightContent := modeHeader + "\n" + strings.Join(rightLines, "\n")
+	rightContent := modeHeader
+	if len(rightLines) > 0 {
+		rightContent += "\n" + strings.Join(rightLines, "\n")
+	}
 	rightPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(rightBorderColor).
@@ -704,34 +725,49 @@ func scopedSelectedFlowPhaseID(p RenderParams, flowSelected bool) string {
 	return ""
 }
 
-// renderModeHeader produces the mode selector line shown at the top of the right pane.
-func renderModeHeader(mode Mode, width int) string {
-	modes := []struct {
-		key  Mode
-		name string
-	}{
-		{ModeWorktrees, "worktrees"},
-		{ModeBranches, "branches"},
-		{ModeStashes, "stashes"},
-		{ModeHistory, "history"},
-		{ModeReflog, "reflog"},
-		{ModeSessions, "sessions"},
-		{ModePlans, "plans"},
-		{ModeFlows, "flows"},
-		{ModeActiveFlows, "active flows"},
-	}
+// modeHeaderItem is one selectable entry in a mode header row.
+type modeHeaderItem struct {
+	key    string
+	name   string
+	active bool
+}
 
+// renderModeHeader produces the view selector shown at the top of the right
+// pane: a single top-level row normally, plus a second git-subview row while
+// a git subview is active.
+func renderModeHeader(mode Mode, width int) string {
+	topLevel := []modeHeaderItem{
+		{key: "1", name: "git", active: IsGitMode(mode)},
+		{key: "2", name: "sessions", active: mode == ModeSessions},
+		{key: "3", name: "plans", active: mode == ModePlans},
+		{key: "4", name: "flows", active: mode == ModeFlows},
+		{key: "5", name: "active flows", active: mode == ModeActiveFlows},
+	}
+	separator := strings.Repeat("─", width)
+	header := renderModeHeaderRow(topLevel, width)
+	if IsGitMode(mode) {
+		subviews := []modeHeaderItem{
+			{key: "w", name: "worktrees", active: mode == ModeWorktrees},
+			{key: "b", name: "branches", active: mode == ModeBranches},
+			{key: "s", name: "stashes", active: mode == ModeStashes},
+			{key: "h", name: "history", active: mode == ModeHistory},
+			{key: "r", name: "reflog", active: mode == ModeReflog},
+		}
+		header += "\n" + renderModeHeaderRow(subviews, width)
+	}
+	return header + "\n" + separator
+}
+
+func renderModeHeaderRow(items []modeHeaderItem, width int) string {
 	var parts []string
-	for _, m := range modes {
-		if mode == m.key {
-			parts = append(parts, activeModeStyle.Render(fmt.Sprintf("[%d] %s", m.key, m.name)))
+	for _, item := range items {
+		if item.active {
+			parts = append(parts, activeModeStyle.Render(fmt.Sprintf("[%s] %s", item.key, item.name)))
 		} else {
-			parts = append(parts, inactiveModeStyle.Render(fmt.Sprintf(" %d %s", m.key, m.name)))
+			parts = append(parts, inactiveModeStyle.Render(fmt.Sprintf(" %s %s", item.key, item.name)))
 		}
 	}
-	line := ansi.Truncate(" "+strings.Join(parts, " "), width, "")
-	separator := strings.Repeat("─", width)
-	return line + "\n" + separator
+	return ansi.Truncate(" "+strings.Join(parts, " "), width, "")
 }
 
 func renderActiveFlowsHeader(width int) string {
@@ -1111,6 +1147,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if sp.ActivePane == 1 {
 		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
+		if IsGitMode(sp.Mode) {
+			navigation = append(navigation, shortcutHint{Key: "w/b/s/h/r", Label: "subview", Inline: true})
+		}
 	}
 	global := []shortcutHint{
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
@@ -1569,6 +1608,9 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 }
 
 func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
+	// The git subview hint is rail-only; the space-constrained footer keeps
+	// its established hint set.
+	sections = withoutShortcutKeys(sections, "w/b/s/h/r")
 	paneKey := paneShortcutKeyForStatus(sp)
 	for _, drop := range [][]string{
 		{},

@@ -196,23 +196,23 @@ func isNumberedModeKey(key string) bool {
 	return key >= "1" && key <= "9"
 }
 
-func modeForNumberedKey(key string) (ui.Mode, bool) {
-	if len(key) != 1 {
-		return ui.ModeWorktrees, false
-	}
-	return ModeForViewNumber(int(key[0] - '0'))
-}
-
+// switchModeFromKey routes the top-level number keys: 1 selects the Git view
+// (landing on its last-used subview), 2-5 select the remaining top-level
+// views, and 6-9 are silent no-ops kept reserved for the future.
 func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
-	mode, ok := modeForNumberedKey(key)
-	if !ok {
+	if !isNumberedModeKey(key) {
 		return m, nil, false
 	}
-	if m.mode == mode {
+	mode, ok := m.topLevelModeForNumberedKey(key)
+	if !ok {
+		return m, nil, true
+	}
+	if m.mode == mode || (ui.IsGitMode(mode) && ui.IsGitMode(m.mode)) {
 		return m, nil, true
 	}
 	previousMode := m.mode
 	m.mode = mode
+	m = m.rememberGitSubview()
 	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		next, cmd := m.startFlowsModeFetchWithRefreshTick()

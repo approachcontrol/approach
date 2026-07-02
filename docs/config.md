@@ -29,7 +29,7 @@ exist:
 | Coding agent | none | `[agent].command` | unset |
 | Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
 | Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
-| Startup default view | none | `[ui].default_view` | flows view (`8`) |
+| Startup default view | none | `[ui].default_view` | flows view (config number `8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
@@ -128,11 +128,11 @@ Stores user-interface preferences.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. Omitted keeps the built-in Flows startup default. |
+| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens the Git view, `2`–`5` open sessions/plans/flows/active flows, and `w`/`b`/`s`/`h`/`r` pick git subviews). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default. |
 
 Press `V` in wtui to choose and persist this value from a picker. The picker
-changes future launches only; use `1` through `9`, arrows, `h`, or `l` to switch
-the current view.
+changes future launches only; use the keyboard keys `1`–`5`, the `w`/`b`/`s`/`h`/`r`
+git subview letters, or arrows to switch the current view.
 
 ### `[editor]`
 
@@ -292,7 +292,7 @@ Agents persist plans explicitly through the `wtui plan` subcommands; plans are
 not captured from provider hooks in v1. Each plan is stored as
 `<artifact-root>/plans/<plan-id>/meta.json` plus `plan.md`, with the same
 restrictive permissions (`0700` directories, `0600` files) and atomic writes as
-sessions. They appear in the TUI plans pane (mode `7`).
+sessions. They appear in the TUI plans pane (keyboard `3`).
 Use `e` in the plans pane to edit the selected `plan.md` with `[editor].command`
 or `$EDITOR`; missing editor commands are shown in the TUI status bar. The plans
 pane refreshes when the configured editor command exits.
@@ -349,7 +349,7 @@ Flow records are task-centric workflow records created by the TUI or explicitly
 through `wtui flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
-flows pane (mode `8`), which is the startup default unless `[ui].default_view`
+flows pane (keyboard `4`), which is the startup default unless `[ui].default_view`
 is set. The pane shows linked plan
 IDs when present; press `n` to create a new Flow. On a Flow row or expanded
 phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
@@ -368,7 +368,7 @@ phase's terminal exits normally and auto-closes; terminal exit also triggers a
 Flow refresh so newly persisted completion state is discovered without waiting
 for unrelated UI activity. Auto mode still skips non-completed outcomes and
 stops before Merge; Merge still requires a manual launch.
-The active flows pane (mode `9`) shows active Flows across all repos and hides
+The active flows pane (keyboard `5`) shows active Flows across all repos and hides
 merged Flow records. Moving focus to the left repo pane temporarily filters the
 visible active rows to the selected repo, and returning focus to the middle pane
 restores the global list. It supports the same Flow actions, phase launches,

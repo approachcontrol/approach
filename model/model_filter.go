@@ -153,15 +153,8 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		return m
 	}
 
-	m.worktrees = m.worktrees.SetQueryPreserveIndex(query)
-	m.rows = m.rows.SetQueryPreserveIndex(query)
-	m.stashes = m.stashes.SetQueryPreserveIndex(query)
-	m.commits = m.commits.SetQueryPreserveIndex(query)
-	m.reflogs = m.reflogs.SetQueryPreserveIndex(query)
-	m.sessions = m.sessions.SetQueryPreserveIndex(query)
-	m.plans = m.plans.SetQueryPreserveIndex(query)
-	m.flows = m.flows.SetQueryPreserveIndex(query)
-
+	// The query only applies to the active pane; every other pane keeps its
+	// own filter so switching views restores that view's previous filter.
 	switch m.mode {
 	case ui.ModeWorktrees:
 		m = m.clearInlineWorktreeSessions()

@@ -439,7 +439,7 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 		SessionSelected: 0,
 	})
 
-	for _, want := range []string{"[6] sessions", "Provider", "Branch", "Worktree", "Status", "Summary", "codex", "feature/headers", "sessions", "ended", "Implement session capture"} {
+	for _, want := range []string{"[2] sessions", "Provider", "Branch", "Worktree", "Status", "Summary", "codex", "feature/headers", "sessions", "ended", "Implement session capture"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sessions view missing %q:\n%s", want, view)
 		}
@@ -487,7 +487,7 @@ func TestRender_SessionsModeShowsEmbeddedTerminalInsteadOfSessionRows(t *testing
 		SessionSelected:       0,
 	})
 
-	for _, want := range []string{"[6] sessions", "1 codex feature/api running", "agent output"} {
+	for _, want := range []string{"[2] sessions", "1 codex feature/api running", "agent output"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("embedded sessions view missing %q:\n%s", want, view)
 		}
@@ -1337,27 +1337,29 @@ func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
 }
 
 func TestModeHeader_ShowsActiveMode(t *testing.T) {
-	header := renderModeHeader(1, 60)
-	if !strings.Contains(header, "[1] worktrees") {
-		t.Error("mode header should show active mode 1 bracketed")
+	header := renderModeHeader(ModeWorktrees, 60)
+	if !strings.Contains(header, "[1] git") {
+		t.Error("mode header should show the Git group bracketed while a git subview is active")
+	}
+	if !strings.Contains(header, "[w] worktrees") {
+		t.Error("mode header should show the active worktrees subview bracketed")
 	}
 	if strings.Contains(header, "[2]") {
-		t.Error("inactive mode 2 should not be bracketed")
+		t.Error("inactive sessions view should not be bracketed")
 	}
-	header = renderModeHeader(3, 60)
-	if !strings.Contains(header, "[3] stashes") {
-		t.Error("mode header should show active mode 3 bracketed")
+	header = renderModeHeader(ModeStashes, 60)
+	if !strings.Contains(header, "[s] stashes") {
+		t.Error("mode header should show the active stashes subview bracketed")
 	}
 }
 
 func TestModeHeader_HasSeparatorLine(t *testing.T) {
-	header := renderModeHeader(1, 40)
+	header := renderModeHeader(ModeWorktrees, 40)
 	lines := strings.Split(header, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected mode header to have at least 2 lines, got %d", len(lines))
 	}
-	// Second line should be a separator (dashes or similar)
-	separator := lines[1]
+	separator := lines[len(lines)-1]
 	if !strings.Contains(separator, "─") {
 		t.Errorf("expected separator line with ─ chars, got %q", separator)
 	}
@@ -1371,8 +1373,8 @@ func TestRender_ModeHeaderInRightPane(t *testing.T) {
 		Height:   10,
 		Mode:     1,
 	})
-	if !strings.Contains(view, "[1] worktrees") {
-		t.Error("render should contain mode header '[1] worktrees' in right pane")
+	if !strings.Contains(view, "[w] worktrees") {
+		t.Error("render should contain mode header '[w] worktrees' in right pane")
 	}
 }
 
@@ -1547,7 +1549,7 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected: 0,
 		Width:    120,
-		Height:   18,
+		Height:   20,
 		Mode:     ModeWorktrees,
 		Worktrees: []gitquery.Worktree{
 			{Path: "/a", BranchName: "main", IsMain: true},
@@ -3438,7 +3440,7 @@ func TestRender_SelectOverlayPreservesStyledBaseRowsAroundPanel(t *testing.T) {
 			t.Fatalf("visible line %d width = %d, want <= 72: %q", i, got, line)
 		}
 	}
-	if !strings.Contains(strings.Join(strippedLines[:4], "\n"), "main") {
+	if !strings.Contains(strings.Join(strippedLines[:5], "\n"), "main") {
 		t.Fatalf("styled base branch row above panel should remain visible:\n%s", strings.Join(strippedLines, "\n"))
 	}
 }
@@ -3749,30 +3751,29 @@ func TestBranchPane_NonWorktreeBranchShowsNoLabel(t *testing.T) {
 
 // --- History (mode 3) tests ---
 
-func TestModeHeader_ShowsFiveModes(t *testing.T) {
-	header := renderModeHeader(4, 80)
-	if !strings.Contains(header, "[4] history") {
-		t.Error("expected active '[4] history' in header")
+func TestModeHeader_ShowsFiveGitSubviews(t *testing.T) {
+	header := renderModeHeader(ModeHistory, 120)
+	if !strings.Contains(header, "[h] history") {
+		t.Error("expected active '[h] history' in header")
 	}
-	if !strings.Contains(header, "1 worktrees") {
-		t.Error("expected inactive '1 worktrees' in header")
+	if !strings.Contains(header, "w worktrees") {
+		t.Error("expected inactive 'w worktrees' in header")
 	}
-	if !strings.Contains(header, "2 branches") {
-		t.Error("expected inactive '2 branches' in header")
+	if !strings.Contains(header, "b branches") {
+		t.Error("expected inactive 'b branches' in header")
 	}
-	if !strings.Contains(header, "3 stashes") {
-		t.Error("expected inactive '3 stashes' in header")
+	if !strings.Contains(header, "s stashes") {
+		t.Error("expected inactive 's stashes' in header")
 	}
-	if !strings.Contains(header, "5 reflog") {
-		t.Error("expected inactive '5 reflog' in header")
+	if !strings.Contains(header, "r reflog") {
+		t.Error("expected inactive 'r reflog' in header")
 	}
-	// Test mode 5 active
-	header5 := renderModeHeader(5, 80)
-	if !strings.Contains(header5, "[5] reflog") {
-		t.Error("expected active '[5] reflog' in header")
+	header5 := renderModeHeader(ModeReflog, 120)
+	if !strings.Contains(header5, "[r] reflog") {
+		t.Error("expected active '[r] reflog' in header")
 	}
-	if !strings.Contains(header5, "4 history") {
-		t.Error("expected inactive '4 history' in header when mode 5 active")
+	if !strings.Contains(header5, "h history") {
+		t.Error("expected inactive 'h history' in header when reflog active")
 	}
 }
 

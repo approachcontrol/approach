@@ -85,7 +85,7 @@ func TestModel_ViewStashesModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 
 	view := m.View()
 	if !strings.Contains(view, "No stashes") {
@@ -116,7 +116,7 @@ func TestModel_ViewKeepsSelectedSessionVisibleBelowTableHeader(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'6'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-0", RepoPath: "/dev/alpha", Branch: "session-row-0"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "session-row-1"},
@@ -139,7 +139,7 @@ func TestModel_ViewKeepsExpandedSelectedPlanVisibleBelowTableHeader(t *testing.T
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-0", RepoPath: "/dev/alpha", Branch: "plan-row-0", Status: "draft", Title: "Plan zero"},
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Branch: "plan-row-1", Status: "draft", Title: "Plan one"},
@@ -220,7 +220,7 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			name: "stashes",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 				m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 				return m
 			},
@@ -231,7 +231,7 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			name: "history",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 				m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
 				return m
 			},
@@ -242,7 +242,7 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 			name: "reflog",
 			setup: func(m model.Model) model.Model {
 				m = inRightPane(m)
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 				m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()[:1]})
 				return m
 			},
@@ -270,70 +270,46 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 	}
 }
 
-func TestModel_ViewModeHeaderShowsFiveModes(t *testing.T) {
+func TestModel_ViewModeHeaderShowsGroupedGitSubviews(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
 	view := m.View()
-	// Mode 1 (worktrees) active
-	if !strings.Contains(view, "[1] worktrees") {
-		t.Error("mode 1 active: right pane header should contain '[1] worktrees'")
+	// Worktrees subview active: grouped header shows the Git group plus the
+	// letter-labelled subview row.
+	if !strings.Contains(view, "[1] git") {
+		t.Error("worktrees active: header should bracket the Git group '[1] git'")
 	}
-	if !strings.Contains(view, "2 branches") {
-		t.Error("mode 1 active: right pane header should show inactive '2 branches'")
+	if !strings.Contains(view, "[w] worktrees") {
+		t.Error("worktrees active: header should contain '[w] worktrees'")
 	}
-	if !strings.Contains(view, "3 stashes") {
-		t.Error("mode 1 active: right pane header should show inactive '3 stashes'")
-	}
-	if !strings.Contains(view, "4 history") {
-		t.Error("mode 1 active: right pane header should show inactive '4 history'")
+	for _, want := range []string{"b branches", "s stashes", "h history", "r reflog", "2 sessions", "3 plans", "4 flows", "5 active flows"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("worktrees active: header should show inactive %q", want)
+		}
 	}
 
-	// Switch to mode 2 (branches)
+	// Cycle the git subviews with the right arrow.
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	view = m.View()
-	if !strings.Contains(view, "[2] branches") {
-		t.Error("mode 2 active: right pane header should contain '[2] branches'")
-	}
-	if !strings.Contains(view, "1 worktrees") {
-		t.Error("mode 2 active: right pane header should show inactive '1 worktrees'")
-	}
-
-	// Switch to mode 3 (stashes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	view = m.View()
-	if !strings.Contains(view, "[3] stashes") {
-		t.Error("mode 3 active: right pane header should contain '[3] stashes'")
+	for _, want := range []string{"[b] branches", "[s] stashes", "[h] history", "[r] reflog"} {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+		view = m.View()
+		if !strings.Contains(view, want) {
+			t.Errorf("header should contain %q after right arrow", want)
+		}
+		if !strings.Contains(view, "[1] git") {
+			t.Errorf("header should keep the Git group bracketed while %q is active", want)
+		}
 	}
 
-	// Switch to mode 4 (history)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	// A non-git view renders the single top-level row without subviews.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	view = m.View()
-	if !strings.Contains(view, "[4] history") {
-		t.Error("mode 4 active: right pane header should contain '[4] history'")
+	if !strings.Contains(view, "[2] sessions") {
+		t.Error("sessions active: header should contain '[2] sessions'")
 	}
-	if !strings.Contains(view, "1 worktrees") {
-		t.Error("mode 4 active: right pane header should show inactive '1 worktrees'")
-	}
-	if !strings.Contains(view, "2 branches") {
-		t.Error("mode 4 active: right pane header should show inactive '2 branches'")
-	}
-	if !strings.Contains(view, "3 stashes") {
-		t.Error("mode 4 active: right pane header should show inactive '3 stashes'")
-	}
-	if !strings.Contains(view, "5 reflog") {
-		t.Error("mode 4 active: right pane header should show inactive '5 reflog'")
-	}
-
-	// Switch to mode 5 (reflog)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	view = m.View()
-	if !strings.Contains(view, "[5] reflog") {
-		t.Error("mode 5 active: right pane header should contain '[5] reflog'")
-	}
-	if !strings.Contains(view, "4 history") {
-		t.Error("mode 5 active: right pane header should show inactive '4 history'")
+	if strings.Contains(view, "w worktrees") {
+		t.Error("sessions active: header should not list git subviews")
 	}
 }
 
@@ -351,7 +327,7 @@ func TestModel_ViewStashesModeShowsStashContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
 
 	view := m.View()
@@ -367,7 +343,7 @@ func TestModel_StatusBarStashesModeShowsStashKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
 	view := m.View()
@@ -384,7 +360,7 @@ func TestModel_StatusBarStashesModeShowsDropHint(t *testing.T) {
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}}) // enable destructive
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()[:1]})
 
 	view := m.View()
@@ -410,7 +386,7 @@ func TestModel_ViewReadOnlyHidesDropHint(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // stashes
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
 
 	view := m.View()
 	if strings.Contains(view, "d: drop") {
@@ -451,7 +427,7 @@ func TestModel_ViewHistoryModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 
 	view := m.View()
 	if !strings.Contains(view, "No commits") {
@@ -463,7 +439,7 @@ func TestModel_ViewHistoryModeShowsCommitContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
 
 	view := m.View()
@@ -479,7 +455,7 @@ func TestModel_StatusBarHistoryModeShowsHistoryKeys(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:1]})
 
 	view := m.View()
@@ -1005,7 +981,7 @@ func TestModel_WrongModeListFetchErrorIgnored(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 
 	m, _ = update(m, model.FetchErrorMsg{
 		RepoPath: "/dev/alpha",
@@ -1177,7 +1153,7 @@ func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
@@ -1200,7 +1176,7 @@ func TestModel_ReflogEmptyDiffPagesMessage(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
@@ -1221,7 +1197,7 @@ func TestModel_ReflogDiffPagesContent(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{
 		RepoPath: "/dev/alpha",
 		Reflogs:  testReflogs(),
@@ -1241,7 +1217,7 @@ func TestModel_ViewReflogModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	view := m.View()
 	if !strings.Contains(view, "No reflog entries") {
