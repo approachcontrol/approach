@@ -3248,6 +3248,80 @@ func TestStoreSetIssuePersistsMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreSetIssueDoesNotRefreshCustomFlowReadiness(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Issue metadata",
+		Instructions: "record the issue without touching phase state",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{
+				PhaseID:   "discover",
+				Title:     "Discover",
+				Kind:      flowstore.KindPlan,
+				Status:    flowstore.PhaseRunning,
+				Order:     1,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			{
+				PhaseID:   "build",
+				Title:     "Build",
+				Kind:      flowstore.KindImplementation,
+				DependsOn: []string{"discover"},
+				Status:    flowstore.PhaseRunning,
+				Order:     2,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	later := now.Add(time.Minute)
+	store, err = flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return later },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	updated, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID:   record.FlowID,
+		Provider: "github",
+		Number:   123,
+		URL:      "https://github.com/brian-bell/wtui/issues/123",
+	})
+	if err != nil {
+		t.Fatalf("SetIssue() error = %v", err)
+	}
+
+	if got := phaseByID(t, updated, "build").Status; got != flowstore.PhaseRunning {
+		t.Fatalf("build status after SetIssue = %q, want running", got)
+	}
+	metaJSON, err := os.ReadFile(filepath.Join(root, "flows", record.FlowID, "meta.json"))
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	var persisted flowstore.FlowRecord
+	if err := json.Unmarshal(metaJSON, &persisted); err != nil {
+		t.Fatalf("decode meta.json: %v", err)
+	}
+	if got := phaseByID(t, persisted, "build").Status; got != flowstore.PhaseRunning {
+		t.Fatalf("persisted build status after SetIssue = %q, want running", got)
+	}
+}
+
 func TestStoreSetIssueIdempotent(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)

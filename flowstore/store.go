@@ -687,7 +687,7 @@ func (s *Store) SetPlanLink(update PlanLinkUpdate) (FlowRecord, error) {
 	if _, err := planStore.ReadPlan(planID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if record.PlanID == planID && record.PlanPath == planPath {
 			return record, nil
 		}
@@ -703,7 +703,7 @@ func (s *Store) SetPR(update PRUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		pr, err := validatePRUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -723,7 +723,7 @@ func (s *Store) SetIssue(update IssueUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		issue, err := validateIssueUpdate(update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -742,7 +742,7 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		merge, err := validateMergeUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -829,7 +829,7 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if record.AutoMode == update.Enabled {
 			return record, nil
 		}
@@ -851,7 +851,7 @@ func (s *Store) SetStartMetadata(update StartMetadataUpdate) (FlowRecord, error)
 	if strings.TrimSpace(update.PlanPath) != "" && !filepath.IsAbs(update.PlanPath) {
 		return FlowRecord{}, fmt.Errorf("flow plan path must be absolute: %s", update.PlanPath)
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if value := strings.TrimSpace(update.WorktreePath); value != "" {
 			record.WorktreePath = filepath.Clean(value)
 		}
@@ -1092,7 +1092,7 @@ func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, e
 	if launchID == "" {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
@@ -1144,7 +1144,7 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 	if strings.TrimSpace(update.Session.SessionID) == "" {
 		return FlowRecord{}, fmt.Errorf("session id is required")
 	}
-	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		// Attaching a session is metadata-only and never changes phase status,
 		// so prefer the row that matches the id exactly: when a legacy record
 		// still holds a stale duplicate ahead of the active row, collapsing
@@ -1199,12 +1199,20 @@ func (s *Store) Delete(flowID string) error {
 }
 
 func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, true, mutate)
+}
+
+func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
+	return s.updateFlowWithReadiness(flowID, false, mutate)
+}
+
+func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	release, err := s.acquireFlowLock(flowID)
 	if err != nil {
 		return FlowRecord{}, err
 	}
 	defer release()
-	record, ok := s.readRecord(flowID)
+	record, ok := s.readRecordWithReadiness(flowID, selfHealOnRead)
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(flowID)
 	}
@@ -1212,7 +1220,7 @@ func (s *Store) updateFlow(flowID string, mutate func(FlowRecord, time.Time) (Fl
 	if err != nil {
 		return FlowRecord{}, err
 	}
-	record = normalizeRecord(record, true)
+	record = normalizeRecordBase(record)
 	record.Status = DeriveStatus(record)
 	if err := s.write(record); err != nil {
 		return FlowRecord{}, err
@@ -1939,6 +1947,10 @@ func (s *Store) write(record FlowRecord) error {
 }
 
 func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
+	return s.readRecordWithReadiness(flowID, true)
+}
+
+func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (FlowRecord, bool) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, false
 	}
@@ -1956,7 +1968,11 @@ func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
 	record.Phases = backfillLinearDependsOnFromRaw(record.Phases, presence)
-	record = normalizeRecord(record, selfHeal)
+	if selfHealOnRead {
+		record = normalizeRecord(record, selfHeal)
+	} else {
+		record = normalizeRecordBase(record)
+	}
 	record.Status = DeriveStatus(record)
 	return record, true
 }
@@ -2024,10 +2040,7 @@ func defaultTime(value, fallback time.Time) time.Time {
 }
 
 func normalizeRecord(record FlowRecord, selfHeal bool) FlowRecord {
-	if record.Merge.Status == "" {
-		record.Merge.Status = MergePending
-	}
-	record.Phases = backfillPhaseKinds(record.Phases)
+	record = normalizeRecordBase(record)
 	// Load-path normalization only: edge-aware records and plan-review-kind
 	// records self-heal here; phase-affecting mutations call
 	// refreshPhaseReadiness explicitly for every graph shape.
@@ -2035,6 +2048,14 @@ func normalizeRecord(record FlowRecord, selfHeal bool) FlowRecord {
 		record = normalizeReviewOutcomes(record)
 		record = refreshPhaseReadiness(record, record.UpdatedAt)
 	}
+	return record
+}
+
+func normalizeRecordBase(record FlowRecord) FlowRecord {
+	if record.Merge.Status == "" {
+		record.Merge.Status = MergePending
+	}
+	record.Phases = backfillPhaseKinds(record.Phases)
 	return record
 }
 
