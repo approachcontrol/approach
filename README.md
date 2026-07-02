@@ -373,16 +373,18 @@ remain manual until auto mode is toggled on. Press `m` on an eligible Flow row
 when its recorded GitHub PR was merged manually in GitHub; wtui verifies the PR
 is merged with `gh`, records the merge commit and timestamp, marks the Merge
 phase completed, and hides the Flow from active lists without launching a Merge
-phase agent. When auto mode is on, a successful
-completed phase transition launches the next ready non-merge phase in that same
-Flow through the same launch path as pressing `g`. For CLI phases running in an
-embedded Flow terminal, wtui waits until the completed phase's terminal exits
-normally and auto-closes before launching the next phase; that exit also
-triggers a Flow refresh so completions recorded after the last refresh are
-picked up promptly. Skipped, blocked, needs-attention, failed-launch, or
-missing-PR-metadata states do not auto-launch. Automation stops before Merge:
-if Autoreview completes and Merge becomes ready, wtui keeps auto mode on and
-requires the existing manual Merge launch.
+phase agent. When auto mode is on, wtui runs an always-on, all-repos advance
+poll that detects live completed-phase transitions and launches the next ready
+non-merge phase in that Flow even when another view is active. Auto-launched CLI
+phases are always headless and do not change the current view or focus. If the
+completed phase still has an embedded Flow terminal, wtui waits until that
+terminal exits normally and auto-closes before launching the next phase. A 3 s
+status message announces auto-launches, `needs_attention`, and merge-ready
+transitions unless another status message is active. Skipped, blocked,
+needs-attention, failed-launch, or missing-PR-metadata states do not
+auto-launch. Automation stops before Merge: if Autoreview completes and Merge
+becomes ready, wtui keeps auto mode on and requires the existing manual Merge
+launch.
 
 ### Active Flows view (mode 9)
 
@@ -407,8 +409,10 @@ Plan launch; uncheck it for an interactive initial Plan launch. That checkbox
 is ignored when Plan Now is off and does not change the selected-phase `h`
 setting. Manual phase launches, auto-launched phases, and new Flow Plan
 launches all use the configured agent and that agent's configured model and
-effort. Press `M` to choose the selected CLI agent's model; press `E` to choose
-its reasoning effort. The shortcut pane shows the current values. Codex CLI
+effort, but the `h` toggle applies only to manual phase launches; AutoMode CLI
+launches are always headless. Press `M` to choose the selected CLI agent's
+model; press `E` to choose its reasoning effort. The shortcut pane shows the
+current values. Codex CLI
 launches use `--model <model>` and `--config
 model_reasoning_effort=<effort>`; Claude launches use `--model <model>` and
 `--effort <effort>`. Session resumes do not receive model or effort flags.

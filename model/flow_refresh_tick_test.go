@@ -81,11 +81,18 @@ func fetchErrorFromCommand(t *testing.T, cmd tea.Cmd) FetchErrorMsg {
 		t.Fatal("expected command")
 	}
 	msg := cmd()
-	errMsg, ok := msg.(FetchErrorMsg)
-	if !ok {
-		t.Fatalf("command returned %T, want FetchErrorMsg", msg)
+	if errMsg, ok := msg.(FetchErrorMsg); ok {
+		return errMsg
 	}
-	return errMsg
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, subcmd := range batch {
+			if errMsg, ok := subcmd().(FetchErrorMsg); ok {
+				return errMsg
+			}
+		}
+	}
+	t.Fatalf("command returned %T, want FetchErrorMsg", msg)
+	return FetchErrorMsg{}
 }
 
 func flowForRefreshTest(flowID string, phases ...flowstore.FlowPhase) flowstore.FlowRecord {

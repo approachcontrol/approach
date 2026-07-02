@@ -388,7 +388,12 @@ func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessi
 }
 
 func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, bool, error) {
-	return m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.flowEmbeddedTerminalContentHeight())
+	activeNum := m.activeFlowTerminalNum
+	next, opened, err := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.flowEmbeddedTerminalContentHeight())
+	if opened && ctx.FlowAutoLaunch && activeNum != 0 {
+		next.activeFlowTerminalNum = activeNum
+	}
+	return next, opened, err
 }
 
 func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, scope embeddedTerminalScope, provider, identity, flowID, flowPhaseID string, width, height int) (Model, bool, error) {

@@ -930,9 +930,23 @@ func TestModel_FilteredEmptyItemsTakePrecedenceOverListFetchErrorPlaceholder(t *
 func TestModel_InitFetchUsesNonZeroListRequest(t *testing.T) {
 	m := model.New(testRepos())
 	msg := m.Init()()
-	fetchErr, ok := msg.(model.FetchErrorMsg)
-	if !ok {
-		t.Fatalf("expected fake repo init to return FetchErrorMsg, got %T", msg)
+	msgs := []tea.Msg{msg}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		msgs = msgs[:0]
+		for _, subcmd := range batch {
+			msgs = append(msgs, subcmd())
+		}
+	}
+	var fetchErr model.FetchErrorMsg
+	found := false
+	for _, msg := range msgs {
+		if err, ok := msg.(model.FetchErrorMsg); ok {
+			fetchErr = err
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected fake repo init to return FetchErrorMsg, got %#v", msgs)
 	}
 	if fetchErr.ListRequest == 0 {
 		t.Fatal("initial fetch should carry a non-zero list request")

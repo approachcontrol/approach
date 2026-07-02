@@ -518,11 +518,14 @@ type FetchErrorMsg struct {
 	PlanID       string
 }
 
-// ActionFailedMsg carries an error from a destructive action (drop/prune)
-// so the failure can be surfaced via the transient error line.
+// ActionFailedMsg carries an async action error so the failure can be surfaced
+// via the transient error line and any retry bookkeeping can be restored.
 type ActionFailedMsg struct {
-	RepoPath string
-	Err      string
+	RepoPath                string
+	Err                     string
+	AutoAdvanceRetryRecord  flowstore.FlowRecord
+	AutoAdvanceRetryFlowID  string
+	AutoAdvanceRetryPhaseID string
 }
 
 // --- Message handlers ---
@@ -1258,11 +1261,27 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 	return m
 }
 
-func (m Model) handleActionFailed(msg ActionFailedMsg) Model {
+func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	m = m.restoreAutoAdvanceRetrySnapshot(msg.AutoAdvanceRetryRecord)
+	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
+	autoAdvanceFailure := autoAdvanceRetry || msg.AutoAdvanceRetryRecord.FlowID != ""
+	if msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != "" {
+		m = m.deferAutoFlowPhaseLaunch(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceRetryPhaseID)
+	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusOther, msg.Err)
+		return m, nil
 	}
-	return m
+	if !autoAdvanceFailure {
+		return m, nil
+	}
+	title := flowTitleForStatus(msg.AutoAdvanceRetryRecord)
+	if strings.TrimSpace(title) == "" {
+		title = msg.AutoAdvanceRetryFlowID
+	}
+	var statusCmd tea.Cmd
+	m, statusCmd = m.setAutoAdvanceStatus("Flow " + title + ": " + msg.Err)
+	return m, statusCmd
 }
 
 func (m Model) handleCommitResult(msg CommitResultMsg) Model {
@@ -1332,7 +1351,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	previousFlows := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
+	m = m.seedAutoAdvanceSnapshot(msg.Flows)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1348,20 +1367,10 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if m.mode != ui.ModeFlows {
-		return m, nil
-	}
-	if m.flowFocus != flowFocusTerminal {
+	if m.mode == ui.ModeFlows && m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
-	var cmds []tea.Cmd
-	var autoCmd tea.Cmd
-	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
-	cmds = append(cmds, autoCmd)
-	var deferredCmd tea.Cmd
-	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches()
-	cmds = append(cmds, deferredCmd)
-	return m, batchNonNil(cmds...)
+	return m, nil
 }
 
 func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) {
@@ -1370,21 +1379,14 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
-	previousFlows := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
+	m = m.seedAutoAdvanceSnapshot(msg.Flows)
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
 	if m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
-	var cmds []tea.Cmd
-	var autoCmd tea.Cmd
-	m, autoCmd = m.prepareAutoFlowPhaseLaunch(previousFlows, msg.Flows)
-	cmds = append(cmds, autoCmd)
-	var deferredCmd tea.Cmd
-	m, deferredCmd = m.prepareDeferredAutoFlowPhaseLaunches()
-	cmds = append(cmds, deferredCmd)
-	return m, batchNonNil(cmds...)
+	return m, nil
 }
 
 func (m Model) handleFlowAutoModeSet(msg FlowAutoModeSetMsg) Model {

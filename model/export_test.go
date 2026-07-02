@@ -1,6 +1,8 @@
 package model
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/brian-bell/wtui/embeddedterm"
 	"github.com/brian-bell/wtui/flowstore"
 	"github.com/brian-bell/wtui/ui"
@@ -45,6 +47,30 @@ func EmbeddedTerminalTickMsgForTest(m Model) any {
 
 func HasRunningFlowEmbeddedTerminalForPhaseForTest(m Model, flowID, phaseID string) bool {
 	return m.hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID)
+}
+
+func AutoAdvanceResultForTest(m Model, flows []flowstore.FlowRecord) (Model, tea.Cmd) {
+	m.autoAdvanceInFlight = 1
+	return m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: flows, Request: 1})
+}
+
+func AutoAdvanceLaunchCommandForTest(m Model, flows []flowstore.FlowRecord) (Model, tea.Cmd) {
+	previous := cloneFlowRecords(m.autoAdvanceSnapshot)
+	current := cloneFlowRecords(flows)
+	m.autoAdvanceSnapshot = current
+	m.autoAdvanceLaunchedPhases = nil
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+	m, cmd, _ = m.prepareAutoFlowPhaseLaunch(previous, current)
+	cmds = append(cmds, cmd)
+	m, cmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom(m.autoAdvanceSnapshot)
+	cmds = append(cmds, cmd)
+	return m, batchNonNil(cmds...)
+}
+
+func WithAutoAdvanceSnapshotForTest(m Model, flows []flowstore.FlowRecord) Model {
+	m.autoAdvanceSnapshot = cloneFlowRecords(flows)
+	return m
 }
 
 func FlowPhaseDoneInstructionForTest() string {

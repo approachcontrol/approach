@@ -44,6 +44,29 @@ func TestFlowPhaseLaunchCoordinatorSelectsFirstLaunchablePhase(t *testing.T) {
 	}
 }
 
+func TestFlowPhaseLaunchTargetManualPreflightFailureSetsStatus(t *testing.T) {
+	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-manual",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
+		},
+	}
+
+	_, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
+		Record: record,
+		Phase:  record.Phases[0],
+	})
+	if ok {
+		t.Fatal("flowPhaseLaunchTarget() succeeded without an agent command")
+	}
+	if m.status.Source != statusOther || !strings.Contains(m.status.Text, "Press A to choose") {
+		t.Fatalf("status = %#v, want manual preflight failure status", m.status)
+	}
+}
+
 func TestFlowPhaseLaunchCoordinatorNormalizesPhaseIDsForPreflightAndRecovery(t *testing.T) {
 	launcher := FlowPhaseLauncher{AgentCommand: "codex"}
 	_, err := launcher.Preflight(FlowPhaseLaunchRequest{
@@ -105,7 +128,7 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		},
 	})
 
-	_, cmd := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	_, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want auto-launch command")
 	}
@@ -147,7 +170,7 @@ func TestFlowPhaseLaunchCoordinatorClearsSuppressedAutoLaunchWithoutRelaunch(t *
 	})
 	m = m.suppressAutoFlowPhaseLaunch("flow-1", "plan-review", "source-launch")
 
-	m, cmd := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T for suppressed source phase", cmd)
 	}
@@ -191,7 +214,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
 	}}
 
-	m, cmd := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T while source terminal was running", cmd)
 	}
@@ -203,10 +226,9 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	}
 
 	m.embeddedTerminals = nil
-	m.flows = m.flows.SetItems([]flowstore.FlowRecord{current})
-	m, cmd = m.prepareDeferredAutoFlowPhaseLaunches()
+	m, cmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom([]flowstore.FlowRecord{current})
 	if cmd == nil {
-		t.Fatal("prepareDeferredAutoFlowPhaseLaunches() returned nil after source terminal closed")
+		t.Fatal("prepareDeferredAutoFlowPhaseLaunchesFrom() returned nil after source terminal closed")
 	}
 	msg := cmd()
 	if batch, ok := msg.(tea.BatchMsg); ok && len(batch) == 1 {
