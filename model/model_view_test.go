@@ -283,10 +283,13 @@ func TestModel_ViewModeHeaderShowsGroupedGitSubviews(t *testing.T) {
 	if !strings.Contains(view, "[w] worktrees") {
 		t.Error("worktrees active: header should contain '[w] worktrees'")
 	}
-	for _, want := range []string{"b branches", "s stashes", "h history", "r reflog", "2 sessions", "3 plans", "4 flows", "5 active flows"} {
+	for _, want := range []string{"b branches", "s stashes", "h history", "r reflog", "2 sessions", "3 plans", "4 flows", "^a active flows"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("worktrees active: header should show inactive %q", want)
 		}
+	}
+	if strings.Contains(view, "5 active flows") {
+		t.Fatalf("worktrees active: header should not label active flows with 5")
 	}
 
 	// Cycle the git subviews with the right arrow.

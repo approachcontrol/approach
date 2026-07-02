@@ -176,13 +176,13 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 			key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}},
 		},
 		{
-			name: "left-arrow",
+			name: "ctrl+a fallback",
 			setup: func(m Model) Model {
 				m.activePane = 1
 				m.mode = ui.ModeActiveFlows
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyLeft},
+			key: tea.KeyMsg{Type: tea.KeyCtrlA},
 		},
 		{
 			name: "right-arrow",
@@ -297,7 +297,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
 	m.activePane = 1
 
-	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
 	if cmd == nil {
 		t.Fatal("expected active Flow result to schedule refresh tick")
@@ -456,7 +456,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	})
 	m.activePane = 1
 	var activeCmd tea.Cmd
-	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if activeCmd == nil {
 		t.Fatal("expected active Flow surface entry to fetch flows")
 	}
@@ -511,9 +511,9 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	}
 	m.activePane = 1
 
-	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if cmd == nil {
-		t.Fatal("expected view 9 entry to supersede stale in-flight Flow fetch")
+		t.Fatal("expected active flows toggle to supersede stale in-flight Flow fetch")
 	}
 	if got := m.ListRequest(ui.ModeActiveFlows); got == 0 {
 		t.Fatalf("active flows list request = %d, want non-zero", got)

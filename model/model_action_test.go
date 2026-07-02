@@ -1148,7 +1148,14 @@ func TestModel_FAndShiftFKeys_NonWorktreeAndBranchModes_NoCmd(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := model.New(testRepos())
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0' + rune(tc.mode)}})
+			switch tc.mode {
+			case ui.ModeStashes:
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+			case ui.ModeHistory:
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+			case ui.ModeReflog:
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			}
 
 			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
 			if cmd != nil {

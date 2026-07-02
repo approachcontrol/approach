@@ -197,8 +197,8 @@ func isNumberedModeKey(key string) bool {
 }
 
 // switchModeFromKey routes the top-level number keys: 1 selects the Git view
-// (landing on its last-used subview), 2-5 select the remaining top-level
-// views, and 6-9 are silent no-ops kept reserved for the future.
+// (landing on its last-used subview), 2-4 select the remaining top-level
+// views, and 5-9 are silent no-ops kept reserved for the future.
 func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	if !isNumberedModeKey(key) {
 		return m, nil, false
@@ -224,4 +224,29 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	}
 	next, cmd := m.startFetchMode(mode)
 	return next, cmd, true
+}
+
+func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
+	if m.mode != ui.ModeActiveFlows {
+		previousMode := m.mode
+		m.activeFlowsReturnMode = previousMode
+		m.mode = ui.ModeActiveFlows
+		m = m.rememberGitSubview()
+		m = m.resetModeCursorsForSwitch(previousMode, m.mode)
+		return m.startActiveFlowsFetchWithRefreshTick()
+	}
+
+	returnMode := m.activeFlowsReturnMode
+	if returnMode == 0 || returnMode == ui.ModeActiveFlows {
+		returnMode = ui.ModeFlows
+	}
+	previousMode := m.mode
+	m.mode = returnMode
+	m.activeFlowsReturnMode = 0
+	m = m.rememberGitSubview()
+	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
+	if m.mode == ui.ModeFlows {
+		return m.startFlowsModeFetchWithRefreshTick()
+	}
+	return m.startFetchMode(m.mode)
 }

@@ -741,10 +741,10 @@ func renderModeHeader(mode Mode, width int) string {
 		{key: "2", name: "sessions", active: mode == ModeSessions},
 		{key: "3", name: "plans", active: mode == ModePlans},
 		{key: "4", name: "flows", active: mode == ModeFlows},
-		{key: "5", name: "active flows", active: mode == ModeActiveFlows},
 	}
+	activeFlows := modeHeaderItem{key: "^a", name: "active flows", active: mode == ModeActiveFlows}
 	separator := strings.Repeat("─", width)
-	header := renderModeHeaderRow(topLevel, width)
+	header := renderModeHeaderRowWithRight(topLevel, &activeFlows, width)
 	if IsGitMode(mode) {
 		subviews := []modeHeaderItem{
 			{key: "w", name: "worktrees", active: mode == ModeWorktrees},
@@ -758,22 +758,38 @@ func renderModeHeader(mode Mode, width int) string {
 	return header + "\n" + separator
 }
 
+func renderModeHeaderItem(item modeHeaderItem) string {
+	if item.active {
+		return activeModeStyle.Render(fmt.Sprintf("[%s] %s", item.key, item.name))
+	}
+	return inactiveModeStyle.Render(fmt.Sprintf(" %s %s", item.key, item.name))
+}
+
 func renderModeHeaderRow(items []modeHeaderItem, width int) string {
 	var parts []string
 	for _, item := range items {
-		if item.active {
-			parts = append(parts, activeModeStyle.Render(fmt.Sprintf("[%s] %s", item.key, item.name)))
-		} else {
-			parts = append(parts, inactiveModeStyle.Render(fmt.Sprintf(" %s %s", item.key, item.name)))
-		}
+		parts = append(parts, renderModeHeaderItem(item))
 	}
 	return ansi.Truncate(" "+strings.Join(parts, " "), width, "")
 }
 
-func renderActiveFlowsHeader(width int) string {
-	line := ansi.Truncate(" "+activeModeStyle.Render("active flows"), width, "")
-	separator := strings.Repeat("─", width)
-	return line + "\n" + separator
+func renderModeHeaderRowWithRight(left []modeHeaderItem, right *modeHeaderItem, width int) string {
+	leftLine := renderModeHeaderRow(left, width)
+	if right == nil {
+		return leftLine
+	}
+	rightLine := renderModeHeaderItem(*right)
+	rightWidth := ansi.StringWidth(rightLine)
+	if width <= rightWidth {
+		return ansi.Truncate(leftLine+" "+rightLine, width, "")
+	}
+	leftWidth := ansi.StringWidth(leftLine)
+	if leftWidth+rightWidth <= width {
+		return leftLine + strings.Repeat(" ", width-leftWidth-rightWidth) + rightLine
+	}
+	leftLine = ansi.Truncate(leftLine, width-rightWidth, "")
+	leftWidth = ansi.StringWidth(leftLine)
+	return leftLine + strings.Repeat(" ", width-leftWidth-rightWidth) + rightLine
 }
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
@@ -1146,7 +1162,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		navigation = append(navigation, shortcutHint{Key: "enter", Label: "pane", Inline: true})
 	}
 	if sp.ActivePane == 1 {
-		navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
+		if sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
+			navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
+		}
 		if IsGitMode(sp.Mode) {
 			navigation = append(navigation, shortcutHint{Key: "w/b/s/h/r", Label: "subview", Inline: true})
 		}
@@ -1154,6 +1172,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	global := []shortcutHint{
 		{Key: paneShortcutKeyForStatus(sp), Label: "pane"},
 		{Key: "q/esc", Label: "quit"},
+		{Key: "ctrl+a", Label: "active flows"},
 		{Key: "f2", Label: "edit prompts"},
 		{Key: "f5", Label: "refresh"},
 	}
@@ -1460,15 +1479,19 @@ func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 
 func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	sections := shortcutSections(sp)
+	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
 	if height < 20 && sp.Mode != ModeFlows && sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
 		paneKey := paneShortcutKeyForStatus(sp)
 		sections = prioritizeShortcutInSection(sections, "Global", "V", paneKey)
 		sections = prioritizeShortcutInSection(sections, "Global", "A", paneKey)
 	}
-	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && !sp.FlowSelected && height <= 9 {
+	if flowSurfaceActive && height < 24 {
+		sections = withoutShortcutKey(sections, "f2")
+	}
+	if flowSurfaceActive && !sp.FlowSelected && height <= 9 {
 		sections = withoutShortcutKeys(sections, "D", "n", "f5")
 	}
-	if (sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && sp.FlowSelected && height <= 12 {
+	if flowSurfaceActive && sp.FlowSelected && height <= 12 {
 		sections = withoutShortcutKey(sections, "n")
 	}
 	if height < 20 {
@@ -1616,19 +1639,20 @@ func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection
 		{},
 		{"f5"},
 		{"f5", "f2"},
-		{"f5", "f2", "A"},
-		{"f5", "f2", "A", "D"},
-		{"f5", "f2", "A", "D", "←/→"},
-		{"f5", "f2", "A", "D", "←/→", "↑/↓"},
-		{"f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc"},
-		{"f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
+		{"f5", "f2", "ctrl+a"},
+		{"f5", "f2", "ctrl+a", "A"},
+		{"f5", "f2", "ctrl+a", "A", "D"},
+		{"f5", "f2", "ctrl+a", "A", "D", "←/→"},
+		{"f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓"},
+		{"f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc"},
+		{"f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc", paneKey},
 	} {
 		candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, drop...)))
 		if lipgloss.Width(candidate) <= sp.Width {
 			return candidate
 		}
 	}
-	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f2", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
+	candidate := "  " + renderFooterHintList(footerSectionOrder(withoutShortcutKeys(sections, "f5", "f2", "ctrl+a", "A", "D", "←/→", "↑/↓", "q/esc", paneKey)))
 	return ansi.Truncate(candidate, sp.Width, "")
 }
 
@@ -1640,10 +1664,21 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	if lipgloss.Width(full) <= sp.Width {
 		return full
 	}
+	for _, drop := range [][]string{
+		{"f2"},
+		{"f2", "f5"},
+		{"f2", "f5", "ctrl+a"},
+	} {
+		candidate := "  " + renderFooterHintList(flowFooterSectionOrder(withoutShortcutKeys(sections, drop...)))
+		if lipgloss.Width(candidate) <= sp.Width {
+			return candidate
+		}
+	}
 	hints := flattenShortcutHints(sections)
 	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
 	compactBase := footerHintsForKeys(hints, paneBackShortcutKey, "q/esc")
 	tinyBase := footerHintsForKeys(hints, "q/esc")
+	toggle := footerHintsForKeys(hints, "ctrl+a")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
 	coreActions := footerHintsForKeys(hints, "D", "h", "enter", "g", "m", "d")
@@ -1657,6 +1692,12 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 	actionsWithoutAgentAndPreferences := footerHintsForKeys(hints, "D", "n", "h", "enter", "g", "m", "x", "o", "y", "d", "r", "a", "f", "F")
 
 	for _, parts := range [][]string{
+		appendParts(base, toggle, upDown, arrow, actions),
+		appendParts(base, toggle, upDown, arrow, actionsWithoutEffort),
+		appendParts(base, toggle, arrow, actionsWithoutModelAndEffort),
+		appendParts(base, toggle, arrow, actionsWithoutAgentAndPreferences),
+		appendParts(base, toggle, coreActionsWithAuto),
+		appendParts(base, toggle, coreActions),
 		appendParts(base, upDown, arrow, actions),
 		appendParts(base, upDown, arrow, actionsWithoutEffort),
 		appendParts(base, upDown, arrow, actionsWithoutModelAndEffort),

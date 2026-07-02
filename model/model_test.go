@@ -1835,9 +1835,9 @@ func TestModel_NumberedModeSwitchClearsStatus(t *testing.T) {
 func TestModel_LeftCyclesTopLevelViewsIntoGitThenWrapsGitSubviews(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
-	for _, want := range []ui.Mode{ui.ModeFlows, ui.ModePlans, ui.ModeSessions, ui.ModeWorktrees} {
+	for _, want := range []ui.Mode{ui.ModePlans, ui.ModeSessions, ui.ModeWorktrees} {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
 		if m.Mode() != want {
 			t.Fatalf("mode after left = %d, want %d", m.Mode(), want)
@@ -1905,24 +1905,24 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 	before = listRequests(m)
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("Mode() = %d, want active flows after right from flows", m.Mode())
+	if m.Mode() != ui.ModeReflog {
+		t.Fatalf("Mode() = %d, want last-used reflog after right from flows", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
-		t.Fatal("right from flows produced nil cmd, want active flows fetch")
+		t.Fatal("right from flows produced nil cmd, want reflog fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeReflog)
 	msgs = runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
-		t.Fatalf("right from flows command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
+	if !hasListFetchForMode(msgs, ui.ModeReflog, m.ListRequest(ui.ModeReflog)) {
+		t.Fatalf("right from flows command messages = %#v, want reflog fetch for request %d", msgs, m.ListRequest(ui.ModeReflog))
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeReflog {
-		t.Fatalf("Mode() = %d, want reflog: Git re-entry lands on the last-used subview", m.Mode())
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("Mode() = %d, want worktrees after cycling right inside Git", m.Mode())
 	}
 	if m.FlowSelected() != 0 || m.ExpandedFlowID() != "" {
 		t.Fatalf("flow state selected=%d expanded=%q, want reset after leaving the flow surface", m.FlowSelected(), m.ExpandedFlowID())
@@ -1946,13 +1946,13 @@ func TestModel_HKeyOpensHistorySubviewAndLAliasesRightInFlows(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	before = listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if m.ActivePane() != 1 || m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("l at flows activePane=%d mode=%d, want right pane active flows", m.ActivePane(), m.Mode())
+	if m.ActivePane() != 1 || m.Mode() != ui.ModeHistory {
+		t.Fatalf("l at flows activePane=%d mode=%d, want right pane history", m.ActivePane(), m.Mode())
 	}
 	if cmd == nil {
-		t.Fatal("l at flows produced nil cmd, want active flows fetch")
+		t.Fatal("l at flows produced nil cmd, want history fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeHistory)
 }
 
 func TestModel_RightFromStashesGoesToHistory(t *testing.T) {

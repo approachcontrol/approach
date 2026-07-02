@@ -7,7 +7,7 @@ import (
 )
 
 // topLevelModeForNumberedKey maps the top-level number keys to their views.
-// 1 is the Git view, which resolves to the last-used git subview; 6-9 are
+// 1 is the Git view, which resolves to the last-used git subview; 5-9 are
 // unbound and report !ok so callers can treat them as no-ops.
 func (m Model) topLevelModeForNumberedKey(key string) (ui.Mode, bool) {
 	switch key {
@@ -19,8 +19,6 @@ func (m Model) topLevelModeForNumberedKey(key string) (ui.Mode, bool) {
 		return ui.ModePlans, true
 	case "4":
 		return ui.ModeFlows, true
-	case "5":
-		return ui.ModeActiveFlows, true
 	}
 	return ui.ModeWorktrees, false
 }

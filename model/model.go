@@ -73,6 +73,7 @@ type Model struct {
 	pendingRepoSelection       string
 	listRequests               [listRequestSlots]uint64
 	activePane                 int // 0=left (repos), 1=right (content)
+	activeFlowsReturnMode      ui.Mode
 	destructive                bool
 	status                     statusError
 	visibleRepoFetchSeq        uint64

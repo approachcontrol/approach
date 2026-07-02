@@ -55,7 +55,7 @@ func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstor
 	if m.ActivePane() == 0 {
 		m = inRightPane(m)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	m, _ = update(m, model.ActiveFlowResultMsg{Flows: records, ListRequest: m.ListRequest(ui.ModeActiveFlows)})
 	return m
 }
@@ -127,12 +127,12 @@ func TestModel_Key9ShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.T
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 30})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("mode = %v, want worktrees before view 9", m.Mode())
+		t.Fatalf("mode = %v, want worktrees before active flows toggle", m.Mode())
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if cmd == nil {
-		t.Fatal("view 9 should start or continue a Flow refresh")
+		t.Fatal("active flows toggle should start or continue a Flow refresh")
 	}
 	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
 	if gotFilter.RepoPath != "" {
@@ -183,7 +183,7 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 24})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	result := activeFlowResultFromCommand(t, cmd)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
@@ -240,7 +240,7 @@ func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 18})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if cmd == nil {
 		t.Fatal("expected active Flow fetch command")
 	}
@@ -278,7 +278,7 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m, _ = update(m, flowResultFromCommand(t, cmd))
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	m, _ = update(m, activeFlowResultFromCommand(t, cmd))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -406,62 +406,39 @@ func TestModel_ActiveFlowsRefreshDoesNotPrepareAutoLaunch(t *testing.T) {
 	}
 }
 
-func TestModel_ActiveFlowsRightNavigationWrapsToWorktrees(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		key  tea.KeyMsg
-	}{
-		{name: "right arrow", key: tea.KeyMsg{Type: tea.KeyRight}},
-		{name: "l", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			flow := flowWithPhaseDetails()
-			m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-			m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-			before := listRequests(m)
-
-			m, cmd := update(m, tc.key)
-			if cmd == nil {
-				t.Fatalf("%s from active Flow surface returned nil command, want worktrees fetch", tc.name)
-			}
-			if m.ActivePane() != 1 {
-				t.Fatalf("%s from active Flow surface active pane = %d, want right pane", tc.name, m.ActivePane())
-			}
-			if m.Mode() != ui.ModeWorktrees {
-				t.Fatalf("%s from active Flow surface mode = %d, want worktrees", tc.name, m.Mode())
-			}
-			view := ansi.Strip(m.View())
-			if strings.Contains(view, "Active flows") {
-				t.Fatalf("%s from active Flow surface should switch away from active Flow view:\n%s", tc.name, view)
-			}
-			assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
-		})
-	}
-}
-
-func TestModel_ActiveFlowsLeftNavigationMovesToFlows(t *testing.T) {
+func TestModel_ActiveFlowsHorizontalNavigationIsInert(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
 	before := listRequests(m)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if cmd == nil {
-		t.Fatal("left from active Flow surface returned nil command, want flows fetch")
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "left arrow", key: tea.KeyMsg{Type: tea.KeyLeft}},
+		{name: "right arrow", key: tea.KeyMsg{Type: tea.KeyRight}},
+		{name: "l", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd tea.Cmd
+			m, cmd = update(m, tc.key)
+			if cmd != nil {
+				t.Fatalf("%s from active Flow surface returned command %T, want nil", tc.name, cmd)
+			}
+			if m.ActivePane() != 1 {
+				t.Fatalf("%s from active Flow surface active pane = %d, want right pane", tc.name, m.ActivePane())
+			}
+			if m.Mode() != ui.ModeActiveFlows {
+				t.Fatalf("%s from active Flow surface mode = %d, want active flows", tc.name, m.Mode())
+			}
+			if view := ansi.Strip(m.View()); !strings.Contains(view, "Active flows") {
+				t.Fatalf("%s from active Flow surface should keep active Flow view:\n%s", tc.name, view)
+			}
+		})
 	}
-	if m.ActivePane() != 1 {
-		t.Fatalf("left from active Flow surface active pane = %d, want right pane", m.ActivePane())
-	}
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("left from active Flow surface mode = %d, want flows", m.Mode())
-	}
-	view := ansi.Strip(m.View())
-	if strings.Contains(view, "Active flows") {
-		t.Fatalf("left from active Flow surface should switch to normal flows:\n%s", view)
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
+	assertListRequestsUnchanged(t, before, m)
 }
 
 func TestModel_ActiveFlowsNewFlowKeyIsIgnored(t *testing.T) {
@@ -501,7 +478,7 @@ func TestModel_ActiveFlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -3526,7 +3503,7 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testi
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	request := m.ListRequest(ui.ModeFlows)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if cmd == nil {
 		t.Fatal("switching to active flows returned nil command, want active flows fetch")
 	}
@@ -5082,7 +5059,7 @@ func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 	}
 }
 
-func TestModel_RightArrowFromFlowsMovesToActiveFlows(t *testing.T) {
+func TestModel_RightArrowFromFlowsWrapsToGit(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -5093,18 +5070,18 @@ func TestModel_RightArrowFromFlowsMovesToActiveFlows(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 	if cmd == nil {
-		t.Fatal("right from flows returned nil command, want active flows fetch")
+		t.Fatal("right from flows returned nil command, want worktrees fetch")
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("right from flows mode = %d, want active flows", m.Mode())
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("right from flows mode = %d, want worktrees", m.Mode())
 	}
-	assertOnlyListRequestChanged(t, beforeRequests, m, ui.ModeActiveFlows)
+	assertOnlyListRequestChanged(t, beforeRequests, m, ui.ModeWorktrees)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
-		t.Fatalf("right from flows command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
+	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
+		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
 	}
 }
 
@@ -5373,7 +5350,7 @@ func TestModel_ActiveFlowDeleteWithNoVisibleFlowIgnoresUnderlyingStash(t *testin
 		}},
 		ListRequest: m.ListRequest(ui.ModeStashes),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -5668,7 +5645,7 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_RightNavigationMovesFromFlowsToActiveFlowsUnderGroupedKeys(t *testing.T) {
+func TestModel_RightNavigationMovesFromFlowsToGitUnderGroupedKeys(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
@@ -5692,19 +5669,19 @@ func TestModel_RightNavigationMovesFromFlowsToActiveFlowsUnderGroupedKeys(t *tes
 	}
 	before := listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeActiveFlows {
-		t.Fatalf("right from flows mode = %d, want active flows", m.Mode())
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("right from flows mode = %d, want worktrees", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
-		t.Fatal("right from flows returned nil command, want active flows fetch")
+		t.Fatal("right from flows returned nil command, want worktrees fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeActiveFlows)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeActiveFlows, m.ListRequest(ui.ModeActiveFlows)) {
-		t.Fatalf("right from flows command messages = %#v, want active flows fetch for request %d", msgs, m.ListRequest(ui.ModeActiveFlows))
+	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
+		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
 	}
 }
 

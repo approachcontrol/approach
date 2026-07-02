@@ -56,6 +56,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	m = m.clearAnyStatus()
 
+	if !m.searchActive && key == "ctrl+a" {
+		return m.handleActiveFlowsToggle()
+	}
+
 	if !m.searchActive && m.activePane == 1 && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
@@ -534,10 +538,6 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleCursorUp()
 	case "down", "j":
 		return m.handleCursorDown()
-	case "left":
-		return m.handleHorizontalNavigation(-1)
-	case "right", "l":
-		return m.handleHorizontalNavigation(1)
 	case "h":
 		return m.handleToggleFlowHeadless()
 	case "g":
@@ -600,8 +600,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 
 // modeAfterHorizontalNavigation steps the view for a left/right arrow press.
 // Inside the Git view the arrows cycle the five git subviews with wrap and
-// never spill into another top-level view; elsewhere they cycle the five
-// top-level views with wrap, entering Git at its last-used subview.
+// never spill into another top-level view; elsewhere they cycle the four
+// arrow-reachable top-level views with wrap, entering Git at its last-used
+// subview. Active Flows is intentionally outside this cycle.
 func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 	if ui.IsGitMode(m.mode) {
 		next := m.mode + ui.Mode(direction)
@@ -613,7 +614,7 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 		}
 		return next
 	}
-	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows, ui.ModeActiveFlows}
+	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows}
 	for i, stop := range stops {
 		if stop == m.mode {
 			return stops[(i+direction+len(stops))%len(stops)]
