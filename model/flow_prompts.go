@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/artifacts"
 )
 
 const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with wtui-flow."
@@ -24,21 +23,21 @@ type FlowPromptTemplates struct {
 	Generic        string
 }
 
-func (templates FlowPromptTemplates) templateForPhase(phaseID string) string {
-	switch artifacts.NormalizePhaseID(phaseID) {
-	case "plan":
+func (templates FlowPromptTemplates) templateForPhase(phase flowstore.FlowPhase) string {
+	switch flowstore.SemanticKind(phase) {
+	case flowstore.KindPlan:
 		return templates.Plan
-	case "plan-review":
+	case flowstore.KindPlanReview:
 		return templates.PlanReview
-	case "implementation":
+	case flowstore.KindImplementation:
 		return templates.Implementation
-	case "review-loop":
+	case flowstore.KindReviewLoop:
 		return templates.ReviewLoop
-	case "pr-creation":
+	case flowstore.KindPRCreation:
 		return templates.PRCreation
-	case "autoreview":
+	case flowstore.KindAutoreview:
 		return templates.Autoreview
-	case "merge":
+	case flowstore.KindMerge:
 		return templates.Merge
 	default:
 		return templates.Generic
@@ -114,25 +113,25 @@ func lastNonEmptyPromptLine(text string) string {
 }
 
 func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string, templates FlowPromptTemplates) string {
-	if template := templates.templateForPhase(phase.PhaseID); strings.TrimSpace(template) != "" {
+	if template := templates.templateForPhase(phase); strings.TrimSpace(template) != "" {
 		prompt := renderFlowPromptTemplate(template, record, phase, planPath, planBody)
 		return ensureFlowPhaseDoneInstruction(prompt, template)
 	}
 	var prompt string
-	switch artifacts.NormalizePhaseID(phase.PhaseID) {
-	case "plan":
+	switch flowstore.SemanticKind(phase) {
+	case flowstore.KindPlan:
 		prompt = flowPlanPrompt(record, templates)
-	case "plan-review":
+	case flowstore.KindPlanReview:
 		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
-	case "implementation":
+	case flowstore.KindImplementation:
 		prompt = flowImplementationPrompt(record, phase, planPath, planBody)
-	case "review-loop":
+	case flowstore.KindReviewLoop:
 		prompt = flowReviewLoopPrompt(record, phase, planPath, planBody)
-	case "pr-creation":
+	case flowstore.KindPRCreation:
 		prompt = flowPRCreationPrompt(record, phase, planPath, planBody)
-	case "autoreview":
+	case flowstore.KindAutoreview:
 		prompt = flowAutoreviewPrompt(record, phase, planPath, planBody)
-	case "merge":
+	case flowstore.KindMerge:
 		prompt = flowMergePrompt(record, phase, planPath, planBody)
 	default:
 		prompt = flowGenericPhasePrompt(record, phase, planPath, planBody)
@@ -140,9 +139,9 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 	return ensureFlowPhaseDoneInstruction(prompt, "")
 }
 
-func flowPhasePromptNeedsPlanBody(phaseID string) bool {
-	switch artifacts.NormalizePhaseID(phaseID) {
-	case "plan", "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge":
+func flowPhasePromptNeedsPlanBody(phase flowstore.FlowPhase) bool {
+	switch flowstore.SemanticKind(phase) {
+	case flowstore.KindPlan, flowstore.KindPlanReview, flowstore.KindImplementation, flowstore.KindReviewLoop, flowstore.KindPRCreation, flowstore.KindAutoreview, flowstore.KindMerge:
 		return false
 	default:
 		return true
@@ -166,7 +165,7 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 	writeFlowChangeMetadata(&b, record)
 	writeFlowPromptHeader(&b, record, "")
 	writeFlowPromptPlanContext(&b, record, "")
-	writeFlowPromptPhaseSummary(&b, record, "Plan Review context", "plan-review")
+	writeFlowPromptPhaseSummaryByKind(&b, record, "Plan Review context", flowstore.KindPlanReview)
 	writeFlowRestartPromptIfNeeded(&b, record, phase)
 	b.WriteString("\nUse the commit skill before completing this phase.")
 	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the implementation is complete, blocked, or needs attention.")
@@ -291,16 +290,16 @@ func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPha
 	return b.String()
 }
 
-func writeFlowPromptPhaseSummary(b *strings.Builder, record flowstore.FlowRecord, title, phaseID string) {
+func writeFlowPromptPhaseSummaryByKind(b *strings.Builder, record flowstore.FlowRecord, title, kind string) {
 	b.WriteString("\n")
 	b.WriteString(title)
 	b.WriteString(":\n")
-	if phase, ok := flowPhaseByID(record, phaseID); ok {
+	if phase, ok := flowstore.FindPhaseByKind(record, kind); ok {
 		writeFlowPhaseContext(b, phase)
 		return
 	}
 	b.WriteString("- Phase: ")
-	b.WriteString(phaseID)
+	b.WriteString(kind)
 	b.WriteString("\n")
 }
 
@@ -322,7 +321,7 @@ func writeFlowPromptHeader(b *strings.Builder, record flowstore.FlowRecord, plan
 }
 
 func writeFlowPromptPlanContext(b *strings.Builder, record flowstore.FlowRecord, planBody string) {
-	if plan, ok := flowPhaseByID(record, "plan"); ok {
+	if plan, ok := flowstore.FindPhaseByKind(record, flowstore.KindPlan); ok {
 		b.WriteString("\nPrior Plan context:\n")
 		writeFlowPhaseContext(b, plan)
 	}

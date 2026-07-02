@@ -159,6 +159,43 @@ func TestFlowPhasePromptIncludesIssueMetadata(t *testing.T) {
 	}
 }
 
+func TestFlowPhasePromptUsesSemanticKindForCustomID(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Instructions: "Build the requested change.",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/plans/plan-1/plan.md",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-kind",
+		Branch:       "flow/kind",
+		Commit:       "abc123",
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     42,
+			URL:        "https://github.com/brian-bell/wtui/pull/42",
+			HeadBranch: "flow/kind",
+			BaseBranch: "main",
+		},
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "write-plan", Kind: flowstore.KindPlan, Title: "Write Plan", Status: flowstore.PhaseCompleted},
+			{PhaseID: "design-review", Kind: flowstore.KindPlanReview, Title: "Design Review", Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved},
+		},
+	}
+
+	prPrompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "open-pr", Kind: flowstore.KindPRCreation, Title: "Open PR"}, record.PlanPath, "", model.FlowPromptTemplates{})
+	if !strings.Contains(prPrompt, "Use the ship skill") || strings.Contains(prPrompt, "Saved plan body") {
+		t.Fatalf("custom pr_creation prompt should use PR template without plan body:\n%s", prPrompt)
+	}
+	genericPrompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "qa-check", Title: "QA Check"}, record.PlanPath, "Plan body here.", model.FlowPromptTemplates{})
+	if !strings.Contains(genericPrompt, "Saved plan body:\nPlan body here.") {
+		t.Fatalf("unknown kind prompt should include plan body:\n%s", genericPrompt)
+	}
+	reviewPrompt := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "build", Kind: flowstore.KindImplementation, Title: "Build"}, "", "", model.FlowPromptTemplates{})
+	if !strings.Contains(reviewPrompt, "design-review") {
+		t.Fatalf("implementation prompt should pull plan-review context by kind:\n%s", reviewPrompt)
+	}
+}
+
 func TestFlowPromptPhaseDoneInstructionDuplicateGuard(t *testing.T) {
 	instruction := model.FlowPhaseDoneInstructionForTest()
 	record := flowstore.FlowRecord{

@@ -63,6 +63,15 @@ func validatePhaseGraph(phases []FlowPhase) error {
 	if len(graph.topo) != len(phases) {
 		return fmt.Errorf("phase graph contains a cycle: %s", cycleDescription(phases, graph))
 	}
+	mergeCount := 0
+	for _, phase := range phases {
+		if SemanticKind(phase) == KindMerge {
+			mergeCount++
+		}
+	}
+	if mergeCount > 1 {
+		return fmt.Errorf("phase graph can include at most one merge phase")
+	}
 	topLevelCount := 0
 	rootCount := 0
 	for _, phase := range phases {
@@ -479,7 +488,7 @@ func allDependencyGatesSatisfied(record FlowRecord, graph phaseGraph, idx int) b
 func phaseDependsOnPlanReviewFailure(record FlowRecord, graph phaseGraph, idx int, failedPlanReview map[int]bool) bool {
 	for _, prereq := range graph.prereqsByIdx[idx] {
 		phase := record.Phases[prereq]
-		if failedPlanReview[prereq] || phase.PhaseID == "plan-review" && !phaseSatisfiesDownstreamGate(record, phase) {
+		if failedPlanReview[prereq] || SemanticKind(phase) == KindPlanReview && !phaseSatisfiesDownstreamGate(record, phase) {
 			return true
 		}
 	}
@@ -505,7 +514,7 @@ func PhaseLaunchEligible(record FlowRecord, orderedIndex int) bool {
 	if !allDependencyGatesSatisfied(FlowRecord{PR: record.PR, Phases: ordered}, graph, orderedIndex) {
 		return false
 	}
-	return artifacts.NormalizePhaseID(phase.PhaseID) != "merge"
+	return SemanticKind(phase) != KindMerge
 }
 
 func phaseLaunchEligibleAtIndex(record FlowRecord, phaseIndex int) bool {
@@ -523,7 +532,7 @@ func phaseLaunchEligibleAtIndex(record FlowRecord, phaseIndex int) bool {
 	if !allDependencyGatesSatisfied(record, graph, phaseIndex) {
 		return false
 	}
-	return artifacts.NormalizePhaseID(phase.PhaseID) != "merge"
+	return SemanticKind(phase) != KindMerge
 }
 
 // FirstLaunchablePhase returns the first ordered phase that can be launched.

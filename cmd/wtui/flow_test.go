@@ -1126,6 +1126,64 @@ func TestRunFlowPhaseActionsDefaultPlanReviewOutcomes(t *testing.T) {
 	}
 }
 
+func TestRunFlowPhaseActionsDefaultOutcomesByKind(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-action-outcomes",
+		Title:        "Custom Action Outcomes",
+		Instructions: "default outcomes by kind",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/custom-action-outcomes",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "design-review", Title: "Design Review", Kind: flowstore.KindPlanReview, DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "second-review", Title: "Second Review", Kind: flowstore.KindAutoreview, DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 2, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err = run([]string{
+		"wtui", "flow", "phase", "complete",
+		"--flow-id", record.FlowID,
+		"--phase-id", "design-review",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run plan-review-kind action returned error: %v", err)
+	}
+	var result flowPhaseActionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Outcome != flowstore.OutcomeApproved {
+		t.Fatalf("design-review outcome = %q, want approved", result.UpdatedPhase.Outcome)
+	}
+
+	stdout.Reset()
+	err = run([]string{
+		"wtui", "flow", "phase", "complete",
+		"--flow-id", record.FlowID,
+		"--phase-id", "second-review",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{stdout: &stdout}))
+	if err != nil {
+		t.Fatalf("run autoreview-kind action returned error: %v", err)
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON action result: %v\n%s", err, stdout.String())
+	}
+	if result.UpdatedPhase.Outcome != "passed" {
+		t.Fatalf("second-review outcome = %q, want passed", result.UpdatedPhase.Outcome)
+	}
+}
+
 func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
 	root := t.TempDir()
 	for _, tc := range []struct {
@@ -1441,7 +1499,7 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 				}
 				return record
 			},
-			want: "requires satisfied predecessors",
+			want: "requires running recoverable phase",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1465,7 +1523,11 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 				t.Fatalf("Read() error = %v", err)
 			}
 			after := phaseByID(read, "implementation")
-			if before.Status != after.Status || strings.Join(before.LaunchIDs, ",") != strings.Join(after.LaunchIDs, ",") || len(before.Sessions) != len(after.Sessions) {
+			wantAfterStatus := before.Status
+			if tc.name == "unsatisfied predecessors" {
+				wantAfterStatus = flowstore.PhasePending
+			}
+			if after.Status != wantAfterStatus || strings.Join(before.LaunchIDs, ",") != strings.Join(after.LaunchIDs, ",") || len(before.Sessions) != len(after.Sessions) {
 				t.Fatalf("record changed after rejected reset: before=%#v after=%#v", before, after)
 			}
 		})

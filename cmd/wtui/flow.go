@@ -482,13 +482,21 @@ func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) e
 	if *phaseID == "" {
 		return fmt.Errorf("flow phase %s requires --phase-id", spec.command)
 	}
-	actionOutcome := strings.TrimSpace(*outcome)
-	if actionOutcome == "" {
-		actionOutcome = defaultFlowPhaseActionOutcome(normalizeFlowPhaseID(*phaseID), spec)
-	}
 	store, err := newFlowStore(*stateRoot, deps)
 	if err != nil {
 		return err
+	}
+	actionOutcome := strings.TrimSpace(*outcome)
+	if actionOutcome == "" {
+		record, err := store.Read(*flowID)
+		if err != nil {
+			return err
+		}
+		phase, ok := flowPhaseByID(record, *phaseID)
+		if !ok {
+			return fmt.Errorf("phase %q not found in flow %q", *phaseID, *flowID)
+		}
+		actionOutcome = defaultFlowPhaseActionOutcome(flowstore.SemanticKind(phase), spec)
 	}
 	record, err := store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  *flowID,
@@ -514,11 +522,11 @@ func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) e
 	})
 }
 
-func defaultFlowPhaseActionOutcome(phaseID string, spec flowPhaseActionSpec) string {
-	switch phaseID {
-	case "plan-review":
+func defaultFlowPhaseActionOutcome(kind string, spec flowPhaseActionSpec) string {
+	switch kind {
+	case flowstore.KindPlanReview:
 		return spec.defaultOutcome
-	case "autoreview":
+	case flowstore.KindAutoreview:
 		switch spec.status {
 		case flowstore.PhaseCompleted:
 			return "passed"

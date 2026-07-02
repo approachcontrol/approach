@@ -1284,7 +1284,7 @@ func TestStoreResetAwaitingSessionPhaseRejectsIneligiblePhases(t *testing.T) {
 				return record
 			},
 			phaseID: "beta",
-			want:    "requires satisfied predecessors",
+			want:    "requires running recoverable phase",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1462,8 +1462,12 @@ func TestStoreResetRecoverableRunningPhaseRejectsLiveSessionMergedFromDuplicateR
 		t.Fatalf("phase rows changed after rejected reset: %#v", read.Phases)
 	}
 	for i := range read.Phases {
+		wantStatus := record.Phases[i].Status
+		if record.Phases[i].PhaseID == "omega" {
+			wantStatus = flowstore.PhaseReady
+		}
 		if read.Phases[i].PhaseID != record.Phases[i].PhaseID ||
-			read.Phases[i].Status != record.Phases[i].Status ||
+			read.Phases[i].Status != wantStatus ||
 			strings.Join(read.Phases[i].LaunchIDs, ",") != strings.Join(record.Phases[i].LaunchIDs, ",") ||
 			len(read.Phases[i].Sessions) != len(record.Phases[i].Sessions) {
 			t.Fatalf("phase %d changed after rejected reset: before=%#v after=%#v", i, record.Phases[i], read.Phases[i])
@@ -1515,8 +1519,12 @@ func TestStoreResetRecoverableRunningPhaseRejectsOtherLiveLaunchMergedFromDuplic
 		t.Fatalf("phase rows changed after rejected reset: %#v", read.Phases)
 	}
 	for i := range read.Phases {
+		wantStatus := record.Phases[i].Status
+		if record.Phases[i].PhaseID == "omega" {
+			wantStatus = flowstore.PhaseReady
+		}
 		if read.Phases[i].PhaseID != record.Phases[i].PhaseID ||
-			read.Phases[i].Status != record.Phases[i].Status ||
+			read.Phases[i].Status != wantStatus ||
 			strings.Join(read.Phases[i].LaunchIDs, ",") != strings.Join(record.Phases[i].LaunchIDs, ",") ||
 			len(read.Phases[i].Sessions) != len(record.Phases[i].Sessions) {
 			t.Fatalf("phase %d changed after rejected reset: before=%#v after=%#v", i, record.Phases[i], read.Phases[i])
@@ -3020,8 +3028,8 @@ func TestStoreSetPhaseConcurrentUpdatesDoNotOverwriteEachOther(t *testing.T) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		Phases: []flowstore.FlowPhase{
-			{PhaseID: "plan", Title: "Plan", Kind: "plan", Status: flowstore.PhaseRunning, Order: 1, CreatedAt: now, UpdatedAt: now},
-			{PhaseID: "implementation", Title: "Implementation", Kind: "implementation", Status: flowstore.PhaseRunning, Order: 2, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, DependsOn: []string{}, Status: flowstore.PhaseRunning, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, DependsOn: []string{}, Status: flowstore.PhaseRunning, Order: 2, CreatedAt: now, UpdatedAt: now},
 		},
 	})
 	if err != nil {
@@ -5646,6 +5654,209 @@ func TestCreateRejectsCyclicPhases(t *testing.T) {
 	}
 }
 
+func TestKindConstantsAndSemanticKind(t *testing.T) {
+	want := map[string]string{
+		"plan":                 flowstore.KindPlan,
+		"plan_review":          flowstore.KindPlanReview,
+		"implementation":       flowstore.KindImplementation,
+		"review_loop":          flowstore.KindReviewLoop,
+		"pr_creation":          flowstore.KindPRCreation,
+		"autoreview":           flowstore.KindAutoreview,
+		"merge":                flowstore.KindMerge,
+		"implementation_child": flowstore.KindImplementationChild,
+	}
+	for value, got := range want {
+		if got != value {
+			t.Fatalf("kind constant = %q, want %q", got, value)
+		}
+	}
+	if got := flowstore.SemanticKind(flowstore.FlowPhase{PhaseID: "plan-review"}); got != flowstore.KindPlanReview {
+		t.Fatalf("SemanticKind(plan-review) = %q, want plan_review", got)
+	}
+	if got := flowstore.SemanticKind(flowstore.FlowPhase{PhaseID: "plan-review", Kind: flowstore.KindImplementation}); got != flowstore.KindImplementation {
+		t.Fatalf("SemanticKind(explicit kind) = %q, want implementation", got)
+	}
+	if got := flowstore.SemanticKind(flowstore.FlowPhase{PhaseID: "custom"}); got != "" {
+		t.Fatalf("SemanticKind(custom) = %q, want empty", got)
+	}
+}
+
+func TestReadBackfillsKindFromWellKnownID(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260607T120000Z-kind-backfill", []flowstore.FlowPhase{
+		graphPhase(now, "plan", flowstore.PhaseCompleted, nil),
+		graphPhase(now, "plan-review", flowstore.PhaseCompleted, nil),
+	})
+	record.Phases[1].Outcome = ""
+	writeFreshFlowRecordForTest(t, root, record)
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	review := phaseByID(t, read, "plan-review")
+	if review.Kind != flowstore.KindPlanReview {
+		t.Fatalf("plan-review Kind = %q, want %q", review.Kind, flowstore.KindPlanReview)
+	}
+	if review.Outcome != flowstore.OutcomeApproved {
+		t.Fatalf("plan-review Outcome = %q, want approved", review.Outcome)
+	}
+}
+
+func TestDownstreamGateByKind(t *testing.T) {
+	pr := flowstore.PullRequest{
+		Provider:   "github",
+		Number:     42,
+		URL:        "https://github.com/brian-bell/wtui/pull/42",
+		HeadBranch: "flow/kind",
+		BaseBranch: "main",
+	}
+	tests := []struct {
+		name  string
+		phase flowstore.FlowPhase
+		pr    flowstore.PullRequest
+		want  bool
+	}{
+		{name: "plan_review approved", phase: flowstore.FlowPhase{PhaseID: "design-review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseCompleted, Outcome: flowstore.OutcomeApproved}, want: true},
+		{name: "plan_review missing outcome", phase: flowstore.FlowPhase{PhaseID: "design-review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseCompleted}, want: false},
+		{name: "pr_creation with target", phase: flowstore.FlowPhase{PhaseID: "open-pr", Kind: flowstore.KindPRCreation, Status: flowstore.PhaseCompleted}, pr: pr, want: true},
+		{name: "pr_creation missing target", phase: flowstore.FlowPhase{PhaseID: "open-pr", Kind: flowstore.KindPRCreation, Status: flowstore.PhaseCompleted}, want: false},
+		{name: "default completed", phase: flowstore.FlowPhase{PhaseID: "verify", Kind: flowstore.KindImplementation, Status: flowstore.PhaseCompleted}, want: true},
+		{name: "id ignored when kind differs", phase: flowstore.FlowPhase{PhaseID: "plan-review", Kind: flowstore.KindImplementation, Status: flowstore.PhaseCompleted}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := flowstore.FlowRecord{PR: tc.pr}
+			if got := flowstore.PhaseGateSatisfied(record, tc.phase); got != tc.want {
+				t.Fatalf("PhaseGateSatisfied() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReviewOutcomeValidationByKind(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-review-validation",
+		Title:        "Custom Review",
+		Instructions: "validate custom review outcomes",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "design-review", Title: "Design Review", Kind: flowstore.KindPlanReview, DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 1, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	_, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "design-review", Status: flowstore.PhaseCompleted})
+	if err == nil || !strings.Contains(err.Error(), "design-review (plan_review) completed requires outcome") {
+		t.Fatalf("SetPhase() error = %v, want custom review outcome validation", err)
+	}
+}
+
+func TestMergeKindPhaseByCustomID(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-merge-kind",
+		Title:        "Custom Merge",
+		Instructions: "merge by kind",
+		RepoPath:     filepath.Join(root, "repo"),
+		Branch:       "flow/custom-merge",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 1, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "ship", LaunchID: "launch-1", AutoLaunch: true})
+	if err == nil || !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("auto AddPhaseLaunchID(custom merge) error = %v, want auto-launch outdated", err)
+	}
+	record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "ship", Status: flowstore.PhaseCompleted, Outcome: flowstore.MergeMerged})
+	if err != nil {
+		t.Fatalf("SetPhase(ship completed) error = %v", err)
+	}
+	record.PR = flowstore.PullRequest{Provider: "github", Number: 42, URL: "https://github.com/brian-bell/wtui/pull/42", HeadBranch: "flow/custom-merge", BaseBranch: "main"}
+	record, err = store.SetPR(flowstore.PRUpdate{FlowID: record.FlowID, Provider: record.PR.Provider, Number: record.PR.Number, URL: record.PR.URL, HeadBranch: record.PR.HeadBranch, BaseBranch: record.PR.BaseBranch})
+	if err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	_, err = store.SetMerge(flowstore.MergeUpdate{FlowID: record.FlowID, Status: flowstore.MergeMerged, Commit: "abc123", MergedAt: now})
+	if err != nil {
+		t.Fatalf("SetMerge(custom merge kind) error = %v", err)
+	}
+}
+
+func TestGraphRejectsTwoMergeKindPhases(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	_, err = store.Create(flowstore.FlowRecord{
+		Title:        "Two merges",
+		Instructions: "reject ambiguous merge phases",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, DependsOn: []string{}, Status: flowstore.PhasePending, Order: 1, CreatedAt: now, UpdatedAt: now},
+			{PhaseID: "release", Title: "Release", Kind: flowstore.KindMerge, DependsOn: []string{}, Status: flowstore.PhasePending, Order: 2, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "at most one merge phase") {
+		t.Fatalf("Create() error = %v, want single merge validation", err)
+	}
+}
+
+func TestAddChildPhaseUnderCustomImplementationID(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-implementation-parent",
+		Title:        "Custom Implementation",
+		Instructions: "children by kind",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "build", Title: "Build", Kind: flowstore.KindImplementation, DependsOn: []string{}, Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	updated, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{FlowID: record.FlowID, ParentPhaseID: "build", PhaseID: "api", Title: "API", Order: 1})
+	if err != nil {
+		t.Fatalf("AddChildPhase(custom implementation) error = %v", err)
+	}
+	child := phaseByID(t, updated, "api")
+	if child.ParentPhaseID != "build" || child.Kind != flowstore.KindImplementationChild {
+		t.Fatalf("child = %#v, want implementation child under build", child)
+	}
+	_, err = store.AddChildPhase(flowstore.ChildPhaseUpdate{FlowID: record.FlowID, ParentPhaseID: "missing", PhaseID: "x", Title: "X", Order: 1})
+	if err == nil || !strings.Contains(err.Error(), `flow "custom-implementation-parent"`) {
+		t.Fatalf("AddChildPhase(missing parent) error = %v, want flow-loaded parent error", err)
+	}
+}
+
 func TestCreateRejectsChildDeclaredDependencies(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
@@ -5837,15 +6048,15 @@ func TestStoreAddPhaseLaunchIDRejectsReadyPhaseWithUnsatisfiedDependency(t *test
 		LaunchID:   "launch-stale-ready",
 		AutoLaunch: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "not eligible") {
-		t.Fatalf("AddPhaseLaunchID(stale ready) error = %v, want not eligible", err)
+	if err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("AddPhaseLaunchID(stale ready) error = %v, want not ready", err)
 	}
 	read, err := store.Read(record.FlowID)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if got := phaseByID(t, read, "publish"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseReady {
-		t.Fatalf("publish after rejected launch = %#v, want unchanged ready without launch", got)
+	if got := phaseByID(t, read, "publish"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhasePending {
+		t.Fatalf("publish after rejected launch = %#v, want demoted pending without launch", got)
 	}
 }
 

@@ -79,7 +79,6 @@ func (m Model) flowPhaseLauncher() FlowPhaseLauncher {
 }
 
 func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunchPreparedRequest, error) {
-	phaseID := artifacts.NormalizePhaseID(req.Phase.PhaseID)
 	if agent.Normalize(l.AgentCommand) == "" {
 		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{
 			Message: "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
@@ -107,7 +106,7 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 			return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: err.Error()}
 		}
 	}
-	if phaseID == "plan-review" && req.Record.PlanID == "" {
+	if flowstore.SemanticKind(req.Phase) == flowstore.KindPlanReview && req.Record.PlanID == "" {
 		return FlowPhaseLaunchPreparedRequest{}, FlowPhaseLaunchValidationError{Message: "Plan Review needs a linked plan before launch"}
 	}
 	generateLaunchID := l.NewLaunchID
@@ -125,7 +124,7 @@ func (l FlowPhaseLauncher) Preflight(req FlowPhaseLaunchRequest) (FlowPhaseLaunc
 
 func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhaseLaunchResult, error) {
 	planBody := ""
-	if req.Record.PlanID != "" && flowPhasePromptNeedsPlanBody(req.Phase.PhaseID) {
+	if req.Record.PlanID != "" && flowPhasePromptNeedsPlanBody(req.Phase) {
 		body, err := l.readPlan(req.Record.PlanID)
 		if err != nil {
 			return FlowPhaseLaunchResult{}, fmt.Errorf("failed to read linked plan %s: %w", req.Record.PlanID, err)
@@ -337,7 +336,7 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			m = m.clearResolvedSuppressedAutoFlowLaunches(record)
 			continue
 		}
-		if artifacts.NormalizePhaseID(completedPhase.PhaseID) == "autoreview" {
+		if flowstore.SemanticKind(completedPhase) == flowstore.KindAutoreview {
 			continue
 		}
 		if m.isAutoFlowLaunchSuppressed(record.FlowID, completedPhase) {
@@ -579,14 +578,13 @@ func flowPhaseCanLaunchAtIndex(record flowstore.FlowRecord, phaseIndex int) bool
 		return false
 	}
 	phase := record.Phases[phaseIndex]
-	phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
 	if phase.Status == flowstore.PhaseReady {
-		if phaseID == "merge" {
+		if flowstore.SemanticKind(phase) == flowstore.KindMerge {
 			return flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
 		}
 		return flowstore.PhaseLaunchEligible(record, phaseIndex)
 	}
-	return phaseID == "autoreview" &&
+	return flowstore.SemanticKind(phase) == flowstore.KindAutoreview &&
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
 		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
@@ -612,8 +610,8 @@ func flowAutoreviewMissingPRTarget(record flowstore.FlowRecord) bool {
 	if flowstore.HasPRTarget(record.PR) {
 		return false
 	}
-	prCreation, hasPRCreation := flowPhaseByID(record, "pr-creation")
-	autoreview, hasAutoreview := flowPhaseByID(record, "autoreview")
+	prCreation, hasPRCreation := flowstore.FindPhaseByKind(record, flowstore.KindPRCreation)
+	autoreview, hasAutoreview := flowstore.FindPhaseByKind(record, flowstore.KindAutoreview)
 	if !hasPRCreation || !hasAutoreview || prCreation.Status != flowstore.PhaseCompleted {
 		return false
 	}
