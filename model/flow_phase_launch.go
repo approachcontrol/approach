@@ -230,16 +230,8 @@ func newlyCompletedFlowPhase(previous, current flowstore.FlowRecord) (flowstore.
 }
 
 func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool) {
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		switch artifacts.NormalizePhaseID(phase.PhaseID) {
-		case "", "merge":
-			continue
-		}
-		if phase.Status == flowstore.PhaseReady {
-			return phase, true
-		}
-	}
-	return flowstore.FlowPhase{}, false
+	phase, _, ok := flowstore.FirstLaunchablePhase(record)
+	return phase, ok
 }
 
 func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
@@ -247,8 +239,11 @@ func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstor
 	if !ok || record.FlowID == "" {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
-	for _, phase := range flowstore.OrderedPhases(record.Phases) {
-		if flowPhaseCanLaunch(record, phase) {
+	ordered := flowstore.OrderedPhases(record.Phases)
+	orderedRecord := record
+	orderedRecord.Phases = ordered
+	for i, phase := range ordered {
+		if flowPhaseCanLaunchAtIndex(orderedRecord, i) {
 			return record, phase, true
 		}
 	}
@@ -567,10 +562,31 @@ func (m Model) prepareDeferredAutoFlowPhaseLaunchesFrom(records []flowstore.Flow
 }
 
 func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {
-	if phase.Status == flowstore.PhaseReady {
-		return true
+	ordered := flowstore.OrderedPhases(record.Phases)
+	orderedRecord := record
+	orderedRecord.Phases = ordered
+	phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+	for i, candidate := range ordered {
+		if artifacts.NormalizePhaseID(candidate.PhaseID) == phaseID && candidate.Status == phase.Status {
+			return flowPhaseCanLaunchAtIndex(orderedRecord, i)
+		}
 	}
-	return artifacts.NormalizePhaseID(phase.PhaseID) == "autoreview" &&
+	return false
+}
+
+func flowPhaseCanLaunchAtIndex(record flowstore.FlowRecord, phaseIndex int) bool {
+	if phaseIndex < 0 || phaseIndex >= len(record.Phases) {
+		return false
+	}
+	phase := record.Phases[phaseIndex]
+	phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+	if phase.Status == flowstore.PhaseReady {
+		if phaseID == "merge" {
+			return flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)
+		}
+		return flowstore.PhaseLaunchEligible(record, phaseIndex)
+	}
+	return phaseID == "autoreview" &&
 		(phase.Status == flowstore.PhaseNeedsAttention || phase.Status == flowstore.PhaseBlocked) &&
 		flowstore.HasPRTarget(record.PR) &&
 		flowstore.PhasePredecessorsSatisfied(record, phase.PhaseID)

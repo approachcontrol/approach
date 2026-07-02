@@ -101,8 +101,14 @@ standard graph; hand-authored records without one keep their stored statuses
 until a phase-affecting mutation touches them. Agents never need to know which
 phase becomes ready next; they only report their own phase.
 
-Walking phases in order, a `pending` phase becomes `ready` once every
-predecessor satisfies its downstream gate:
+Newly written Flow records persist explicit top-level dependency edges in each
+phase's `depends_on` field. Legacy standard records that do not have the key are
+backfilled as the same linear graph on read; explicit empty `depends_on` means a
+root phase. Implementation child phases remain structurally ordered under their
+parent rather than declaring their own dependencies.
+
+Walking phases in topological dependency order, a `pending` phase becomes
+`ready` once every prerequisite satisfies its downstream gate:
 
 - **Default gate**: the phase is `completed`, or `skipped` with notes.
 - **Plan Review**: `completed` with outcome `approved` or
