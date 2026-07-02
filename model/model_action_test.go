@@ -3416,12 +3416,12 @@ func TestModel_ShiftVOpensDefaultViewSelectFromBothPanes(t *testing.T) {
 				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
-			for _, want := range []string{"Choose default view", "1 worktrees", "2 branches", "3 stashes", "4 history", "5 reflog", "6 sessions", "7 plans", "8 flows", "9 active flows"} {
+			for _, want := range []string{"Choose default view", "Git — Worktrees", "Git — Branches", "Git — Stashes", "Git — History", "Git — Reflog", "Sessions", "Plans", "Flows", "Active Flows"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected default view select to contain %q:\n%s", want, view)
 				}
 			}
-			if !strings.Contains(view, "> 8 flows") {
+			if !strings.Contains(view, "> Flows") {
 				t.Fatalf("expected current default view to be preselected:\n%s", view)
 			}
 			if cmd != nil {
@@ -3439,7 +3439,7 @@ func TestModel_ShiftVOpensDefaultViewSelectFromActiveFlowsMode(t *testing.T) {
 	if m.Overlay() != ui.OverlaySelect {
 		t.Fatalf("expected default view select overlay, got %d", m.Overlay())
 	}
-	if !strings.Contains(m.View(), "> 9 active flows") {
+	if !strings.Contains(m.View(), "> Active Flows") {
 		t.Fatalf("expected active flows default preselected:\n%s", m.View())
 	}
 	if cmd != nil {
@@ -3782,8 +3782,8 @@ func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
 	if number, ok := model.ViewNumber(ui.ModeActiveFlows); !ok || number != 9 {
 		t.Fatalf("ViewNumber(ModeActiveFlows) = %d, %v; want 9, true", number, ok)
 	}
-	if label := model.ViewChoiceLabel(ui.ModeActiveFlows); label != "9 active flows" {
-		t.Fatalf("ViewChoiceLabel(ModeActiveFlows) = %q, want %q", label, "9 active flows")
+	if label := model.ViewChoiceLabel(ui.ModeActiveFlows); label != "9 Active Flows" {
+		t.Fatalf("ViewChoiceLabel(ModeActiveFlows) = %q, want %q", label, "9 Active Flows")
 	}
 }
 

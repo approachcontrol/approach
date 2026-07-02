@@ -270,70 +270,46 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 	}
 }
 
-func TestModel_ViewModeHeaderShowsFiveModes(t *testing.T) {
+func TestModel_ViewModeHeaderShowsGroupedGitSubviews(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
 	view := m.View()
-	// Mode 1 (worktrees) active
-	if !strings.Contains(view, "[1] worktrees") {
-		t.Error("mode 1 active: right pane header should contain '[1] worktrees'")
+	// Worktrees subview active: grouped header shows the Git group plus the
+	// letter-labelled subview row.
+	if !strings.Contains(view, "[1] git") {
+		t.Error("worktrees active: header should bracket the Git group '[1] git'")
 	}
-	if !strings.Contains(view, "2 branches") {
-		t.Error("mode 1 active: right pane header should show inactive '2 branches'")
+	if !strings.Contains(view, "[w] worktrees") {
+		t.Error("worktrees active: header should contain '[w] worktrees'")
 	}
-	if !strings.Contains(view, "3 stashes") {
-		t.Error("mode 1 active: right pane header should show inactive '3 stashes'")
-	}
-	if !strings.Contains(view, "4 history") {
-		t.Error("mode 1 active: right pane header should show inactive '4 history'")
+	for _, want := range []string{"b branches", "s stashes", "h history", "r reflog", "2 sessions", "3 plans", "4 flows", "5 active flows"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("worktrees active: header should show inactive %q", want)
+		}
 	}
 
-	// Switch to mode 2 (branches)
+	// Cycle the git subviews with the right arrow.
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	view = m.View()
-	if !strings.Contains(view, "[2] branches") {
-		t.Error("mode 2 active: right pane header should contain '[2] branches'")
-	}
-	if !strings.Contains(view, "1 worktrees") {
-		t.Error("mode 2 active: right pane header should show inactive '1 worktrees'")
-	}
-
-	// Switch to mode 3 (stashes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	view = m.View()
-	if !strings.Contains(view, "[3] stashes") {
-		t.Error("mode 3 active: right pane header should contain '[3] stashes'")
+	for _, want := range []string{"[b] branches", "[s] stashes", "[h] history", "[r] reflog"} {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+		view = m.View()
+		if !strings.Contains(view, want) {
+			t.Errorf("header should contain %q after right arrow", want)
+		}
+		if !strings.Contains(view, "[1] git") {
+			t.Errorf("header should keep the Git group bracketed while %q is active", want)
+		}
 	}
 
-	// Switch to mode 4 (history)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	// A non-git view renders the single top-level row without subviews.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	view = m.View()
-	if !strings.Contains(view, "[4] history") {
-		t.Error("mode 4 active: right pane header should contain '[4] history'")
+	if !strings.Contains(view, "[2] sessions") {
+		t.Error("sessions active: header should contain '[2] sessions'")
 	}
-	if !strings.Contains(view, "1 worktrees") {
-		t.Error("mode 4 active: right pane header should show inactive '1 worktrees'")
-	}
-	if !strings.Contains(view, "2 branches") {
-		t.Error("mode 4 active: right pane header should show inactive '2 branches'")
-	}
-	if !strings.Contains(view, "3 stashes") {
-		t.Error("mode 4 active: right pane header should show inactive '3 stashes'")
-	}
-	if !strings.Contains(view, "5 reflog") {
-		t.Error("mode 4 active: right pane header should show inactive '5 reflog'")
-	}
-
-	// Switch to mode 5 (reflog)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	view = m.View()
-	if !strings.Contains(view, "[5] reflog") {
-		t.Error("mode 5 active: right pane header should contain '[5] reflog'")
-	}
-	if !strings.Contains(view, "4 history") {
-		t.Error("mode 5 active: right pane header should show inactive '4 history'")
+	if strings.Contains(view, "w worktrees") {
+		t.Error("sessions active: header should not list git subviews")
 	}
 }
 

@@ -1202,12 +1202,14 @@ func (m Model) handleSetDefaultView() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// defaultViewSelectItems labels the picker with the grouped view names while
+// each item keeps persisting its original frozen default_view number.
 func defaultViewSelectItems() []modal.SelectItem {
 	choices := ViewChoices()
 	items := make([]modal.SelectItem, 0, len(choices))
 	for _, choice := range choices {
 		items = append(items, modal.SelectItem{
-			Label: fmt.Sprintf("%d %s", choice.Number, choice.Label),
+			Label: choice.Label,
 			Value: strconv.Itoa(choice.Number),
 		})
 	}
@@ -2739,6 +2741,8 @@ func (m Model) contentHeightForMode() int {
 		return m.worktreeContentHeight()
 	case ui.ModeStashes:
 		return m.stashContentHeight()
+	case ui.ModeBranches, ui.ModeHistory, ui.ModeReflog:
+		return m.gitPaneContentHeight()
 	case ui.ModeSessions:
 		return m.sessionContentHeight()
 	case ui.ModePlans:
@@ -2750,6 +2754,16 @@ func (m Model) contentHeightForMode() int {
 	default:
 		return m.rightContentHeight()
 	}
+}
+
+// gitPaneContentHeight is the list height for the branches, history, and
+// reflog subviews, which render under the two-row grouped Git header.
+func (m Model) gitPaneContentHeight() int {
+	height := m.height - ui.GitContentOverhead
+	if height <= 0 {
+		return 16
+	}
+	return height
 }
 
 func (m Model) worktreeContentHeight() int {

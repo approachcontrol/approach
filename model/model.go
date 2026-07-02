@@ -2046,7 +2046,7 @@ func (m Model) reflowWorktreeSessions() Model {
 }
 
 func (m Model) reflowReflogs() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
+	contentHeight := m.height - ui.GitContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
@@ -2082,7 +2082,7 @@ func (m Model) reflowFlows() Model {
 }
 
 func (m Model) reflowCommits() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
+	contentHeight := m.height - ui.GitContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}
@@ -2091,7 +2091,7 @@ func (m Model) reflowCommits() Model {
 }
 
 func (m Model) reflowBranches() Model {
-	contentHeight := m.height - ui.BranchContentOverhead
+	contentHeight := m.height - ui.GitContentOverhead
 	if contentHeight <= 0 {
 		contentHeight = 16
 	}

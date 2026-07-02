@@ -31,7 +31,7 @@ func TestRender_PlansModeShowsHeaderAndRows(t *testing.T) {
 		PlanSelected: 0,
 	})
 
-	for _, want := range []string{"[7] plans", "Status", "Branch", "Phase", "Updated", "Title", "in_progress", "feature/plans", "1/2", "2026-06-06", "Persist plans"} {
+	for _, want := range []string{"[3] plans", "Status", "Branch", "Phase", "Updated", "Title", "in_progress", "feature/plans", "1/2", "2026-06-06", "Persist plans"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("plans view missing %q:\n%s", want, view)
 		}

@@ -40,7 +40,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 		FlowSelected: 0,
 	})
 
-	for _, want := range []string{"[8] flows", "Status", "Branch", "Phase", "Issue", "Plan", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "#456", "plan-1", "#123", "2026-06-07", "Add Flow mode"} {
+	for _, want := range []string{"[4] flows", "Status", "Branch", "Phase", "Issue", "Plan", "PR", "Updated", "Title", "in_progress", "flow/add-flow-mode", "1/2", "#456", "plan-1", "#123", "2026-06-07", "Add Flow mode"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("flows view missing %q:\n%s", want, view)
 		}
