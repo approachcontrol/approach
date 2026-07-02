@@ -5,7 +5,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/brian-bell/wtui/gitquery"
 	"github.com/brian-bell/wtui/model"
+	"github.com/brian-bell/wtui/planstore"
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -220,6 +222,103 @@ func TestRetiredKeys_LInFlowsAliasesRightArrow(t *testing.T) {
 
 	if m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("l in flows mode = %d, want ModeActiveFlows (right alias)", m.Mode())
+	}
+}
+
+func testHistoryWithCommits(t *testing.T) model.Model {
+	t.Helper()
+	m := inRightPane(model.New(testRepos()))
+	m = pressKey(m, 'h')
+	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.CommitSelected() != 2 {
+		t.Fatalf("CommitSelected = %d, want 2", m.CommitSelected())
+	}
+	return m
+}
+
+func TestGitSubview_IntraGitSwitchPreservesSiblingCursor(t *testing.T) {
+	m := testHistoryWithCommits(t)
+
+	m = pressKey(m, 'b') // branches
+	m = pressKey(m, 'h') // back to history
+
+	if m.CommitSelected() != 2 {
+		t.Fatalf("CommitSelected = %d, want preserved 2", m.CommitSelected())
+	}
+}
+
+func TestGitSubview_LeavingGitAndReturningPreservesCursor(t *testing.T) {
+	m := testHistoryWithCommits(t)
+
+	m = pressKey(m, '2') // sessions
+	m = pressKey(m, '1') // back to Git, lands on history
+
+	if m.Mode() != ui.ModeHistory {
+		t.Fatalf("mode = %d, want ModeHistory", m.Mode())
+	}
+	if m.CommitSelected() != 2 {
+		t.Fatalf("CommitSelected = %d, want preserved 2", m.CommitSelected())
+	}
+}
+
+func TestGitSubview_PreservedCursorClampsWhenRefetchShrinksList(t *testing.T) {
+	m := testHistoryWithCommits(t)
+
+	m = pressKey(m, 'b')
+	m = pressKey(m, 'h')
+	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()[:2]})
+
+	if m.CommitSelected() != 1 {
+		t.Fatalf("CommitSelected = %d, want clamped to 1", m.CommitSelected())
+	}
+}
+
+func TestGitSubview_SessionsPlansKeepResetOnEntry(t *testing.T) {
+	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{
+		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "First", Status: "draft"},
+		{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Second", Status: "draft"},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.PlanSelected() != 1 {
+		t.Fatalf("PlanSelected = %d, want 1", m.PlanSelected())
+	}
+
+	m = pressKey(m, '2') // sessions
+	m = pressKey(m, '3') // back to plans
+
+	if m.PlanSelected() != 0 {
+		t.Fatalf("PlanSelected = %d, want reset 0", m.PlanSelected())
+	}
+}
+
+func TestGitSubview_FilterIsPerSubview(t *testing.T) {
+	m := inRightPane(model.New(testRepos()))
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
+		{Path: "/dev/alpha-worktrees/zebra", BranchName: "zebra"},
+		{Path: "/dev/alpha-worktrees/two", BranchName: "two"},
+	}})
+
+	m = pressKey(m, '/')
+	for _, r := range "zebra" {
+		m = pressKey(m, r)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := len(m.Worktrees()); got != 1 {
+		t.Fatalf("filtered worktrees = %d, want 1", got)
+	}
+
+	m = pressKey(m, 'h') // history
+	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
+	if got := len(m.Commits()); got != len(testCommits()) {
+		t.Fatalf("history rows = %d, want unfiltered %d", got, len(testCommits()))
+	}
+
+	m = pressKey(m, 'w') // back to worktrees
+	if got := len(m.Worktrees()); got != 1 {
+		t.Fatalf("worktree filter not restored: rows = %d, want 1", got)
 	}
 }
 

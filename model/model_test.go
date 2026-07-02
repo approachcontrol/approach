@@ -1283,7 +1283,7 @@ func TestModel_BackspaceOnEmptyItemFilterInputClearsFilter(t *testing.T) {
 	}
 }
 
-func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T) {
+func TestModel_RightPaneSearchIsPerSubviewAndEscapeClearsIt(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{
@@ -1292,23 +1292,30 @@ func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T)
 		{Name: "bugfix"},
 	}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{
-		{Index: 0, Date: "2026-03-18", Message: "feature auth work"},
+		{Index: 0, Date: "2026-03-18", Message: "zebra work"},
 		{Index: 1, Date: "2026-03-18", Message: "bugfix stash"},
 	}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	for _, r := range "work" {
+	for _, r := range "auth" {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if rows := m.Rows(); len(rows) != 1 || rows[0].Branch.Name != "feature/auth" {
+		t.Fatalf("expected branch filter to leave feature/auth, got %#v", rows)
+	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	if m.ItemSearch() != "work" {
-		t.Fatalf("expected right-pane search to remain work after mode switch, got %q", m.ItemSearch())
+	if m.ItemSearch() != "" {
+		t.Fatalf("expected stashes to keep their own empty filter, got %q", m.ItemSearch())
 	}
-	stashes := m.Stashes()
-	if len(stashes) != 1 || stashes[0].Message != "feature auth work" {
-		t.Fatalf("expected shared filter to leave only feature auth work stash, got %#v", stashes)
+	if stashes := m.Stashes(); len(stashes) != 2 {
+		t.Fatalf("expected stashes unfiltered by the branch query, got %#v", stashes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if m.ItemSearch() != "auth" {
+		t.Fatalf("expected branch filter restored on subview re-entry, got %q", m.ItemSearch())
 	}
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEscape})
@@ -1318,12 +1325,10 @@ func TestModel_RightPaneSearchIsSharedAcrossModesAndEscapeClearsIt(t *testing.T)
 	if m.ItemSearch() != "" || m.SearchActive() {
 		t.Fatalf("expected right-pane filter cleared and inactive, got query=%q active=%v", m.ItemSearch(), m.SearchActive())
 	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	view := m.View()
 	for _, name := range []string{"main", "feature/auth", "bugfix"} {
 		if !strings.Contains(view, name) {
-			t.Fatalf("clearing shared filter should restore branch %s", name)
+			t.Fatalf("clearing the filter should restore branch %s", name)
 		}
 	}
 }
@@ -2153,7 +2158,7 @@ func TestModel_CommitScrollFollowsCursor(t *testing.T) {
 	}
 }
 
-func TestModel_ModeSwitchResetsCommitCursors(t *testing.T) {
+func TestModel_ModeSwitchPreservesCommitCursors(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
@@ -2166,8 +2171,8 @@ func TestModel_ModeSwitchResetsCommitCursors(t *testing.T) {
 	// Switch away and back
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if m.CommitSelected() != 0 {
-		t.Errorf("expected CommitSelected reset to 0, got %d", m.CommitSelected())
+	if m.CommitSelected() != 2 {
+		t.Errorf("expected CommitSelected preserved at 2, got %d", m.CommitSelected())
 	}
 }
 

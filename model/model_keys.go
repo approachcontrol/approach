@@ -2599,15 +2599,12 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resetModeCursors zeroes the cursor and scroll positions for non-worktree
-// right-pane views without discarding loaded list data. The worktree selection
-// is intentionally preserved across mode switches so users can inspect another
-// pane and return to the same selected worktree.
+// resetModeCursors zeroes the cursor and scroll positions for the non-git
+// right-pane views without discarding loaded list data. The git subview
+// selections (worktrees, branches, stashes, history, reflog) are intentionally
+// preserved across view switches so users can inspect another view and return
+// to the same selected row; refetches clamp any stale index via SetItems.
 func (m Model) resetModeCursors() Model {
-	m.rows = m.rows.ResetSelection()
-	m.stashes = m.stashes.ResetSelection()
-	m.commits = m.commits.ResetSelection()
-	m.reflogs = m.reflogs.ResetSelection()
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
