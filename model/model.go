@@ -678,10 +678,12 @@ func (m Model) flowLaunchAgentSettings() (string, string, string) {
 func (m Model) flowModelLabel() string {
 	command := agent.Normalize(m.agentCommand)
 	switch command {
-	case agent.CommandCodex, agent.CommandClaude:
-		return fmt.Sprintf("model: %s", modelDisplay(m.ModelFor(command)))
+	case agent.CommandCodex:
+		return modelDisplay(m.ModelFor(command))
+	case agent.CommandClaude:
+		return strings.TrimPrefix(modelDisplay(m.ModelFor(command)), "claude-")
 	case agent.CommandCodexApp:
-		return "model: app"
+		return "app"
 	default:
 		return ""
 	}
