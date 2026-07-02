@@ -2147,6 +2147,45 @@ func TestStoreAddPhaseLaunchIDResumeRefreshesReadinessForCustomGraph(t *testing.
 	}
 }
 
+func TestStoreAddPhaseLaunchIDLaunchesReadyRootOfCustomGraph(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// A custom depends_on DAG without plan-review is created with pending roots;
+	// launching the root must derive readiness first so the transition to running
+	// is not rejected, otherwise the flow can never launch any phase.
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "custom-launch",
+		Title:        "Custom launch",
+		Instructions: "launch the root of a custom DAG without plan-review",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "alpha", Title: "Alpha", Status: flowstore.PhasePending, Order: 1},
+			{PhaseID: "beta", Title: "Beta", Status: flowstore.PhasePending, Order: 2, DependsOn: []string{"alpha"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	launched, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "alpha",
+		LaunchID: "launch-alpha-1",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(alpha) error = %v", err)
+	}
+	if got := phaseByID(t, launched, "alpha").Status; got != flowstore.PhaseRunning {
+		t.Fatalf("alpha status after launch = %q, want running", got)
+	}
+	if got := phaseByID(t, launched, "beta").Status; got != flowstore.PhasePending {
+		t.Fatalf("beta status after launch = %q, want pending behind running alpha", got)
+	}
+}
+
 func TestStoreAddPhaseLaunchIDResumeStillRestartsNeedsAttentionPhase(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

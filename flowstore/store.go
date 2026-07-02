@@ -891,6 +891,19 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
+		// Launching a phase is a mutation that derives its readiness. Custom graphs
+		// persist with pending roots (Create defers readiness derivation), so a
+		// now-eligible pending target would otherwise be rejected as an invalid
+		// pending -> running transition. Promote only the target row when the graph
+		// releases it; stale ready rows and other phases are left to the eligibility
+		// checks and the post-launch readiness refresh.
+		if phase.Status == PhasePending {
+			graph := buildPhaseGraph(record.Phases)
+			if graph.released[phaseIndex] && !graph.duplicateRows[phaseIndex] && allDependencyGatesSatisfied(record, graph, phaseIndex) {
+				phase.Status = PhaseReady
+				record.Phases[phaseIndex] = phase
+			}
+		}
 		if update.AutoLaunch {
 			if err := validateAutoPhaseLaunch(record, phaseIndex); err != nil {
 				return FlowRecord{}, err
