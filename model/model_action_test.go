@@ -3915,6 +3915,14 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 			notWant:    []string{"A      set agent", "M      model: gpt-5.5", "E      codex effort: high"},
 		},
 		{
+			name:       "codex model with claude prefix",
+			options:    model.Options{AgentCommand: "codex", CodexModel: "claude-compatible", CodexReasoningEffort: "high"},
+			wantAgent:  "A      codex",
+			wantModel:  "M      claude-compatible",
+			wantEffort: "E      effort: high",
+			notWant:    []string{"M      compatible", "M      model: claude-compatible"},
+		},
+		{
 			name:       "codex app",
 			options:    model.Options{AgentCommand: "codex-app"},
 			wantAgent:  "A      codex-app",
