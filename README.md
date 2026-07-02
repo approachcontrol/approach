@@ -54,7 +54,7 @@ The active pane is highlighted with a blue border.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active, the right pane border turns red and delete/drop hints appear in red as a visual warning.
 
-**Fuzzy filter:** Press `/` in the active pane to type-ahead filter repos or right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits it.
+**Fuzzy filter:** Press `/` in the active pane to type-ahead filter repos or right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits it. Each right-pane view keeps its own filter: filtering worktrees does not filter history, and returning to a view restores that view's previous query.
 
 Empty panes explain why they are empty: no data for the selected repo, no fuzzy
 filter matches, or a load failure with details in the status bar.
@@ -67,7 +67,7 @@ filter matches, or a load failure with details in the status bar.
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view (`1` through `9`) |
+| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Active Flows`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -83,9 +83,11 @@ filter matches, or a load failure with details in the status bar.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4`/`5`/`6`/`7`/`8`/`9` | Switch to worktrees / branches / stashes / history / reflog / sessions / plans / flows / active flows |
-| `←`/`→`/`l` | Switch views in the right pane, wrapping between worktrees and active flows; use arrows or `l` in flows view because `h` toggles Flow headless/interactive command mode |
-| `h` | Switch to the previous view outside flows view; toggle Flow headless/interactive command mode in flows view |
+| `1`/`2`/`3`/`4`/`5` | Switch to the Git view / sessions / plans / flows / active flows (`6`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
+| `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
+| `←`/`→` | Cycle git subviews with wrap inside the Git view (arrows never leave it); cycle the five top-level views with wrap elsewhere, entering Git at its last-used subview |
+| `l` | Alias for `→` in flows and active flows views (where `h` toggles Flow headless/interactive command mode); unbound elsewhere |
+| `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
@@ -95,7 +97,7 @@ filter matches, or a load failure with details in the status bar.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view (`1` through `9`) |
+| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Active Flows`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
@@ -117,10 +119,13 @@ filter matches, or a load failure with details in the status bar.
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
-The right pane header shows the active mode. Press `1`–`9` or use arrow keys to
-switch between worktrees, branches, stashes, history, reflog, sessions, plans,
-flows, and active flows. Horizontal view switching wraps between worktrees and
-active flows. Press `V` to choose which numbered view wtui opens on future
+The right pane header shows the top-level views: `1` git, `2` sessions, `3`
+plans, `4` flows, `5` active flows. While the Git view is active a second
+header row lists its subviews with their direct letter keys (`w` worktrees,
+`b` branches, `s` stashes, `h` history, `r` reflog); the active entries are
+bracketed. Entering the Git view lands on the last-used subview (worktrees on
+first entry), and each subview keeps its own cursor position and filter across
+switches. Press `V` to choose which view wtui opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
 `enter` or `tab` from the repo pane to focus the content pane. In the content
 pane, `tab` or `bksp` switches focus back to the left repo pane. Press `f2` from normal
@@ -143,12 +148,12 @@ enabled, wtui then runs `gh repo create <name> --public|--private --source <path
 creation succeeds, wtui keeps the local repo and reopens the form so submitting
 again retries only the GitHub/origin setup against that existing local path.
 
-### Worktrees view (mode 1)
+### Git view: worktrees subview (`1`, then `w`)
 
 Shows all worktree checkouts for the selected repo. The main (root) worktree
-always appears first with a blue `[root]` annotation. wtui starts in Flow mode
-by default unless `[ui].default_view` is set, but worktrees remain mode `1` and
-keep the same numeric access.
+always appears first with a blue `[root]` annotation. wtui starts in the flows
+view by default unless `[ui].default_view` is set; worktrees is the default
+subview the first time you enter the Git view.
 
 Each row shows the branch name (or `(detached)` for detached HEAD), status indicators, and the worktree path:
 
@@ -178,13 +183,13 @@ Press `x` on a selected worktree to show captured agent sessions for that
 worktree inline. While the inline session list is open, `up`/`down` move through
 the sessions and `enter` resumes the selected session from its recorded `cwd` or
 worktree path. Filtering worktrees, refreshing the worktree list, switching
-modes, or changing repos closes the inline list. The full sessions view in mode
-`6` remains repo-scoped and keeps transcript, summary, resume, and copy-id
+views, or changing repos closes the inline list. The full sessions view (`2`)
+remains repo-scoped and keeps transcript, summary, resume, and copy-id
 actions when no embedded terminal is active.
 
-### Branches view (mode 2)
+### Git view: branches subview (`b`)
 
-Shows non-worktree branches and the root branch. Worktree branches are managed in the worktrees view (mode 1) and are hidden here to avoid duplication. The root branch (checked out at the repo root) is pinned to position 0 with a blue `[root]` annotation and cannot be deleted.
+Shows non-worktree branches and the root branch. Worktree branches are managed in the worktrees subview (`w`) and are hidden here to avoid duplication. The root branch (checked out at the repo root) is pinned to position 0 with a blue `[root]` annotation and cannot be deleted.
 
 Status indicators stack on each branch:
 
@@ -204,19 +209,19 @@ and `F` runs `git pull --ff-only` for branches that have a checked-out
 worktree. `d` deletes non-worktree branches, with a force-retry prompt on
 failure. Deletion requires destructive mode to be enabled first (`D`).
 
-### Stashes view (mode 3)
+### Git view: stashes subview (`s`)
 
 Browse stashes for the selected repo. Long stash messages wrap to two lines (date + message start, then indented continuation). Use `↑`/`↓` to select a stash, `enter` to page its diff in `less -R`, `d` to drop the selected stash (with confirmation, requires destructive mode). The stash list scrolls when entries exceed the pane height.
 
-### History view (mode 4)
+### Git view: history subview (`h`)
 
 Browse recent commits (up to 50) for the selected repo. Each row shows the commit hash, author, relative date, and subject. Use `enter` to page the full commit diff in `less -R`, `y` to copy the commit hash to clipboard, `t` to open or attach to a tmux/Zellij session, and `c` to open VSCode at the repo root.
 
-### Reflog view (mode 5)
+### Git view: reflog subview (`r`)
 
 Browse HEAD reflog entries (up to 50) for the selected repo. Each row shows the abbreviated hash, selector (e.g. `HEAD@{0}`), relative date, and subject. Use `enter` to page the diff for that entry in `less -R` -- checkout entries with no tree changes page "No changes at this reflog entry". Use `y` to copy the entry hash to clipboard.
 
-### Sessions view (mode 6)
+### Sessions view (`2`)
 
 Browse captured Claude Code and Codex sessions associated with the selected
 repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
@@ -268,7 +273,7 @@ this in the status line instead of starting a fresh provider session. Hook
 payloads without a usable session ID are rejected at capture time, so no
 unusable session records are stored.
 
-### Plans view (mode 7)
+### Plans view (`3`)
 
 Browse saved agent plans for the selected repo. Rows show status, branch, phase
 progress (`completed/total`), the updated date, and the title. Use `/` to filter
@@ -330,7 +335,7 @@ instructs agents on when and how to save plans. Its canonical source lives in
 Claude's repo auto-discovery directories so it can be symlinked into user-level
 skill dirs for use across repos. v1 has no TUI plan deletion.
 
-### Flows view (mode 8)
+### Flows view (`4`)
 
 Browse persisted Flow records for the selected repo. Rows show status, branch
 or worktree basename, phase progress plus the current phase state, optional
@@ -386,7 +391,7 @@ auto-launch. Automation stops before Merge: if Autoreview completes and Merge
 becomes ready, wtui keeps auto mode on and requires the existing manual Merge
 launch.
 
-### Active Flows view (mode 9)
+### Active Flows view (`5`)
 
 Browse active Flow records across all repos. This view hides merged Flow records;
 moving focus to the left repo pane temporarily filters the visible active rows to
@@ -655,6 +660,11 @@ configure provider-specific effort for new CLI agent launches; empty or
 `claude-sonnet-5`, and `claude-fable-5`. Empty or `default` omits the model
 override and keeps provider defaults. `[ui].default_view` accepts `1` through `9`
 and controls the startup view; omitting it keeps the built-in Flows default.
+The config numbers keep their original meanings (`1` worktrees … `9` active
+flows) for compatibility and deliberately differ from the grouped keyboard
+keys, where `1` opens the Git view and `2`–`5` open sessions, plans, flows,
+and active flows. A git default (`1`–`5`) also seeds the Git view's sticky
+subview.
 `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while
 `[flow_prompts]` customizes Flow phase launch templates. wtui appends
