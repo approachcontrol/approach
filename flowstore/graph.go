@@ -531,8 +531,10 @@ func phaseLaunchEligibleAtIndex(record FlowRecord, phaseIndex int) bool {
 // FirstLaunchablePhase returns the first ordered phase that can be launched.
 func FirstLaunchablePhase(record FlowRecord) (FlowPhase, int, bool) {
 	ordered := OrderedPhases(record.Phases)
+	orderedRecord := record
+	orderedRecord.Phases = ordered
 	for i, phase := range ordered {
-		if PhaseLaunchEligible(FlowRecord{Phases: ordered}, i) {
+		if PhaseLaunchEligible(orderedRecord, i) {
 			return phase, i, true
 		}
 	}

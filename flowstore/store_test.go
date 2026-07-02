@@ -5665,6 +5665,28 @@ func TestDuplicateReadyRowNotLaunchEligible(t *testing.T) {
 	}
 }
 
+func TestFirstLaunchablePhasePreservesPRMetadataForAutoreviewGate(t *testing.T) {
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	record := flowstore.FlowRecord{
+		PR: flowstore.PullRequest{
+			Provider:   "github",
+			Number:     273,
+			URL:        "https://github.com/brian-bell/wtui/pull/273",
+			HeadBranch: "flow/phase-graph",
+			BaseBranch: "main",
+		},
+		Phases: []flowstore.FlowPhase{
+			graphPhase(now, "pr-creation", flowstore.PhaseCompleted, []string{}),
+			graphPhase(now, "autoreview", flowstore.PhaseReady, []string{"pr-creation"}),
+		},
+	}
+
+	phase, idx, ok := flowstore.FirstLaunchablePhase(record)
+	if !ok || phase.PhaseID != "autoreview" || idx != 1 {
+		t.Fatalf("FirstLaunchablePhase() = (%#v, %d, %v), want autoreview at index 1", phase, idx, ok)
+	}
+}
+
 func TestStoreAddPhaseLaunchIDRejectsDuplicateReadyRow(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
