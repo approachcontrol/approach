@@ -381,7 +381,7 @@ func TestModel_WorktreeScrollFollowsCursor(t *testing.T) {
 	}
 	contentHeight := 3
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + contentHeight})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.WorktreeContentOverhead + contentHeight})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: wts})
 
@@ -1443,7 +1443,7 @@ func TestModel_BranchScrollFollowsCursor(t *testing.T) {
 		branches[i] = gitquery.Branch{Name: fmt.Sprintf("branch-%d", i)}
 	}
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + 3}) // 3 content lines
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.GitContentOverhead + 3}) // 3 content lines
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
 
@@ -1574,7 +1574,7 @@ func TestModel_StashScrollFollowsCursor(t *testing.T) {
 	}
 	contentHeight := 3
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + contentHeight})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.StashContentOverhead + contentHeight})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
@@ -1625,7 +1625,7 @@ func TestModel_StashScrollAccountsForLongMessages(t *testing.T) {
 	// 3 content lines → only ~1.5 stashes visible at a time
 	contentHeight := 3
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 50 + ui.LeftPaneWidth + 2, Height: ui.BranchContentOverhead + contentHeight})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 50 + ui.LeftPaneWidth + 2, Height: ui.StashContentOverhead + contentHeight})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: stashes})
@@ -2144,7 +2144,7 @@ func TestModel_CommitScrollFollowsCursor(t *testing.T) {
 		commits[i] = gitquery.Commit{Hash: fmt.Sprintf("abc%04d", i), Author: "test", Date: "now", Subject: fmt.Sprintf("commit %d", i)}
 	}
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BranchContentOverhead + 3})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.GitContentOverhead + 3})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: commits})
@@ -2331,7 +2331,7 @@ func TestModel_ReflogScrollFollowsCursor(t *testing.T) {
 		})
 	}
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: ui.BranchContentOverhead + 3})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: ui.GitContentOverhead + 3})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: entries})

@@ -920,6 +920,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 	}
 	m = m.clearWorktreeCreateRequest(msg.Request)
 	m.mode = ui.ModeWorktrees
+	m = m.rememberGitSubview()
 	m.worktrees = m.worktrees.ResetSelection()
 	m, fetchCmd := m.startFetchMode(ui.ModeWorktrees)
 	if !msg.LaunchAgent {
@@ -941,6 +942,7 @@ func (m Model) handleWorktreeBootstrapFailed(msg WorktreeBootstrapFailedMsg) (te
 		errText = "bootstrap hook failed: " + errText
 	}
 	m.mode = ui.ModeWorktrees
+	m = m.rememberGitSubview()
 	m.worktrees = m.worktrees.ResetSelection()
 	m = m.setStatus(statusGitMutation, errText)
 	return m.startFetchMode(ui.ModeWorktrees)
@@ -1184,6 +1186,7 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m.mode = ui.ModeBranches
+		m = m.rememberGitSubview()
 		m.rows = m.rows.SetQuery("")
 		m.pendingBranchSelection = msg.Name
 		return m.startFetchMode(ui.ModeBranches)

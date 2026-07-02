@@ -1,8 +1,6 @@
 package model
 
 import (
-	"fmt"
-
 	"github.com/brian-bell/wtui/ui"
 )
 
@@ -52,10 +50,12 @@ func ViewNumber(mode ui.Mode) (int, bool) {
 	return 0, false
 }
 
+// ViewChoiceLabel is the display name for a view. It deliberately omits the
+// frozen config number, which no longer matches the keyboard's grouped keys.
 func ViewChoiceLabel(mode ui.Mode) string {
 	for _, choice := range viewChoices {
 		if choice.Mode == mode {
-			return fmt.Sprintf("%d %s", choice.Number, choice.Label)
+			return choice.Label
 		}
 	}
 	return "choose view"

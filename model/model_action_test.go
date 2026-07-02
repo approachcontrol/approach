@@ -3770,9 +3770,8 @@ func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
 			t.Fatalf("view number %d maps to %v, choice mode %v", choice.Number, mode, choice.Mode)
 		}
 		label := model.ViewChoiceLabel(choice.Mode)
-		want := fmt.Sprintf("%d %s", choice.Number, choice.Label)
-		if label != want {
-			t.Fatalf("ViewChoiceLabel(%v) = %q, want %q", choice.Mode, label, want)
+		if label != choice.Label {
+			t.Fatalf("ViewChoiceLabel(%v) = %q, want %q", choice.Mode, label, choice.Label)
 		}
 	}
 	mode, ok := model.ModeForViewNumber(9)
@@ -3782,8 +3781,8 @@ func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
 	if number, ok := model.ViewNumber(ui.ModeActiveFlows); !ok || number != 9 {
 		t.Fatalf("ViewNumber(ModeActiveFlows) = %d, %v; want 9, true", number, ok)
 	}
-	if label := model.ViewChoiceLabel(ui.ModeActiveFlows); label != "9 Active Flows" {
-		t.Fatalf("ViewChoiceLabel(ModeActiveFlows) = %q, want %q", label, "9 Active Flows")
+	if label := model.ViewChoiceLabel(ui.ModeActiveFlows); label != "Active Flows" {
+		t.Fatalf("ViewChoiceLabel(ModeActiveFlows) = %q, want %q", label, "Active Flows")
 	}
 }
 

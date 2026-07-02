@@ -293,6 +293,24 @@ func TestGitSubview_SessionsPlansKeepResetOnEntry(t *testing.T) {
 	}
 }
 
+func TestGitSubview_AsyncModeForcingUpdatesStickySubview(t *testing.T) {
+	m := inRightPane(model.New(testRepos()))
+	m = pressKey(m, 'h') // history; sticky subview = history
+
+	// A completed branch creation forces the branches subview open.
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feat"})
+	if m.Mode() != ui.ModeBranches {
+		t.Fatalf("mode = %d, want ModeBranches after branch creation", m.Mode())
+	}
+
+	m = pressKey(m, '2') // sessions
+	m = pressKey(m, '1') // back to Git
+
+	if m.Mode() != ui.ModeBranches {
+		t.Fatalf("mode = %d, want sticky ModeBranches from the forced subview switch", m.Mode())
+	}
+}
+
 func TestGitSubview_FilterIsPerSubview(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
