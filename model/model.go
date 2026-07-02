@@ -929,7 +929,11 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
 	}
 	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == m.activeContentFetchMode() {
-		return "Could not load " + modeDataName(m.activeContentFetchMode()) + "; see status bar"
+		message := "Could not load " + modeDataName(m.activeContentFetchMode())
+		if m.status.Text != "" {
+			message += "; see status bar"
+		}
+		return message
 	}
 	if m.activeFlowSurfaceVisible() {
 		return "No active flows"

@@ -876,6 +876,35 @@ func TestModel_ListFetchErrorOnEmptyPaneDoesNotLookLikeNoData(t *testing.T) {
 	}
 }
 
+func TestModel_ListFetchErrorOnEmptyPaneStillLooksFailedAfterStatusExpires(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
+
+	m, _ = update(m, model.FetchErrorMsg{
+		RepoPath: "/dev/alpha",
+		Pane:     "worktrees",
+		Err:      "failed to load worktrees: boom",
+		Kind:     model.FetchList,
+		Mode:     ui.ModeWorktrees,
+	})
+	m, _ = update(m, model.StatusExpiredMsg{Seq: 1})
+
+	view := m.View()
+	if strings.Contains(view, "failed to load worktrees: boom") {
+		t.Fatalf("status bar text should expire, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Could not load worktrees") {
+		t.Fatalf("empty failed pane should still show load failure after status expiry, got:\n%s", view)
+	}
+	if strings.Contains(view, "see status bar") {
+		t.Fatalf("expired status should not direct the user to an empty status bar, got:\n%s", view)
+	}
+	if strings.Contains(view, "No worktrees to show") {
+		t.Fatal("expired status should not make failed load look like successful empty data")
+	}
+}
+
 func TestModel_FilteredEmptyItemsTakePrecedenceOverListFetchErrorPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})

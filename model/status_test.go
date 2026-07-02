@@ -175,7 +175,7 @@ func TestSourceSpecificClearEmptyStatusDoesNotAdvanceSequence(t *testing.T) {
 	}
 }
 
-func TestFetchStatusPreservesMetadataAndExpires(t *testing.T) {
+func TestListFetchStatusExpiryPreservesFailureMetadata(t *testing.T) {
 	m := New(nil)
 	m = m.setFetchStatus(FetchErrorMsg{Err: "fetch failed", Kind: FetchList, Mode: 2})
 	seq := m.status.Seq
@@ -185,7 +185,26 @@ func TestFetchStatusPreservesMetadataAndExpires(t *testing.T) {
 	}
 	m = m.handleStatusExpired(StatusExpiredMsg{Seq: seq})
 	if m.status.Text != "" {
-		t.Fatalf("fetch status after expiry = %#v, want cleared", m.status)
+		t.Fatalf("fetch status text after expiry = %#v, want hidden", m.status)
+	}
+	if m.status.Source != statusFetch || m.status.FetchKind != FetchList || m.status.Mode != 2 {
+		t.Fatalf("fetch status after expiry = %#v, want failure metadata preserved", m.status)
+	}
+}
+
+func TestExpiredListFetchStatusClearsOnUserAction(t *testing.T) {
+	m := New(nil)
+	m = m.setFetchStatus(FetchErrorMsg{Err: "fetch failed", Kind: FetchList, Mode: 2})
+	m = m.handleStatusExpired(StatusExpiredMsg{Seq: m.status.Seq})
+	seq := m.statusSeq
+
+	m = m.clearAnyStatus()
+
+	if m.status != (statusError{}) {
+		t.Fatalf("status after clear = %#v, want cleared", m.status)
+	}
+	if m.statusSeq != seq+1 {
+		t.Fatalf("status sequence = %d, want %d", m.statusSeq, seq+1)
 	}
 }
 

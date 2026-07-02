@@ -114,7 +114,7 @@ func (m Model) drainStatusCmds(cmd tea.Cmd) (Model, tea.Cmd) {
 }
 
 func (m Model) clearStatus(source statusSource) Model {
-	if m.status.Text != "" && m.status.Source == source {
+	if m.status.isSet() && m.status.Source == source {
 		m.status = statusError{}
 		m = m.nextStatusSeq()
 	}
@@ -130,7 +130,7 @@ func (m Model) clearFetchListStatus(mode ui.Mode) Model {
 }
 
 func (m Model) clearAnyStatus() Model {
-	if m.status.Text != "" {
+	if m.status.isSet() {
 		m.status = statusError{}
 		m = m.nextStatusSeq()
 	}
@@ -139,6 +139,13 @@ func (m Model) clearAnyStatus() Model {
 
 func (m Model) handleStatusExpired(msg StatusExpiredMsg) Model {
 	if msg.Seq == 0 || msg.Seq != m.status.Seq {
+		return m
+	}
+	if m.status.Source == statusFetch && m.status.FetchKind == FetchList {
+		m.status.Text = ""
+		m.status.FadeStep = 0
+		m = m.nextStatusSeq()
+		m.status.Seq = m.statusSeq
 		return m
 	}
 	m.status = statusError{}
@@ -152,4 +159,8 @@ func (m Model) handleStatusFade(msg StatusFadeMsg) Model {
 	}
 	m.status.FadeStep = msg.Step
 	return m
+}
+
+func (s statusError) isSet() bool {
+	return s.Source != statusNone || s.Text != ""
 }
