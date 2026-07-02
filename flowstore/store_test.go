@@ -5428,6 +5428,53 @@ func TestReadBackfillsLinearDependsOn(t *testing.T) {
 	}
 }
 
+func TestReadBackfillsLinearDependsOnForLegacyCustomFlow(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flowID := "20260607T120000Z-legacy-custom"
+	flowDir := filepath.Join(root, "flows", flowID)
+	if err := os.MkdirAll(flowDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{
+  "schema_version": 1,
+  "flow_id": "` + flowID + `",
+  "title": "Legacy custom",
+  "instructions": "backfill custom records",
+  "status": "in_progress",
+  "repo_path": "` + filepath.Join(root, "repo") + `",
+  "phases": [
+    {"phase_id": "alpha", "title": "Alpha", "kind": "", "status": "running", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "beta", "title": "Beta", "kind": "", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}`
+	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "beta").DependsOn; len(got) != 1 || got[0] != "alpha" {
+		t.Fatalf("beta DependsOn = %#v, want [alpha]", got)
+	}
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "alpha", Status: flowstore.PhaseNeedsAttention})
+	if err != nil {
+		t.Fatalf("SetPhase(alpha needs_attention) error = %v", err)
+	}
+	if got := phaseByID(t, updated, "beta").Status; got != flowstore.PhasePending {
+		t.Fatalf("beta status = %q, want pending while alpha is unsatisfied", got)
+	}
+}
+
 func TestReadinessFanOut(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)

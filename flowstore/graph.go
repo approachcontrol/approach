@@ -403,9 +403,6 @@ func backfillLinearDependsOnFromRaw(phases []FlowPhase, presence []rawDependsOnS
 	if anyPresent {
 		return normalizeDependsOnValues(phases)
 	}
-	if !phaseIDsCompatibleWithDefaultSequence(phases) {
-		return phases
-	}
 	return backfillLinearDependsOn(phases)
 }
 

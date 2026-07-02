@@ -64,6 +64,28 @@ func TestNextAutoLaunchPhaseSkipsDuplicateReadyRow(t *testing.T) {
 	}
 }
 
+func TestSelectedFlowNextLaunchablePhaseSkipsDuplicateReadyRow(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:   "flow-1",
+		RepoPath: "/dev/alpha",
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "Step-1", Title: "Step 1", DependsOn: []string{}, Status: flowstore.PhaseCompleted, Order: 1},
+			{PhaseID: "step-1", Title: "Step 1 stale duplicate", DependsOn: []string{}, Status: flowstore.PhaseReady, Order: 2},
+			{PhaseID: "step-2", Title: "Step 2", DependsOn: []string{"step-1"}, Status: flowstore.PhaseReady, Order: 3},
+		},
+	}
+	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+
+	_, phase, ok := m.selectedFlowNextLaunchablePhase()
+	if !ok {
+		t.Fatal("selectedFlowNextLaunchablePhase() found no launchable phase")
+	}
+	if phase.PhaseID != "step-2" {
+		t.Fatalf("selectedFlowNextLaunchablePhase() = %q, want step-2", phase.PhaseID)
+	}
+}
+
 func TestNextAutoLaunchPhaseSkipsReadyPhaseWithUnsatisfiedDependency(t *testing.T) {
 	record := flowstore.FlowRecord{
 		FlowID:   "flow-1",
