@@ -1976,6 +1976,8 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 	record = s.restoreMissingDependsOn(record, presence)
 	if record.GraphRecovery.Status == GraphRecoveryPresetEdgesRestored {
 		selfHeal = true
+	} else if record.GraphRecovery.Status == GraphRecoveryMissingEdgesUnresolved {
+		selfHeal = false
 	}
 	if selfHealOnRead {
 		record = normalizeRecord(record, selfHeal)

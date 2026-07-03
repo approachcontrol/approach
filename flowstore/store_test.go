@@ -5792,6 +5792,31 @@ func TestReadMissingNamedPresetDoesNotBackfillDefaultEdges(t *testing.T) {
 	}
 }
 
+func TestReadPartiallyMissingUnavailableNamedPresetDoesNotSelfHealReadiness(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	writeRawFlowMeta(t, root, "20260607T120000Z-partial-missing-preset", `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "depends_on": [], "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	read, err := store.Read("20260607T120000Z-partial-missing-preset")
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.GraphRecovery.Status != flowstore.GraphRecoveryMissingEdgesUnresolved {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryMissingEdgesUnresolved)
+	}
+	if got := phaseByID(t, read, "draft").Status; got != flowstore.PhasePending {
+		t.Fatalf("draft status = %q, want pending while graph recovery is unresolved", got)
+	}
+}
+
 func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
