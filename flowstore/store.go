@@ -1974,13 +1974,20 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
 	record = s.restoreMissingDependsOn(record, presence)
+	unresolvedGraph := false
 	if record.GraphRecovery.Status == GraphRecoveryPresetEdgesRestored {
 		selfHeal = true
 	} else if record.GraphRecovery.Status == GraphRecoveryMissingEdgesUnresolved {
 		selfHeal = false
+		unresolvedGraph = true
 	}
 	if selfHealOnRead {
-		record = normalizeRecord(record, selfHeal)
+		if unresolvedGraph {
+			record = normalizeRecordBase(record)
+			record = normalizeReviewOutcomes(record)
+		} else {
+			record = normalizeRecord(record, selfHeal)
+		}
 	} else {
 		record = normalizeRecordBase(record)
 	}
