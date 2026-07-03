@@ -641,6 +641,68 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 2},
+				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+					{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 2},
+					{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Add Flow Mode", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+
+	if len(phaseUpdates) != 2 {
+		t.Fatalf("phase updates = %#v, want research and review blocked", phaseUpdates)
+	}
+	if phaseUpdates[0].PhaseID != "research" || phaseUpdates[0].Status != flowstore.PhaseBlocked || phaseUpdates[0].Outcome != "" {
+		t.Fatalf("first phase update = %#v, want blocked research", phaseUpdates[0])
+	}
+	if phaseUpdates[1].PhaseID != "review" ||
+		phaseUpdates[1].Status != flowstore.PhaseBlocked ||
+		phaseUpdates[1].Outcome != flowstore.OutcomeBlocked ||
+		!strings.Contains(phaseUpdates[1].Notes, "Bootstrap hook failed") {
+		t.Fatalf("second phase update = %#v, want blocked review with outcome", phaseUpdates[1])
+	}
+}
+
 func TestFlowStarterStartPlanWorktreeFailureBlocksRequestedPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 
