@@ -949,6 +949,77 @@ func TestRunSessionHookEnvStateRootOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestRunSessionHookPassesFlowPresetsForRecovery(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260607T120000Z-hook-preset-recovery"
+	flowDir := filepath.Join(root, "flows", flowID)
+	if err := os.MkdirAll(flowDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{
+  "schema_version": 1,
+  "flow_id": "` + flowID + `",
+  "title": "Hook preset recovery",
+  "instructions": "attach session without losing preset edges",
+  "status": "in_progress",
+  "repo_path": "` + filepath.Join(root, "repo") + `",
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "running", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}`
+	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{
+				Flow: config.FlowConfig{
+					Presets: []flowstore.Preset{researchPresetForCLITest()},
+				},
+			}, nil
+		},
+		getenv: func(key string) string {
+			switch key {
+			case "WTUI_FLOW_STATE_ROOT", "WTUI_SESSION_STATE_ROOT":
+				return root
+			case "WTUI_FLOW_ID":
+				return flowID
+			case "WTUI_FLOW_PHASE_ID":
+				return "research"
+			case "WTUI_LAUNCH_ID":
+				return "launch-hook-preset"
+			default:
+				return ""
+			}
+		},
+		stdin: strings.NewReader(`{"session_id":"codex-hook-preset","cwd":"/repo/worktree"}`),
+	})
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(read, "draft").DependsOn; !reflect.DeepEqual(got, []string{"research"}) {
+		t.Fatalf("draft DependsOn = %#v, want [research]", got)
+	}
+	if sessions := phaseByID(read, "research").Sessions; len(sessions) != 1 {
+		t.Fatalf("research sessions = %#v, want one attached session", sessions)
+	}
+}
+
 func singleSessionFile(t *testing.T, root, provider, name string) string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(root, "sessions", provider, "*", name))

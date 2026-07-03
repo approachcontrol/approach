@@ -272,6 +272,7 @@ func runSessionHook(args []string, deps runDeps) error {
 	_, err = sessions.IngestHook(provider, deps.stdin, sessions.IngestOptions{
 		StateRoot:          root,
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
+		FlowPresets:        cfg.Flow.Presets,
 		Env: map[string]string{
 			"WTUI_LAUNCH_ID":          deps.getenv("WTUI_LAUNCH_ID"),
 			"WTUI_REPO_PATH":          deps.getenv("WTUI_REPO_PATH"),

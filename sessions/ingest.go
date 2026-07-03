@@ -15,6 +15,7 @@ import (
 type IngestOptions struct {
 	StateRoot          string
 	CopyRawTranscripts bool
+	FlowPresets        []flowstore.Preset
 	Env                map[string]string
 }
 
@@ -206,7 +207,7 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 	if root == "" {
 		root = opts.Env["WTUI_SESSION_STATE_ROOT"]
 	}
-	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: opts.FlowPresets})
 	if err != nil {
 		return
 	}
