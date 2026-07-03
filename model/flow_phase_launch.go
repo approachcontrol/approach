@@ -331,6 +331,10 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 		if !ok {
 			continue
 		}
+		if len(newlyStoppedAutoAdvanceFlowPhases(previous, record)) > 0 {
+			m = m.disarmAutoAdvanceDrain(record.FlowID)
+			continue
+		}
 		if len(newlyCompletedFlowPhases(previous, record)) > 0 {
 			m = m.armAutoAdvanceDrain(record.FlowID)
 		}
@@ -358,6 +362,36 @@ func newlyCompletedFlowPhases(previous, current flowstore.FlowRecord) []flowstor
 		}
 	}
 	return completed
+}
+
+func newlyStoppedAutoAdvanceFlowPhases(previous, current flowstore.FlowRecord) []flowstore.FlowPhase {
+	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
+	for _, phase := range previous.Phases {
+		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
+			previousByPhaseID[phaseID] = phase
+		}
+	}
+	var stopped []flowstore.FlowPhase
+	for _, phase := range flowstore.OrderedPhases(current.Phases) {
+		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+		if phaseID == "" || !autoAdvanceStopStatus(phase.Status) {
+			continue
+		}
+		previousPhase, ok := previousByPhaseID[phaseID]
+		if ok && previousPhase.Status != phase.Status {
+			stopped = append(stopped, phase)
+		}
+	}
+	return stopped
+}
+
+func autoAdvanceStopStatus(status string) bool {
+	switch status {
+	case flowstore.PhaseSkipped, flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m Model) armAutoAdvanceDrain(flowID string) Model {

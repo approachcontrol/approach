@@ -182,6 +182,53 @@ func TestAutoModeSkipDoesNotArmDrain(t *testing.T) {
 	}
 }
 
+func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
+	rootCompleted := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchARunning := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseRunning,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchASkipped := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseSkipped,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchASkipped.Phases[1].Notes = "Skipped by user"
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return branchARunning, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{autoAdvanceCustomFlow(map[string]string{
+		"root": flowstore.PhaseRunning,
+	})}
+
+	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "branch-a" {
+		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
+		t.Fatalf("updates after first launch = %#v, want branch-a", updates)
+	}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{branchASkipped})
+	if len(updates) != 1 {
+		t.Fatalf("updates after skipped branch = %#v, want no successor launch", updates)
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want skipped branch to disarm drain", m.autoAdvanceDrainFlows)
+	}
+}
+
 func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"pr-creation": flowstore.PhaseCompleted,

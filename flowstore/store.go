@@ -1996,7 +1996,7 @@ func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDepends
 		record.GraphRecovery.Status = GraphRecoveryPresetEdgesRestored
 		return record
 	}
-	if phaseIDsCompatibleWithDefaultSequence(record.Phases) {
+	if recordAllowsDefaultEdgeRecovery(record) && phaseIDsCompatibleWithDefaultSequence(record.Phases) {
 		record.Phases = backfillLinearDependsOn(record.Phases)
 		return record
 	}
@@ -2012,6 +2012,11 @@ func (s *Store) presetForRecovery(record FlowRecord) (Preset, bool) {
 	}
 	preset, ok := s.presets[name]
 	return preset, ok
+}
+
+func recordAllowsDefaultEdgeRecovery(record FlowRecord) bool {
+	name := normalizePresetName(record.PresetName)
+	return name == "" || name == "default"
 }
 
 func presetMatchesRecord(preset Preset, record FlowRecord) bool {
