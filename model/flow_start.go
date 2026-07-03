@@ -196,7 +196,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 
 	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
 	if err != nil {
-		return result, s.blockPlanPhase(flow.FlowID, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
+		return result, s.blockWorktreeFailurePhases(flow, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
 	}
 	result.Worktree = worktree
 
@@ -278,6 +278,40 @@ func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) er
 		return fmt.Errorf("%s; mark flow blocked: %v", resultErr, err)
 	}
 	return fmt.Errorf("%s", resultErr)
+}
+
+func (s FlowStarter) blockWorktreeFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes, resultErr string) error {
+	phaseIDs := launchablePhaseIDs(flow)
+	if len(phaseIDs) == 0 {
+		phaseIDs = []string{fallbackPhaseID}
+	}
+	for _, phaseID := range phaseIDs {
+		if _, err := s.setPhase(flowstore.PhaseUpdate{
+			FlowID:  flow.FlowID,
+			PhaseID: phaseID,
+			Status:  flowstore.PhaseBlocked,
+			Notes:   notes,
+		}); err != nil {
+			return fmt.Errorf("%s; mark flow blocked: %v", resultErr, err)
+		}
+	}
+	return fmt.Errorf("%s", resultErr)
+}
+
+func launchablePhaseIDs(flow flowstore.FlowRecord) []string {
+	ordered := flowstore.OrderedPhases(flow.Phases)
+	orderedFlow := flow
+	orderedFlow.Phases = ordered
+	var ids []string
+	seen := make(map[string]bool)
+	for i, phase := range ordered {
+		if !flowstore.PhaseLaunchEligible(orderedFlow, i) || seen[phase.PhaseID] {
+			continue
+		}
+		seen[phase.PhaseID] = true
+		ids = append(ids, phase.PhaseID)
+	}
+	return ids
 }
 
 func flowStartPromptRecord(flow flowstore.FlowRecord, req FlowStartRequest, worktree actions.FlowWorktreeCreateResult, commit string) flowstore.FlowRecord {
