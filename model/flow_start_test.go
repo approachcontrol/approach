@@ -230,6 +230,48 @@ func TestFlowStarterStartPlanUsesGenericPromptForNonPlanRoot(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 1},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/review", Branch: "flow/review"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddPhaseLaunchID() should not run for plan-review root without plan: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/repo",
+		Title:        "Review flow",
+		Instructions: "Review the plan.",
+	})
+	if err == nil {
+		t.Fatal("StartPlan() error = nil, want linked plan requirement")
+	}
+	if !strings.Contains(err.Error(), "Plan Review needs a linked plan before launch") {
+		t.Fatalf("StartPlan() error = %q, want linked plan requirement", err)
+	}
+}
+
 func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {

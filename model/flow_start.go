@@ -129,6 +129,9 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	phase := initialFlowLaunchPhase(flow, req.PlanPhaseID)
 	phaseID := phase.PhaseID
 
+	if err := validateInitialFlowLaunchPhase(flow, phase); err != nil {
+		return result, err
+	}
 	launchID := s.newLaunchID()
 	launchedFlow, err := s.addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   flow.FlowID,
@@ -172,6 +175,13 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		InitialPrompt:    initialFlowLaunchPrompt(flowStartPromptRecord(flow, req, worktree, commit), phase, s.promptTemplatesForRequest(req)),
 	}
 	return result, nil
+}
+
+func validateInitialFlowLaunchPhase(flow flowstore.FlowRecord, phase flowstore.FlowPhase) error {
+	if flowstore.SemanticKind(phase) == flowstore.KindPlanReview && flow.PlanID == "" {
+		return fmt.Errorf("Plan Review needs a linked plan before launch")
+	}
+	return nil
 }
 
 func (s FlowStarter) promptTemplatesForRequest(req FlowStartRequest) FlowPromptTemplates {
