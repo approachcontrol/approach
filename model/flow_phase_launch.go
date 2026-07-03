@@ -162,6 +162,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		PlanPath:         req.PlanPath,
 		FlowID:           req.Record.FlowID,
 		FlowPhaseID:      launchPhase.PhaseID,
+		FlowPhaseKind:    flowstore.SemanticKind(launchPhase),
 		FlowAutoLaunch:   req.AutoLaunch,
 		InitialPrompt:    flowPhasePrompt(req.Record, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
 	}

@@ -5709,6 +5709,35 @@ func TestReadRestoresMissingDependsOnFromNamedPreset(t *testing.T) {
 	}
 }
 
+func TestReadRestoresPartiallyMissingDependsOnFromNamedPreset(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:    root,
+		Presets: []flowstore.Preset{researchPresetForStoreTest()},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	writeRawFlowMeta(t, root, "20260607T120000Z-partial-preset-recovery", `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "depends_on": [], "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "depends_on": ["draft"], "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	read, err := store.Read("20260607T120000Z-partial-preset-recovery")
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.GraphRecovery.Status != flowstore.GraphRecoveryPresetEdgesRestored {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryPresetEdgesRestored)
+	}
+	if got := phaseByID(t, read, "draft").DependsOn; len(got) != 1 || got[0] != "research" {
+		t.Fatalf("draft DependsOn = %#v, want [research]", got)
+	}
+}
+
 func TestReadMissingNamedPresetEdgesUnresolvedWhenPresetUnavailable(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

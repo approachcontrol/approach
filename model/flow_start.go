@@ -168,6 +168,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		PlanPhaseStatus:  phaseStatus,
 		FlowID:           flow.FlowID,
 		FlowPhaseID:      phaseID,
+		FlowPhaseKind:    flowstore.SemanticKind(phase),
 		InitialPrompt:    initialFlowLaunchPrompt(flowStartPromptRecord(flow, req, worktree, commit), phase, s.promptTemplatesForRequest(req)),
 	}
 	return result, nil

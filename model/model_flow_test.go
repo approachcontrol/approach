@@ -7788,7 +7788,10 @@ func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T)
 			phaseUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			if ctx.FlowPhaseKind != flowstore.KindPlanReview {
+				t.Fatalf("FlowPhaseKind = %q, want %q", ctx.FlowPhaseKind, flowstore.KindPlanReview)
+			}
 			return nil, errors.New("pty unavailable")
 		},
 	})
@@ -9783,6 +9786,38 @@ func TestModel_GUsesFlowPhaseOrderingForReadyLaunch(t *testing.T) {
 
 	if launchUpdate.PhaseID != "implementation-api" {
 		t.Fatalf("launched phase = %q, want child phase before review-loop", launchUpdate.PhaseID)
+	}
+}
+
+func TestModel_OffViewCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	})
+
+	m, cmd := update(m, model.AgentResultMsg{
+		LaunchContext: actions.AgentLaunchContext{
+			FlowID:        "flow-1",
+			FlowPhaseID:   "design-review",
+			FlowPhaseKind: flowstore.KindPlanReview,
+			RepoPath:      "/dev/alpha",
+		},
+		Err: "terminal failed",
+	})
+	if cmd == nil {
+		t.Fatal("expected flow refresh command")
+	}
+	_ = cmd()
+
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "design-review" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		phaseUpdate.Outcome != flowstore.OutcomeBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "terminal failed") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
 }
 

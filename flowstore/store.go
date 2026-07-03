@@ -1987,7 +1987,7 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 }
 
 func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDependsOnState) FlowRecord {
-	if rawDependsOnPresentForTopLevel(record.Phases, presence) {
+	if rawDependsOnPresentForEveryTopLevel(record.Phases, presence) {
 		record.Phases = normalizeDependsOnValues(record.Phases)
 		return record
 	}
@@ -2079,6 +2079,20 @@ func rawDependsOnPresentForTopLevel(phases []FlowPhase, presence []rawDependsOnS
 		}
 	}
 	return false
+}
+
+func rawDependsOnPresentForEveryTopLevel(phases []FlowPhase, presence []rawDependsOnState) bool {
+	seenTopLevel := false
+	for i, phase := range phases {
+		if phase.ParentPhaseID != "" {
+			continue
+		}
+		seenTopLevel = true
+		if i >= len(presence) || !presence[i].Present {
+			return false
+		}
+	}
+	return seenTopLevel
 }
 
 func (s *Store) flowDir(flowID string) string {
