@@ -9903,11 +9903,11 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						Branch:           "flow/add-flow-mode",
 						Commit:           "abc123",
 						SessionStateRoot: req.SessionStateRoot,
-						PlanPhaseID:      req.PlanPhaseID,
-						PlanPhaseTitle:   req.PlanPhaseTitle,
-						PlanPhaseStatus:  req.PlanPhaseStatus,
+						PlanPhaseID:      "plan",
+						PlanPhaseTitle:   "Plan",
+						PlanPhaseStatus:  flowstore.PhaseRunning,
 						FlowID:           "flow-1",
-						FlowPhaseID:      req.PlanPhaseID,
+						FlowPhaseID:      "plan",
 						ReasoningEffort:  req.ReasoningEffort,
 						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
 					}}, nil
@@ -9956,9 +9956,9 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			}
 			if startRequest.AgentCommand != command ||
 				startRequest.SessionStateRoot != "/state/wtui/sessions/v1" ||
-				startRequest.PlanPhaseID != "plan" ||
-				startRequest.PlanPhaseTitle != "Plan" ||
-				startRequest.PlanPhaseStatus != flowstore.PhaseRunning ||
+				startRequest.PlanPhaseID != "" ||
+				startRequest.PlanPhaseTitle != "" ||
+				startRequest.PlanPhaseStatus != "" ||
 				startRequest.ReasoningEffort != wantEffort {
 				t.Fatalf("start request metadata = %#v", startRequest)
 			}
@@ -9998,6 +9998,58 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				t.Fatalf("flow terminal view missing agent output:\n%s", view)
 			}
 		})
+	}
+}
+
+func TestModel_NewFlowPlanNowLetsStarterChooseCustomRootPhase(t *testing.T) {
+	var startRequest model.FlowStartRequest
+	var started actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			startRequest = req
+			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
+				Command:      req.AgentCommand,
+				LaunchID:     "launch-1",
+				RepoPath:     req.RepoPath,
+				WorktreePath: "/dev/alpha-worktrees/flow-research",
+				Branch:       "flow/research",
+				FlowID:       "flow-1",
+				FlowPhaseID:  "research",
+				PlanPhaseID:  "research",
+			}}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("CLI Flow launch should use embedded terminal")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+
+	m, cmd := submitNewFlowPrompts(t, m, "Research Flow", "Plan research", "main")
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	launchMsg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", launchMsg)
+	}
+	m, _ = update(m, launchMsg)
+
+	if startRequest.PlanPhaseID != "" || startRequest.PlanPhaseTitle != "" || startRequest.PlanPhaseStatus != "" {
+		t.Fatalf("TUI create path forced phase metadata: %#v", startRequest)
+	}
+	if started.FlowPhaseID != "research" || started.PlanPhaseID != "research" {
+		t.Fatalf("started phase IDs = flow %q plan %q, want research", started.FlowPhaseID, started.PlanPhaseID)
 	}
 }
 
@@ -10097,7 +10149,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 				Branch:           "flow/add-flow-mode",
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           "flow-1",
-				FlowPhaseID:      req.PlanPhaseID,
+				FlowPhaseID:      "plan",
 				ReasoningEffort:  req.ReasoningEffort,
 			}}, nil
 		},
@@ -10156,7 +10208,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 						Branch:           "flow/interactive-plan",
 						SessionStateRoot: req.SessionStateRoot,
 						FlowID:           "flow-1",
-						FlowPhaseID:      req.PlanPhaseID,
+						FlowPhaseID:      "plan",
 					}}, nil
 				},
 				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -10223,7 +10275,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 				Branch:           "flow/interactive-plan",
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           "flow-1",
-				FlowPhaseID:      req.PlanPhaseID,
+				FlowPhaseID:      "plan",
 				InitialPrompt:    "Create and persist the plan.",
 			}}, nil
 		},
@@ -10294,11 +10346,11 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 						Branch:           "flow/add-flow-mode",
 						Commit:           "abc123",
 						SessionStateRoot: req.SessionStateRoot,
-						PlanPhaseID:      req.PlanPhaseID,
-						PlanPhaseTitle:   req.PlanPhaseTitle,
-						PlanPhaseStatus:  req.PlanPhaseStatus,
+						PlanPhaseID:      "plan",
+						PlanPhaseTitle:   "Plan",
+						PlanPhaseStatus:  flowstore.PhaseRunning,
 						FlowID:           "flow-1",
-						FlowPhaseID:      req.PlanPhaseID,
+						FlowPhaseID:      "plan",
 						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
 					}}, nil
 				},
@@ -10424,7 +10476,7 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 				WorktreePath: "/dev/alpha-worktrees/flow-stale",
 				Branch:       "flow/stale",
 				FlowID:       "flow-1",
-				FlowPhaseID:  req.PlanPhaseID,
+				FlowPhaseID:  "plan",
 			}}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -10475,7 +10527,7 @@ func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
 				Branch:       "flow/add-flow-mode",
 				FlowID:       "flow-1",
-				FlowPhaseID:  req.PlanPhaseID,
+				FlowPhaseID:  "plan",
 			}}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -10526,7 +10578,7 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 				WorktreePath: "/dev/alpha-worktrees/flow-stale",
 				Branch:       "flow/stale",
 				FlowID:       "flow-1",
-				FlowPhaseID:  req.PlanPhaseID,
+				FlowPhaseID:  "plan",
 			}}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -10822,7 +10874,7 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
 				Branch:       "flow/add-flow-mode",
 				FlowID:       "flow-1",
-				FlowPhaseID:  req.PlanPhaseID,
+				FlowPhaseID:  "plan",
 			}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
@@ -10878,7 +10930,7 @@ func TestModel_NewFlowCodexAppLaunchFailureMarksPlanNeedsAttention(t *testing.T)
 				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
 				Branch:       "flow/add-flow-mode",
 				FlowID:       "flow-1",
-				FlowPhaseID:  req.PlanPhaseID,
+				FlowPhaseID:  "plan",
 			}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
@@ -10938,7 +10990,7 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
 				Branch:       "flow/add-flow-mode",
 				FlowID:       "flow-1",
-				FlowPhaseID:  req.PlanPhaseID,
+				FlowPhaseID:  "plan",
 			}}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {

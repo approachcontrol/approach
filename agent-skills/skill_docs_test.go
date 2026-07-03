@@ -17,6 +17,7 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 		"name: wtui-flow",
 		"WTUI_FLOW_ID",
 		"WTUI_FLOW_PHASE_ID",
+		"WTUI_CURRENT_PHASE_ID",
 	})
 	requireContainsAll(t, "flow commands", skill, []string{
 		"wtui flow read --flow-id",
@@ -204,6 +205,9 @@ func TestWtuiFlowCreateSkillDocumentsAgentContract(t *testing.T) {
 
 	if hasRunnableCommandExample(skill, "wtui flow session attach") {
 		t.Fatal("skill includes a runnable example for unimplemented command \"wtui flow session attach\"")
+	}
+	if strings.Contains(skill, "FLOW_PRESET") && regexp.MustCompile(`(?s)wtui flow phase (?:block|complete|needs-attention).*?--phase-id plan`).MatchString(skill) {
+		t.Fatal("wtui-flow-create should use the created Flow's plan-kind phase ID instead of hardcoded --phase-id plan")
 	}
 }
 

@@ -475,9 +475,6 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			SessionStateRoot:            m.sessionStateRoot,
 			FlowPromptTemplates:         m.flowPromptTemplates,
 			FlowPromptTemplatesProvided: true,
-			PlanPhaseID:                 flowPlanPhaseID,
-			PlanPhaseTitle:              "Plan",
-			PlanPhaseStatus:             flowstore.PhaseRunning,
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
@@ -493,7 +490,6 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) 
 			Title:        title,
 			Instructions: instructions,
 			BaseRef:      baseRef,
-			PlanPhaseID:  flowPlanPhaseID,
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}

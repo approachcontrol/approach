@@ -423,6 +423,28 @@ func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 	}
 }
 
+func TestRunFlowReadWithExplicitStateRootSkipsConfig(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Readable", "--instructions", "read it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+		noScanDeps(t, runDeps{
+			loadConfig: func() (config.Config, error) {
+				t.Fatal("loadConfig should not run with explicit state root")
+				return config.Config{}, nil
+			},
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), created.FlowID) {
+		t.Fatalf("flow read output missing flow ID %q: %s", created.FlowID, stdout.String())
+	}
+}
+
 func TestRunFlowListJSONFiltersByRepo(t *testing.T) {
 	root := t.TempDir()
 	alpha := filepath.Join(root, "alpha")

@@ -25,8 +25,14 @@ if [ -n "$WTUI_ARTIFACT_ROOT" ]; then
   PLAN_STATE_ARGS=(--state-root "$WTUI_ARTIFACT_ROOT")
 fi
 
-if ! wtui flow read --flow-id "$WTUI_FLOW_ID" "${FLOW_STATE_ARGS[@]}" >/dev/null; then
+if ! FLOW_JSON=$(wtui flow read --flow-id "$WTUI_FLOW_ID" "${FLOW_STATE_ARGS[@]}"); then
   echo "wtui flow read failed; report the command error to the user." >&2
+  exit 1
+fi
+
+WTUI_CURRENT_PHASE_ID="${WTUI_FLOW_PHASE_ID:-${WTUI_PLAN_PHASE_ID:-}}"
+if [ -z "$WTUI_CURRENT_PHASE_ID" ]; then
+  echo "WTUI_FLOW_PHASE_ID is required; report the missing launch metadata to the user." >&2
   exit 1
 fi
 ```
@@ -35,6 +41,12 @@ Also use the launch metadata when present: `WTUI_FLOW_PHASE_ID`,
 `WTUI_PLAN_ID`, `WTUI_PLAN_PATH`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`,
 `WTUI_BRANCH`, `WTUI_COMMIT`, `WTUI_SESSION_STATE_ROOT`, and
 `WTUI_PLAN_STATE_ROOT`.
+
+When mutating your own Flow phase, use `WTUI_CURRENT_PHASE_ID` rather than a
+hardcoded default preset phase ID. The default preset phase IDs are `plan`,
+`plan-review`, `implementation`, `review-loop`, `pr-creation`, `autoreview`,
+and `merge`, but custom presets may use different IDs for the same semantic
+phase kinds.
 
 Agent-facing phase statuses are `running`, `needs_attention`, `completed`,
 `blocked`, and `skipped`. Report only the status of your own phase honestly;
@@ -131,7 +143,7 @@ if ! PLAN_ID=$(printf '%s' "$PLAN_MARKDOWN" | wtui plan save \
     "${PLAN_STATE_ARGS[@]}"); then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
-    --phase-id plan \
+    --phase-id "$WTUI_CURRENT_PHASE_ID" \
     --status blocked \
     --outcome "plan_save_failed" \
     --notes "wtui plan save failed; report the command error to the user." \
@@ -145,7 +157,7 @@ if ! wtui flow plan set \
     "${FLOW_STATE_ARGS[@]}"; then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
-    --phase-id plan \
+    --phase-id "$WTUI_CURRENT_PHASE_ID" \
     --status blocked \
     --outcome "plan_link_failed" \
     --notes "wtui flow plan set failed for saved plan $PLAN_ID; report the command error to the user." \
@@ -153,27 +165,50 @@ if ! wtui flow plan set \
   exit 1
 fi
 
-if ! wtui plan phase set \
-    --plan-id "$PLAN_ID" \
-    --phase-id implementation \
-    --title "Implementation" \
-    --status pending \
-    --order 1 \
-    "${PLAN_STATE_ARGS[@]}"; then
+if ! WTUI_PLAN_PHASE_EXPORTS=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, shlex, sys
+record = json.load(sys.stdin)
+def semantic_kind(phase):
+    kind = (phase.get("kind") or "").strip().lower()
+    if kind:
+        return kind
+    return "implementation" if (phase.get("phase_id") or "").strip().lower() == "implementation" else ""
+phase = next((phase for phase in record.get("phases", []) if semantic_kind(phase) == "implementation"), {})
+print("WTUI_PLAN_NEXT_PHASE_ID=" + shlex.quote((phase.get("phase_id") or "").strip()))
+print("WTUI_PLAN_NEXT_PHASE_TITLE=" + shlex.quote((phase.get("title") or phase.get("phase_id") or "").strip()))'); then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
-    --phase-id plan \
+    --phase-id "$WTUI_CURRENT_PHASE_ID" \
     --status blocked \
-    --outcome "plan_phase_save_failed" \
-    --notes "wtui plan phase set failed for saved plan $PLAN_ID; report the command error to the user." \
+    --outcome "plan_phase_discovery_failed" \
+    --notes "wtui flow read JSON could not be parsed for the next saved-plan phase; report the command error to the user." \
     "${FLOW_STATE_ARGS[@]}"
   exit 1
+fi
+eval "$WTUI_PLAN_PHASE_EXPORTS"
+
+if [ -n "${WTUI_PLAN_NEXT_PHASE_ID:-}" ]; then
+  if ! wtui plan phase set \
+      --plan-id "$PLAN_ID" \
+      --phase-id "$WTUI_PLAN_NEXT_PHASE_ID" \
+      --title "${WTUI_PLAN_NEXT_PHASE_TITLE:-$WTUI_PLAN_NEXT_PHASE_ID}" \
+      --status pending \
+      --order 1 \
+      "${PLAN_STATE_ARGS[@]}"; then
+    wtui flow phase set \
+      --flow-id "$WTUI_FLOW_ID" \
+      --phase-id "$WTUI_CURRENT_PHASE_ID" \
+      --status blocked \
+      --outcome "plan_phase_save_failed" \
+      --notes "wtui plan phase set failed for saved plan $PLAN_ID; report the command error to the user." \
+      "${FLOW_STATE_ARGS[@]}"
+    exit 1
+  fi
 fi
 
 if ! wtui plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
-    --phase-id plan \
+    --phase-id "$WTUI_CURRENT_PHASE_ID" \
     --status blocked \
     --outcome "plan_read_failed" \
     --notes "Saved plan $PLAN_ID could not be read back; report the command error to the user." \
@@ -183,7 +218,7 @@ fi
 
 wtui flow phase complete \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id plan \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --outcome "plan_saved" \
   --summary "Saved and linked plan $PLAN_ID." \
   "${FLOW_STATE_ARGS[@]}"
@@ -214,7 +249,7 @@ if [ -z "$WTUI_PLAN_ID" ]; then
   if ! WTUI_PLAN_ID=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("plan_id", ""))'); then
     wtui flow phase set \
       --flow-id "$WTUI_FLOW_ID" \
-      --phase-id plan-review \
+      --phase-id "$WTUI_CURRENT_PHASE_ID" \
       --status blocked \
       --outcome "blocked" \
       --notes "wtui flow read returned JSON that could not be parsed for plan_id; report the command error to the user." \
@@ -226,7 +261,7 @@ fi
 if [ -z "$WTUI_PLAN_ID" ]; then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
-    --phase-id plan-review \
+    --phase-id "$WTUI_CURRENT_PHASE_ID" \
     --status blocked \
     --outcome "blocked" \
     --notes "Plan Review needs the plan ID from the completed Plan phase." \
@@ -237,7 +272,7 @@ fi
 if ! wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; then
   wtui flow phase set \
     --flow-id "$WTUI_FLOW_ID" \
-    --phase-id plan-review \
+    --phase-id "$WTUI_CURRENT_PHASE_ID" \
     --status blocked \
     --outcome "blocked" \
     --notes "wtui plan read failed for $WTUI_PLAN_ID; report the command error to the user." \
@@ -247,7 +282,7 @@ fi
 
 wtui flow phase complete \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id plan-review \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --summary "Plan is ready for implementation." \
   "${FLOW_STATE_ARGS[@]}"
 ```
@@ -289,7 +324,7 @@ its work is done.
 ```bash
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id implementation \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --status completed \
   --outcome "implemented" \
   --summary "Implemented the accepted plan and verified the target tests." \
@@ -313,7 +348,7 @@ fixed, `needs_attention` when non-blocking concerns remain for the user, and
 ```bash
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id review-loop \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --status completed \
   --outcome "completed" \
   --summary "Review loop passed after revisions." \
@@ -343,7 +378,7 @@ wtui flow pr set \
 
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id pr-creation \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --status completed \
   --outcome "pr_open" \
   --summary "Opened GitHub PR #123." \
@@ -372,14 +407,14 @@ complete it after the rerun succeeds:
 ```bash
 wtui flow phase restart \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id autoreview \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
 ```bash
 wtui flow phase complete \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id autoreview \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --summary "Autoreview passed; no blocking findings remain." \
   "${FLOW_STATE_ARGS[@]}"
 ```
@@ -397,7 +432,7 @@ commands must succeed before reporting the Flow as merged.
 ```bash
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id merge \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --status completed \
   --outcome "merged" \
   --summary "Merged PR github#123 at commit $MERGE_COMMIT." \
@@ -417,7 +452,7 @@ record the structured blocked merge status:
 ```bash
 wtui flow phase set \
   --flow-id "$WTUI_FLOW_ID" \
-  --phase-id merge \
+  --phase-id "$WTUI_CURRENT_PHASE_ID" \
   --status blocked \
   --outcome "blocked" \
   --notes "Explain why merge is blocked." \

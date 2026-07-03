@@ -475,7 +475,7 @@ Other phase and progression mutation remains CLI/agent-driven in v1.
 wtui flow create --title "Ship saved plans" \
     --instructions "Plan, implement, review, open a PR, and merge." \
     --repo-path "$REPO" [--worktree-path PATH] [--branch BRANCH] \
-    [--base-ref REF] [--commit HASH] [--state-root PATH] --json
+    [--base-ref REF] [--commit HASH] [--preset NAME] [--state-root PATH] --json
 
 # You may also read instructions from a file.
 wtui flow create --title "Ship saved plans" \

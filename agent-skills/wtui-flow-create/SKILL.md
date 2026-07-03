@@ -290,11 +290,31 @@ if [ -z "${PLAN_MARKDOWN:-}" ]; then
   exit 0
 fi
 
+if ! FLOW_PLAN_PHASE_ID=$(printf '%s' "$FLOW_JSON" | python3 -c 'import json, sys
+record = json.load(sys.stdin)
+phases = record.get("phases", [])
+def semantic_kind(phase):
+    kind = (phase.get("kind") or "").strip().lower()
+    if kind:
+        return kind
+    return "plan" if (phase.get("phase_id") or "").strip().lower() == "plan" else ""
+candidates = [phase for phase in phases if semantic_kind(phase) == "plan"]
+ready = [phase for phase in candidates if phase.get("status") == "ready"]
+picked = (ready or candidates or [{}])[0]
+print(picked.get("phase_id", ""))'); then
+  echo "wtui flow create returned JSON that could not be parsed for a plan-kind phase; report the command error to the user." >&2
+  exit 1
+fi
+
 record_plan_import_failure() {
   notes="${1:-}"
+  if [ -z "${FLOW_PLAN_PHASE_ID:-}" ]; then
+    echo "Plan import failed, and Flow $FLOW_ID has no plan-kind phase to mark blocked; report both facts to the user." >&2
+    return 0
+  fi
   if ! wtui flow phase block \
     --flow-id "$FLOW_ID" \
-    --phase-id plan \
+    --phase-id "$FLOW_PLAN_PHASE_ID" \
     --notes "$notes" \
     "${FLOW_STATE_ARGS[@]}"; then
     echo "wtui flow phase block failed after plan import failure; report both command errors to the user." >&2
@@ -326,20 +346,25 @@ if ! wtui plan read --plan-id "$PLAN_ID" "${PLAN_STATE_ARGS[@]}" >/dev/null; the
   exit 1
 fi
 
-if ! wtui flow phase complete \
-  --flow-id "$FLOW_ID" \
-  --phase-id plan \
-  --summary "Imported plan $PLAN_ID." \
-  "${FLOW_STATE_ARGS[@]}"; then
-  record_plan_import_failure "wtui flow phase complete failed after importing plan $PLAN_ID; report the command error to the user."
-  exit 1
+if [ -n "${FLOW_PLAN_PHASE_ID:-}" ]; then
+  if ! wtui flow phase complete \
+    --flow-id "$FLOW_ID" \
+    --phase-id "$FLOW_PLAN_PHASE_ID" \
+    --summary "Imported plan $PLAN_ID." \
+    "${FLOW_STATE_ARGS[@]}"; then
+    record_plan_import_failure "wtui flow phase complete failed after importing plan $PLAN_ID; report the command error to the user."
+    exit 1
+  fi
+else
+  echo "Imported and linked plan $PLAN_ID; Flow $FLOW_ID has no plan-kind phase to complete, so leave it ready for its configured first phase." >&2
 fi
 ```
 
-Only complete the new Flow's `plan` phase after all four steps succeed: plan
-save, flow-plan link, plan readback, and phase completion. If there is no
-concrete plan body, report the new Flow ID and leave Plan ready for a normal
-Flow Plan launch.
+Only complete the new Flow's plan-kind phase after all four steps succeed: plan
+save, flow-plan link, plan readback, and phase completion. If the selected
+preset has no plan-kind phase, link the plan but do not complete a Flow phase.
+If there is no concrete plan body, report the new Flow ID and leave Plan ready
+for a normal Flow Plan launch.
 
 ## Persistence Failures
 
@@ -355,13 +380,13 @@ also succeeded. The import snippet above uses this recovery command:
 ```bash
 wtui flow phase block \
   --flow-id "$FLOW_ID" \
-  --phase-id plan \
+  --phase-id "$FLOW_PLAN_PHASE_ID" \
   --notes "Plan import failed; report the wtui command error to the user." \
   "${FLOW_STATE_ARGS[@]}"
 ```
 
-Use `wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan
---notes "..." "${FLOW_STATE_ARGS[@]}"` instead when the Flow can continue but
-the imported plan should be reviewed before implementation. If this recovery
-update fails too, report both the original command error and the recovery
-command error.
+Use `wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id
+"$FLOW_PLAN_PHASE_ID" --notes "..." "${FLOW_STATE_ARGS[@]}"` instead when the
+Flow can continue but the imported plan should be reviewed before
+implementation. If this recovery update fails too, report both the original
+command error and the recovery command error.

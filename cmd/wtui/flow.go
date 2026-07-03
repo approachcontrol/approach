@@ -91,6 +91,19 @@ Most commands accept:
 `
 
 func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
+	root := stateRoot
+	if root == "" {
+		if envRoot := deps.getenv("WTUI_FLOW_STATE_ROOT"); envRoot != "" {
+			root = envRoot
+		} else if envRoot := deps.getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
+			root = envRoot
+		} else if envRoot := deps.getenv("WTUI_SESSION_STATE_ROOT"); envRoot != "" {
+			root = envRoot
+		}
+	}
+	if root != "" {
+		return flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	}
 	cfg, err := deps.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config: %w", err)

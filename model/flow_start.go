@@ -249,7 +249,7 @@ func findFlowPhaseByID(flow flowstore.FlowRecord, phaseID string) (flowstore.Flo
 
 func initialFlowLaunchPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates) string {
 	if flowstore.SemanticKind(phase) == flowstore.KindPlan {
-		return flowPlanPrompt(flow, templates)
+		return flowPlanPrompt(flow, phase, templates)
 	}
 	return flowPhasePrompt(flow, phase, flow.PlanPath, "", templates)
 }
@@ -304,9 +304,12 @@ func flowStartPromptRecord(flow flowstore.FlowRecord, req FlowStartRequest, work
 	return flow
 }
 
-func flowPlanPrompt(flow flowstore.FlowRecord, templates FlowPromptTemplates) string {
+func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates) string {
+	if strings.TrimSpace(phase.PhaseID) == "" {
+		phase = flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
+	}
 	if strings.TrimSpace(templates.Plan) != "" {
-		prompt := renderFlowPromptTemplate(templates.Plan, flow, flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan"}, flow.PlanPath, "")
+		prompt := renderFlowPromptTemplate(templates.Plan, flow, phase, flow.PlanPath, "")
 		return ensureFlowPhaseDoneInstruction(prompt, templates.Plan)
 	}
 	var b strings.Builder
