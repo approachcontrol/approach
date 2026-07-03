@@ -1769,13 +1769,6 @@ func (m Model) hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID,
 	return false
 }
 
-func (m Model) clearDeferredAutoFlowLaunchForTerminal(slot embeddedTerminalSlot) Model {
-	if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil || flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
-		return m
-	}
-	return m.suppressAutoFlowPhaseLaunch(slot.FlowID, slot.FlowPhaseID, slot.LaunchID)
-}
-
 func flowEmbeddedTerminalSlotMatchesPhase(slot embeddedTerminalSlot, flowID, normalizedPhaseID string) bool {
 	return slot.Scope == embeddedTerminalScopeFlow &&
 		slot.FlowID == flowID &&

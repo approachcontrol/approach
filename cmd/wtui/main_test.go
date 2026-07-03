@@ -444,6 +444,29 @@ func TestModelOptionsFromConfigMapsDefaultView(t *testing.T) {
 	}
 }
 
+func TestModelOptionsFromConfigPassesFlowPreset(t *testing.T) {
+	sessionStore, planStore, flowStore := testArtifactStores(t)
+	preset := flowstore.Preset{
+		Name: "research",
+		Phases: []flowstore.PhaseSpec{
+			{ID: "research", Title: "Research", Kind: flowstore.KindPlan, DependsOn: []string{}},
+		},
+	}
+	opts := modelOptionsFromConfig(config.Config{
+		Flow: config.FlowConfig{
+			Preset:  "research",
+			Presets: []flowstore.Preset{preset},
+		},
+	}, nil, sessionStore, planStore, flowStore)
+
+	if len(opts.FlowPresets) != 1 || opts.FlowPresets[0].Name != "research" {
+		t.Fatalf("FlowPresets = %#v, want research preset", opts.FlowPresets)
+	}
+	if opts.FlowPreset == nil || opts.FlowPreset.Name != "research" {
+		t.Fatalf("FlowPreset = %#v, want research", opts.FlowPreset)
+	}
+}
+
 func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("ZELLIJ", "")

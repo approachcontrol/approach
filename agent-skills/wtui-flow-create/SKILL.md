@@ -186,7 +186,9 @@ fi
 
 Prefer `--instructions-file` when the instructions are more than a short
 sentence; use `--instructions` for compact task text. `wtui flow create --json`
-prints machine-readable output containing `flow_id`.
+prints machine-readable output containing `flow_id`. Set `FLOW_PRESET` only
+when the user or surrounding workflow explicitly asks for a configured custom
+phase graph; omitted uses `[flow].preset` or the built-in `default` preset.
 
 ```bash
 if [ -z "${FLOW_TITLE:-}" ] || [ -z "${WTUI_REPO_PATH:-}" ]; then
@@ -204,6 +206,10 @@ if [ -z "${FLOW_INSTRUCTIONS_FILE:-}" ] && [ -z "${FLOW_INSTRUCTIONS:-}" ]; then
   echo "Flow creation requires FLOW_INSTRUCTIONS or FLOW_INSTRUCTIONS_FILE; ask the user for the task instructions." >&2
   exit 1
 fi
+FLOW_PRESET_ARGS=()
+if [ -n "${FLOW_PRESET:-}" ]; then
+  FLOW_PRESET_ARGS=(--preset "$FLOW_PRESET")
+fi
 
 if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
   if ! FLOW_JSON=$(wtui flow create \
@@ -214,6 +220,7 @@ if [ -n "${FLOW_INSTRUCTIONS_FILE:-}" ]; then
     --branch "${WTUI_BRANCH:-}" \
     --base-ref "${WTUI_BASE_REF:-}" \
     --commit "${WTUI_COMMIT:-}" \
+    "${FLOW_PRESET_ARGS[@]}" \
     --json \
     "${FLOW_STATE_ARGS[@]}"); then
     echo "wtui flow create failed; report the command error to the user." >&2
@@ -228,6 +235,7 @@ else
     --branch "${WTUI_BRANCH:-}" \
     --base-ref "${WTUI_BASE_REF:-}" \
     --commit "${WTUI_COMMIT:-}" \
+    "${FLOW_PRESET_ARGS[@]}" \
     --json \
     "${FLOW_STATE_ARGS[@]}"); then
     echo "wtui flow create failed; report the command error to the user." >&2

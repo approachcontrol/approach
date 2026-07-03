@@ -119,11 +119,6 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 }
 
 func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
-	phaseID := req.PlanPhaseID
-	if phaseID == "" {
-		phaseID = flowPlanPhaseID
-	}
-
 	result, err := s.PrepareFlow(req)
 	if err != nil {
 		return result, err
@@ -131,6 +126,8 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	flow := result.Flow
 	worktree := result.Worktree
 	commit := result.Commit
+	phase := initialFlowLaunchPhase(flow, req.PlanPhaseID)
+	phaseID := phase.PhaseID
 
 	launchID := s.newLaunchID()
 	launchedFlow, err := s.addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
@@ -147,7 +144,10 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 
 	phaseTitle := req.PlanPhaseTitle
 	if phaseTitle == "" {
-		phaseTitle = "Plan"
+		phaseTitle = phase.Title
+	}
+	if phaseTitle == "" {
+		phaseTitle = phaseID
 	}
 	phaseStatus := req.PlanPhaseStatus
 	if phaseStatus == "" {
@@ -168,7 +168,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		PlanPhaseStatus:  phaseStatus,
 		FlowID:           flow.FlowID,
 		FlowPhaseID:      phaseID,
-		InitialPrompt:    flowPlanPrompt(flowStartPromptRecord(flow, req, worktree, commit), s.promptTemplatesForRequest(req)),
+		InitialPrompt:    initialFlowLaunchPrompt(flowStartPromptRecord(flow, req, worktree, commit), phase, s.promptTemplatesForRequest(req)),
 	}
 	return result, nil
 }
@@ -181,11 +181,6 @@ func (s FlowStarter) promptTemplatesForRequest(req FlowStartRequest) FlowPromptT
 }
 
 func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) {
-	phaseID := req.PlanPhaseID
-	if phaseID == "" {
-		phaseID = flowPlanPhaseID
-	}
-
 	flow, err := s.createFlow(flowstore.FlowRecord{
 		Title:        req.Title,
 		Instructions: req.Instructions,
@@ -195,6 +190,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	if err != nil {
 		return FlowStartResult{}, err
 	}
+	phaseID := initialFlowLaunchPhase(flow, req.PlanPhaseID).PhaseID
 	result := FlowStartResult{Flow: flow}
 
 	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
@@ -224,6 +220,38 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	}
 
 	return result, nil
+}
+
+func initialFlowLaunchPhase(flow flowstore.FlowRecord, requestedPhaseID string) flowstore.FlowPhase {
+	if requestedPhaseID != "" {
+		if phase, ok := findFlowPhaseByID(flow, requestedPhaseID); ok {
+			return phase
+		}
+		return flowstore.FlowPhase{PhaseID: requestedPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
+	}
+	if phase, _, ok := flowstore.FirstLaunchablePhase(flow); ok {
+		return phase
+	}
+	if phase, ok := findFlowPhaseByID(flow, flowPlanPhaseID); ok {
+		return phase
+	}
+	return flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
+}
+
+func findFlowPhaseByID(flow flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	for _, phase := range flow.Phases {
+		if phase.PhaseID == phaseID {
+			return phase, true
+		}
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+func initialFlowLaunchPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templates FlowPromptTemplates) string {
+	if flowstore.SemanticKind(phase) == flowstore.KindPlan {
+		return flowPlanPrompt(flow, templates)
+	}
+	return flowPhasePrompt(flow, phase, flow.PlanPath, "", templates)
 }
 
 func (s FlowStarter) runBootstrap(repoPath string, worktree actions.FlowWorktreeCreateResult) error {

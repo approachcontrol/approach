@@ -49,6 +49,17 @@ func HasRunningFlowEmbeddedTerminalForPhaseForTest(m Model, flowID, phaseID stri
 	return m.hasRunningFlowEmbeddedTerminalForPhase(flowID, phaseID)
 }
 
+func ClearFlowEmbeddedTerminalsForTest(m Model) Model {
+	var kept []embeddedTerminalSlot
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope != embeddedTerminalScopeFlow {
+			kept = append(kept, slot)
+		}
+	}
+	m.embeddedTerminals = kept
+	return m
+}
+
 func AutoAdvanceResultForTest(m Model, flows []flowstore.FlowRecord) (Model, tea.Cmd) {
 	m.autoAdvanceInFlight = 1
 	return m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: flows, Request: 1})
@@ -62,8 +73,6 @@ func AutoAdvanceLaunchCommandForTest(m Model, flows []flowstore.FlowRecord) (Mod
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	m, cmd, _ = m.prepareAutoFlowPhaseLaunch(previous, current)
-	cmds = append(cmds, cmd)
-	m, cmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom(m.autoAdvanceSnapshot)
 	cmds = append(cmds, cmd)
 	return m, batchNonNil(cmds...)
 }

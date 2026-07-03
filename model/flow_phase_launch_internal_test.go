@@ -237,7 +237,7 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 	}
 }
 
-func TestFlowPhaseLaunchCoordinatorClearsSuppressedAutoLaunchWithoutRelaunch(t *testing.T) {
+func TestFlowPhaseLaunchCoordinatorDrainIgnoresObsoleteSuppression(t *testing.T) {
 	previous := flowstore.FlowRecord{
 		FlowID:       "flow-1",
 		RepoPath:     "/dev/alpha",
@@ -253,21 +253,20 @@ func TestFlowPhaseLaunchCoordinatorClearsSuppressedAutoLaunchWithoutRelaunch(t *
 		{PhaseID: "plan-review", Status: flowstore.PhaseCompleted, LaunchIDs: []string{"source-launch"}, Order: 1},
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
+	var updates []flowstore.PhaseLaunchUpdate
 	m := NewWithOptions(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-			t.Fatalf("AddFlowPhaseLaunchID() should not run for a suppressed source phase: %#v", update)
-			return flowstore.FlowRecord{}, nil
+			updates = append(updates, update)
+			return current, nil
 		},
 	})
-	m = m.suppressAutoFlowPhaseLaunch("flow-1", "plan-review", "source-launch")
-
 	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
-	if cmd != nil {
-		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T for suppressed source phase", cmd)
+	if cmd == nil {
+		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want drain launch command")
 	}
-	if len(m.suppressedAutoFlowLaunches) != 0 {
-		t.Fatalf("suppressed auto-launches = %#v, want cleared", m.suppressedAutoFlowLaunches)
+	if len(updates) != 0 {
+		t.Fatalf("launch updates before command runs = %#v, want none", updates)
 	}
 }
 
@@ -313,14 +312,14 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	if len(updates) != 0 {
 		t.Fatalf("launch updates while source terminal was running = %#v, want none", updates)
 	}
-	if _, ok := m.deferredAutoFlowLaunches[deferredAutoFlowLaunchKey{FlowID: "flow-1", PhaseID: "plan-review"}]; !ok {
-		t.Fatalf("deferred auto-launches = %#v, want plan-review deferred", m.deferredAutoFlowLaunches)
+	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want flow-1 armed", m.autoAdvanceDrainFlows)
 	}
 
 	m.embeddedTerminals = nil
-	m, cmd = m.prepareDeferredAutoFlowPhaseLaunchesFrom([]flowstore.FlowRecord{current})
+	m, cmd = m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
 	if cmd == nil {
-		t.Fatal("prepareDeferredAutoFlowPhaseLaunchesFrom() returned nil after source terminal closed")
+		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil after source terminal closed")
 	}
 	msg := cmd()
 	if batch, ok := msg.(tea.BatchMsg); ok && len(batch) == 1 {
@@ -331,9 +330,6 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	}
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates after source terminal closed = %#v, want auto implementation launch", updates)
-	}
-	if len(m.deferredAutoFlowLaunches) != 0 {
-		t.Fatalf("deferred auto-launches after launch = %#v, want empty", m.deferredAutoFlowLaunches)
 	}
 }
 

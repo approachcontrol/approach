@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/brian-bell/wtui/config"
+	"github.com/brian-bell/wtui/flowstore"
 )
 
 func TestLoadFrom_AllowsMissingConfig(t *testing.T) {
@@ -56,6 +57,23 @@ claude_reasoning_effort = "max"
 plan = "Plan only: {instructions}"
 implementation = "Implement {plan_path} in {worktree_path}"
 autoreview = "Review {pr_url} and ship fixes"
+
+[flow]
+preset = "research"
+
+[[flow.presets]]
+name = "research"
+
+[[flow.presets.phases]]
+id = "research"
+title = "Research"
+kind = "plan"
+
+[[flow.presets.phases]]
+id = "build"
+title = "Build"
+kind = " implementation "
+depends_on = ["research"]
 
 [sessions]
 root = "~/state/wtui/sessions"
@@ -128,6 +146,25 @@ timeout_seconds = 300
 		cfg.FlowPrompts.Autoreview != "Review {pr_url} and ship fixes" {
 		t.Fatalf("expected flow prompt templates to parse, got %#v", cfg.FlowPrompts)
 	}
+	if cfg.Flow.Preset != "research" {
+		t.Fatalf("expected flow preset research, got %q", cfg.Flow.Preset)
+	}
+	if len(cfg.Flow.Presets) != 1 {
+		t.Fatalf("expected one flow preset, got %#v", cfg.Flow.Presets)
+	}
+	preset := cfg.Flow.Presets[0]
+	if preset.Name != "research" {
+		t.Fatalf("expected normalized preset name research, got %q", preset.Name)
+	}
+	if len(preset.Phases) != 2 {
+		t.Fatalf("expected two preset phases, got %#v", preset.Phases)
+	}
+	if preset.Phases[1].Kind != flowstore.KindImplementation {
+		t.Fatalf("expected normalized phase kind %q, got %q", flowstore.KindImplementation, preset.Phases[1].Kind)
+	}
+	if got := preset.Phases[1].DependsOn; len(got) != 1 || got[0] != "research" {
+		t.Fatalf("expected build to depend on research, got %#v", got)
+	}
 	if cfg.Sessions.Root != filepath.Join(home, "state", "wtui", "sessions") {
 		t.Fatalf("expected expanded sessions root, got %q", cfg.Sessions.Root)
 	}
@@ -189,6 +226,106 @@ func TestLoadFrom_DefaultsSessionsCopyRawTranscriptsOff(t *testing.T) {
 	}
 	if cfg.Sessions.CopyRawTranscripts {
 		t.Fatal("expected sessions copy_raw_transcripts to default false")
+	}
+}
+
+func TestLoadFrom_ParsesFlowDefaultPreset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[flow]\npreset = \"default\"\nunknown = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if cfg.Flow.Preset != "default" {
+		t.Fatalf("expected default flow preset, got %q", cfg.Flow.Preset)
+	}
+}
+
+func TestLoadFrom_RejectsInvalidFlowConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "wrong preset type",
+			body: "[flow]\npreset = 3\n",
+			want: "toml",
+		},
+		{
+			name: "undefined default preset",
+			body: "[flow]\npreset = \"missing\"\n",
+			want: `flow.preset "missing" is not a defined preset`,
+		},
+		{
+			name: "invalid graph",
+			body: `
+[[flow.presets]]
+name = "research"
+
+[[flow.presets.phases]]
+id = "a"
+title = "A"
+depends_on = ["b"]
+
+[[flow.presets.phases]]
+id = "b"
+title = "B"
+depends_on = ["a"]
+`,
+			want: `flow.presets["research"]:`,
+		},
+		{
+			name: "duplicate preset name",
+			body: `
+[[flow.presets]]
+name = " Research "
+
+[[flow.presets.phases]]
+id = "a"
+title = "A"
+
+[[flow.presets]]
+name = "research"
+
+[[flow.presets.phases]]
+id = "b"
+title = "B"
+`,
+			want: `duplicate preset name "research"`,
+		},
+		{
+			name: "reserved default preset",
+			body: `
+[[flow.presets]]
+name = " default "
+
+[[flow.presets.phases]]
+id = "a"
+title = "A"
+`,
+			want: `preset name "default" is reserved`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := config.LoadFrom(path)
+			if err == nil {
+				t.Fatal("expected invalid flow config error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to contain %q, got %q", tt.want, err.Error())
+			}
+		})
 	}
 }
 

@@ -5620,7 +5620,7 @@ func TestReadBackfillsLinearDependsOn(t *testing.T) {
 	}
 }
 
-func TestReadBackfillsLinearDependsOnForLegacyCustomFlow(t *testing.T) {
+func TestReadMissingDependsOnForLegacyCustomFlowStaysUnresolved(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
@@ -5654,16 +5654,119 @@ func TestReadBackfillsLinearDependsOnForLegacyCustomFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if got := phaseByID(t, read, "beta").DependsOn; len(got) != 1 || got[0] != "alpha" {
-		t.Fatalf("beta DependsOn = %#v, want [alpha]", got)
+	if read.GraphRecovery.Status != flowstore.GraphRecoveryMissingEdgesUnresolved {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryMissingEdgesUnresolved)
+	}
+	if got := phaseByID(t, read, "beta").DependsOn; len(got) != 0 || got == nil {
+		t.Fatalf("beta DependsOn = %#v, want explicit empty unresolved graph", got)
 	}
 
 	updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "alpha", Status: flowstore.PhaseNeedsAttention})
 	if err != nil {
 		t.Fatalf("SetPhase(alpha needs_attention) error = %v", err)
 	}
-	if got := phaseByID(t, updated, "beta").Status; got != flowstore.PhasePending {
-		t.Fatalf("beta status = %q, want pending while alpha is unsatisfied", got)
+	if got := phaseByID(t, updated, "beta").Status; got != flowstore.PhaseReady {
+		t.Fatalf("beta status = %q, want ready as unresolved independent root", got)
+	}
+}
+
+func TestReadRestoresMissingDependsOnFromNamedPreset(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:    root,
+		Now:     func() time.Time { return now },
+		Presets: []flowstore.Preset{researchPresetForStoreTest()},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	writeRawFlowMeta(t, root, "20260607T120000Z-preset-recovery", `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	read, err := store.Read("20260607T120000Z-preset-recovery")
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.GraphRecovery.Status != flowstore.GraphRecoveryPresetEdgesRestored {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryPresetEdgesRestored)
+	}
+	if got := phaseByID(t, read, "draft").DependsOn; len(got) != 1 || got[0] != "research" {
+		t.Fatalf("draft DependsOn = %#v, want [research]", got)
+	}
+
+	records, err := store.List(flowstore.FlowFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].GraphRecovery.Status != flowstore.GraphRecoveryPresetEdgesRestored {
+		t.Fatalf("List() recovery = %#v", records)
+	}
+}
+
+func TestReadMissingNamedPresetEdgesUnresolvedWhenPresetUnavailable(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	writeRawFlowMeta(t, root, "20260607T120000Z-missing-preset", `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "completed", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	read, err := store.Read("20260607T120000Z-missing-preset")
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if read.GraphRecovery.Status != flowstore.GraphRecoveryMissingEdgesUnresolved {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", read.GraphRecovery.Status, flowstore.GraphRecoveryMissingEdgesUnresolved)
+	}
+	if got := phaseByID(t, read, "draft").DependsOn; len(got) != 0 || got == nil {
+		t.Fatalf("draft DependsOn = %#v, want explicit empty unresolved graph", got)
+	}
+}
+
+func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root:    root,
+		Presets: []flowstore.Preset{researchPresetForStoreTest()},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flowID := "20260607T120000Z-preset-mutation-recovery"
+	writeRawFlowMeta(t, root, flowID, `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "ready", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "research", Status: flowstore.PhaseCompleted})
+	if err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+	if got := phaseByID(t, updated, "draft").DependsOn; len(got) != 1 || got[0] != "research" {
+		t.Fatalf("updated draft DependsOn = %#v, want [research]", got)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) error = %v", err)
+	}
+	if !strings.Contains(string(data), `"depends_on": [
+        "research"
+      ]`) {
+		t.Fatalf("meta.json did not persist restored depends_on:\n%s", data)
 	}
 }
 
@@ -6252,6 +6355,39 @@ func graphPhase(now time.Time, phaseID, status string, dependsOn []string) flows
 		Order:     1,
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+}
+
+func researchPresetForStoreTest() flowstore.Preset {
+	return flowstore.Preset{
+		Name: "research",
+		Phases: []flowstore.PhaseSpec{
+			{ID: "research", Title: "Research", Kind: flowstore.KindPlan, DependsOn: []string{}},
+			{ID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, DependsOn: []string{"research"}},
+			{ID: "publish", Title: "Publish", Kind: flowstore.KindMerge, DependsOn: []string{"draft"}},
+		},
+	}
+}
+
+func writeRawFlowMeta(t *testing.T, root, flowID, fields string) {
+	t.Helper()
+	flowDir := filepath.Join(root, "flows", flowID)
+	if err := os.MkdirAll(flowDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{
+  "schema_version": 1,
+  "flow_id": "` + flowID + `",
+  "title": "Raw flow",
+  "instructions": "raw migration fixture",
+  "status": "in_progress",
+  "repo_path": "` + filepath.Join(root, "repo") + `",
+` + fields + `,
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}`
+	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 }
 

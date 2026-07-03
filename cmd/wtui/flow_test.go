@@ -1860,12 +1860,173 @@ func TestRunFlowCreateFallsBackToPlanThenSessionRoot(t *testing.T) {
 	}
 }
 
+func TestRunFlowCreateWithPresetFlagSeedsCustomGraph(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "create",
+		"--title", "Research",
+		"--instructions", "phase it",
+		"--repo-path", repoPath,
+		"--preset", "research",
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{
+				Flow: config.FlowConfig{
+					Presets: []flowstore.Preset{researchPresetForCLITest()},
+				},
+			}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if record.PresetName != "research" {
+		t.Fatalf("preset name = %q, want research", record.PresetName)
+	}
+	if got := phaseIDs(record.Phases); !slices.Equal(got, []string{"research", "draft", "publish"}) {
+		t.Fatalf("phase IDs = %#v", got)
+	}
+	if record.Phases[0].Status != flowstore.PhaseReady {
+		t.Fatalf("root phase status = %q, want ready", record.Phases[0].Status)
+	}
+}
+
+func TestRunFlowCreateUsesConfiguredDefaultPreset(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "create",
+		"--title", "Research",
+		"--instructions", "phase it",
+		"--repo-path", repoPath,
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{
+				Flow: config.FlowConfig{
+					Preset:  "research",
+					Presets: []flowstore.Preset{researchPresetForCLITest()},
+				},
+			}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if record.PresetName != "research" {
+		t.Fatalf("preset name = %q, want research", record.PresetName)
+	}
+	if got := phaseIDs(record.Phases); !slices.Equal(got, []string{"research", "draft", "publish"}) {
+		t.Fatalf("phase IDs = %#v", got)
+	}
+}
+
+func TestRunFlowCreateRejectsUnknownPreset(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	err := run([]string{
+		"wtui", "flow", "create",
+		"--title", "Research",
+		"--instructions", "phase it",
+		"--repo-path", repoPath,
+		"--preset", "missing",
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{
+				Flow: config.FlowConfig{
+					Presets: []flowstore.Preset{researchPresetForCLITest()},
+				},
+			}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil {
+		t.Fatal("expected unknown preset error")
+	}
+	for _, want := range []string{`unknown flow preset "missing"`, "available presets: default, research"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %q", want, err.Error())
+		}
+	}
+}
+
+func TestRunFlowCreateWithoutPresetUsesDefault(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	var stdout bytes.Buffer
+	err := run([]string{
+		"wtui", "flow", "create",
+		"--title", "Default",
+		"--instructions", "phase it",
+		"--repo-path", repoPath,
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if record.PresetName != "" {
+		t.Fatalf("preset name = %q, want empty for default preset", record.PresetName)
+	}
+	if got := phaseIDs(record.Phases); !slices.Equal(got, []string{"plan", "plan-review", "implementation", "review-loop", "pr-creation", "autoreview", "merge"}) {
+		t.Fatalf("phase IDs = %#v", got)
+	}
+}
+
 func TestRunFlowCreateRequiresJSON(t *testing.T) {
 	err := run([]string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", "/repo", "--state-root", t.TempDir()},
 		noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --json")
 	}
+}
+
+func researchPresetForCLITest() flowstore.Preset {
+	return flowstore.Preset{
+		Name: "research",
+		Phases: []flowstore.PhaseSpec{
+			{ID: "research", Title: "Research", Kind: flowstore.KindPlan, DependsOn: []string{}},
+			{ID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, DependsOn: []string{"research"}},
+			{ID: "publish", Title: "Publish", Kind: flowstore.KindMerge, DependsOn: []string{"draft"}},
+		},
+	}
+}
+
+func phaseIDs(phases []flowstore.FlowPhase) []string {
+	ids := make([]string, 0, len(phases))
+	for _, phase := range phases {
+		ids = append(ids, phase.PhaseID)
+	}
+	return ids
 }
 
 func TestRunFlowCreateValidatesRepoPathBeforeLoadingConfig(t *testing.T) {

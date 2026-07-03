@@ -347,10 +347,12 @@ basename, plan metadata, issue metadata, PR metadata,
 phase titles/statuses/summaries, and linked session metadata. Press
 `n` to create a new Flow with one form for title, multiline instructions, and
 optional base ref plus Headless and Plan Now checkboxes; use `alt+enter` for
-instruction newlines. Plan Now is checked by default and immediately launches
-the initial Plan phase after creating the Flow. Uncheck it to create a parked
-Flow with its instructions, worktree, branch, and start commit saved; the ready
-Plan phase can be launched later from the Flow row. On a Flow row, `enter`
+instruction newlines. New Flows use the built-in default phase graph unless
+`[flow].preset` selects a configured custom graph. Plan Now is checked by
+default and immediately launches the first ready root phase after creating the
+Flow. Uncheck it to create a parked Flow with its instructions, worktree,
+branch, and start commit saved; the ready root phase can be launched later from
+the Flow row. On a Flow row, `enter`
 expands or collapses phase detail rows; `o` pages the linked plan body in
 `less -R`, and wtui shows a status message when the selected Flow has no linked
 plan. With
@@ -380,13 +382,14 @@ when its recorded GitHub PR was merged manually in GitHub; wtui verifies the PR
 is merged with `gh`, records the merge commit and timestamp, marks the Merge
 phase completed, and hides the Flow from active lists without launching a Merge
 phase agent. When auto mode is on, wtui runs an always-on, all-repos advance
-poll that detects live completed-phase transitions and launches the next ready
-non-merge phase in that Flow even when another view is active. Auto-launched CLI
-phases are always headless and do not change the current view or focus. If the
-completed phase still has an embedded Flow terminal, wtui waits until that
-terminal exits normally and auto-closes before launching the next phase. A 3 s
-status message announces auto-launches, `needs_attention`, and merge-ready
-transitions unless another status message is active. Skipped, blocked,
+poll that detects live completed-phase transitions and drains the Flow by
+launching the first ready non-merge phase in display order. Auto-launched CLI
+phases are always headless and do not change the current view or focus. wtui
+launches at most one phase per Flow at a time: if any phase is running or any
+Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
+A 3 s status message announces auto-launches, `needs_attention`, and
+merge-ready transitions unless another status message is active. Skipped,
+blocked,
 needs-attention, failed-launch, or missing-PR-metadata states do not
 auto-launch. Automation stops before Merge: if Autoreview completes and Merge
 becomes ready, wtui keeps auto mode on and requires the existing manual Merge
@@ -481,6 +484,11 @@ wtui flow create --title "Ship saved plans" \
   --instructions "Plan, implement, review, open a PR, and merge." \
   --repo-path "$REPO" --json
 
+# Use a configured custom graph preset instead of the built-in default.
+wtui flow create --preset research --title "Evaluate parser" \
+  --instructions "Research, draft, and publish." \
+  --repo-path "$REPO" --json
+
 # List or read flows.
 wtui flow list --repo-path "$REPO" --json
 wtui flow read --flow-id "$FLOW_ID"
@@ -553,7 +561,10 @@ recoverable: it restores the previous PR status, clears terminal merge
 metadata, marks the Merge phase `needs_attention`, and keeps the Flow visible
 for repair.
 
-Child implementation phases gate downstream readiness in phase order: review
+Custom phase graph presets are configured in `[flow]`; see `docs/config.md`.
+Phase gates are keyed by semantic kind (`plan_review`, `pr_creation`, `merge`,
+and so on), while CLI commands still address phases by phase ID. Child
+implementation phases gate downstream readiness in phase order: review
 loop and PR creation remain pending until required implementation children are
 completed or explicitly skipped with notes. Flow phase launch prompts stay
 minimal: Plan Review and Implementation point to the saved plan artifact, while

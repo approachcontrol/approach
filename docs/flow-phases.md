@@ -95,11 +95,8 @@ Additional rules:
 
 The phase-affecting mutations (`SetPhase`, `AddChildPhase`, `SetPR`,
 `AddPhaseLaunchID`, and `ResetRecoverableRunningPhase`) re-derive readiness with
-`refreshPhaseReadiness`, regardless of graph shape. Loads and the remaining
-mutations normalize only records containing a `plan-review` phase — the
-standard graph; hand-authored records without one keep their stored statuses
-until a phase-affecting mutation touches them. Agents never need to know which
-phase becomes ready next; they only report their own phase.
+`refreshPhaseReadiness`, regardless of graph shape. Agents never need to know
+which phase becomes ready next; they only report their own phase.
 
 Newly written Flow records persist explicit top-level dependency edges in each
 phase's `depends_on` field. Legacy standard records that do not have the key are
@@ -108,25 +105,27 @@ root phase. Implementation child phases remain structurally ordered under their
 parent rather than declaring their own dependencies.
 
 Walking phases in topological dependency order, a `pending` phase becomes
-`ready` once every prerequisite satisfies its downstream gate:
+`ready` once every prerequisite satisfies its downstream gate. Gates are keyed by
+semantic phase `kind`, not by literal phase ID:
 
 - **Default gate**: the phase is `completed`, or `skipped` with notes.
-- **Plan Review**: `completed` with outcome `approved` or
+- **Plan Review (`plan_review`)**: `completed` with outcome `approved` or
   `approved_with_concerns`, or `skipped` with notes. Any other outcome keeps
   Implementation `pending`. The high-level Plan Review wrappers fill the
   unambiguous outcomes when omitted: `complete` uses `approved`,
   `needs-attention` uses `changes_requested`, and `block` uses `blocked`.
-- **Autoreview**: the high-level wrappers fill the unambiguous outcomes when
+- **Autoreview (`autoreview`)**: the high-level wrappers fill the unambiguous outcomes when
   omitted: `complete` uses `passed`, `needs-attention` uses
   `needs_attention`, and `block` uses `blocked`.
-- **PR Creation**: `completed` *and* structured PR metadata recorded via
+- **PR Creation (`pr_creation`)**: `completed` *and* structured PR metadata recorded via
   `wtui flow pr set` (provider, positive number, valid URL, head/base
   branches). Completion alone does not unlock Autoreview; a skipped PR
   Creation never unlocks it.
-- **Plan**: may record optional GitHub issue metadata with
+- **Plan (`plan`)**: may record optional GitHub issue metadata with
   `wtui flow issue set` when the task references an issue. Issue metadata is
   informational and does not gate downstream phases.
-- **Implementation children**: every child phase under Implementation must be
+- **Implementation children**: every child phase under an implementation-kind
+  parent must be
   `completed` or `skipped` with notes before phases after Implementation can
   become ready.
 
@@ -136,6 +135,61 @@ stale readiness never survives a regression upstream. Downstream `blocked`
 phases are an exception: they are reset only when Plan Review's gate is
 unsatisfied — whether Plan Review itself regressed or an earlier gate broke —
 and keep their blocked state under any other gate regression.
+
+In branched graphs, reset propagation follows dependency edges. A regression in
+one branch resets only transitive successors of that branch; independent sibling
+branches keep their stored state.
+
+## Custom phase graphs
+
+The built-in `default` preset is the familiar linear graph: Plan → Plan Review
+→ Implementation → Review loop → PR Creation → Autoreview → Merge. Config can
+declare additional named presets under `[flow]`, and `wtui flow create
+--preset NAME` or `[flow].preset` can select them for new Flows. CLI and TUI
+"next phase" surfaces remain display-order based: with fan-out, "next" means
+the first ready launchable branch in `OrderedPhases` order, not a scheduling
+guarantee.
+
+Custom preset validation is strict at config/create time:
+
+- Phase IDs must be unique after normalization.
+- Top-level `depends_on` edges must reference top-level phases in the preset.
+- The graph must be acyclic and include at least one root.
+- At most one phase may have kind `merge`.
+- Unknown kinds are rejected in presets. Existing hand-authored records with an
+  unknown kind still load and use the default gate.
+
+Readiness is best-effort for existing on-disk records. If Kahn's algorithm
+cannot release a node because of a cycle, dangling dependency, duplicate
+normalized ID beyond the first occurrence, or a transitive dependency on one of
+those nodes, wtui leaves that node's stored status untouched. This avoids
+destroying recorded work on a malformed hand-authored record. Index-aware launch
+eligibility prevents stale duplicate rows from being selected for manual or
+AutoMode launches.
+
+Records created from named custom presets persist `preset_name`. If a record is
+later read with missing `depends_on` keys, wtui uses the named preset as a
+recovery hint when the preset is available and its phase IDs still match. The
+non-persisted `GraphRecovery.Status` values are:
+
+- `preset_edges_restored`: missing edges were restored from the named preset.
+- `missing_edges_unresolved`: wtui refused to invent a graph. Re-select or
+  recreate the preset, or repair the record manually.
+
+Default-preset records still use legacy linear backfill when `depends_on` is
+absent. Edge-less custom records without a recoverable preset remain readable
+but degraded; their stored statuses are preserved except where a later
+phase-affecting mutation can safely re-derive readiness from explicit edges.
+
+AutoMode is drain-based for DAGs. A successful phase completion arms an
+in-memory drain for that Flow; each poll launches the first ready non-merge
+launchable phase only when no phase in that Flow is `running` and no
+flow-scoped embedded terminal is still open or auto-closing. This serializes
+branches so parallel agents do not collide in one worktree. Skipped phases do
+not arm the drain, even when skip-with-notes readies successors. Resetting a
+phase back to `ready` also does not arm the drain. Completing an
+`autoreview`-kind phase may launch a custom non-merge successor; in the default
+preset it still stops because the only successor is merge-kind.
 
 ## Derived Flow status
 
@@ -174,11 +228,11 @@ previous PR status, clears that terminal metadata, marks the Merge phase
   migration.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
-  `ResetRecoverableRunningPhase`) re-derive readiness for any graph, and records
-  containing a `plan-review` phase (the standard graph) are additionally
-  normalized on load, so records written before a gate rule existed converge to
-  correct `pending`/`ready` values. Records without a `plan-review` phase keep
-  their stored statuses until a phase-affecting mutation touches them.
+  `ResetRecoverableRunningPhase`) re-derive readiness for any graph. Records
+  with explicit persisted edges opt into load-time readiness normalization, and
+  records containing a plan-review-kind phase are also normalized on load.
+  Edge-less, kind-less custom records keep stored statuses instead of receiving
+  guessed edges.
 - Completed plan-review phases persisted before outcomes existed are
   normalized to `approved` on read.
 

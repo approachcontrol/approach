@@ -47,7 +47,8 @@ or needs-attention phase as `running` requires a rerun note; prefer
 omitted. Invalid transitions fail with the allowed next statuses; fix the
 reported state rather than retrying blindly.
 
-For the `plan-review` phase, wtui accepts only these review outcomes:
+For plan-review-kind phases (the default preset phase ID is `plan-review`),
+wtui accepts only these review outcomes:
 `approved`, `approved_with_concerns`, `changes_requested`, and `blocked`.
 `approved_with_concerns`, `changes_requested`, and `blocked` require
 `--notes`.
@@ -67,7 +68,7 @@ wtui flow phase complete \
 
 Use `wtui flow phase block --notes "..."` for blockers and
 `wtui flow phase needs-attention --notes "..."` for non-blocking concerns.
-For Plan Review, those wrappers fill default outcomes when omitted:
+For plan-review-kind phases, those wrappers fill default outcomes when omitted:
 `complete` => `approved`, `needs-attention` => `changes_requested`, and
 `block` => `blocked`. The `complete` wrapper can still take an explicit
 Plan Review outcome such as `approved_with_concerns`. For Autoreview, the
@@ -263,17 +264,18 @@ or an external dependency prevents review; the Plan Review outcome defaults to
 
 Goal: implement the reviewed plan in the Flow worktree.
 
-TUI-launched Implementation phases provide `WTUI_FLOW_ID`,
-`WTUI_FLOW_PHASE_ID=implementation`, `WTUI_PLAN_ID`, `WTUI_PLAN_PATH`,
-`WTUI_WORKTREE_PATH`, and the shared state roots. Use `wtui plan read` when
-`WTUI_PLAN_ID` is available, then implement and verify the requested behavior in
-the Flow worktree. If the work splits into follow-up child phases, create stable
-ordered children before advancing downstream phases:
+TUI-launched implementation-kind phases provide `WTUI_FLOW_ID`,
+`WTUI_FLOW_PHASE_ID` (default preset: `implementation`), `WTUI_PLAN_ID`,
+`WTUI_PLAN_PATH`, `WTUI_WORKTREE_PATH`, and the shared state roots. Use
+`wtui plan read` when `WTUI_PLAN_ID` is available, then implement and verify the
+requested behavior in the Flow worktree. If the work splits into follow-up
+child phases under an implementation-kind parent, create stable ordered children
+before advancing downstream phases:
 
 ```bash
 wtui flow phase add-child \
   --flow-id "$WTUI_FLOW_ID" \
-  --parent-phase-id implementation \
+  --parent-phase-id "$WTUI_FLOW_PHASE_ID" \
   --phase-id implementation-api \
   --title "API integration" \
   --order 10 \

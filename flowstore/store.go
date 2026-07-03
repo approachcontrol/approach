@@ -72,11 +72,17 @@ const (
 	KindImplementationChild = "implementation_child"
 )
 
+const (
+	GraphRecoveryPresetEdgesRestored    = "preset_edges_restored"
+	GraphRecoveryMissingEdgesUnresolved = "missing_edges_unresolved"
+)
+
 // Store reads and writes flow records under an artifact root.
 type Store struct {
 	root        string
 	now         func() time.Time
 	lockTimeout time.Duration
+	presets     map[string]Preset
 }
 
 // StoreOptions configures a Store.
@@ -84,6 +90,7 @@ type StoreOptions struct {
 	Root        string
 	Now         func() time.Time
 	LockTimeout time.Duration
+	Presets     []Preset
 }
 
 // IsNotFound reports whether err means the requested Flow record does not exist.
@@ -196,25 +203,33 @@ type AutoModeUpdate struct {
 
 // FlowRecord is the persisted task workflow record.
 type FlowRecord struct {
-	SchemaVersion int         `json:"schema_version"`
-	FlowID        string      `json:"flow_id"`
-	Title         string      `json:"title"`
-	Instructions  string      `json:"instructions"`
-	Status        string      `json:"status"`
-	RepoPath      string      `json:"repo_path"`
-	WorktreePath  string      `json:"worktree_path,omitempty"`
-	Branch        string      `json:"branch,omitempty"`
-	BaseRef       string      `json:"base_ref,omitempty"`
-	Commit        string      `json:"commit,omitempty"`
-	PlanID        string      `json:"plan_id,omitempty"`
-	PlanPath      string      `json:"plan_path,omitempty"`
-	Issue         Issue       `json:"issue,omitempty"`
-	PR            PullRequest `json:"pr,omitempty"`
-	Merge         Merge       `json:"merge,omitempty"`
-	AutoMode      bool        `json:"auto_mode,omitempty"`
-	Phases        []FlowPhase `json:"phases"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	SchemaVersion int                `json:"schema_version"`
+	FlowID        string             `json:"flow_id"`
+	Title         string             `json:"title"`
+	Instructions  string             `json:"instructions"`
+	Status        string             `json:"status"`
+	RepoPath      string             `json:"repo_path"`
+	WorktreePath  string             `json:"worktree_path,omitempty"`
+	Branch        string             `json:"branch,omitempty"`
+	BaseRef       string             `json:"base_ref,omitempty"`
+	Commit        string             `json:"commit,omitempty"`
+	PresetName    string             `json:"preset_name,omitempty"`
+	PlanID        string             `json:"plan_id,omitempty"`
+	PlanPath      string             `json:"plan_path,omitempty"`
+	Issue         Issue              `json:"issue,omitempty"`
+	PR            PullRequest        `json:"pr,omitempty"`
+	Merge         Merge              `json:"merge,omitempty"`
+	AutoMode      bool               `json:"auto_mode,omitempty"`
+	Phases        []FlowPhase        `json:"phases"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+	GraphRecovery GraphRecoveryState `json:"-"`
+}
+
+// GraphRecoveryState reports non-persisted recovery performed while reading a
+// Flow record whose persisted graph metadata was missing or degraded.
+type GraphRecoveryState struct {
+	Status string
 }
 
 // FlowFilter narrows records returned by List.
@@ -325,7 +340,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	return &Store{root: root, now: now, lockTimeout: lockTimeout}, nil
+	presets, err := presetRegistry(opts.Presets)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{root: root, now: now, lockTimeout: lockTimeout, presets: presets}, nil
 }
 
 // DefaultRoot returns the default artifact root, matching sessions and plans.
@@ -391,6 +410,7 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 		preset := DefaultPreset()
 		if opts.Preset != nil {
 			preset = *opts.Preset
+			record.PresetName = strings.ToLower(strings.TrimSpace(preset.Name))
 		}
 		if err := validatePreset(preset); err != nil {
 			return FlowRecord{}, err
@@ -1953,7 +1973,10 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 		return FlowRecord{}, false
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
-	record.Phases = backfillLinearDependsOnFromRaw(record.Phases, presence)
+	record = s.restoreMissingDependsOn(record, presence)
+	if record.GraphRecovery.Status == GraphRecoveryPresetEdgesRestored {
+		selfHeal = true
+	}
 	if selfHealOnRead {
 		record = normalizeRecord(record, selfHeal)
 	} else {
@@ -1961,6 +1984,70 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 	}
 	record.Status = DeriveStatus(record)
 	return record, true
+}
+
+func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDependsOnState) FlowRecord {
+	if rawDependsOnPresentForTopLevel(record.Phases, presence) {
+		record.Phases = normalizeDependsOnValues(record.Phases)
+		return record
+	}
+	if preset, ok := s.presetForRecovery(record); ok && presetMatchesRecord(preset, record) {
+		record.Phases = applyPresetDependsOn(record.Phases, preset)
+		record.GraphRecovery.Status = GraphRecoveryPresetEdgesRestored
+		return record
+	}
+	if phaseIDsCompatibleWithDefaultSequence(record.Phases) {
+		record.Phases = backfillLinearDependsOn(record.Phases)
+		return record
+	}
+	record.Phases = normalizeDependsOnValues(record.Phases)
+	record.GraphRecovery.Status = GraphRecoveryMissingEdgesUnresolved
+	return record
+}
+
+func (s *Store) presetForRecovery(record FlowRecord) (Preset, bool) {
+	name := normalizePresetName(record.PresetName)
+	if name == "" || name == "default" || s.presets == nil {
+		return Preset{}, false
+	}
+	preset, ok := s.presets[name]
+	return preset, ok
+}
+
+func presetMatchesRecord(preset Preset, record FlowRecord) bool {
+	var ids []string
+	for _, phase := range OrderedPhases(record.Phases) {
+		if phase.ParentPhaseID != "" {
+			continue
+		}
+		ids = append(ids, artifacts.NormalizePhaseID(phase.PhaseID))
+	}
+	if len(ids) != len(preset.Phases) {
+		return false
+	}
+	for i, spec := range preset.Phases {
+		if ids[i] != artifacts.NormalizePhaseID(spec.ID) {
+			return false
+		}
+	}
+	return true
+}
+
+func applyPresetDependsOn(phases []FlowPhase, preset Preset) []FlowPhase {
+	dependsOnByID := make(map[string][]string, len(preset.Phases))
+	for _, spec := range preset.Phases {
+		id := artifacts.NormalizePhaseID(spec.ID)
+		dependsOnByID[id] = append([]string{}, spec.DependsOn...)
+	}
+	for i := range phases {
+		if phases[i].ParentPhaseID != "" {
+			phases[i].DependsOn = []string{}
+			continue
+		}
+		id := artifacts.NormalizePhaseID(phases[i].PhaseID)
+		phases[i].DependsOn = append([]string{}, dependsOnByID[id]...)
+	}
+	return normalizeDependsOnValues(phases)
 }
 
 func rawDependsOnPresence(data []byte) []rawDependsOnState {

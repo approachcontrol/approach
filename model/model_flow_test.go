@@ -3059,7 +3059,7 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 	}
 }
 
-func TestModel_FlowAutoModeStaleTerminalDoesNotBlockLaterLaunchID(t *testing.T) {
+func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
@@ -3121,8 +3121,16 @@ func TestModel_FlowAutoModeStaleTerminalDoesNotBlockLaterLaunchID(t *testing.T) 
 		t.Fatalf("new launch running advance returned command %T, want nil", cmd)
 	}
 	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	if cmd != nil {
+		t.Fatalf("completion with stale flow terminal returned command %T, want nil", cmd)
+	}
+	if !strings.Contains(m.View(), "old failed output") {
+		t.Fatalf("stale failed terminal should remain visible while it blocks the drain:\n%s", m.View())
+	}
+	m = model.ClearFlowEmbeddedTerminalsForTest(m)
+	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
 	if cmd == nil {
-		t.Fatal("completion for newer launch ID should auto-launch next phase despite stale terminal")
+		t.Fatal("completion should drain after stale terminal is dismissed")
 	}
 	launches := flowEmbeddedLaunchesFromCommand(t, cmd)
 	if len(launches) != 1 {
@@ -3130,9 +3138,6 @@ func TestModel_FlowAutoModeStaleTerminalDoesNotBlockLaterLaunchID(t *testing.T) 
 	}
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates after newer completion = %#v, want implementation auto launch", updates)
-	}
-	if !strings.Contains(m.View(), "old failed output") {
-		t.Fatalf("stale failed terminal should remain visible:\n%s", m.View())
 	}
 }
 
