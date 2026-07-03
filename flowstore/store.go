@@ -224,6 +224,8 @@ type FlowRecord struct {
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
 	GraphRecovery GraphRecoveryState `json:"-"`
+
+	preserveMissingDependsOn map[string]bool
 }
 
 // GraphRecoveryState reports non-persisted recovery performed while reading a
@@ -1942,7 +1944,7 @@ func (s *Store) write(record FlowRecord) error {
 	if err != nil {
 		return fmt.Errorf("secure flow directory: %w", err)
 	}
-	data, err := json.MarshalIndent(record, "", "  ")
+	data, err := marshalFlowRecord(record)
 	if err != nil {
 		return fmt.Errorf("encode flow metadata: %w", err)
 	}
@@ -1950,6 +1952,101 @@ func (s *Store) write(record FlowRecord) error {
 		return fmt.Errorf("write flow metadata: %w", err)
 	}
 	return nil
+}
+
+func marshalFlowRecord(record FlowRecord) ([]byte, error) {
+	if len(record.preserveMissingDependsOn) == 0 {
+		return json.MarshalIndent(record, "", "  ")
+	}
+	phases := make([]flowPhaseForWrite, 0, len(record.Phases))
+	for _, phase := range record.Phases {
+		phases = append(phases, flowPhaseForWriteFrom(phase, record.preserveMissingDependsOn[artifacts.NormalizePhaseID(phase.PhaseID)]))
+	}
+	return json.MarshalIndent(flowRecordForWrite{
+		SchemaVersion: record.SchemaVersion,
+		FlowID:        record.FlowID,
+		Title:         record.Title,
+		Instructions:  record.Instructions,
+		Status:        record.Status,
+		RepoPath:      record.RepoPath,
+		WorktreePath:  record.WorktreePath,
+		Branch:        record.Branch,
+		BaseRef:       record.BaseRef,
+		Commit:        record.Commit,
+		PresetName:    record.PresetName,
+		PlanID:        record.PlanID,
+		PlanPath:      record.PlanPath,
+		Issue:         record.Issue,
+		PR:            record.PR,
+		Merge:         record.Merge,
+		AutoMode:      record.AutoMode,
+		Phases:        phases,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
+	}, "", "  ")
+}
+
+type flowRecordForWrite struct {
+	SchemaVersion int                 `json:"schema_version"`
+	FlowID        string              `json:"flow_id"`
+	Title         string              `json:"title"`
+	Instructions  string              `json:"instructions"`
+	Status        string              `json:"status"`
+	RepoPath      string              `json:"repo_path"`
+	WorktreePath  string              `json:"worktree_path,omitempty"`
+	Branch        string              `json:"branch,omitempty"`
+	BaseRef       string              `json:"base_ref,omitempty"`
+	Commit        string              `json:"commit,omitempty"`
+	PresetName    string              `json:"preset_name,omitempty"`
+	PlanID        string              `json:"plan_id,omitempty"`
+	PlanPath      string              `json:"plan_path,omitempty"`
+	Issue         Issue               `json:"issue,omitempty"`
+	PR            PullRequest         `json:"pr,omitempty"`
+	Merge         Merge               `json:"merge,omitempty"`
+	AutoMode      bool                `json:"auto_mode,omitempty"`
+	Phases        []flowPhaseForWrite `json:"phases"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+}
+
+type flowPhaseForWrite struct {
+	PhaseID       string    `json:"phase_id"`
+	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
+	Title         string    `json:"title"`
+	Kind          string    `json:"kind"`
+	DependsOn     *[]string `json:"depends_on,omitempty"`
+	Status        string    `json:"status"`
+	Order         int       `json:"order"`
+	Outcome       string    `json:"outcome,omitempty"`
+	Notes         string    `json:"notes,omitempty"`
+	Summary       string    `json:"summary,omitempty"`
+	LaunchIDs     []string  `json:"launch_ids,omitempty"`
+	Sessions      []Session `json:"sessions,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func flowPhaseForWriteFrom(phase FlowPhase, omitDependsOn bool) flowPhaseForWrite {
+	var dependsOn *[]string
+	if !omitDependsOn {
+		dependsOn = &phase.DependsOn
+	}
+	return flowPhaseForWrite{
+		PhaseID:       phase.PhaseID,
+		ParentPhaseID: phase.ParentPhaseID,
+		Title:         phase.Title,
+		Kind:          phase.Kind,
+		DependsOn:     dependsOn,
+		Status:        phase.Status,
+		Order:         phase.Order,
+		Outcome:       phase.Outcome,
+		Notes:         phase.Notes,
+		Summary:       phase.Summary,
+		LaunchIDs:     phase.LaunchIDs,
+		Sessions:      phase.Sessions,
+		CreatedAt:     phase.CreatedAt,
+		UpdatedAt:     phase.UpdatedAt,
+	}
 }
 
 func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
@@ -1990,6 +2087,9 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 		}
 	} else {
 		record = normalizeRecordBase(record)
+		if unresolvedGraph {
+			record.preserveMissingDependsOn = missingTopLevelDependsOnByID(record.Phases, presence)
+		}
 	}
 	record.Status = DeriveStatus(record)
 	return record, true
@@ -2102,6 +2202,26 @@ func rawDependsOnPresentForEveryTopLevel(phases []FlowPhase, presence []rawDepen
 		}
 	}
 	return seenTopLevel
+}
+
+func missingTopLevelDependsOnByID(phases []FlowPhase, presence []rawDependsOnState) map[string]bool {
+	missing := make(map[string]bool)
+	for i, phase := range phases {
+		if phase.ParentPhaseID != "" {
+			continue
+		}
+		if i < len(presence) && presence[i].Present {
+			continue
+		}
+		id := artifacts.NormalizePhaseID(phase.PhaseID)
+		if id != "" {
+			missing[id] = true
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return missing
 }
 
 func (s *Store) flowDir(flowID string) string {

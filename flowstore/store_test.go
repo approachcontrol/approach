@@ -5846,6 +5846,59 @@ func TestReadUnresolvedGraphWithPlanReviewDoesNotSelfHealReadiness(t *testing.T)
 	}
 }
 
+func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flowID := "20260607T120000Z-unresolved-metadata"
+	writeRawFlowMeta(t, root, flowID, `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	if _, err := store.SetIssue(flowstore.IssueUpdate{
+		FlowID:   flowID,
+		Provider: "github",
+		Number:   276,
+		URL:      "https://github.com/brian-bell/wtui/issues/276",
+	}); err != nil {
+		t.Fatalf("SetIssue() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) error = %v", err)
+	}
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
+	}
+	for _, phase := range raw.Phases {
+		if strings.Contains(string(phase["phase_id"]), "draft") {
+			if _, ok := phase["depends_on"]; ok {
+				t.Fatalf("draft depends_on was persisted for unresolved graph:\n%s", data)
+			}
+		}
+	}
+
+	reread, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() after SetIssue error = %v", err)
+	}
+	if reread.GraphRecovery.Status != flowstore.GraphRecoveryMissingEdgesUnresolved {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", reread.GraphRecovery.Status, flowstore.GraphRecoveryMissingEdgesUnresolved)
+	}
+	if got := phaseByID(t, reread, "draft").Status; got != flowstore.PhasePending {
+		t.Fatalf("draft status after metadata write = %q, want pending", got)
+	}
+}
+
 func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
