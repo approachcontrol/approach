@@ -452,6 +452,7 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 			cmds = append(cmds, statusCmd)
 			continue
 		}
+		m = m.disarmAutoAdvanceDrain(record.FlowID)
 		target.AutoAdvanceRetryFlowID = record.FlowID
 		target.AutoAdvanceRetryPhaseID = phase.PhaseID
 		m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{

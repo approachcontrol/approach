@@ -1882,6 +1882,63 @@ func TestRunFlowCreateFallsBackToPlanThenSessionRoot(t *testing.T) {
 	}
 }
 
+func TestRunFlowReadEnvRootLoadsConfigPresetsForRecovery(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260607T120000Z-env-preset-recovery"
+	flowDir := filepath.Join(root, "flows", flowID)
+	if err := os.MkdirAll(flowDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	meta := `{
+  "schema_version": 1,
+  "flow_id": "` + flowID + `",
+  "title": "Env preset recovery",
+  "instructions": "restore named preset edges",
+  "status": "in_progress",
+  "repo_path": "` + filepath.Join(root, "repo") + `",
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ],
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z"
+}`
+	if err := os.WriteFile(filepath.Join(flowDir, "meta.json"), []byte(meta), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err := run([]string{"wtui", "flow", "read", "--flow-id", flowID},
+		noScanDeps(t, runDeps{
+			loadConfig: func() (config.Config, error) {
+				return config.Config{
+					Flow: config.FlowConfig{
+						Presets: []flowstore.Preset{researchPresetForCLITest()},
+					},
+				}, nil
+			},
+			getenv: func(key string) string {
+				if key == "WTUI_FLOW_STATE_ROOT" {
+					return root
+				}
+				return ""
+			},
+			stdout: &stdout,
+		}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got := phaseByID(record, "draft").DependsOn; !slices.Equal(got, []string{"research"}) {
+		t.Fatalf("draft DependsOn = %#v, want [research]", got)
+	}
+}
+
 func TestRunFlowCreateWithPresetFlagSeedsCustomGraph(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(t.TempDir(), "repo")

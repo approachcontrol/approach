@@ -284,6 +284,34 @@ func TestAutoModeDisableDisarmsDrain(t *testing.T) {
 	}
 }
 
+func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddFlowPhaseLaunchID() should not run until the queued command executes: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
+
+	m, cmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	if cmd == nil {
+		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil, want queued launch command")
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want scheduling launch to disarm drain", m.autoAdvanceDrainFlows)
+	}
+	_, duplicate := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	if duplicate != nil {
+		t.Fatal("second drain pass queued duplicate launch before first command executed")
+	}
+}
+
 func collectMsgsFromCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	t.Helper()
 	if cmd == nil {
