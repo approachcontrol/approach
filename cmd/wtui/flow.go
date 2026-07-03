@@ -91,9 +91,6 @@ Most commands accept:
 `
 
 func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
-	if stateRoot != "" {
-		return flowstore.NewStore(flowstore.StoreOptions{Root: stateRoot})
-	}
 	cfg, err := deps.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config: %w", err)
