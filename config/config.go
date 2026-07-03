@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/brian-bell/wtui/agent"
+	"github.com/brian-bell/wtui/flowstore"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -24,6 +25,7 @@ type Config struct {
 	UI          UIConfig         `toml:"ui"`
 	Agent       AgentConfig      `toml:"agent"`
 	FlowPrompts FlowPromptConfig `toml:"flow_prompts"`
+	Flow        FlowConfig       `toml:"flow"`
 	Sessions    SessionsConfig   `toml:"sessions"`
 	Bootstrap   BootstrapConfig  `toml:"bootstrap"`
 }
@@ -79,6 +81,12 @@ type FlowPromptConfig struct {
 	Autoreview     string `toml:"autoreview"`
 	Merge          string `toml:"merge"`
 	Generic        string `toml:"generic"`
+}
+
+// FlowConfig stores Flow creation defaults and custom phase graph presets.
+type FlowConfig struct {
+	Preset  string             `toml:"preset"`
+	Presets []flowstore.Preset `toml:"presets"`
 }
 
 // SessionsConfig controls agent-session capture storage.
@@ -232,6 +240,10 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		cfg.Sessions.Root = root
 	}
 
+	if err := normalizeFlowConfig(path, &cfg.Flow); err != nil {
+		return Config{}, err
+	}
+
 	if err := normalizeBootstrapConfig(path, &cfg.Bootstrap, opts); err != nil {
 		return Config{}, err
 	}
@@ -248,6 +260,38 @@ func validateDefaultView(view int) error {
 		return fmt.Errorf("ui.default_view must be between 1 and 9")
 	}
 	return nil
+}
+
+func normalizeFlowConfig(path string, cfg *FlowConfig) error {
+	cfg.Preset = normalizeFlowPresetName(cfg.Preset)
+	seen := map[string]struct{}{}
+	for i := range cfg.Presets {
+		preset := &cfg.Presets[i]
+		preset.Name = normalizeFlowPresetName(preset.Name)
+		if preset.Name == "default" {
+			return fmt.Errorf("parse config %s: preset name \"default\" is reserved", path)
+		}
+		if _, ok := seen[preset.Name]; ok {
+			return fmt.Errorf("parse config %s: duplicate preset name %q", path, preset.Name)
+		}
+		seen[preset.Name] = struct{}{}
+		for j := range preset.Phases {
+			preset.Phases[j].Kind = strings.ToLower(strings.TrimSpace(preset.Phases[j].Kind))
+		}
+		if err := flowstore.ValidatePreset(*preset); err != nil {
+			return fmt.Errorf("parse config %s: flow.presets[%q]: %w", path, preset.Name, err)
+		}
+	}
+	if cfg.Preset != "" && cfg.Preset != "default" {
+		if _, ok := seen[cfg.Preset]; !ok {
+			return fmt.Errorf("parse config %s: flow.preset %q is not a defined preset", path, cfg.Preset)
+		}
+	}
+	return nil
+}
+
+func normalizeFlowPresetName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func normalizeBootstrapConfig(path string, cfg *BootstrapConfig, opts loadOptions) error {

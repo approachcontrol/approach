@@ -32,6 +32,7 @@ exist:
 | Startup default view | none | `[ui].default_view` | flows view (config number `8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
+| Flow phase graph preset | `wtui flow create --preset` | `[flow].preset` | `default` |
 | TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
 | Session hook root | `--state-root` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
@@ -81,6 +82,29 @@ implementation = "Implement {plan_path} in {worktree_path} for issue {issue_numb
 review_loop = "Use review-loop for {branch}; use commit if revisions are made."
 pr_creation = "Use ship for {branch}; record PR metadata for flow {flow_id}."
 autoreview = "Autoreview {pr_url}; use ship when fixes require commits or pushes."
+
+[flow]
+preset = "research"
+
+[[flow.presets]]
+name = "research"
+
+[[flow.presets.phases]]
+id = "research"
+title = "Research"
+kind = "plan"
+
+[[flow.presets.phases]]
+id = "draft"
+title = "Draft"
+kind = "implementation"
+depends_on = ["research"]
+
+[[flow.presets.phases]]
+id = "publish"
+title = "Publish"
+kind = "merge"
+depends_on = ["draft"]
 
 [sessions]
 root = "~/.local/state/wtui/sessions/v1"
@@ -264,6 +288,32 @@ Loop, PR Creation, Autoreview, and Merge launches do not pre-read the linked
 plan body, so `{plan_body}` is empty for those built-in phase types unless a
 future phase path explicitly supplies it.
 
+### `[flow]`
+
+Configures the default phase graph for newly created Flows.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `preset` | string | Optional preset name used by TUI Flow creation and `wtui flow create` when `--preset` is omitted. Empty or `default` uses the built-in graph. |
+| `presets` | array of tables | Custom phase graph presets. User presets cannot be named `default`, and duplicate normalized names are startup-fatal. |
+
+Each `[[flow.presets]]` table requires `name` and one or more
+`[[flow.presets.phases]]` entries:
+
+| Phase key | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Stable phase ID used by CLI commands and launch metadata. IDs are normalized like other Flow phase IDs. |
+| `title` | string | Display title for the phase row and launch prompt. |
+| `kind` | string | Optional semantic kind. Supported custom-preset kinds are `plan`, `plan_review`, `implementation`, `review_loop`, `pr_creation`, `autoreview`, and `merge`. Unknown kinds are rejected in config. |
+| `depends_on` | array of strings | Optional top-level prerequisite phase IDs. Omitted or empty means the phase is a root. |
+
+Custom presets must form an acyclic top-level graph, may include multiple root
+phases, and may include at most one `merge`-kind phase. Child implementation
+phases are still created dynamically with `wtui flow phase add-child`; they are
+not declared in config. Records created from a named preset persist
+`preset_name` so wtui can restore missing `depends_on` edges if an older binary
+partially rewrites the record.
+
 ### `[sessions]`
 
 Controls portable agent-session storage. Session metadata and normalized
@@ -425,7 +475,7 @@ Other phase and progression mutation remains CLI/agent-driven in v1.
 wtui flow create --title "Ship saved plans" \
     --instructions "Plan, implement, review, open a PR, and merge." \
     --repo-path "$REPO" [--worktree-path PATH] [--branch BRANCH] \
-    [--base-ref REF] [--commit HASH] [--state-root PATH] --json
+    [--base-ref REF] [--commit HASH] [--preset NAME] [--state-root PATH] --json
 
 # You may also read instructions from a file.
 wtui flow create --title "Ship saved plans" \

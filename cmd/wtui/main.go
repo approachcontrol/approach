@@ -272,6 +272,7 @@ func runSessionHook(args []string, deps runDeps) error {
 	_, err = sessions.IngestHook(provider, deps.stdin, sessions.IngestOptions{
 		StateRoot:          root,
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
+		FlowPresets:        cfg.Flow.Presets,
 		Env: map[string]string{
 			"WTUI_LAUNCH_ID":          deps.getenv("WTUI_LAUNCH_ID"),
 			"WTUI_REPO_PATH":          deps.getenv("WTUI_REPO_PATH"),
@@ -304,7 +305,7 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 	if err != nil {
 		return err
 	}
-	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root()})
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: sessionStore.Root(), Presets: cfg.Flow.Presets})
 	if err != nil {
 		return err
 	}
@@ -323,6 +324,7 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 			startupMode = mode
 		}
 	}
+	flowPreset, _ := resolveConfiguredFlowPreset(cfg, "")
 	return model.Options{
 		AgentCommand:          cfg.Agent.Command,
 		CodexModel:            cfg.Agent.CodexModel,
@@ -331,6 +333,8 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		ClaudeReasoningEffort: cfg.Agent.ClaudeReasoningEffort,
 		StartupMode:           startupMode,
 		PlanPromptTemplate:    cfg.Agent.PlanPrompt,
+		FlowPresets:           cfg.Flow.Presets,
+		FlowPreset:            flowPreset,
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Plan:           cfg.FlowPrompts.Plan,
 			PlanReview:     cfg.FlowPrompts.PlanReview,

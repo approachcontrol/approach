@@ -50,6 +50,30 @@ func autoAdvanceTestFlow(flowID, repoPath string, autoMode bool, statuses map[st
 	}
 }
 
+func autoAdvanceCustomFlow(statuses map[string]string) flowstore.FlowRecord {
+	phases := []flowstore.FlowPhase{
+		{PhaseID: "root", Title: "Root", Kind: flowstore.KindPlan, Status: statuses["root"], Order: 1, DependsOn: []string{}},
+		{PhaseID: "branch-a", Title: "Branch A", Kind: flowstore.KindImplementation, Status: statuses["branch-a"], Order: 2, DependsOn: []string{"root"}},
+		{PhaseID: "branch-b", Title: "Branch B", Kind: flowstore.KindReviewLoop, Status: statuses["branch-b"], Order: 3, DependsOn: []string{"root"}},
+		{PhaseID: "summary", Title: "Summary", Kind: "", Status: statuses["summary"], Order: 4, DependsOn: []string{"branch-a", "branch-b"}},
+	}
+	for i := range phases {
+		if phases[i].Status == "" {
+			phases[i].Status = flowstore.PhasePending
+		}
+	}
+	return flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		Title:        "Custom Flow",
+		RepoPath:     "/dev/bravo",
+		WorktreePath: "/dev/bravo-worktrees/custom",
+		Branch:       "flow/custom",
+		Status:       flowstore.StatusInProgress,
+		AutoMode:     true,
+		Phases:       phases,
+	}
+}
+
 func runAutoAdvanceResultForTest(t *testing.T, m Model, flows []flowstore.FlowRecord) (Model, tea.Cmd) {
 	t.Helper()
 	m.autoAdvanceInFlight = 1
@@ -78,6 +102,248 @@ func firstFlowEmbeddedLaunchFromAutoAdvance(t *testing.T, cmd tea.Cmd) FlowEmbed
 	}
 	t.Fatalf("auto-advance batch returned no FlowEmbeddedLaunchRequestedMsg")
 	return FlowEmbeddedLaunchRequestedMsg{}
+}
+
+func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
+	previous := autoAdvanceCustomFlow(map[string]string{
+		"root": flowstore.PhaseRunning,
+	})
+	rootCompleted := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return rootCompleted, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+
+	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "branch-a" {
+		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
+		t.Fatalf("updates = %#v, want branch-a launch", updates)
+	}
+
+	branchARunning := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseRunning,
+		"branch-b": flowstore.PhaseReady,
+	})
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{branchARunning})
+	if len(updates) != 1 {
+		t.Fatalf("updates while branch-a running = %#v, want no additional launch", updates)
+	}
+
+	branchACompleted := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseCompleted,
+		"branch-b": flowstore.PhaseReady,
+	})
+	m, cmd = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{branchACompleted})
+	launch = firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "branch-b" {
+		t.Fatalf("second drain launch = %q, want branch-b", launch.LaunchContext.FlowPhaseID)
+	}
+}
+
+func TestAutoModeSkipDoesNotArmDrain(t *testing.T) {
+	previous := autoAdvanceCustomFlow(map[string]string{
+		"root": flowstore.PhaseRunning,
+	})
+	skipped := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseSkipped,
+		"branch-a": flowstore.PhaseReady,
+	})
+	skipped.Phases[0].Notes = "Skipped by user"
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return skipped, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{skipped})
+	if len(updates) != 0 {
+		t.Fatalf("updates after skip = %#v, want none", updates)
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want skip not to arm drain", m.autoAdvanceDrainFlows)
+	}
+}
+
+func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
+	rootCompleted := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchARunning := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseRunning,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchASkipped := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseSkipped,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchASkipped.Phases[1].Notes = "Skipped by user"
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return branchARunning, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{autoAdvanceCustomFlow(map[string]string{
+		"root": flowstore.PhaseRunning,
+	})}
+
+	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{rootCompleted})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "branch-a" {
+		t.Fatalf("first drain launch = %q, want branch-a", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
+		t.Fatalf("updates after first launch = %#v, want branch-a", updates)
+	}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{branchASkipped})
+	if len(updates) != 1 {
+		t.Fatalf("updates after skipped branch = %#v, want no successor launch", updates)
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want skipped branch to disarm drain", m.autoAdvanceDrainFlows)
+	}
+}
+
+func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
+	branchARunning := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseRunning,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchAReset := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return branchAReset, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{branchARunning}
+	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
+
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{branchARunning}, []flowstore.FlowRecord{branchAReset})
+	if cmd != nil {
+		t.Fatal("reset-to-ready queued successor launch, want drain disarmed")
+	}
+	if len(updates) != 0 {
+		t.Fatalf("updates after reset-to-ready = %#v, want none", updates)
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want reset-to-ready to disarm drain", m.autoAdvanceDrainFlows)
+	}
+}
+
+func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
+	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"pr-creation": flowstore.PhaseCompleted,
+		"autoreview":  flowstore.PhaseRunning,
+	})
+	current := previous
+	current.Phases = append([]flowstore.FlowPhase(nil), previous.Phases...)
+	current.Phases[5].Status = flowstore.PhaseCompleted
+	current.Phases[6] = flowstore.FlowPhase{PhaseID: "summary", Title: "Summary", Kind: "", Status: flowstore.PhaseReady, Order: 7, DependsOn: []string{"autoreview"}}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+
+	_, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if launch.LaunchContext.FlowPhaseID != "summary" {
+		t.Fatalf("autoreview successor launch = %q, want summary", launch.LaunchContext.FlowPhaseID)
+	}
+	if len(updates) != 1 || updates[0].PhaseID != "summary" {
+		t.Fatalf("updates = %#v, want summary", updates)
+	}
+}
+
+func TestAutoModeDisableDisarmsDrain(t *testing.T) {
+	current := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+	})
+	current.AutoMode = false
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return current, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{current}
+	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
+
+	m, _ = runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
+	if len(updates) != 0 {
+		t.Fatalf("updates after disabling AutoMode = %#v, want none", updates)
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want disabled flow disarmed", m.autoAdvanceDrainFlows)
+	}
+}
+
+func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddFlowPhaseLaunchID() should not run until the queued command executes: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
+
+	m, cmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	if cmd == nil {
+		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil, want queued launch command")
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want scheduling launch to disarm drain", m.autoAdvanceDrainFlows)
+	}
+	_, duplicate := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	if duplicate != nil {
+		t.Fatal("second drain pass queued duplicate launch before first command executed")
+	}
 }
 
 func collectMsgsFromCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
@@ -380,8 +646,11 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 	if len(updates) != 0 {
 		t.Fatalf("launch updates after preflight failure = %#v, want none", updates)
 	}
-	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
-		t.Fatalf("autoAdvanceSnapshot = %#v, want previous running edge preserved", m.autoAdvanceSnapshot)
+	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[2].Status != flowstore.PhaseReady {
+		t.Fatalf("autoAdvanceSnapshot = %#v, want current ready snapshot", m.autoAdvanceSnapshot)
+	}
+	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want flow-1 armed", m.autoAdvanceDrainFlows)
 	}
 
 	m.agentCommand = "codex"
@@ -397,29 +666,24 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 }
 
 func TestModel_AutoAdvanceActionFailureSetsStatusOffRepo(t *testing.T) {
-	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
-		"plan":           flowstore.PhaseCompleted,
-		"plan-review":    flowstore.PhaseRunning,
-		"implementation": flowstore.PhasePending,
-	})
 	m := NewWithOptions(flowRefreshTestRepos(), Options{})
 	m.mode = ui.ModeWorktrees
 
 	m, cmd := updateFlowRefreshTest(m, ActionFailedMsg{
-		RepoPath:               "/dev/bravo",
-		Err:                    "failed to mark flow phase running: store unavailable",
-		AutoAdvanceRetryRecord: previous,
+		RepoPath:                "/dev/bravo",
+		Err:                     "failed to mark flow phase running: store unavailable",
+		AutoAdvanceRetryFlowID:  "flow-1",
+		AutoAdvanceRetryPhaseID: "implementation",
 	})
 	if cmd == nil {
 		t.Fatal("off-repo auto-advance failure should schedule status expiry")
 	}
 	if m.status.Source != statusFlowAutoAdvance ||
-		m.status.Text != "Flow Bravo Flow: failed to mark flow phase running: store unavailable" {
+		m.status.Text != "Flow flow-1: failed to mark flow phase running: store unavailable" {
 		t.Fatalf("status = %#v, want off-repo auto-advance failure", m.status)
 	}
-	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].FlowID != "flow-1" ||
-		m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
-		t.Fatalf("autoAdvanceSnapshot = %#v, want previous running edge restored", m.autoAdvanceSnapshot)
+	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want flow-1 rearmed", m.autoAdvanceDrainFlows)
 	}
 }
 
@@ -470,8 +734,8 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	if !failed {
 		t.Fatal("queued auto-advance command should report ActionFailedMsg")
 	}
-	if len(m.autoAdvanceSnapshot) != 1 || m.autoAdvanceSnapshot[0].Phases[1].Status != flowstore.PhaseRunning {
-		t.Fatalf("autoAdvanceSnapshot = %#v, want previous running edge restored", m.autoAdvanceSnapshot)
+	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want flow-1 rearmed", m.autoAdvanceDrainFlows)
 	}
 
 	failLaunchUpdate = false
@@ -492,7 +756,6 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 		"plan-review":    flowstore.PhaseCompleted,
 		"implementation": flowstore.PhaseReady,
 	})
-	key := deferredAutoFlowLaunchKey{FlowID: "flow-1", PhaseID: "plan-review"}
 	var updates []flowstore.PhaseLaunchUpdate
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -501,12 +764,12 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 		},
 	})
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{current}
-	m.deferredAutoFlowLaunches = map[deferredAutoFlowLaunchKey]struct{}{key: {}}
+	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
 	m.autoAdvanceInFlight = 1
 
 	m, _ = updateFlowRefreshTest(m, AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{current}, Request: 1})
-	if _, ok := m.deferredAutoFlowLaunches[key]; !ok {
-		t.Fatalf("deferredAutoFlowLaunches = %#v, want retry preserved after preflight failure", m.deferredAutoFlowLaunches)
+	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want retry preserved after preflight failure", m.autoAdvanceDrainFlows)
 	}
 	if m.status.Source != statusFlowAutoAdvance || !strings.Contains(m.status.Text, "choose codex") {
 		t.Fatalf("status = %#v, want auto-advance preflight guidance", m.status)
@@ -521,9 +784,6 @@ func TestModel_AutoAdvanceDeferredPreflightFailurePreservesRetry(t *testing.T) {
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after deferred preflight fix = %#v, want implementation auto launch", updates)
-	}
-	if len(m.deferredAutoFlowLaunches) != 0 {
-		t.Fatalf("deferredAutoFlowLaunches after launch = %#v, want empty", m.deferredAutoFlowLaunches)
 	}
 }
 
@@ -827,8 +1087,8 @@ func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *te
 	if len(updates) != 0 {
 		t.Fatalf("launch updates while source terminal runs = %#v, want none", updates)
 	}
-	if _, ok := m.deferredAutoFlowLaunches[deferredAutoFlowLaunchKey{FlowID: "flow-1", PhaseID: "plan-review"}]; !ok {
-		t.Fatalf("deferredAutoFlowLaunches = %#v, want plan-review deferred", m.deferredAutoFlowLaunches)
+	if _, ok := m.autoAdvanceDrainFlows["flow-1"]; !ok {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want flow-1 armed while source terminal runs", m.autoAdvanceDrainFlows)
 	}
 
 	m.embeddedTerminals = nil

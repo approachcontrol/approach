@@ -135,6 +135,191 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanLaunchesFirstReadyRoot(t *testing.T) {
+	var launchedPhase string
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2, DependsOn: []string{"research"}},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/research", Branch: "flow/research"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID: update.FlowID,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+					{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2, DependsOn: []string{"research"}},
+				},
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchedPhase = update.PhaseID
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+		ResolveCommit: func(string) string {
+			return "abc123"
+		},
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/repo",
+		Title:        "Research flow",
+		Instructions: "Plan the research.",
+	})
+	if err != nil {
+		t.Fatalf("StartPlan() error = %v", err)
+	}
+	if launchedPhase != "research" {
+		t.Fatalf("launched phase = %q, want research", launchedPhase)
+	}
+	if result.LaunchContext.FlowPhaseID != "research" || result.LaunchContext.PlanPhaseID != "research" {
+		t.Fatalf("launch context phase IDs = flow %q plan %q, want research", result.LaunchContext.FlowPhaseID, result.LaunchContext.PlanPhaseID)
+	}
+}
+
+func TestFlowStarterStartPlanUsesGenericPromptForNonPlanRoot(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "triage", Title: "Triage", Kind: "", Status: flowstore.PhaseReady, Order: 1},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/triage", Branch: "flow/triage"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID: update.FlowID,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "triage", Title: "Triage", Kind: "", Status: flowstore.PhaseReady, Order: 1},
+				},
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/repo",
+		Title:        "Triage flow",
+		Instructions: "Sort the task.",
+	})
+	if err != nil {
+		t.Fatalf("StartPlan() error = %v", err)
+	}
+	if !strings.Contains(result.LaunchContext.InitialPrompt, "Flow phase: Triage (triage).") {
+		t.Fatalf("initial prompt did not use generic phase prompt:\n%s", result.LaunchContext.InitialPrompt)
+	}
+	if strings.Contains(result.LaunchContext.InitialPrompt, "Produce a plan only") {
+		t.Fatalf("generic root prompt should not use plan-only wording:\n%s", result.LaunchContext.InitialPrompt)
+	}
+}
+
+func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 1},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/review", Branch: "flow/review"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddPhaseLaunchID() should not run for plan-review root without plan: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/repo",
+		Title:        "Review flow",
+		Instructions: "Review the plan.",
+	})
+	if err == nil {
+		t.Fatal("StartPlan() error = nil, want linked plan requirement")
+	}
+	if !strings.Contains(err.Error(), "Plan Review needs a linked plan before launch") {
+		t.Fatalf("StartPlan() error = %q, want linked plan requirement", err)
+	}
+}
+
+func TestFlowStarterStartPlanParksFlowWhenNoPhaseIsLaunchable(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 1},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/ship", Branch: "flow/ship"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddPhaseLaunchID() should not run when no phase is launchable: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/repo",
+		Title:        "Merge-only flow",
+		Instructions: "Track an externally merged change.",
+	})
+	if err != nil {
+		t.Fatalf("StartPlan() error = %v", err)
+	}
+	if !result.LaunchSkipped {
+		t.Fatal("StartPlan() LaunchSkipped = false, want parked Flow without launch")
+	}
+	if result.LaunchID != "" || result.LaunchContext.FlowID != "" {
+		t.Fatalf("launch result = id %q context %#v, want no launch", result.LaunchID, result.LaunchContext)
+	}
+	if result.Flow.FlowID != "flow-1" || result.Flow.WorktreePath != "/repo/worktrees/ship" {
+		t.Fatalf("result flow = %#v", result.Flow)
+	}
+}
+
 func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
@@ -278,6 +463,58 @@ func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
 	}
 
 	want := appendFlowDoneInstructionForTest("Plan flow-1: Build the thing in /dev/alpha-worktrees/flow-plan on flow/plan from abc123; keep {unknown}")
+	if result.LaunchContext.InitialPrompt != want {
+		t.Fatalf("plan prompt = %q, want %q", result.LaunchContext.InitialPrompt, want)
+	}
+}
+
+func TestFlowStarterStartPlanTemplateUsesCustomRootPhase(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2, DependsOn: []string{"research"}},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/research", Branch: "flow/research"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				Instructions: "Research it",
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+					{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2, DependsOn: []string{"research"}},
+				},
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		NewLaunchID: func() string {
+			return "launch-1"
+		},
+		FlowPromptTemplates: model.FlowPromptTemplates{
+			Plan: "Start {phase_id}: {phase_title}",
+		},
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/dev/alpha",
+		Title:        "Research Flow",
+		Instructions: "Research it",
+		AgentCommand: "codex",
+	})
+	if err != nil {
+		t.Fatalf("StartPlan returned error: %v", err)
+	}
+
+	want := appendFlowDoneInstructionForTest("Start research: Research")
 	if result.LaunchContext.InitialPrompt != want {
 		t.Fatalf("plan prompt = %q, want %q", result.LaunchContext.InitialPrompt, want)
 	}
@@ -494,6 +731,68 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 2},
+				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+					{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 2},
+					{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+				},
+			}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatal("launch ID should not be recorded after bootstrap failure")
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Add Flow Mode", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap failure")
+	}
+
+	if len(phaseUpdates) != 2 {
+		t.Fatalf("phase updates = %#v, want research and review blocked", phaseUpdates)
+	}
+	if phaseUpdates[0].PhaseID != "research" || phaseUpdates[0].Status != flowstore.PhaseBlocked || phaseUpdates[0].Outcome != "" {
+		t.Fatalf("first phase update = %#v, want blocked research", phaseUpdates[0])
+	}
+	if phaseUpdates[1].PhaseID != "review" ||
+		phaseUpdates[1].Status != flowstore.PhaseBlocked ||
+		phaseUpdates[1].Outcome != flowstore.OutcomeBlocked ||
+		!strings.Contains(phaseUpdates[1].Notes, "Bootstrap hook failed") {
+		t.Fatalf("second phase update = %#v, want blocked review with outcome", phaseUpdates[1])
+	}
+}
+
 func TestFlowStarterStartPlanWorktreeFailureBlocksRequestedPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 
@@ -522,6 +821,83 @@ func TestFlowStarterStartPlanWorktreeFailureBlocksRequestedPlanPhase(t *testing.
 		!strings.Contains(phaseUpdate.Notes, "Worktree creation failed") ||
 		!strings.Contains(phaseUpdate.Notes, "branch exists") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+}
+
+func TestFlowStarterPrepareFlowWorktreeFailureBlocksFirstLaunchablePhase(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2, DependsOn: []string{"research"}},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Research Flow", Instructions: "Plan research"})
+	if err == nil {
+		t.Fatal("PrepareFlow returned nil error, want worktree failure")
+	}
+
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "research" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "Worktree creation failed") ||
+		!strings.Contains(phaseUpdate.Notes, "branch exists") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+}
+
+func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
+				{PhaseID: "draft", Title: "Draft", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"research"}},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{}, errors.New("branch exists")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.PrepareFlow(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Research Flow", Instructions: "Plan research"})
+	if err == nil {
+		t.Fatal("PrepareFlow returned nil error, want worktree failure")
+	}
+
+	if len(phaseUpdates) != 2 {
+		t.Fatalf("phase updates = %#v, want research and spike blocked", phaseUpdates)
+	}
+	for i, wantPhaseID := range []string{"research", "spike"} {
+		update := phaseUpdates[i]
+		if update.FlowID != "flow-1" ||
+			update.PhaseID != wantPhaseID ||
+			update.Status != flowstore.PhaseBlocked ||
+			!strings.Contains(update.Notes, "Worktree creation failed") ||
+			!strings.Contains(update.Notes, "branch exists") {
+			t.Fatalf("phase update %d = %#v, want blocked %s", i, update, wantPhaseID)
+		}
 	}
 }
 

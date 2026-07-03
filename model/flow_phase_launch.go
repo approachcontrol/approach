@@ -162,6 +162,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		PlanPath:         req.PlanPath,
 		FlowID:           req.Record.FlowID,
 		FlowPhaseID:      launchPhase.PhaseID,
+		FlowPhaseKind:    flowstore.SemanticKind(launchPhase),
 		FlowAutoLaunch:   req.AutoLaunch,
 		InitialPrompt:    flowPhasePrompt(req.Record, launchPhase, req.PlanPath, planBody, l.PromptTemplates),
 	}
@@ -251,7 +252,6 @@ func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstor
 
 type flowPhaseLaunchTarget struct {
 	FlowPhaseLaunchPreparedRequest
-	AutoAdvanceRetryRecord  flowstore.FlowRecord
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
 }
@@ -295,7 +295,6 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 			return ActionFailedMsg{
 				RepoPath:                target.RepoPath,
 				Err:                     err.Error(),
-				AutoAdvanceRetryRecord:  target.AutoAdvanceRetryRecord,
 				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
 				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
 			}
@@ -314,50 +313,135 @@ func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
 	return PlanLaunchRequestedMsg{LaunchContext: result.Context}
 }
 
-func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []deferredAutoFlowLaunchKey) {
+func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previousFlows))
 	for _, record := range previousFlows {
 		if record.FlowID != "" {
 			previousByFlowID[record.FlowID] = record
 		}
 	}
-	var cmds []tea.Cmd
-	var retryEdges []deferredAutoFlowLaunchKey
 	for _, record := range currentFlows {
-		if !record.AutoMode || record.FlowID == "" {
+		if record.FlowID == "" {
+			continue
+		}
+		if !record.AutoMode {
+			m = m.disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
 		previous, ok := previousByFlowID[record.FlowID]
 		if !ok {
 			continue
 		}
-		completedPhase, ok := newlyCompletedFlowPhase(previous, record)
-		if !ok {
-			m = m.clearResolvedSuppressedAutoFlowLaunches(record)
+		if len(newlyStoppedAutoAdvanceFlowPhases(previous, record)) > 0 {
+			m = m.disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
-		if flowstore.SemanticKind(completedPhase) == flowstore.KindAutoreview {
+		if len(newlyCompletedFlowPhases(previous, record)) > 0 {
+			m = m.armAutoAdvanceDrain(record.FlowID)
+		}
+	}
+	m, cmd := m.prepareAutoAdvanceDrainLaunches(currentFlows)
+	return m, cmd, nil
+}
+
+func newlyCompletedFlowPhases(previous, current flowstore.FlowRecord) []flowstore.FlowPhase {
+	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
+	for _, phase := range previous.Phases {
+		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
+			previousByPhaseID[phaseID] = phase
+		}
+	}
+	var completed []flowstore.FlowPhase
+	for _, phase := range flowstore.OrderedPhases(current.Phases) {
+		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+		if phaseID == "" || phase.Status != flowstore.PhaseCompleted {
 			continue
 		}
-		if m.isAutoFlowLaunchSuppressed(record.FlowID, completedPhase) {
-			m = m.clearSuppressedAutoFlowLaunch(record.FlowID, completedPhase)
+		previousPhase, ok := previousByPhaseID[phaseID]
+		if ok && previousPhase.Status != flowstore.PhaseCompleted {
+			completed = append(completed, phase)
+		}
+	}
+	return completed
+}
+
+func newlyStoppedAutoAdvanceFlowPhases(previous, current flowstore.FlowRecord) []flowstore.FlowPhase {
+	previousByPhaseID := make(map[string]flowstore.FlowPhase, len(previous.Phases))
+	for _, phase := range previous.Phases {
+		if phaseID := artifacts.NormalizePhaseID(phase.PhaseID); phaseID != "" {
+			previousByPhaseID[phaseID] = phase
+		}
+	}
+	var stopped []flowstore.FlowPhase
+	for _, phase := range flowstore.OrderedPhases(current.Phases) {
+		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
+		if phaseID == "" {
 			continue
 		}
-		sourceLaunchID := flowstore.LatestPhaseLaunchID(completedPhase)
-		if m.hasRunningFlowEmbeddedTerminalForPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID) ||
-			m.hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID) {
-			m = m.deferAutoFlowPhaseLaunch(record.FlowID, completedPhase.PhaseID)
+		previousPhase, ok := previousByPhaseID[phaseID]
+		if ok && autoAdvanceStopped(previousPhase.Status, phase.Status) {
+			stopped = append(stopped, phase)
+		}
+	}
+	return stopped
+}
+
+func autoAdvanceStopped(previousStatus, currentStatus string) bool {
+	switch currentStatus {
+	case flowstore.PhaseSkipped, flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention:
+		return previousStatus != currentStatus
+	default:
+		return previousStatus == flowstore.PhaseRunning && currentStatus == flowstore.PhaseReady
+	}
+}
+
+func (m Model) armAutoAdvanceDrain(flowID string) Model {
+	if strings.TrimSpace(flowID) == "" {
+		return m
+	}
+	if m.autoAdvanceDrainFlows == nil {
+		m.autoAdvanceDrainFlows = make(map[string]struct{})
+	}
+	m.autoAdvanceDrainFlows[flowID] = struct{}{}
+	return m
+}
+
+func (m Model) disarmAutoAdvanceDrain(flowID string) Model {
+	if len(m.autoAdvanceDrainFlows) == 0 {
+		return m
+	}
+	delete(m.autoAdvanceDrainFlows, flowID)
+	if len(m.autoAdvanceDrainFlows) == 0 {
+		m.autoAdvanceDrainFlows = nil
+	}
+	return m
+}
+
+func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (Model, tea.Cmd) {
+	if len(m.autoAdvanceDrainFlows) == 0 {
+		return m, nil
+	}
+	recordsByID := make(map[string]flowstore.FlowRecord, len(records))
+	for _, record := range records {
+		if record.FlowID != "" {
+			recordsByID[record.FlowID] = record
+		}
+	}
+	var cmds []tea.Cmd
+	for flowID := range m.autoAdvanceDrainFlows {
+		record, ok := recordsByID[flowID]
+		if !ok || !record.AutoMode {
+			m = m.disarmAutoAdvanceDrain(flowID)
 			continue
 		}
-		if m.hasFlowEmbeddedTerminalForPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID) {
-			m = m.suppressAutoFlowPhaseLaunch(record.FlowID, completedPhase.PhaseID, sourceLaunchID)
+		if m.flowAutoAdvanceOccupied(record) {
 			continue
 		}
 		phase, ok := nextAutoLaunchPhase(record)
 		if !ok {
+			m = m.disarmAutoAdvanceDrain(flowID)
 			continue
 		}
-		var cmd tea.Cmd
 		target, targetOK, next, statusCmd := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
 			Record:     record,
 			Phase:      phase,
@@ -367,197 +451,41 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 		m = next
 		if !targetOK {
 			cmds = append(cmds, statusCmd)
-			if key, ok := newDeferredAutoFlowLaunchKey(record.FlowID, completedPhase.PhaseID); ok {
-				retryEdges = append(retryEdges, key)
-			}
 			continue
 		}
-		target.AutoAdvanceRetryRecord = previous
+		m = m.disarmAutoAdvanceDrain(record.FlowID)
+		target.AutoAdvanceRetryFlowID = record.FlowID
+		target.AutoAdvanceRetryPhaseID = phase.PhaseID
 		m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
 			FlowTitle: record.Title,
 			PhaseID:   phase.PhaseID,
 		})
-		cmd = m.prepareFlowPhaseLaunch(target)
-		if cmd != nil {
+		if cmd := m.prepareFlowPhaseLaunch(target); cmd != nil {
 			cmds = append(cmds, cmd)
-		} else if key, ok := newDeferredAutoFlowLaunchKey(record.FlowID, completedPhase.PhaseID); ok {
-			retryEdges = append(retryEdges, key)
 		}
-	}
-	return m, batchNonNil(cmds...), retryEdges
-}
-
-type deferredAutoFlowLaunchKey struct {
-	FlowID  string
-	PhaseID string
-}
-
-type suppressedAutoFlowLaunchKey struct {
-	FlowID   string
-	PhaseID  string
-	LaunchID string
-}
-
-func (m Model) deferAutoFlowPhaseLaunch(flowID, phaseID string) Model {
-	key, ok := newDeferredAutoFlowLaunchKey(flowID, phaseID)
-	if !ok {
-		return m
-	}
-	if m.deferredAutoFlowLaunches == nil {
-		m.deferredAutoFlowLaunches = make(map[deferredAutoFlowLaunchKey]struct{})
-	}
-	m.deferredAutoFlowLaunches[key] = struct{}{}
-	return m
-}
-
-func (m Model) suppressAutoFlowPhaseLaunch(flowID, phaseID, launchID string) Model {
-	key, ok := newSuppressedAutoFlowLaunchKey(flowID, phaseID, launchID)
-	if !ok {
-		return m
-	}
-	if m.suppressedAutoFlowLaunches == nil {
-		m.suppressedAutoFlowLaunches = make(map[suppressedAutoFlowLaunchKey]struct{})
-	}
-	m.suppressedAutoFlowLaunches[key] = struct{}{}
-	deferredKey, ok := newDeferredAutoFlowLaunchKey(flowID, phaseID)
-	if ok {
-		m = m.clearDeferredAutoFlowLaunch(deferredKey)
-	}
-	return m
-}
-
-func newSuppressedAutoFlowLaunchKey(flowID, phaseID, launchID string) (suppressedAutoFlowLaunchKey, bool) {
-	phaseID = artifacts.NormalizePhaseID(phaseID)
-	launchID = strings.TrimSpace(launchID)
-	if flowID == "" || phaseID == "" {
-		return suppressedAutoFlowLaunchKey{}, false
-	}
-	return suppressedAutoFlowLaunchKey{FlowID: flowID, PhaseID: phaseID, LaunchID: launchID}, true
-}
-
-func suppressedAutoFlowLaunchKeyForPhase(flowID string, phase flowstore.FlowPhase) (suppressedAutoFlowLaunchKey, bool) {
-	return newSuppressedAutoFlowLaunchKey(flowID, phase.PhaseID, flowstore.LatestPhaseLaunchID(phase))
-}
-
-func (m Model) isAutoFlowLaunchSuppressed(flowID string, phase flowstore.FlowPhase) bool {
-	key, ok := suppressedAutoFlowLaunchKeyForPhase(flowID, phase)
-	if !ok {
-		return false
-	}
-	_, suppressed := m.suppressedAutoFlowLaunches[key]
-	return suppressed
-}
-
-func (m Model) clearSuppressedAutoFlowLaunch(flowID string, phase flowstore.FlowPhase) Model {
-	key, ok := suppressedAutoFlowLaunchKeyForPhase(flowID, phase)
-	if !ok || len(m.suppressedAutoFlowLaunches) == 0 {
-		return m
-	}
-	delete(m.suppressedAutoFlowLaunches, key)
-	if len(m.suppressedAutoFlowLaunches) == 0 {
-		m.suppressedAutoFlowLaunches = nil
-	}
-	return m
-}
-
-func (m Model) clearResolvedSuppressedAutoFlowLaunches(record flowstore.FlowRecord) Model {
-	if len(m.suppressedAutoFlowLaunches) == 0 || record.FlowID == "" {
-		return m
-	}
-	for _, phase := range record.Phases {
-		if phase.Status == flowstore.PhaseRunning || phase.Status == flowstore.PhaseCompleted {
-			continue
-		}
-		m = m.clearSuppressedAutoFlowLaunch(record.FlowID, phase)
-	}
-	return m
-}
-
-func (m Model) clearDeferredAutoFlowLaunch(key deferredAutoFlowLaunchKey) Model {
-	if len(m.deferredAutoFlowLaunches) == 0 {
-		return m
-	}
-	delete(m.deferredAutoFlowLaunches, key)
-	if len(m.deferredAutoFlowLaunches) == 0 {
-		m.deferredAutoFlowLaunches = nil
-	}
-	return m
-}
-
-func newDeferredAutoFlowLaunchKey(flowID, phaseID string) (deferredAutoFlowLaunchKey, bool) {
-	phaseID = artifacts.NormalizePhaseID(phaseID)
-	if flowID == "" || phaseID == "" {
-		return deferredAutoFlowLaunchKey{}, false
-	}
-	return deferredAutoFlowLaunchKey{FlowID: flowID, PhaseID: phaseID}, true
-}
-
-func (m Model) prepareAutoFlowPhaseLaunchForRecord(record flowstore.FlowRecord, phase flowstore.FlowPhase, retryPhaseID string) (Model, tea.Cmd, bool) {
-	target, ok, next, statusCmd := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
-		Record:     record,
-		Phase:      phase,
-		AutoLaunch: true,
-		Headless:   true,
-	})
-	m = next
-	if !ok {
-		return m, statusCmd, false
-	}
-	m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
-		FlowTitle: record.Title,
-		PhaseID:   phase.PhaseID,
-	})
-	target.AutoAdvanceRetryFlowID = record.FlowID
-	target.AutoAdvanceRetryPhaseID = retryPhaseID
-	return m, next.prepareFlowPhaseLaunch(target), true
-}
-
-func (m Model) prepareDeferredAutoFlowPhaseLaunchesFrom(records []flowstore.FlowRecord) (Model, tea.Cmd) {
-	recordsByID := make(map[string]flowstore.FlowRecord, len(records))
-	for _, record := range records {
-		if record.FlowID != "" {
-			recordsByID[record.FlowID] = record
-		}
-	}
-	var cmds []tea.Cmd
-	for key := range m.deferredAutoFlowLaunches {
-		delete(m.deferredAutoFlowLaunches, key)
-		record, ok := recordsByID[key.FlowID]
-		if !ok {
-			continue
-		}
-		if !record.AutoMode {
-			continue
-		}
-		sourcePhase, sourcePhaseOK := flowRecordPhaseByID(record, key.PhaseID)
-		sourceLaunchID := flowstore.LatestPhaseLaunchID(sourcePhase)
-		if sourcePhaseOK && m.hasRunningFlowEmbeddedTerminalForPhaseLaunch(key.FlowID, key.PhaseID, sourceLaunchID) {
-			m.deferredAutoFlowLaunches[key] = struct{}{}
-			continue
-		}
-		if sourcePhaseOK && m.hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(key.FlowID, key.PhaseID, sourceLaunchID) {
-			m.deferredAutoFlowLaunches[key] = struct{}{}
-			continue
-		}
-		if sourcePhaseOK && m.hasFlowEmbeddedTerminalForPhaseLaunch(key.FlowID, key.PhaseID, sourceLaunchID) {
-			continue
-		}
-		if phase, ok := nextAutoLaunchPhase(record); ok {
-			var cmd tea.Cmd
-			var prepared bool
-			m, cmd, prepared = m.prepareAutoFlowPhaseLaunchForRecord(record, phase, key.PhaseID)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			if !prepared {
-				m.deferredAutoFlowLaunches[key] = struct{}{}
-			}
-		}
-	}
-	if len(m.deferredAutoFlowLaunches) == 0 {
-		m.deferredAutoFlowLaunches = nil
 	}
 	return m, batchNonNil(cmds...)
+}
+
+func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
+	for _, phase := range record.Phases {
+		if phase.Status == flowstore.PhaseRunning {
+			return true
+		}
+	}
+	return m.hasFlowEmbeddedTerminalForFlow(record.FlowID)
+}
+
+func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
+	if strings.TrimSpace(flowID) == "" {
+		return false
+	}
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func flowPhaseCanLaunch(record flowstore.FlowRecord, phase flowstore.FlowPhase) bool {

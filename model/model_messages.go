@@ -508,11 +508,10 @@ type FetchErrorMsg struct {
 }
 
 // ActionFailedMsg carries an async action error so the failure can be surfaced
-// via the transient error line and any retry bookkeeping can be restored.
+// via the transient error line.
 type ActionFailedMsg struct {
 	RepoPath                string
 	Err                     string
-	AutoAdvanceRetryRecord  flowstore.FlowRecord
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
 }
@@ -1198,11 +1197,10 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
-	m = m.restoreAutoAdvanceRetrySnapshot(msg.AutoAdvanceRetryRecord)
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
-	autoAdvanceFailure := autoAdvanceRetry || msg.AutoAdvanceRetryRecord.FlowID != ""
-	if msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != "" {
-		m = m.deferAutoFlowPhaseLaunch(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceRetryPhaseID)
+	autoAdvanceFailure := autoAdvanceRetry
+	if msg.AutoAdvanceRetryFlowID != "" {
+		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
 		m = m.setStatus(statusOther, msg.Err)
@@ -1211,7 +1209,7 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 	if !autoAdvanceFailure {
 		return m, nil
 	}
-	title := flowTitleForStatus(msg.AutoAdvanceRetryRecord)
+	title := ""
 	if strings.TrimSpace(title) == "" {
 		title = msg.AutoAdvanceRetryFlowID
 	}

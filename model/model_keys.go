@@ -1769,13 +1769,6 @@ func (m Model) hasAutoClosingFlowEmbeddedTerminalForPhaseLaunch(flowID, phaseID,
 	return false
 }
 
-func (m Model) clearDeferredAutoFlowLaunchForTerminal(slot embeddedTerminalSlot) Model {
-	if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil || flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
-		return m
-	}
-	return m.suppressAutoFlowPhaseLaunch(slot.FlowID, slot.FlowPhaseID, slot.LaunchID)
-}
-
 func flowEmbeddedTerminalSlotMatchesPhase(slot embeddedTerminalSlot, flowID, normalizedPhaseID string) bool {
 	return slot.Scope == embeddedTerminalScopeFlow &&
 		slot.FlowID == flowID &&
@@ -1973,6 +1966,7 @@ func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, 
 		PlanPath:          record.PlanPath,
 		FlowID:            record.FlowID,
 		FlowPhaseID:       phase.PhaseID,
+		FlowPhaseKind:     flowstore.SemanticKind(phase),
 		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(phase.Status),
 	}
 	return ctx, true, m
@@ -2303,7 +2297,10 @@ func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errT
 	}
 	status := flowstore.PhaseNeedsAttention
 	outcome := ""
-	if _, phase, ok := m.flowPhaseByID(ctx.FlowID, ctx.FlowPhaseID); ok && flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
+	if ctx.FlowPhaseKind == flowstore.KindPlanReview {
+		status = flowstore.PhaseBlocked
+		outcome = flowstore.OutcomeBlocked
+	} else if _, phase, ok := m.flowPhaseByID(ctx.FlowID, ctx.FlowPhaseID); ok && flowstore.SemanticKind(phase) == flowstore.KindPlanReview {
 		status = flowstore.PhaseBlocked
 		outcome = flowstore.OutcomeBlocked
 	} else if ctx.FlowPhaseID == "plan-review" {

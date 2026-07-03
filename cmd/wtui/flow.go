@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brian-bell/wtui/config"
 	"github.com/brian-bell/wtui/flowstore"
 )
 
@@ -89,35 +90,31 @@ Most commands accept:
   --state-root PATH  Override the artifact state root after the leaf command.
 `
 
-// resolveFlowRoot applies the documented precedence:
-// --state-root > WTUI_FLOW_STATE_ROOT > WTUI_PLAN_STATE_ROOT >
-// WTUI_SESSION_STATE_ROOT > [sessions].root from config > flowstore.DefaultRoot().
-func resolveFlowRoot(stateRoot string, deps runDeps) (string, error) {
-	if stateRoot != "" {
-		return stateRoot, nil
-	}
-	if root := deps.getenv("WTUI_FLOW_STATE_ROOT"); root != "" {
-		return root, nil
-	}
-	if root := deps.getenv("WTUI_PLAN_STATE_ROOT"); root != "" {
-		return root, nil
-	}
-	if root := deps.getenv("WTUI_SESSION_STATE_ROOT"); root != "" {
-		return root, nil
-	}
+func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
 	cfg, err := deps.loadConfig()
 	if err != nil {
-		return "", fmt.Errorf("error loading config: %w", err)
+		return nil, fmt.Errorf("error loading config: %w", err)
 	}
-	return cfg.Sessions.Root, nil
+	return newFlowStoreWithConfig(stateRoot, cfg, deps)
 }
 
-func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
-	root, err := resolveFlowRoot(stateRoot, deps)
-	if err != nil {
-		return nil, err
+func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps) (*flowstore.Store, error) {
+	root := stateRoot
+	if root == "" {
+		if envRoot := deps.getenv("WTUI_FLOW_STATE_ROOT"); envRoot != "" {
+			root = envRoot
+		} else if envRoot := deps.getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
+			root = envRoot
+		} else if envRoot := deps.getenv("WTUI_SESSION_STATE_ROOT"); envRoot != "" {
+			root = envRoot
+		} else {
+			root = cfg.Sessions.Root
+		}
 	}
-	return flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if root == "" {
+		root = cfg.Sessions.Root
+	}
+	return flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: cfg.Flow.Presets})
 }
 
 func runFlowCreate(args []string, deps runDeps) error {
@@ -132,6 +129,7 @@ func runFlowCreate(args []string, deps runDeps) error {
 	branch := flags.String("branch", "", "branch name")
 	baseRef := flags.String("base-ref", "", "base ref")
 	commit := flags.String("commit", "", "start commit")
+	presetName := flags.String("preset", "", "flow phase graph preset")
 	stateRoot := flags.String("state-root", "", "artifact state root")
 	asJSON := flags.Bool("json", false, "emit JSON output")
 	if help, err := parseCommandFlags(flags, args); help || err != nil {
@@ -156,11 +154,19 @@ func runFlowCreate(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	store, err := newFlowStore(*stateRoot, deps)
+	cfg, err := deps.loadConfig()
+	if err != nil {
+		return fmt.Errorf("error loading config: %w", err)
+	}
+	preset, err := resolveConfiguredFlowPreset(cfg, *presetName)
 	if err != nil {
 		return err
 	}
-	record, err := store.Create(flowstore.FlowRecord{
+	store, err := newFlowStoreWithConfig(*stateRoot, cfg, deps)
+	if err != nil {
+		return err
+	}
+	record, err := store.CreateWithOptions(flowstore.FlowRecord{
 		Title:        *title,
 		Instructions: body,
 		RepoPath:     *repoPath,
@@ -168,11 +174,45 @@ func runFlowCreate(args []string, deps runDeps) error {
 		Branch:       *branch,
 		BaseRef:      *baseRef,
 		Commit:       *commit,
-	})
+	}, flowstore.CreateOptions{Preset: preset})
 	if err != nil {
 		return err
 	}
 	return writeFlowJSON(deps.stdout, record)
+}
+
+func resolveConfiguredFlowPreset(cfg config.Config, requested string) (*flowstore.Preset, error) {
+	name := normalizeFlowPresetName(requested)
+	if name == "" {
+		name = normalizeFlowPresetName(cfg.Flow.Preset)
+	}
+	if name == "" || name == "default" {
+		return nil, nil
+	}
+	for _, preset := range cfg.Flow.Presets {
+		presetName := normalizeFlowPresetName(preset.Name)
+		if presetName == name {
+			preset.Name = presetName
+			return &preset, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown flow preset %q (available presets: %s)", name, strings.Join(availableFlowPresetNames(cfg), ", "))
+}
+
+func availableFlowPresetNames(cfg config.Config) []string {
+	names := []string{"default"}
+	for _, preset := range cfg.Flow.Presets {
+		name := normalizeFlowPresetName(preset.Name)
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func normalizeFlowPresetName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func printFlowCreateHelp(w io.Writer) {
@@ -191,6 +231,7 @@ Common flags:
   --branch BRANCH
   --base-ref REF
   --commit SHA
+  --preset NAME
   --state-root PATH
 
 Example:

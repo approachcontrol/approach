@@ -120,7 +120,7 @@ func flowPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 	var prompt string
 	switch flowstore.SemanticKind(phase) {
 	case flowstore.KindPlan:
-		prompt = flowPlanPrompt(record, templates)
+		prompt = flowPlanPrompt(record, phase, templates)
 	case flowstore.KindPlanReview:
 		prompt = flowPlanReviewPrompt(record, phase, planPath, planBody)
 	case flowstore.KindImplementation:

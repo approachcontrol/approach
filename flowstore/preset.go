@@ -10,16 +10,16 @@ import (
 
 // PhaseSpec is a data-only phase declaration used by Flow phase graph presets.
 type PhaseSpec struct {
-	ID        string
-	Title     string
-	Kind      string
-	DependsOn []string
+	ID        string   `toml:"id"`
+	Title     string   `toml:"title"`
+	Kind      string   `toml:"kind"`
+	DependsOn []string `toml:"depends_on"`
 }
 
 // Preset declares a reusable graph of top-level Flow phases.
 type Preset struct {
-	Name   string
-	Phases []PhaseSpec
+	Name   string      `toml:"name"`
+	Phases []PhaseSpec `toml:"phases"`
 }
 
 // CreateOptions configures Flow creation without changing the persisted schema.
@@ -44,8 +44,33 @@ func DefaultPreset() Preset {
 	}
 }
 
+// ValidatePreset checks whether preset can seed a Flow phase graph.
+func ValidatePreset(preset Preset) error {
+	return validatePreset(preset)
+}
+
+func presetRegistry(presets []Preset) (map[string]Preset, error) {
+	if len(presets) == 0 {
+		return nil, nil
+	}
+	registry := make(map[string]Preset, len(presets))
+	for _, preset := range presets {
+		preset.Name = normalizePresetName(preset.Name)
+		if err := validatePreset(preset); err != nil {
+			return nil, err
+		}
+		registry[preset.Name] = preset
+	}
+	return registry, nil
+}
+
+func normalizePresetName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
 func validatePreset(preset Preset) error {
-	if strings.TrimSpace(preset.Name) == "" {
+	preset.Name = normalizePresetName(preset.Name)
+	if preset.Name == "" {
 		return fmt.Errorf("preset name is required")
 	}
 	if len(preset.Phases) == 0 {

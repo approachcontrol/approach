@@ -729,6 +729,7 @@ type AgentLaunchContext struct {
 	PlanPhaseStatus   string
 	FlowID            string
 	FlowPhaseID       string
+	FlowPhaseKind     string
 	FlowLaunchTracked bool
 	FlowAutoLaunch    bool
 	// FlowPhaseTerminal records that the persisted phase kept a terminal
