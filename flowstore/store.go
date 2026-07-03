@@ -469,6 +469,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(update.FlowID)
 	}
+	if err := validatePhaseGraphResolved(record); err != nil {
+		return FlowRecord{}, err
+	}
 	// When a legacy record still holds duplicate rows for this logical phase,
 	// the first row wins: it is validated, updated, and kept, while the others
 	// are merged into it by collapseDuplicatePhaseRows below.
@@ -809,6 +812,9 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(update.FlowID)
 	}
+	if err := validatePhaseGraphResolved(record); err != nil {
+		return FlowRecord{}, err
+	}
 	phaseIndex := mergePhaseIndex(record)
 	if phaseIndex < 0 {
 		return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
@@ -970,6 +976,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			record.Status = DeriveStatus(record)
 			return record, nil
 		}
+		if err := validateFlowLaunchOccupancy(record, phaseIndex, update.AutoLaunch); err != nil {
+			return FlowRecord{}, err
+		}
 		launchPhaseUpdate := PhaseUpdate{FlowID: update.FlowID, PhaseID: update.PhaseID, Status: PhaseRunning}
 		if phase.Status == PhaseNeedsAttention || phase.Status == PhaseBlocked {
 			launchPhaseUpdate.Notes = fmt.Sprintf("Relaunched after %s.", phase.Status)
@@ -995,6 +1004,45 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+func validateFlowLaunchOccupancy(record FlowRecord, targetIndex int, autoLaunch bool) error {
+	graph := buildPhaseGraph(record.Phases)
+	for i, phase := range record.Phases {
+		if i == targetIndex || phase.Status != PhaseRunning {
+			continue
+		}
+		if phaseDependsOnTarget(graph, i, targetIndex) {
+			continue
+		}
+		message := fmt.Sprintf("flow %q already has running phase %q", record.FlowID, phase.PhaseID)
+		if autoLaunch {
+			return fmt.Errorf("%s: %w", message, errAutoLaunchOutdated)
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func phaseDependsOnTarget(graph phaseGraph, phaseIndex, targetIndex int) bool {
+	seen := make(map[int]bool)
+	var visit func(int) bool
+	visit = func(idx int) bool {
+		if idx == targetIndex {
+			return true
+		}
+		if seen[idx] {
+			return false
+		}
+		seen[idx] = true
+		for _, prereq := range graph.prereqsByIdx[idx] {
+			if visit(prereq) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(phaseIndex)
 }
 
 func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
@@ -1254,6 +1302,11 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(flowID)
 	}
+	if selfHealOnRead {
+		if err := validatePhaseGraphResolved(record); err != nil {
+			return FlowRecord{}, err
+		}
+	}
 	record, err = mutate(record, s.now())
 	if err != nil {
 		return FlowRecord{}, err
@@ -1264,6 +1317,17 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 		return FlowRecord{}, err
 	}
 	return record, nil
+}
+
+func validatePhaseGraphResolved(record FlowRecord) error {
+	if record.GraphRecovery.Status != GraphRecoveryMissingEdgesUnresolved {
+		return nil
+	}
+	preset := normalizePresetName(record.PresetName)
+	if preset == "" || preset == "default" {
+		return nil
+	}
+	return fmt.Errorf("flow %q has unresolved missing dependencies; restore preset %q or explicit depends_on before mutating phases", record.FlowID, preset)
 }
 
 func appendUnique(values []string, value string) []string {

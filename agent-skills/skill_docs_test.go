@@ -258,6 +258,9 @@ func TestWtuiFlowCreateSkillGuardsPersistenceFailures(t *testing.T) {
 			"exit 1",
 		})
 	}
+	if strings.Contains(importBlock, "ready or candidates") {
+		t.Fatal("plan import should leave FLOW_PLAN_PHASE_ID empty when no plan-kind phase is ready")
+	}
 
 	readbackIndex := strings.Index(skill, `if ! wtui plan read --plan-id "$PLAN_ID"`)
 	completeIndex := strings.Index(skill, "if ! wtui flow phase complete")

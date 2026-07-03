@@ -3864,6 +3864,53 @@ func TestStoreMarkManualMergeCompletesMergeAndRecordsMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreMarkManualMergeRejectsUnresolvedMissingDependsOn(t *testing.T) {
+	root := t.TempDir()
+	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flowID := "20260607T120000Z-unresolved-manual-merge"
+	writeRawFlowMeta(t, root, flowID, `
+  "branch": "flow/manual-merge",
+  "preset_name": "research",
+  "pr": {"provider": "github", "number": 116, "url": "https://github.com/brian-bell/wtui/pull/116", "head_branch": "flow/manual-merge", "base_branch": "main", "status": "open"},
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "completed", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "ready", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
+		FlowID:   flowID,
+		PRNumber: 116,
+		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		Commit:   "0123456789abcdef",
+		MergedAt: mergedAt,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unresolved missing dependencies") {
+		t.Fatalf("MarkManualMerge() error = %v, want unresolved graph error", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) error = %v", err)
+	}
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
+	}
+	for _, phase := range raw.Phases {
+		if strings.Contains(string(phase["phase_id"]), "draft") {
+			if _, ok := phase["depends_on"]; ok {
+				t.Fatalf("draft depends_on was persisted after rejected manual merge:\n%s", data)
+			}
+		}
+	}
+}
+
 func TestStoreMarkManualMergeRejectsChangedPRTarget(t *testing.T) {
 	root := t.TempDir()
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
@@ -5899,6 +5946,44 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 	}
 }
 
+func TestSetPhaseRejectsUnresolvedMissingDependsOn(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flowID := "20260607T120000Z-unresolved-phase-mutation"
+	writeRawFlowMeta(t, root, flowID, `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "ready", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+  ]`)
+
+	_, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: flowID, PhaseID: "research", Status: flowstore.PhaseCompleted})
+	if err == nil || !strings.Contains(err.Error(), "unresolved missing dependencies") {
+		t.Fatalf("SetPhase() error = %v, want unresolved graph error", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "flows", flowID, "meta.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) error = %v", err)
+	}
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
+	}
+	for _, phase := range raw.Phases {
+		if strings.Contains(string(phase["phase_id"]), "draft") {
+			if _, ok := phase["depends_on"]; ok {
+				t.Fatalf("draft depends_on was persisted after rejected mutation:\n%s", data)
+			}
+		}
+	}
+}
+
 func TestSetPhaseRestoresNamedPresetEdgesBeforeWrite(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{
@@ -6491,6 +6576,97 @@ func TestStoreAddPhaseLaunchIDRejectsReadyPhaseWithUnsatisfiedDependency(t *test
 	}
 	if got := phaseByID(t, read, "publish"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhasePending {
 		t.Fatalf("publish after rejected launch = %#v, want demoted pending without launch", got)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRejectsAutoLaunchWhenAnotherPhaseRunning(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260607T120000Z-auto-occupied-launch", []flowstore.FlowPhase{
+		graphPhase(now, "branch-a", flowstore.PhaseRunning, []string{}),
+		graphPhase(now, "branch-b", flowstore.PhaseReady, []string{}),
+	})
+	writeFreshFlowRecordForTest(t, root, record)
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:     record.FlowID,
+		PhaseID:    "branch-b",
+		LaunchID:   "launch-branch-b",
+		AutoLaunch: true,
+	})
+	if err == nil || !flowstore.IsAutoLaunchOutdated(err) || !strings.Contains(err.Error(), "already has running phase") {
+		t.Fatalf("AddPhaseLaunchID(auto occupied) error = %v, want auto-launch outdated occupancy error", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "branch-b"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseReady {
+		t.Fatalf("branch-b after rejected auto launch = %#v, want unchanged ready without launch", got)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRejectsManualLaunchWhenAnotherPhaseRunning(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260607T120000Z-manual-occupied-launch", []flowstore.FlowPhase{
+		graphPhase(now, "branch-a", flowstore.PhaseRunning, []string{}),
+		graphPhase(now, "branch-b", flowstore.PhaseReady, []string{}),
+	})
+	writeFreshFlowRecordForTest(t, root, record)
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "branch-b",
+		LaunchID: "launch-branch-b",
+	})
+	if err == nil || flowstore.IsAutoLaunchOutdated(err) || !strings.Contains(err.Error(), "already has running phase") {
+		t.Fatalf("AddPhaseLaunchID(manual occupied) error = %v, want manual occupancy error", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "branch-b"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseReady {
+		t.Fatalf("branch-b after rejected manual launch = %#v, want unchanged ready without launch", got)
+	}
+}
+
+func TestStoreAddPhaseLaunchIDRejectsRelaunchWhenAnotherPhaseRunning(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260607T120000Z-manual-occupied-relaunch", []flowstore.FlowPhase{
+		graphPhase(now, "branch-a", flowstore.PhaseRunning, []string{}),
+		graphPhase(now, "branch-b", flowstore.PhaseNeedsAttention, []string{}),
+	})
+	writeFreshFlowRecordForTest(t, root, record)
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "branch-b",
+		LaunchID: "launch-branch-b",
+	})
+	if err == nil || !strings.Contains(err.Error(), "already has running phase") {
+		t.Fatalf("AddPhaseLaunchID(manual occupied relaunch) error = %v, want occupancy error", err)
+	}
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if got := phaseByID(t, read, "branch-b"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("branch-b after rejected relaunch = %#v, want unchanged needs_attention without launch", got)
 	}
 }
 

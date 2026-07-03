@@ -300,7 +300,7 @@ def semantic_kind(phase):
     return "plan" if (phase.get("phase_id") or "").strip().lower() == "plan" else ""
 candidates = [phase for phase in phases if semantic_kind(phase) == "plan"]
 ready = [phase for phase in candidates if phase.get("status") == "ready"]
-picked = (ready or candidates or [{}])[0]
+picked = (ready or [{}])[0]
 print(picked.get("phase_id", ""))'); then
   echo "wtui flow create returned JSON that could not be parsed for a plan-kind phase; report the command error to the user." >&2
   exit 1
@@ -360,9 +360,10 @@ else
 fi
 ```
 
-Only complete the new Flow's plan-kind phase after all four steps succeed: plan
-save, flow-plan link, plan readback, and phase completion. If the selected
-preset has no plan-kind phase, link the plan but do not complete a Flow phase.
+Only complete the new Flow's ready plan-kind phase after all four steps succeed:
+plan save, flow-plan link, plan readback, and phase completion. If the selected
+preset has no ready plan-kind phase, link the plan but do not complete a Flow
+phase.
 If there is no concrete plan body, report the new Flow ID and leave Plan ready
 for a normal Flow Plan launch.
 

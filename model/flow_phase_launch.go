@@ -375,23 +375,23 @@ func newlyStoppedAutoAdvanceFlowPhases(previous, current flowstore.FlowRecord) [
 	var stopped []flowstore.FlowPhase
 	for _, phase := range flowstore.OrderedPhases(current.Phases) {
 		phaseID := artifacts.NormalizePhaseID(phase.PhaseID)
-		if phaseID == "" || !autoAdvanceStopStatus(phase.Status) {
+		if phaseID == "" {
 			continue
 		}
 		previousPhase, ok := previousByPhaseID[phaseID]
-		if ok && previousPhase.Status != phase.Status {
+		if ok && autoAdvanceStopped(previousPhase.Status, phase.Status) {
 			stopped = append(stopped, phase)
 		}
 	}
 	return stopped
 }
 
-func autoAdvanceStopStatus(status string) bool {
-	switch status {
+func autoAdvanceStopped(previousStatus, currentStatus string) bool {
+	switch currentStatus {
 	case flowstore.PhaseSkipped, flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention:
-		return true
+		return previousStatus != currentStatus
 	default:
-		return false
+		return previousStatus == flowstore.PhaseRunning && currentStatus == flowstore.PhaseReady
 	}
 }
 

@@ -10594,6 +10594,42 @@ func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 	}
 }
 
+func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			return model.FlowStartResult{
+				Flow:          flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title},
+				LaunchSkipped: true,
+			}, nil
+		},
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			t.Fatal("launch-skipped Flow should not launch an external agent")
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			t.Fatal("launch-skipped Flow should not start an embedded terminal")
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+
+	_, cmd := submitNewFlowPrompts(t, m, "Merge-only Flow", "Track the merge", "main")
+	if cmd == nil {
+		t.Fatal("expected flow creation command")
+	}
+	raw := cmd()
+	msg, ok := raw.(model.FlowCreatedMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want FlowCreatedMsg", raw)
+	}
+	if msg.FlowID != "flow-parked" || msg.Title != "Merge-only Flow" || msg.Request == 0 {
+		t.Fatalf("FlowCreatedMsg = %#v", msg)
+	}
+}
+
 func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	embeddedStarts := 0
 	externalLaunches := 0

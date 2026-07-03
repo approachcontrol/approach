@@ -272,6 +272,54 @@ func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T
 	}
 }
 
+func TestFlowStarterStartPlanParksFlowWhenNoPhaseIsLaunchable(t *testing.T) {
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 1},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/ship", Branch: "flow/ship"}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID:       update.FlowID,
+				WorktreePath: update.WorktreePath,
+				Branch:       update.Branch,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 1},
+				},
+			}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("AddPhaseLaunchID() should not run when no phase is launchable: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+	})
+
+	result, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath:     "/repo",
+		Title:        "Merge-only flow",
+		Instructions: "Track an externally merged change.",
+	})
+	if err != nil {
+		t.Fatalf("StartPlan() error = %v", err)
+	}
+	if !result.LaunchSkipped {
+		t.Fatal("StartPlan() LaunchSkipped = false, want parked Flow without launch")
+	}
+	if result.LaunchID != "" || result.LaunchContext.FlowID != "" {
+		t.Fatalf("launch result = id %q context %#v, want no launch", result.LaunchID, result.LaunchContext)
+	}
+	if result.Flow.FlowID != "flow-1" || result.Flow.WorktreePath != "/repo/worktrees/ship" {
+		t.Fatalf("result flow = %#v", result.Flow)
+	}
+}
+
 func TestFlowStarterStartPlanRequiresCreateFlow(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {

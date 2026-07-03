@@ -36,6 +36,7 @@ type FlowStartResult struct {
 	Worktree      actions.FlowWorktreeCreateResult
 	Commit        string
 	LaunchID      string
+	LaunchSkipped bool
 	LaunchContext actions.AgentLaunchContext
 }
 
@@ -126,7 +127,11 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	flow := result.Flow
 	worktree := result.Worktree
 	commit := result.Commit
-	phase := initialFlowLaunchPhase(flow, req.PlanPhaseID)
+	phase, ok := initialFlowLaunchPhase(flow, req.PlanPhaseID)
+	if !ok {
+		result.LaunchSkipped = true
+		return result, nil
+	}
 	phaseID := phase.PhaseID
 
 	if err := validateInitialFlowLaunchPhase(flow, phase); err != nil {
@@ -201,7 +206,10 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	if err != nil {
 		return FlowStartResult{}, err
 	}
-	phaseID := initialFlowLaunchPhase(flow, req.PlanPhaseID).PhaseID
+	phaseID := ""
+	if phase, ok := initialFlowLaunchPhase(flow, req.PlanPhaseID); ok {
+		phaseID = phase.PhaseID
+	}
 	result := FlowStartResult{Flow: flow}
 
 	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
@@ -233,20 +241,20 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	return result, nil
 }
 
-func initialFlowLaunchPhase(flow flowstore.FlowRecord, requestedPhaseID string) flowstore.FlowPhase {
+func initialFlowLaunchPhase(flow flowstore.FlowRecord, requestedPhaseID string) (flowstore.FlowPhase, bool) {
 	if requestedPhaseID != "" {
 		if phase, ok := findFlowPhaseByID(flow, requestedPhaseID); ok {
-			return phase
+			return phase, true
 		}
-		return flowstore.FlowPhase{PhaseID: requestedPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
+		return flowstore.FlowPhase{PhaseID: requestedPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, true
+	}
+	if len(flow.Phases) == 0 {
+		return flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}, true
 	}
 	if phase, _, ok := flowstore.FirstLaunchablePhase(flow); ok {
-		return phase
+		return phase, true
 	}
-	if phase, ok := findFlowPhaseByID(flow, flowPlanPhaseID); ok {
-		return phase
-	}
-	return flowstore.FlowPhase{PhaseID: flowPlanPhaseID, Title: "Plan", Kind: flowstore.KindPlan}
+	return flowstore.FlowPhase{}, false
 }
 
 func findFlowPhaseByID(flow flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
@@ -293,6 +301,9 @@ func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) er
 func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes, resultErr string) error {
 	phases := launchablePhases(flow)
 	if len(phases) == 0 {
+		if fallbackPhaseID == "" {
+			return fmt.Errorf("%s", resultErr)
+		}
 		if phase, ok := findFlowPhaseByID(flow, fallbackPhaseID); ok {
 			phases = []flowstore.FlowPhase{phase}
 		} else {

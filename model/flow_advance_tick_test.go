@@ -229,6 +229,40 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 	}
 }
 
+func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
+	branchARunning := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseRunning,
+		"branch-b": flowstore.PhaseReady,
+	})
+	branchAReset := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return branchAReset, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{branchARunning}
+	m.autoAdvanceDrainFlows = map[string]struct{}{"flow-1": {}}
+
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{branchARunning}, []flowstore.FlowRecord{branchAReset})
+	if cmd != nil {
+		t.Fatal("reset-to-ready queued successor launch, want drain disarmed")
+	}
+	if len(updates) != 0 {
+		t.Fatalf("updates after reset-to-ready = %#v, want none", updates)
+	}
+	if len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("autoAdvanceDrainFlows = %#v, want reset-to-ready to disarm drain", m.autoAdvanceDrainFlows)
+	}
+}
+
 func TestAutoModeAutoreviewSuccessorLaunches(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"pr-creation": flowstore.PhaseCompleted,
