@@ -1,48 +1,34 @@
-# AGENTS.md
+# Agent Entry Point for wtui
 
-## Commands
+Intentionally short. Don't copy build, UI, config, Flow, or storage detail here; it drifts when repeated across entrypoints. Add substance to the linked docs.
+
+## Read First
+
+- Commands, quality gates, dev workflow: `docs/agent-operations.md`
+- Architecture, package map, invariants: `docs/architecture.md`
+- User-facing behavior and key bindings: `README.md`
+- Config, saved plans, Flows, and hooks: `docs/config.md`
+- Flow phase semantics: `docs/flow-phases.md`
+- Agent Flow recipes: `agent-skills/wtui-flow/SKILL.md`, `agent-skills/wtui-flow-create/SKILL.md`, `agent-skills/wtui-plan-persist/SKILL.md`
+
+## Ground Rules (know these immediately)
+
+- Use TDD unless told otherwise or there's a strong reason not to.
+- Pull latest from main before starting, unless given a different base.
+- Never commit or push directly to main; branch first.
+- Persist Flow and plan progress through the `wtui flow` / `wtui plan` CLIs, never by editing store files by hand.
+- Transcripts may contain secrets — keep them under user state, never in a repo.
+
+## Quality Gate
+
+CI requires all three clean before merge:
 
 ```bash
-make build          # build bin/wtui
-make test           # run all tests
-make run            # build and run the TUI
-go test ./scanner   # run one package
-gofmt -l .          # formatting check used by CI
+gofmt -l .          # must print nothing
+make test           # all tests pass
+make build          # builds bin/wtui
 ```
 
-CI requires clean `gofmt -l .`, `make test`, and `make build`.
+## Conflict Rule
 
-## Project Shape
-
-`wtui` is a Go Bubble Tea TUI for managing git worktrees across repositories. User-facing behavior, key bindings, and CLI examples are documented in `README.md`; config reference is `docs/config.md`; Flow phase semantics are `docs/flow-phases.md`.
-
-- `cmd/wtui/` — entrypoint. Handles `--version`, `session-hook --provider claude|codex`, and the `plan save|list|read|phase set` and `flow create|list|read|phase complete|phase block|phase needs-attention|phase restart|phase reset|phase set|phase add-child|plan set|issue set|pr set|merge set` subcommands (`plan.go`, `flow.go`). Subcommands resolve the artifact root without scanning repos or starting the TUI.
-- `config/` — optional TOML from `$XDG_CONFIG_HOME/wtui/config.toml` or `~/.config/wtui/config.toml`. Missing config is non-fatal; unreadable files, malformed TOML, wrong types for known keys, and invalid known values are startup-fatal, while unknown sections/keys are ignored for version compatibility.
-- `scanner/` — discovers repos under `WORKTREE_ROOT`, `[scan].root`, or `~/dev` (default depth 2, reducible via `[scan].max_depth`), excluding `*-worktrees`.
-- `gitquery/` — read-only git queries. `parse.go` is pure parsing; `runner.go` defines the `Runner` seam wrapped by a `Querier` (`NewQuerier` injects a fake `Runner` for tests).
-- `actions/` — git mutations (worktree create/remove/prune/unlock, branch delete, stash drop, fetch `--prune`, pull `--ff-only`), clipboard, VS Code, editor commands, tmux/Zellij/terminal launches, and Codex/Claude launch/resume command construction with wtui hook metadata.
-- `agent/` — supported agent command names (`codex`, `codex-app`, `claude`) with normalization and validation.
-- `sessions/` — agent-session metadata and normalized transcripts under the user state dir; ingests Claude/Codex hook payloads. Blank or whitespace-only session IDs are rejected at ingest and in the store; session dirs are keyed by a hash of the provider session ID.
-- `embeddedterm/` — runtime-only PTY process management for embedded CLI agents (sessions-mode resumes and flows-mode CLI phase launches, both headless and interactive). It owns PTY start, output capture, live visible lines, input forwarding, resize, lifecycle state, and termination behind a small API so model tests can fake terminals. `StartCommandWithOptions` accepts an optional `OutputTransform` that rewrites child output before the emulator (used to render claude stream-json).
-- `claudestream/` — renders the `claude --print --output-format stream-json --include-partial-messages` JSONL event stream into readable terminal lines (init header, thinking/tool-call/tool-result/text blocks streamed token-by-token, closing summary). It is a stateful, streaming `embeddedterm.OutputTransform` that renders from `stream_event` deltas and suppresses the duplicate aggregated `assistant` events (falling back to them if no deltas appear); non-JSON lines pass through verbatim so provider errors stay visible.
-- `planstore/` — saved plans at `<root>/plans/<plan-id>/` (`meta.json` + `plan.md`).
-- `flowstore/` — task-centric Flow records at `<root>/flows/<flow-id>/meta.json` with a seeded phase graph (plan → plan review → implementation → review loop → PR creation → autoreview → merge). The canonical transition table is `flowstore/transitions.go` (`AllowedNextPhaseStatuses`, `AgentSettablePhaseStatuses`); gating and readiness rules are in `docs/flow-phases.md`.
-- `internal/artifacts/` — shared filesystem mechanics for the three stores: artifact-root resolution, absolute-root checks, `0700` dirs, `0600` atomic writes, safe IDs, phase-ID normalization (`NormalizePhaseID`), slugging, timestamp+slug collision allocation. Store-specific schemas, locking, and phase semantics stay in the owning store packages.
-- `model/` — Bubble Tea state and key handling. Each list is a generic value-type `pane.Pane[T]` from `model/pane/`; prompt state is a typed `modal.Modal` from `model/modal/`; read-only views page through `less -R` via `actions.PageText` with stale-result protection. Flow start orchestration is grouped behind `FlowStarter` in `model/flow_start.go`; expanded Flow phase rows can resume attached CLI provider sessions with fresh wtui launch tracking (resuming a `completed`/`skipped` phase records the launch without reopening the phase, even if the launch fails); `codex-app` resume deep links are untracked app navigation because they cannot carry wtui launch metadata; full sessions-mode CLI resumes open runtime-only embedded PTYs with a `ctrl+]` command prefix (chosen so agent shortcuts like `ctrl+g` pass through). In flows mode, `enter` on a selected launchable phase launches that phase; CLI providers launch in a flow-scoped embedded PTY, headlessly by default (`codex exec` / `claude --print`) and interactively when `h` toggles headless mode off; `codex-app` launches externally. AutoMode Flow advancement runs from an always-on, all-repos 1 Hz advance poll independent of the current view, and AutoMode CLI launches are always headless; `h` governs only manual launches. Headless claude streams `--output-format stream-json --include-partial-messages` rendered through `claudestream` (gated by `actions.UsesStreamJSONOutput`), so it runs directly rather than via the tmux transport and is not detachable. `tab` toggles list/terminal focus while a Flow terminal is open, and Flow terminal focus uses wtui command mode by default. Embedded PTY startup failures and slot exhaustion mark the phase `needs_attention`. The production TUI starts in the flows pane (config default_view 8). The five git modes (ModeWorktrees…ModeReflog) are grouped under a single top-level Git view: keyboard 1 enters Git at its last-used subview (tracked in `lastGitMode`, seeded by git startup defaults and async subview forcing), 2–4 select sessions/plans/flows outside Active Flows, `ctrl+a` toggles active flows, 5–9 are unbound, and w/b/s/h/r switch git subviews directly. Arrows wrap within the git subviews inside Git and cycle the four arrow-reachable top-level views elsewhere; h/l cross-mode cycling is retired (h stays the Flows headless toggle, l remains the Flows right alias). Git subview cursors and per-pane filters are preserved across switches (clamped on refetch); the config `default_view` 1–9 vocabulary is frozen and diverges from the keyboard keys.
-- `ui/` — stateless lipgloss rendering from a `RenderParams` snapshot. The right-pane header is a grouped selector (top-level row plus a letter-labelled git subview row when a git mode is active; git panes use `GitContentOverhead` so the extra row comes out of the list height), and it includes Flow recovery labels (`recover-worktree`, `await-session`, `ended-session`, `session-mismatch`, `missing-session-id`, `missing-pr`), embedded terminal headers/live lines, and the flows-mode list/terminal split pane.
-- `internal/version/` — version/commit/date injected via `-ldflags`.
-
-## Working Notes
-
-- Tests use real temporary git repositories and command execution, not mocks; `gitquery` also accepts a fake `Runner` for unit-level coverage.
-- Destructive actions are gated by destructive mode in the model; preserve that safety boundary. Locked worktrees are never deleted or pruned — unlock is a separate action.
-- Branch lists hide non-root worktree branches; the root branch stays pinned at the top.
-- Plan and Flow phase IDs are normalized (trimmed + lowercased) before matching, so case- or whitespace-variant IDs upsert the same logical phase, and updates collapse duplicate rows left by older records.
-- `WORKTREE_ROOT` overrides `[scan].root`; `TERMINAL` overrides `[terminal].command` for launches outside tmux/Zellij. `[editor].command` is used for plans-pane Markdown editing and falls back to `EDITOR`; provider/launch config fields are parsed foundation only. All store roots must be absolute.
-- Sessions, plans, and Flows share one artifact root (default `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1`); moving or cleaning it moves saved artifacts too. TUI root precedence is `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` > `[sessions].root` > default; CLI subcommands also accept `--state-root` where documented. CLI-launched agents get the resolved root exported; `codex-app` receives prompt-only launch metadata plus copyable `--state-root` command examples.
-- Transcripts may contain secrets: keep them under user state with restrictive permissions, never inside repositories. Raw provider transcript copies are opt-in (`copy_raw_transcripts = true`).
-- Embedded terminals (sessions-mode resumes and flows-mode CLI launches) are runtime-only and not persisted or restored; quitting while any are running asks for confirmation before terminating them. Keep PTY mechanics in `embeddedterm`; model should own slot selection, scope (session vs flow) routing, `ctrl+]` prefix routing, picker/confirm state, and conversion from saved sessions to `actions.AgentCommand` contexts. `codex-app` session resumes and flow launches continue to use the external deep-link path.
-- Flow auto-advance is view-independent: a private unscoped advance poll detects live completion edges and launches the next AutoMode phase headlessly without changing focus or mode. A 3 s transient status announces auto-launches, `needs_attention`, and merge-ready transitions unless another status is active.
-- TUI mutation of plans and Flows is intentionally minimal (new Flow creation, ready-phase launches); agents persist everything else through the `wtui plan` and `wtui flow` CLIs. Canonical skill sources live in `agent-skills/wtui-plan-persist/` and `agent-skills/wtui-flow/` — non-auto-discovered, intended to be symlinked into user-level skill dirs; `agent-skills/skill_docs_test.go` asserts they stay in sync with the CLI contract.
-- When a Flow is linked to a saved plan, transitioning a Flow phase to `completed` syncs a matching saved-plan phase with the same normalized phase ID to `completed`; missing plan phases are ignored, and sync failures mark the Flow phase `needs_attention`. Repeating `completed` for an already-completed Flow phase preserves that completed state even if the linked-plan sync later fails.
-- Keep Flow launch prompts minimal: state the action plus essential location metadata (worktree, branch, commit). Don't embed plan bodies, phase history, or status-update recipes unless the phase can't work without them.
+If this file conflicts with a linked source, trust the linked source and fix this file by removing the duplicate.
