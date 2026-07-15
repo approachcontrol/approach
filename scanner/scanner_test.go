@@ -376,6 +376,44 @@ func TestScan_ExcludesNestedLinkedWorktreeCheckout(t *testing.T) {
 	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "org/wtui", IsBare: false})
 }
 
+func TestScan_ExcludesDanglingLinkedWorktreeCheckoutAfterRepoDeleted(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "flowstate")
+	worktreeDir := filepath.Join(root, "flowstate-pr7")
+
+	makeCommittedGitRepo(t, repoDir)
+	addLinkedWorktree(t, repoDir, worktreeDir, "pr7")
+	if err := os.RemoveAll(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("expected dangling linked worktree to be excluded, got %+v", repos)
+	}
+}
+
+func TestScan_ExcludesDanglingLinkedWorktreeCheckoutAfterPrune(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "flowstate")
+	worktreeDir := filepath.Join(root, "flowstate-pr7")
+
+	makeCommittedGitRepo(t, repoDir)
+	addLinkedWorktree(t, repoDir, worktreeDir, "pr7")
+	if err := os.RemoveAll(filepath.Join(repoDir, ".git", "worktrees")); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := scanner.Scan(scanner.ScanOptions{Root: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "flowstate", IsBare: false})
+}
+
 func TestScan_GitFileNonWorktreeRepoDiscovered(t *testing.T) {
 	root := t.TempDir()
 	repoDir := filepath.Join(root, "separate")

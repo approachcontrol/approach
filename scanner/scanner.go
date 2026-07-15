@@ -177,6 +177,12 @@ func isLinkedWorktreeGitFile(checkoutDir, gitPath string) bool {
 	if filepath.Base(filepath.Dir(adminDir)) != "worktrees" {
 		return false
 	}
+	// A worktrees-shaped pointer whose admin dir is gone entirely is a
+	// dangling linked worktree (parent repo deleted or worktree pruned);
+	// git cannot operate on the checkout, so exclude it like a live one.
+	if _, err := os.Stat(adminDir); os.IsNotExist(err) {
+		return true
+	}
 	if !isRegularFile(filepath.Join(adminDir, "gitdir")) ||
 		!isRegularFile(filepath.Join(adminDir, "commondir")) {
 		return false
