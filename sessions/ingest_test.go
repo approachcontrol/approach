@@ -383,6 +383,85 @@ func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
 	}
 }
 
+func TestIngestHookDoesNotRestoreFlowLinkForOrdinarySessionResume(t *testing.T) {
+	root := t.TempDir()
+	trackedLaunchID := "wtui-100-aaaaaaaaaaaa"
+	resumeLaunchID := "wtui-200-bbbbbbbbbbbb"
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flow, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-untracked-resume",
+		Title:        "Keep ordinary resume untracked",
+		Instructions: "Do not restore old Flow metadata",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	flow, err = flowStore.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   flow.FlowID,
+		PhaseID:  "plan",
+		LaunchID: trackedLaunchID,
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	if _, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "shared-session",
+		"timestamp": "2026-07-15T14:10:00Z"
+	}`)), sessions.IngestOptions{Env: map[string]string{
+		"WTUI_LAUNCH_ID":          trackedLaunchID,
+		"WTUI_SESSION_STATE_ROOT": root,
+		"WTUI_FLOW_STATE_ROOT":    root,
+		"WTUI_FLOW_ID":            flow.FlowID,
+		"WTUI_FLOW_PHASE_ID":      "plan",
+	}}); err != nil {
+		t.Fatalf("tracked IngestHook() error = %v", err)
+	}
+
+	record, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "shared-session",
+		"timestamp": "2026-07-15T14:20:00Z"
+	}`)), sessions.IngestOptions{Env: map[string]string{
+		"WTUI_LAUNCH_ID":          resumeLaunchID,
+		"WTUI_SESSION_STATE_ROOT": root,
+	}})
+	if err != nil {
+		t.Fatalf("ordinary resume IngestHook() error = %v", err)
+	}
+	if record.LaunchID != resumeLaunchID || record.FlowID != "" || record.FlowPhaseID != "" {
+		t.Fatalf("ordinary resume restored Flow metadata: %#v", record)
+	}
+	record, err = sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "shared-session",
+		"timestamp": "2026-07-15T14:30:00Z",
+		"hook_event_name": "Stop"
+	}`)), sessions.IngestOptions{Env: map[string]string{
+		"WTUI_LAUNCH_ID":          trackedLaunchID,
+		"WTUI_SESSION_STATE_ROOT": root,
+		"WTUI_FLOW_STATE_ROOT":    root,
+		"WTUI_FLOW_ID":            flow.FlowID,
+		"WTUI_FLOW_PHASE_ID":      "plan",
+	}})
+	if err != nil {
+		t.Fatalf("delayed tracked IngestHook() error = %v", err)
+	}
+	if record.LaunchID != resumeLaunchID || record.FlowID != "" || record.FlowPhaseID != "" || record.Status != "last_seen" {
+		t.Fatalf("delayed tracked hook regressed ordinary resume: %#v", record)
+	}
+
+	flow, err = flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := flowPhaseByID(t, flow, "plan")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].LaunchID != trackedLaunchID {
+		t.Fatalf("ordinary resume changed Flow attachment: %#v", phase.Sessions)
+	}
+}
+
 func TestIngestHookPersistsToDefaultRootWhenNoStateRootProvided(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)

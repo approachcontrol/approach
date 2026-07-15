@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -334,8 +335,10 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	preserveBlank(&incoming.WorktreePath, existing.WorktreePath)
 	preserveBlank(&incoming.PlanID, existing.PlanID)
 	preserveBlank(&incoming.PlanPath, existing.PlanPath)
-	preserveBlank(&incoming.FlowID, existing.FlowID)
-	preserveBlank(&incoming.FlowPhaseID, existing.FlowPhaseID)
+	if !newerLaunch {
+		preserveBlank(&incoming.FlowID, existing.FlowID)
+		preserveBlank(&incoming.FlowPhaseID, existing.FlowPhaseID)
+	}
 	preserveBlank(&incoming.Branch, existing.Branch)
 	preserveBlank(&incoming.Commit, existing.Commit)
 	preserveBlank(&incoming.Model, existing.Model)
@@ -360,7 +363,24 @@ func (s *Store) isStaleLaunchUpdate(existing, incoming SessionRecord) bool {
 			return stale
 		}
 	}
+	existingOrder, existingOrdered := wtuiLaunchOrder(existing.LaunchID)
+	incomingOrder, incomingOrdered := wtuiLaunchOrder(incoming.LaunchID)
+	if existingOrdered && incomingOrdered && existingOrder != incomingOrder {
+		return incomingOrder < existingOrder
+	}
 	return !sortTime(incoming).After(sortTime(existing))
+}
+
+func wtuiLaunchOrder(launchID string) (int64, bool) {
+	value, ok := strings.CutPrefix(launchID, "wtui-")
+	if !ok {
+		return 0, false
+	}
+	if timestamp, _, found := strings.Cut(value, "-"); found {
+		value = timestamp
+	}
+	order, err := strconv.ParseInt(value, 10, 64)
+	return order, err == nil
 }
 
 func earliestNonzero(a, b time.Time) time.Time {
