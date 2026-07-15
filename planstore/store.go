@@ -19,6 +19,7 @@ import (
 )
 
 const schemaVersion = 1
+const defaultLockTimeout = 5 * time.Second
 
 var validStatuses = map[string]bool{
 	"draft":       true,
@@ -39,8 +40,9 @@ var validPhaseStatuses = map[string]bool{
 
 // Store reads and writes saved plans under an artifact root.
 type Store struct {
-	root string
-	now  func() time.Time
+	root        string
+	now         func() time.Time
+	lockTimeout time.Duration
 }
 
 // StoreOptions configures a Store.
@@ -49,6 +51,9 @@ type StoreOptions struct {
 	// Now overrides the clock used for generated IDs and timestamps. Tests use
 	// it for deterministic output; production leaves it nil (UTC wall clock).
 	Now func() time.Time
+	// LockTimeout bounds waits for another plan writer. Production defaults to
+	// five seconds; tests may use a shorter deterministic timeout.
+	LockTimeout time.Duration
 }
 
 // PlanPhase is one ordered step within a plan.
@@ -116,7 +121,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Store{root: root, now: now}, nil
+	lockTimeout := opts.LockTimeout
+	if lockTimeout <= 0 {
+		lockTimeout = defaultLockTimeout
+	}
+	return &Store{root: root, now: now, lockTimeout: lockTimeout}, nil
 }
 
 // DefaultRoot returns the default artifact root, matching sessions.DefaultRoot.
@@ -175,6 +184,11 @@ func (s *Store) Save(record PlanRecord) (string, error) {
 	if record.Status != "" && !validStatuses[record.Status] {
 		return "", fmt.Errorf("invalid plan status %q", record.Status)
 	}
+	release, err := s.acquireMutationLock()
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	if record.PlanID == "" {
 		generated, err := s.generateID(record.Title)
 		if err != nil {
@@ -226,6 +240,11 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 	if phase.PhaseID == "" {
 		return fmt.Errorf("phase id is required")
 	}
+	release, err := s.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer release()
 	record, ok := s.readRecord(planID)
 	if !ok {
 		return fmt.Errorf("plan %q not found", planID)
@@ -404,6 +423,21 @@ func (s *Store) readMetadataStrict(planID string) (PlanRecord, error) {
 
 func (s *Store) planDir(planID string) string {
 	return artifacts.RecordDir(s.root, "plans", planID)
+}
+
+// acquireMutationLock serializes all plan writes, including generated-ID
+// allocation. Flow mutations may acquire a Flow lock and then this plan lock
+// for linked-plan synchronization; plan operations must never acquire Flow
+// locks, preserving that one-way lock order.
+func (s *Store) acquireMutationLock() (func(), error) {
+	lockDir := filepath.Join(s.root, "plans", ".locks")
+	if err := os.MkdirAll(lockDir, artifacts.DirPerm); err != nil {
+		return nil, fmt.Errorf("create plan lock directory: %w", err)
+	}
+	if err := os.Chmod(lockDir, artifacts.DirPerm); err != nil {
+		return nil, fmt.Errorf("secure plan lock directory: %w", err)
+	}
+	return artifacts.AcquireFileLock(filepath.Join(lockDir, "mutations.lock"), "plan mutation lock", s.lockTimeout)
 }
 
 func validatePlanID(planID string) error {

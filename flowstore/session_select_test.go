@@ -202,6 +202,14 @@ func TestRecoverableRunningPhaseResetReasonClassifiesLatestLaunchOnly(t *testing
 			},
 		},
 		{
+			name: "resumed live session retains prior end timestamp",
+			phase: flowstore.FlowPhase{
+				Status:    flowstore.PhaseRunning,
+				LaunchIDs: []string{"launch-new"},
+				Sessions:  []flowstore.Session{{Provider: "codex", SessionID: "session-new", LaunchID: "launch-new", Status: "last_seen", EndedAt: endedAt}},
+			},
+		},
+		{
 			name: "latest launch with mixed ended and live sessions",
 			phase: flowstore.FlowPhase{
 				Status:    flowstore.PhaseRunning,

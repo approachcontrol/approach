@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/brian-bell/wtui/internal/artifacts"
@@ -1195,8 +1194,9 @@ func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, e
 			if phase.Sessions[i].LaunchID != launchID {
 				continue
 			}
+			wasEnded := strings.TrimSpace(phase.Sessions[i].Status) == "ended"
 			phase.Sessions[i].Status = "ended"
-			if phase.Sessions[i].EndedAt.IsZero() {
+			if phase.Sessions[i].EndedAt.IsZero() || (!wasEnded && update.EndedAt.After(phase.Sessions[i].EndedAt)) {
 				phase.Sessions[i].EndedAt = update.EndedAt
 			}
 			changed = true
@@ -1245,6 +1245,9 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		replaced := false
 		for i, existing := range phase.Sessions {
 			if sameSession(existing, session) {
+				if launchPrecedes(phase.LaunchIDs, session.LaunchID, existing.LaunchID) {
+					return record, nil
+				}
 				phase.Sessions[i] = session
 				replaced = true
 				break
@@ -1260,6 +1263,19 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		record.UpdatedAt = now
 		return record, nil
 	})
+}
+
+func launchPrecedes(launchIDs []string, candidate, current string) bool {
+	candidateIndex, currentIndex := -1, -1
+	for i, launchID := range launchIDs {
+		if launchID == candidate {
+			candidateIndex = i
+		}
+		if launchID == current {
+			currentIndex = i
+		}
+	}
+	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
 // Delete removes only the persisted Flow record directory.
@@ -1351,48 +1367,7 @@ func (s *Store) acquireFlowLock(flowID string) (func(), error) {
 		return nil, fmt.Errorf("secure flow lock directory: %w", err)
 	}
 	lockPath := filepath.Join(lockDir, flowID+".lock")
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, artifacts.FilePerm)
-	if err != nil {
-		return nil, fmt.Errorf("open flow lock: %w", err)
-	}
-	if err := file.Chmod(artifacts.FilePerm); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("secure flow lock: %w", err)
-	}
-	deadline := time.Now().Add(s.lockTimeout)
-	for {
-		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			if err := file.Truncate(0); err != nil {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-				return nil, fmt.Errorf("truncate flow lock: %w", err)
-			}
-			if _, err := file.Seek(0, 0); err != nil {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-				return nil, fmt.Errorf("seek flow lock: %w", err)
-			}
-			if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-				return nil, fmt.Errorf("write flow lock: %w", err)
-			}
-			return func() {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-			}, nil
-		}
-		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
-			_ = file.Close()
-			return nil, fmt.Errorf("acquire flow lock: %w", err)
-		}
-		if !time.Now().Before(deadline) {
-			_ = file.Close()
-			return nil, fmt.Errorf("timed out waiting for flow lock %q", flowID)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	return artifacts.AcquireFileLock(lockPath, fmt.Sprintf("flow lock %q", flowID), s.lockTimeout)
 }
 
 // List returns records matching filter, sorted by UpdatedAt descending.

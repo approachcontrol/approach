@@ -50,6 +50,59 @@ func activeFlowResultFromCommand(t *testing.T, cmd tea.Cmd) model.ActiveFlowResu
 	return model.ActiveFlowResultMsg{}
 }
 
+func settleModelCommands(t *testing.T, m model.Model, cmd tea.Cmd, rounds int) model.Model {
+	t.Helper()
+	pending := []tea.Cmd{cmd}
+	for range rounds {
+		var nextPending []tea.Cmd
+		for _, current := range pending {
+			if current == nil {
+				continue
+			}
+			messages := immediateTestCommandMessages(current)
+			for _, msg := range messages {
+				var next tea.Cmd
+				m, next = update(m, msg)
+				if next != nil {
+					nextPending = append(nextPending, next)
+				}
+			}
+		}
+		pending = nextPending
+		if len(pending) == 0 {
+			break
+		}
+	}
+	return m
+}
+
+func immediateTestCommandMessages(cmd tea.Cmd) []tea.Msg {
+	raw, ok := runImmediateTestCommand(cmd)
+	if !ok {
+		return nil
+	}
+	batch, ok := raw.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{raw}
+	}
+	var messages []tea.Msg
+	for _, child := range batch {
+		messages = append(messages, immediateTestCommandMessages(child)...)
+	}
+	return messages
+}
+
+func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
+	result := make(chan tea.Msg, 1)
+	go func() { result <- cmd() }()
+	select {
+	case msg := <-result:
+		return msg, true
+	case <-time.After(20 * time.Millisecond):
+		return nil, false
+	}
+}
+
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
 	if m.ActivePane() == 0 {
@@ -514,6 +567,9 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 	flowTwo.Title = "Second active flow"
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flowOne, flowTwo}, nil
+		},
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updated := flowOne
 			for i := range updated.Phases {
@@ -535,7 +591,8 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("g on active Flow should prepare an embedded launch")
 	}
-	m, _ = update(m, cmd())
+	m, asyncCmd := update(m, cmd())
+	m = settleModelCommands(t, m, asyncCmd, 2)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
@@ -804,10 +861,11 @@ func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow phase resume command")
 	}
+	m = settleModelCommands(t, m, cmd, 2)
 	if started.ResumeSessionID != "codex-review" ||
 		started.FlowID != "flow-1" ||
 		started.FlowPhaseID != "review-loop" ||
@@ -856,7 +914,8 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	if !ok {
 		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
 	}
-	m, _ = update(m, launchMsg)
+	m, cmd = update(m, launchMsg)
+	m = settleModelCommands(t, m, cmd, 2)
 	if started.FlowID != "flow-1" || started.FlowPhaseID != "implementation" || started.Headless {
 		t.Fatalf("unexpected active Flow launch context: %#v", started)
 	}
@@ -898,7 +957,8 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	if !ok {
 		t.Fatalf("command returned non-launch message")
 	}
-	m, _ = update(m, launchMsg)
+	m, cmd = update(m, launchMsg)
+	m = settleModelCommands(t, m, cmd, 2)
 	writeCount := len(fakeTerm.writes)
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyF3})
@@ -955,7 +1015,8 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	if !ok {
 		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
 	}
-	m, _ = update(m, launchMsg)
+	m, cmd = update(m, launchMsg)
+	m = settleModelCommands(t, m, cmd, 2)
 	if flowTerm == nil {
 		t.Fatal("expected active Flow launch to start a flow embedded terminal")
 	}
@@ -3905,6 +3966,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 			if cmd == nil {
 				t.Fatal("expected embedded Flow launch to return repaint/fetch command")
 			}
+			m = settleModelCommands(t, m, cmd, 2)
 			if started.Command != command ||
 				started.FlowID != "flow-1" ||
 				started.FlowPhaseID != "implementation" ||
@@ -3982,6 +4044,7 @@ func TestModel_GOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t
 	if cmd == nil {
 		t.Fatal("expected embedded Flow launch to return repaint/fetch command")
 	}
+	m = settleModelCommands(t, m, cmd, 2)
 
 	wantWrite := "\x1b[200~" + appendFlowDoneInstructionForTest("Alpha\nBeta\tOmegaDone") + "\x1b[201~"
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != wantWrite {
@@ -5859,7 +5922,14 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected selected Flow phase resume command")
 	}
-	_ = cmd()
+	if launchUpdate.FlowID != "" || started.Command != "" {
+		t.Fatalf("resume persistence or terminal start ran inside Update: update=%#v started=%#v", launchUpdate, started)
+	}
+	persisted := cmd()
+	if launchUpdate.FlowID != "flow-1" || started.Command != "" {
+		t.Fatalf("resume command sequencing = update %#v started %#v; want persistence only", launchUpdate, started)
+	}
+	m, _ = update(m, persisted)
 	if started.Command != "codex" ||
 		started.ResumeSessionID != "codex-new" ||
 		started.FlowID != "flow-1" ||
@@ -5892,6 +5962,51 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
 		t.Fatalf("interactive Flow phase resume should focus terminal input and forward z: %#v", fakeTerm.writes)
+	}
+}
+
+func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *testing.T) {
+	persisted := false
+	started := false
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			persisted = true
+			return flowstore.FlowRecord{}, errors.New("state root locked")
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			started = true
+			return &fakeEmbeddedTerminal{}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return nil, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/resume-failure",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "implementation",
+			Status:  flowstore.PhaseCompleted,
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-session", Status: "ended",
+			}},
+		}},
+	}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil || persisted || started {
+		t.Fatalf("resume Update sequencing: cmd=%T persisted=%v started=%v", cmd, persisted, started)
+	}
+	result := cmd()
+	if !persisted || started {
+		t.Fatalf("resume persistence command sequencing: persisted=%v started=%v", persisted, started)
+	}
+	m, refreshCmd := update(m, result)
+	if started || refreshCmd == nil || !strings.Contains(m.TransientError(), "failed to mark flow phase resume: state root locked") {
+		t.Fatalf("persistence failure state: started=%v refresh=%T status=%q", started, refreshCmd, m.TransientError())
 	}
 }
 
@@ -6178,11 +6293,11 @@ func TestModel_RKeyOnFlowPhaseNeedsAttentionCanResumeOlderValidSession(t *testin
 	if !strings.Contains(m.View(), "r      resume") {
 		t.Fatalf("needs_attention phase should advertise Flow phase resume:\n%s", m.View())
 	}
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected needs_attention phase to resume older valid session")
 	}
-	_ = cmd()
+	m = settleModelCommands(t, m, cmd, 2)
 	if started.ResumeSessionID != "codex-old" || !started.Embedded || started.Headless || !started.FlowLaunchTracked {
 		t.Fatalf("embedded resume context = %#v, want older valid interactive session", started)
 	}
@@ -6234,7 +6349,7 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureKeepsCompletedPhase(t *testing.T
 	if cmd == nil {
 		t.Fatal("resume start failure should refresh flows")
 	}
-	_ = cmd()
+	m = settleModelCommands(t, m, cmd, 3)
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
 	}
@@ -6286,7 +6401,8 @@ func TestModel_RKeyOnFlowPhaseResumeSetupFailureStillFlagsNonTerminalPhase(t *te
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
 	}
@@ -6340,7 +6456,8 @@ func TestModel_RKeyOnFlowPhaseResumeFailureFlagsPhaseReopenedByStore(t *testing.
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one; the store reopened the phase, so a failed launch must flag it", phaseUpdates)
 	}
@@ -6392,7 +6509,8 @@ func TestModel_RKeyOnFlowPhaseResumeFailureUsesNormalizedPersistedPhaseID(t *tes
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one; normalized persisted running phase must override terminal snapshot", phaseUpdates)
 	}
@@ -6444,7 +6562,8 @@ func TestModel_RKeyOnFlowPhaseResumeFailurePrefersExactPersistedDuplicate(t *tes
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one; exact persisted running phase must override stale terminal duplicate", phaseUpdates)
 	}
@@ -6498,7 +6617,8 @@ func TestModel_RKeyOnFlowPhaseResumeFailureKeepsPhaseCompletedInStore(t *testing
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = settleModelCommands(t, m, cmd, 3)
 	if len(phaseUpdates) != 0 {
 		t.Fatalf("phase updates = %#v, want none; the store preserved the completed phase, so a failed launch must not regress it", phaseUpdates)
 	}
@@ -6554,7 +6674,7 @@ func TestModel_RKeyOnFlowPhaseResumeStartFailureKeepsSkippedPhase(t *testing.T) 
 	if cmd == nil {
 		t.Fatal("expected resume launch command")
 	}
-	_ = cmd()
+	m = settleModelCommands(t, m, cmd, 3)
 
 	if launchUpdate.FlowID != "flow-1" || launchUpdate.PhaseID != "review-loop" || launchUpdate.LaunchID == "" {
 		t.Fatalf("launch update = %#v", launchUpdate)
@@ -7764,7 +7884,8 @@ func TestModel_GFlowPhaseEmbeddedTerminalStartFailureMarksPhaseNeedsAttention(t 
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
-	m, _ = update(m, cmd())
+	m, asyncCmd := update(m, cmd())
+	m = settleModelCommands(t, m, asyncCmd, 2)
 
 	if phaseUpdate.FlowID != "flow-1" ||
 		phaseUpdate.PhaseID != "implementation" ||
@@ -7820,7 +7941,8 @@ func TestModel_ActiveFlowCustomPlanReviewLaunchFailureMarksBlocked(t *testing.T)
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded launch")
 	}
-	m, _ = update(m, cmd())
+	m, asyncCmd := update(m, cmd())
+	m = settleModelCommands(t, m, asyncCmd, 2)
 
 	if phaseUpdate.FlowID != "flow-1" ||
 		phaseUpdate.PhaseID != "design-review" ||
@@ -7908,6 +8030,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 			if cmd == nil {
 				t.Fatal("failed embedded prefill should still refresh Flow state")
 			}
+			m = settleModelCommands(t, m, cmd, 3)
 
 			if tt.term.terminates != 1 || tt.term.State() != "terminated" {
 				t.Fatalf("terminal cleanup = terminates %d state %q, want one terminated cleanup", tt.term.terminates, tt.term.State())
@@ -8842,7 +8965,8 @@ func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *test
 	if cmd == nil {
 		t.Fatal("g at cap should still prepare a launch attempt")
 	}
-	m, _ = update(m, cmd())
+	m, asyncCmd := update(m, cmd())
+	m = settleModelCommands(t, m, asyncCmd, 2)
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts after cap = %d, want 9", starts)
 	}
@@ -9841,7 +9965,7 @@ func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected flow refresh command")
 	}
-	_ = cmd()
+	m = settleModelCommands(t, m, cmd, 2)
 
 	if phaseUpdate.FlowID != "flow-1" ||
 		phaseUpdate.PhaseID != "plan-review" ||
@@ -10343,6 +10467,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	if cmd == nil {
 		t.Fatal("expected embedded launch repaint/fetch command")
 	}
+	m = settleModelCommands(t, m, cmd, 2)
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
 	}
@@ -10972,7 +11097,8 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 	if !ok {
 		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
 	}
-	m, _ = update(m, launchMsg)
+	m, asyncCmd := update(m, launchMsg)
+	m = settleModelCommands(t, m, asyncCmd, 2)
 
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
@@ -11028,7 +11154,8 @@ func TestModel_NewFlowCodexAppLaunchFailureMarksPlanNeedsAttention(t *testing.T)
 	if !ok {
 		t.Fatalf("command returned %T, want PlanLaunchRequestedMsg", msg)
 	}
-	m, _ = update(m, launchMsg)
+	m, asyncCmd := update(m, launchMsg)
+	m = settleModelCommands(t, m, asyncCmd, 2)
 
 	if len(phaseUpdates) != 1 {
 		t.Fatalf("phase updates = %#v, want one launch failure update", phaseUpdates)
@@ -11108,7 +11235,8 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 	if !ok {
 		t.Fatalf("command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
 	}
-	m, _ = update(m, launchMsg)
+	m, asyncCmd := update(m, launchMsg)
+	m = settleModelCommands(t, m, asyncCmd, 2)
 
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts after cap = %d, want 9", starts)
@@ -11154,14 +11282,12 @@ func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected flow refresh command")
 	}
+	m = settleModelCommands(t, m, cmd, 2)
 	if phaseUpdate.FlowID != "flow-1" ||
 		phaseUpdate.PhaseID != "plan" ||
 		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
 		!strings.Contains(phaseUpdate.Notes, "agent exited") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
-	}
-	for _, refreshMsg := range runLeadingBatchCmdWithCount(t, cmd, 2) {
-		m, _ = update(m, refreshMsg)
 	}
 	if !listed {
 		t.Fatal("expected ListFlows to run")
@@ -11191,6 +11317,7 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected flow refresh command")
 	}
+	m = settleModelCommands(t, m, cmd, 2)
 	if got := m.TransientError(); !strings.Contains(got, "agent exited") || !strings.Contains(got, "update flow phase: state root locked") {
 		t.Fatalf("status = %q, want launch and phase-update failures", got)
 	}

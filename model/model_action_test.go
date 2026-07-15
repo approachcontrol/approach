@@ -4408,7 +4408,18 @@ func TestModel_AgentResultFinalizesLaunchedSession(t *testing.T) {
 		Branch:       "main",
 	}
 
-	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx})
+	m, cmd := update(m, model.AgentResultMsg{LaunchContext: ctx})
+	if got.LaunchID != "" {
+		t.Fatalf("FinalizeAgentSession ran inside Update with %#v", got)
+	}
+	if cmd == nil {
+		t.Fatal("AgentResultMsg returned nil command, want asynchronous finalization")
+	}
+	finalized := cmd()
+	if got != ctx {
+		t.Fatalf("finalize command got context %#v, want %#v", got, ctx)
+	}
+	m, _ = update(m, finalized)
 	if got != ctx {
 		t.Fatalf("finalized context = %#v, want %#v", got, ctx)
 	}
@@ -4422,7 +4433,11 @@ func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
 	})
 	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
 
-	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx})
+	m, cmd := update(m, model.AgentResultMsg{LaunchContext: ctx})
+	if cmd == nil {
+		t.Fatal("AgentResultMsg returned nil command, want asynchronous finalization")
+	}
+	m, _ = update(m, cmd())
 	if !strings.Contains(m.View(), "finalize session: state unavailable") {
 		t.Fatal("expected finalize error in status bar")
 	}

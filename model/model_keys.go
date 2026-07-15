@@ -516,7 +516,7 @@ func (m Model) cyclePaneFocusForward() Model {
 		return m.syncActiveFlowTerminalToSelectedFlow()
 	}
 
-	if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) && m.flowFocus != flowFocusTerminal {
+	if m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeFlow) && m.flowFocus != flowFocusTerminal {
 		m.flowFocus = flowFocusTerminal
 		m.terminalPrefixActive = true
 		return m
@@ -2159,10 +2159,7 @@ func (m Model) launchAgentAtPathWithBranch(path string, branch *string) (Model, 
 func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	launch, err := m.launchAgent(ctx)
 	if err != nil {
-		errText := err.Error()
-		m, errText = m.markFlowLaunchNeedsAttention(ctx, errText)
-		m = m.setStatus(statusOther, errText)
-		return m, nil
+		return m.startFlowLaunchFailure(ctx, err.Error())
 	}
 	return m.runAgentLaunchWithContext(ctx, launch)
 }
@@ -2171,21 +2168,22 @@ func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Mo
 	ctx.Embedded = true
 	ctx.FlowLaunchTracked = true
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err := m.openFlowEmbeddedTerminal(ctx)
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
 			errText = err.Error()
 		}
-		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
-		next = next.setStatus(statusOther, errText)
-		return next, nil
+		return next.startFlowLaunchFailure(ctx, errText)
 	}
-	next = next.updateFlowTerminalFocusAfterLaunch(ctx)
+	if prefillCmd == nil {
+		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
+	}
+	var tickCmd tea.Cmd
 	if needsTick {
-		return next.startEmbeddedTerminalTick()
+		next, tickCmd = next.startEmbeddedTerminalTick()
 	}
-	return next, nil
+	return next, batchNonNil(prefillCmd, tickCmd)
 }
 
 func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext) Model {
@@ -2210,48 +2208,59 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	ctx.FlowLaunchTracked = true
 	ctx.Embedded = true
 	ctx.Headless = false
-	updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-		FlowID:   ctx.FlowID,
-		PhaseID:  ctx.FlowPhaseID,
-		LaunchID: ctx.LaunchID,
-		Resume:   true,
-	})
-	if err != nil {
-		m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", err))
-		return m, nil
+	return m, func() tea.Msg {
+		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+			FlowID:   ctx.FlowID,
+			PhaseID:  ctx.FlowPhaseID,
+			LaunchID: ctx.LaunchID,
+			Resume:   true,
+		})
+		if err != nil {
+			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: err}
+		}
+		return flowPhaseResumePersistedMsg{LaunchContext: ctx, Flow: updated}
 	}
+}
+
+func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (Model, tea.Cmd) {
+	ctx := msg.LaunchContext
 	// The store decided from the persisted record whether this resume preserved
 	// a terminal phase or reopened a running one; the snapshot the launch
 	// context was built from may be stale, so failure handling must follow the
 	// persisted status.
-	if phase, ok := flowPhaseByID(updated, ctx.FlowPhaseID); ok {
+	if phase, ok := flowPhaseByID(msg.Flow, ctx.FlowPhaseID); ok {
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err := m.openFlowEmbeddedTerminal(ctx)
+	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
 	if err != nil || !opened {
 		errText := "Maximum embedded terminals reached"
 		if err != nil {
 			errText = err.Error()
 		}
-		next, errText = next.markFlowLaunchNeedsAttention(ctx, errText)
-		next = next.setStatus(statusOther, errText)
-		if next.flowSurfaceVisible() {
-			next, fetchCmd := next.startFlowSurfaceFetch()
-			return next, fetchCmd
-		}
-		return next, nil
+		return next.startFlowLaunchFailure(ctx, errText)
 	}
-	next = next.updateFlowTerminalFocusAfterLaunch(ctx)
+	if prefillCmd == nil {
+		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
+	}
 	var launchCmd tea.Cmd
 	if needsTick {
 		next, launchCmd = next.startEmbeddedTerminalTick()
 	}
+	launchCmd = batchNonNil(prefillCmd, launchCmd)
 	if next.flowSurfaceVisible() {
 		next, fetchCmd := next.startFlowSurfaceFetch()
 		return next, tea.Batch(fetchCmd, launchCmd)
 	}
 	return next, launchCmd
+}
+
+func (m Model) handleFlowPhaseResumePersistFailed(msg flowPhaseResumePersistFailedMsg) (Model, tea.Cmd) {
+	m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", msg.Err))
+	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
 }
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
@@ -2282,14 +2291,14 @@ func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch 
 	}
 }
 
-func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errText string) (Model, string) {
+func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText string) (flowstore.PhaseUpdate, bool) {
 	if ctx.FlowID == "" || ctx.FlowPhaseID == "" || (ctx.ResumeSessionID != "" && !ctx.FlowLaunchTracked) {
-		return m, errText
+		return flowstore.PhaseUpdate{}, false
 	}
 	if ctx.FlowPhaseTerminal {
 		// The phase had already finished when this launch (a session resume)
 		// started; a failed resume must not regress it to needs_attention.
-		return m, errText
+		return flowstore.PhaseUpdate{}, false
 	}
 	notes := "Agent launch failed"
 	if errText != "" {
@@ -2307,16 +2316,43 @@ func (m Model) markFlowLaunchNeedsAttention(ctx actions.AgentLaunchContext, errT
 		status = flowstore.PhaseBlocked
 		outcome = flowstore.OutcomeBlocked
 	}
-	if _, err := m.setFlowPhase(flowstore.PhaseUpdate{
+	return flowstore.PhaseUpdate{
 		FlowID:  ctx.FlowID,
 		PhaseID: ctx.FlowPhaseID,
 		Status:  status,
 		Outcome: outcome,
 		Notes:   notes,
-	}); err != nil && errText != "" {
-		return m, errText + "; update flow phase: " + err.Error()
+	}, true
+}
+
+func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText string) (Model, tea.Cmd) {
+	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
+	if !ok {
+		return m.setStatus(statusOther, errText), nil
 	}
-	return m, errText
+	return m, func() tea.Msg {
+		_, err := m.setFlowPhase(update)
+		return flowLaunchFailurePersistedMsg{
+			LaunchContext: ctx,
+			OriginalErr:   errText,
+			PersistErr:    err,
+		}
+	}
+}
+
+func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMsg) (Model, tea.Cmd) {
+	errText := msg.OriginalErr
+	if msg.PersistErr != nil {
+		if errText != "" {
+			errText += "; "
+		}
+		errText += "update flow phase: " + msg.PersistErr.Error()
+	}
+	m = m.setStatus(statusOther, errText)
+	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
 }
 
 // agentLaunchedStatus describes a successful detached launch without implying

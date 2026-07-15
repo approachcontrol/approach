@@ -274,6 +274,9 @@ func runSessionHook(args []string, deps runDeps) error {
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
 		FlowPresets:        cfg.Flow.Presets,
 		Env: map[string]string{
+			"HOME":                    deps.getenv("HOME"),
+			"CODEX_HOME":              deps.getenv("CODEX_HOME"),
+			"CLAUDE_CONFIG_DIR":       deps.getenv("CLAUDE_CONFIG_DIR"),
 			"WTUI_LAUNCH_ID":          deps.getenv("WTUI_LAUNCH_ID"),
 			"WTUI_REPO_PATH":          deps.getenv("WTUI_REPO_PATH"),
 			"WTUI_WORKTREE_PATH":      deps.getenv("WTUI_WORKTREE_PATH"),

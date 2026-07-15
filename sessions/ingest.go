@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/internal/artifacts"
 )
 
 type IngestOptions struct {
@@ -58,17 +59,28 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	}
 	applyEnvMetadata(&record, opts.Env)
 	resolveGitMetadata(&record)
+	if record.TranscriptPath != "" {
+		canonical, err := ValidateTranscriptPath(provider, record.TranscriptPath, opts.Env)
+		if err != nil {
+			return SessionRecord{}, err
+		}
+		record.TranscriptPath = canonical
+	}
 	stateRoot := opts.StateRoot
 	if stateRoot == "" {
 		stateRoot = opts.Env["WTUI_SESSION_STATE_ROOT"]
 	}
-	store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts})
+	store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts, Env: opts.Env})
 	if err != nil {
 		return SessionRecord{}, err
 	}
-	if err := store.Upsert(record); err != nil {
+	store.launchStale = flowLaunchStaleResolver(record, opts)
+	record, err = store.upsert(record)
+	if err != nil {
 		return SessionRecord{}, err
 	}
+	// Upsert releases the per-session lock before Flow attachment. Keeping that
+	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts)
 	return record, nil
 }
@@ -197,16 +209,7 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 	if record.FlowID == "" || record.FlowPhaseID == "" || strings.TrimSpace(record.SessionID) == "" {
 		return
 	}
-	root := opts.Env["WTUI_FLOW_STATE_ROOT"]
-	if root == "" {
-		root = opts.Env["WTUI_PLAN_STATE_ROOT"]
-	}
-	if root == "" {
-		root = opts.StateRoot
-	}
-	if root == "" {
-		root = opts.Env["WTUI_SESSION_STATE_ROOT"]
-	}
+	root := flowStateRoot(opts)
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Presets: opts.FlowPresets})
 	if err != nil {
 		return
@@ -224,6 +227,60 @@ func attachFlowSession(record SessionRecord, opts IngestOptions) {
 			TranscriptPath: record.TranscriptPath,
 		},
 	})
+}
+
+func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) launchStaleFunc {
+	if record.FlowID == "" || record.FlowPhaseID == "" {
+		return nil
+	}
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: flowStateRoot(opts), Presets: opts.FlowPresets})
+	if err != nil {
+		return nil
+	}
+	// This resolver runs while the session lock is held. Keep it read-only:
+	// taking a Flow lock here would create a session-lock -> Flow-lock edge.
+	return func(existing, incoming SessionRecord) (bool, bool) {
+		if existing.FlowID == "" || existing.FlowID != incoming.FlowID ||
+			existing.FlowPhaseID == "" || artifacts.NormalizePhaseID(existing.FlowPhaseID) != artifacts.NormalizePhaseID(incoming.FlowPhaseID) {
+			return false, false
+		}
+		flow, err := store.Read(incoming.FlowID)
+		if err != nil {
+			return false, false
+		}
+		phaseID := artifacts.NormalizePhaseID(incoming.FlowPhaseID)
+		for _, phase := range flow.Phases {
+			if artifacts.NormalizePhaseID(phase.PhaseID) != phaseID {
+				continue
+			}
+			incomingIndex, existingIndex := -1, -1
+			for i, launchID := range phase.LaunchIDs {
+				if launchID == incoming.LaunchID {
+					incomingIndex = i
+				}
+				if launchID == existing.LaunchID {
+					existingIndex = i
+				}
+			}
+			if incomingIndex >= 0 && existingIndex >= 0 {
+				return incomingIndex < existingIndex, true
+			}
+		}
+		return false, false
+	}
+}
+
+func flowStateRoot(opts IngestOptions) string {
+	if root := opts.Env["WTUI_FLOW_STATE_ROOT"]; root != "" {
+		return root
+	}
+	if root := opts.Env["WTUI_PLAN_STATE_ROOT"]; root != "" {
+		return root
+	}
+	if opts.StateRoot != "" {
+		return opts.StateRoot
+	}
+	return opts.Env["WTUI_SESSION_STATE_ROOT"]
 }
 
 func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {

@@ -398,6 +398,17 @@ type AgentResultMsg struct {
 	Detached bool
 }
 
+type agentSessionFinalizedMsg struct {
+	Result AgentResultMsg
+	Err    error
+}
+
+type flowLaunchFailurePersistedMsg struct {
+	LaunchContext actions.AgentLaunchContext
+	OriginalErr   string
+	PersistErr    error
+}
+
 type PlanLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Request       uint64
@@ -406,6 +417,16 @@ type PlanLaunchRequestedMsg struct {
 type FlowEmbeddedLaunchRequestedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Request       uint64
+}
+
+type flowPhaseResumePersistedMsg struct {
+	LaunchContext actions.AgentLaunchContext
+	Flow          flowstore.FlowRecord
+}
+
+type flowPhaseResumePersistFailedMsg struct {
+	LaunchContext actions.AgentLaunchContext
+	Err           error
 }
 
 type FlowCreatedMsg struct {

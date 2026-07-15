@@ -3,11 +3,106 @@ package planstore_test
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/planstore"
 )
+
+func TestStoreMutationsSerializeAndPreserveConcurrentChanges(t *testing.T) {
+	root := t.TempDir()
+	store1, err := planstore.NewStore(planstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(first) error = %v", err)
+	}
+	store2, err := planstore.NewStore(planstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(second) error = %v", err)
+	}
+	if _, err := store1.Save(planstore.PlanRecord{PlanID: "shared", Title: "Shared", Markdown: "old"}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+
+	lockPath := filepath.Join(root, "plans", ".locks", "mutations.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		t.Fatalf("create lock dir: %v", err)
+	}
+	release, err := artifacts.AcquireFileLock(lockPath, "test plan mutation lock", time.Second)
+	if err != nil {
+		t.Fatalf("hold plan mutation lock: %v", err)
+	}
+	results := make(chan error, 2)
+	go func() {
+		_, err := store1.Save(planstore.PlanRecord{PlanID: "shared", Title: "Shared updated", Markdown: "new", Summary: "saved concurrently"})
+		results <- err
+	}()
+	go func() {
+		results <- store2.SetPhase("shared", planstore.PlanPhase{PhaseID: "implementation", Title: "Implementation", Status: "in_progress"})
+	}()
+	select {
+	case err := <-results:
+		release()
+		t.Fatalf("plan mutation completed while lock was held: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	release()
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent plan mutation error = %v", err)
+		}
+	}
+	got, err := store1.ReadMetadata("shared")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if got.Summary != "saved concurrently" || len(got.Phases) != 1 || got.Phases[0].PhaseID != "implementation" {
+		t.Fatalf("concurrent plan changes were not merged: %#v", got)
+	}
+}
+
+func TestStoreConcurrentGeneratedIDSavesAreUnique(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	stores := make([]*planstore.Store, 2)
+	for i := range stores {
+		store, err := planstore.NewStore(planstore.StoreOptions{Root: root, Now: func() time.Time { return now }, LockTimeout: time.Second})
+		if err != nil {
+			t.Fatalf("NewStore(%d) error = %v", i, err)
+		}
+		stores[i] = store
+	}
+	start := make(chan struct{})
+	ids := make(chan string, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, store := range stores {
+		wg.Add(1)
+		go func(store *planstore.Store) {
+			defer wg.Done()
+			<-start
+			id, err := store.Save(planstore.PlanRecord{Title: "Same title", Markdown: "body"})
+			ids <- id
+			errs <- err
+		}(store)
+	}
+	close(start)
+	wg.Wait()
+	close(ids)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("generated Save() error = %v", err)
+		}
+	}
+	got := make(map[string]bool)
+	for id := range ids {
+		got[id] = true
+	}
+	if len(got) != 2 {
+		t.Fatalf("generated plan IDs = %#v, want two unique IDs", got)
+	}
+}
 
 func TestStoreListSkipsCorruptAndNonDirEntries(t *testing.T) {
 	root := t.TempDir()

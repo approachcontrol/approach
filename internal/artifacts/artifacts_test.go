@@ -157,6 +157,33 @@ func TestAllocateTimestampedIDSlugFallbackAndCollisionSuffix(t *testing.T) {
 	}
 }
 
+func TestAcquireFileLockIsBoundedAndReusable(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "session.lock")
+	release, err := artifacts.AcquireFileLock(lockPath, "session lock session-1", 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("AcquireFileLock(first) error = %v", err)
+	}
+	defer release()
+	assertMode(t, lockPath, 0o600)
+
+	started := time.Now()
+	_, err = artifacts.AcquireFileLock(lockPath, "session lock session-1", 15*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "session lock session-1") {
+		t.Fatalf("AcquireFileLock(contended) error = %v, want descriptive timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed < 10*time.Millisecond {
+		t.Fatalf("contended lock returned after %v, want bounded retry wait", elapsed)
+	}
+
+	release()
+	release = func() {}
+	releaseAgain, err := artifacts.AcquireFileLock(lockPath, "session lock session-1", 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("AcquireFileLock(after release) error = %v", err)
+	}
+	releaseAgain()
+}
+
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) {

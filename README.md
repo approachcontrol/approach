@@ -265,6 +265,13 @@ Session data is stored under the user state directory by default:
 may contain secrets or private prompts; wtui keeps them outside repositories and
 uses restrictive file permissions for created session files. Provider session IDs
 are stored in hashed directory names instead of raw path components.
+Hook transcript paths must resolve to regular files inside the provider-owned
+transcript root. Codex uses `$CODEX_HOME/sessions` (default
+`$HOME/.codex/sessions`); Claude uses `$CLAUDE_CONFIG_DIR/projects` (default
+`$HOME/.claude/projects`). Set those existing provider environment variables
+when the provider itself uses a custom home or config directory. Relative paths,
+paths outside the expected root, and symlink escapes are rejected before wtui
+creates session artifacts.
 When resuming a session, wtui runs the provider resume command from the recorded
 session `cwd` when present, falling back to the captured worktree path, while
 preserving the stored worktree metadata for subsequent hooks. `codex-app`
