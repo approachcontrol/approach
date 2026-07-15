@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/brian-bell/wtui/internal/artifacts"
@@ -1351,48 +1350,7 @@ func (s *Store) acquireFlowLock(flowID string) (func(), error) {
 		return nil, fmt.Errorf("secure flow lock directory: %w", err)
 	}
 	lockPath := filepath.Join(lockDir, flowID+".lock")
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, artifacts.FilePerm)
-	if err != nil {
-		return nil, fmt.Errorf("open flow lock: %w", err)
-	}
-	if err := file.Chmod(artifacts.FilePerm); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("secure flow lock: %w", err)
-	}
-	deadline := time.Now().Add(s.lockTimeout)
-	for {
-		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			if err := file.Truncate(0); err != nil {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-				return nil, fmt.Errorf("truncate flow lock: %w", err)
-			}
-			if _, err := file.Seek(0, 0); err != nil {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-				return nil, fmt.Errorf("seek flow lock: %w", err)
-			}
-			if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-				return nil, fmt.Errorf("write flow lock: %w", err)
-			}
-			return func() {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				_ = file.Close()
-			}, nil
-		}
-		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
-			_ = file.Close()
-			return nil, fmt.Errorf("acquire flow lock: %w", err)
-		}
-		if !time.Now().Before(deadline) {
-			_ = file.Close()
-			return nil, fmt.Errorf("timed out waiting for flow lock %q", flowID)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	return artifacts.AcquireFileLock(lockPath, fmt.Sprintf("flow lock %q", flowID), s.lockTimeout)
 }
 
 // List returns records matching filter, sorted by UpdatedAt descending.

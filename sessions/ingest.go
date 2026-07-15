@@ -58,17 +58,26 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	}
 	applyEnvMetadata(&record, opts.Env)
 	resolveGitMetadata(&record)
+	if record.TranscriptPath != "" {
+		canonical, err := ValidateTranscriptPath(provider, record.TranscriptPath, opts.Env)
+		if err != nil {
+			return SessionRecord{}, err
+		}
+		record.TranscriptPath = canonical
+	}
 	stateRoot := opts.StateRoot
 	if stateRoot == "" {
 		stateRoot = opts.Env["WTUI_SESSION_STATE_ROOT"]
 	}
-	store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts})
+	store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts, Env: opts.Env})
 	if err != nil {
 		return SessionRecord{}, err
 	}
 	if err := store.Upsert(record); err != nil {
 		return SessionRecord{}, err
 	}
+	// Upsert releases the per-session lock before Flow attachment. Keeping that
+	// boundary prevents a session-lock -> Flow-lock edge in the store lock order.
 	attachFlowSession(record, opts)
 	return record, nil
 }

@@ -203,9 +203,13 @@ func TestIngestHookCreatesEndedClaudeRecordFromSessionEnd(t *testing.T) {
 	root := t.TempDir()
 	cwd := filepath.Join(root, "worktree")
 	repoPath := filepath.Join(root, "repo")
-	transcriptPath := filepath.Join(root, "claude-transcript.jsonl")
+	transcriptPath := providerTranscriptPath(t, sessions.ProviderClaude, "claude-transcript.jsonl")
 	if err := os.WriteFile(transcriptPath, []byte(`{"timestamp":"2026-06-06T14:01:00Z","role":"user","kind":"message","text":"Fix scanner tests"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
+	}
+	canonicalTranscriptPath, err := filepath.EvalSymlinks(transcriptPath)
+	if err != nil {
+		t.Fatalf("canonicalize transcript: %v", err)
 	}
 	payload := []byte(`{
 		"session_id": "claude-session-1",
@@ -241,7 +245,7 @@ func TestIngestHookCreatesEndedClaudeRecordFromSessionEnd(t *testing.T) {
 		record.WorktreePath != cwd ||
 		record.Branch != "feature/sessions" ||
 		record.Commit != "abcdef123456" ||
-		record.TranscriptPath != transcriptPath ||
+		record.TranscriptPath != canonicalTranscriptPath ||
 		record.Summary != "Fix scanner tests" ||
 		record.CaptureSource != "hook" ||
 		!record.EndedAt.Equal(wantEndedAt) ||
@@ -368,7 +372,7 @@ func TestIngestHookFallsBackClaudeSessionEndTimesAndSummary(t *testing.T) {
 func TestIngestHookPersistsCodexStopSnapshotsInPlace(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	transcriptPath := filepath.Join(root, "codex.jsonl")
+	transcriptPath := providerTranscriptPath(t, sessions.ProviderCodex, "codex.jsonl")
 	if err := os.WriteFile(transcriptPath, []byte(`{"timestamp":"2026-06-06T14:10:00Z","role":"user","kind":"message","text":"first prompt"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}

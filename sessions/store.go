@@ -18,6 +18,7 @@ import (
 
 const schemaVersion = 1
 const maxTranscriptLineBytes = 16 * 1024 * 1024
+const defaultLockTimeout = 5 * time.Second
 
 type Provider string
 
@@ -29,11 +30,15 @@ const (
 type Store struct {
 	root               string
 	copyRawTranscripts bool
+	lockTimeout        time.Duration
+	env                map[string]string
 }
 
 type StoreOptions struct {
 	Root               string
 	CopyRawTranscripts bool
+	LockTimeout        time.Duration
+	Env                map[string]string
 }
 
 type SessionRecord struct {
@@ -90,7 +95,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if err := artifacts.EnsureCollection(root, "sessions"); err != nil {
 		return nil, fmt.Errorf("create session store: %w", err)
 	}
-	return &Store{root: root, copyRawTranscripts: opts.CopyRawTranscripts}, nil
+	lockTimeout := opts.LockTimeout
+	if lockTimeout <= 0 {
+		lockTimeout = defaultLockTimeout
+	}
+	return &Store{root: root, copyRawTranscripts: opts.CopyRawTranscripts, lockTimeout: lockTimeout, env: opts.Env}, nil
 }
 
 func DefaultRoot() (string, error) {
@@ -105,14 +114,47 @@ func (s *Store) Upsert(record SessionRecord) error {
 	if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
 		return err
 	}
+	var transcript *os.File
+	if record.TranscriptPath != "" {
+		canonical, err := ValidateTranscriptPath(record.Provider, record.TranscriptPath, s.env)
+		if err != nil {
+			return err
+		}
+		transcript, err = os.Open(canonical)
+		if err != nil {
+			return fmt.Errorf("open provider transcript %q: %w", canonical, err)
+		}
+		defer transcript.Close()
+		info, err := transcript.Stat()
+		if err != nil {
+			return fmt.Errorf("stat open provider transcript %q: %w", canonical, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("provider transcript %q is not a regular file", canonical)
+		}
+		record.TranscriptPath = canonical
+	}
+	release, err := s.acquireSessionLock(record.Provider, record.SessionID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	existing, ok, err := s.readMetadata(record.Provider, record.SessionID)
+	if err != nil {
+		return err
+	}
+	hasIncomingTranscript := record.TranscriptPath != ""
+	if ok {
+		record = mergeSessionRecord(existing, record)
+	}
 	if record.SchemaVersion == 0 {
 		record.SchemaVersion = schemaVersion
 	}
 	if err := s.writeMetadata(record); err != nil {
 		return err
 	}
-	if record.TranscriptPath != "" {
-		if err := s.writeTranscriptFiles(record); err != nil {
+	if hasIncomingTranscript {
+		if err := s.writeTranscriptFiles(record, transcript); err != nil {
 			return err
 		}
 	}
@@ -195,21 +237,36 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 		if record.LaunchID != launchID {
 			continue
 		}
-		record.Status = "ended"
-		if record.EndedAt.IsZero() {
-			record.EndedAt = endedAt
-		}
-		if record.LastSeenAt.IsZero() || endedAt.After(record.LastSeenAt) {
-			record.LastSeenAt = endedAt
-		}
 		if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
 			// Legacy records with unusable keys cannot be rewritten in place;
 			// skip them rather than abort updates for the remaining records.
 			continue
 		}
-		if err := s.writeMetadata(record); err != nil {
+		release, err := s.acquireSessionLock(record.Provider, record.SessionID)
+		if err != nil {
 			return err
 		}
+		current, ok, err := s.readMetadata(record.Provider, record.SessionID)
+		if err != nil {
+			release()
+			return err
+		}
+		if !ok || current.LaunchID != launchID {
+			release()
+			continue
+		}
+		current.Status = "ended"
+		if current.EndedAt.IsZero() {
+			current.EndedAt = endedAt
+		}
+		if current.LastSeenAt.IsZero() || endedAt.After(current.LastSeenAt) {
+			current.LastSeenAt = endedAt
+		}
+		if err := s.writeMetadata(current); err != nil {
+			release()
+			return err
+		}
+		release()
 	}
 	return nil
 }
@@ -225,6 +282,85 @@ func (s *Store) sessionDir(provider Provider, sessionID string) string {
 func safeSessionDirName(sessionID string) string {
 	sum := sha256.Sum256([]byte(sessionID))
 	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) acquireSessionLock(provider Provider, sessionID string) (func(), error) {
+	lockDir := filepath.Join(s.root, "sessions", ".locks")
+	if err := os.MkdirAll(lockDir, artifacts.DirPerm); err != nil {
+		return nil, fmt.Errorf("create session lock directory: %w", err)
+	}
+	if err := os.Chmod(lockDir, artifacts.DirPerm); err != nil {
+		return nil, fmt.Errorf("secure session lock directory: %w", err)
+	}
+	lockName := providerPathPart(provider) + "-" + safeSessionDirName(sessionID) + ".lock"
+	label := fmt.Sprintf("session lock %q/%q", provider, sessionID)
+	return artifacts.AcquireFileLock(filepath.Join(lockDir, lockName), label, s.lockTimeout)
+}
+
+func (s *Store) readMetadata(provider Provider, sessionID string) (SessionRecord, bool, error) {
+	data, err := os.ReadFile(filepath.Join(s.sessionDir(provider, sessionID), "meta.json"))
+	if os.IsNotExist(err) {
+		return SessionRecord{}, false, nil
+	}
+	if err != nil {
+		return SessionRecord{}, false, fmt.Errorf("read session metadata: %w", err)
+	}
+	var record SessionRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return SessionRecord{}, false, fmt.Errorf("decode session metadata: %w", err)
+	}
+	return record, true, nil
+}
+
+func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
+	incoming.Provider = existing.Provider
+	incoming.SessionID = existing.SessionID
+	if incoming.SchemaVersion == 0 {
+		incoming.SchemaVersion = existing.SchemaVersion
+	}
+	preserveBlank := func(value *string, old string) {
+		if *value == "" {
+			*value = old
+		}
+	}
+	preserveBlank(&incoming.LaunchID, existing.LaunchID)
+	preserveBlank(&incoming.Status, existing.Status)
+	preserveBlank(&incoming.CWD, existing.CWD)
+	preserveBlank(&incoming.RepoPath, existing.RepoPath)
+	preserveBlank(&incoming.WorktreePath, existing.WorktreePath)
+	preserveBlank(&incoming.PlanID, existing.PlanID)
+	preserveBlank(&incoming.PlanPath, existing.PlanPath)
+	preserveBlank(&incoming.FlowID, existing.FlowID)
+	preserveBlank(&incoming.FlowPhaseID, existing.FlowPhaseID)
+	preserveBlank(&incoming.Branch, existing.Branch)
+	preserveBlank(&incoming.Commit, existing.Commit)
+	preserveBlank(&incoming.Model, existing.Model)
+	preserveBlank(&incoming.Summary, existing.Summary)
+	preserveBlank(&incoming.TranscriptPath, existing.TranscriptPath)
+	preserveBlank(&incoming.CaptureSource, existing.CaptureSource)
+	if existing.Status == "ended" {
+		incoming.Status = "ended"
+	}
+	incoming.StartedAt = earliestNonzero(existing.StartedAt, incoming.StartedAt)
+	incoming.LastSeenAt = latestTime(existing.LastSeenAt, incoming.LastSeenAt)
+	if !existing.EndedAt.IsZero() {
+		incoming.EndedAt = existing.EndedAt
+	}
+	return incoming
+}
+
+func earliestNonzero(a, b time.Time) time.Time {
+	if a.IsZero() || (!b.IsZero() && b.Before(a)) {
+		return b
+	}
+	return a
+}
+
+func latestTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 func validateRecordKey(provider Provider, sessionID string) error {
@@ -283,34 +419,22 @@ func sortTime(record SessionRecord) time.Time {
 	return record.StartedAt
 }
 
-func (s *Store) writeTranscriptFiles(record SessionRecord) error {
-	input, err := os.Open(record.TranscriptPath)
-	if err != nil {
-		return fmt.Errorf("read provider transcript: %w", err)
-	}
-	defer input.Close()
-
+func (s *Store) writeTranscriptFiles(record SessionRecord, input *os.File) error {
 	dir := s.sessionDir(record.Provider, record.SessionID)
 	if s.copyRawTranscripts {
-		if err := copyFile(record.TranscriptPath, filepath.Join(dir, "raw.jsonl")); err != nil {
-			return err
+		if _, err := input.Seek(0, 0); err != nil {
+			return fmt.Errorf("rewind provider transcript for raw copy: %w", err)
 		}
+		if err := artifacts.WriteFileAtomicFromReader(filepath.Join(dir, "raw.jsonl"), input); err != nil {
+			return fmt.Errorf("write raw transcript: %w", err)
+		}
+	}
+	if _, err := input.Seek(0, 0); err != nil {
+		return fmt.Errorf("rewind provider transcript for normalization: %w", err)
 	}
 
 	if err := writeNormalizedTranscript(filepath.Join(dir, "transcript.jsonl"), input); err != nil {
 		return fmt.Errorf("write normalized transcript: %w", err)
-	}
-	return nil
-}
-
-func copyFile(src, dst string) error {
-	input, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("read raw transcript: %w", err)
-	}
-	defer input.Close()
-	if err := artifacts.WriteFileAtomicFromReader(dst, input); err != nil {
-		return fmt.Errorf("write raw transcript: %w", err)
 	}
 	return nil
 }

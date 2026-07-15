@@ -1,12 +1,15 @@
 package sessions_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/brian-bell/wtui/sessions"
 )
 
@@ -112,6 +115,158 @@ func TestStoreUpsertUpdatesExistingSession(t *testing.T) {
 	}
 }
 
+func TestStoreConcurrentUpsertAndMarkLaunchEndedMergeWithoutLostUpdate(t *testing.T) {
+	root := t.TempDir()
+	store1, err := sessions.NewStore(sessions.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(first) error = %v", err)
+	}
+	store2, err := sessions.NewStore(sessions.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(second) error = %v", err)
+	}
+	started := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	if err := store1.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderCodex,
+		SessionID:  "shared-session",
+		LaunchID:   "launch-1",
+		Status:     "last_seen",
+		StartedAt:  started,
+		LastSeenAt: started.Add(time.Minute),
+		Summary:    "old summary",
+	}); err != nil {
+		t.Fatalf("seed Upsert() error = %v", err)
+	}
+
+	sum := sha256.Sum256([]byte("shared-session"))
+	lockDir := filepath.Join(root, "sessions", ".locks")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		t.Fatalf("create lock dir: %v", err)
+	}
+	lockPath := filepath.Join(lockDir, "codex-"+hex.EncodeToString(sum[:])+".lock")
+	release, err := artifacts.AcquireFileLock(lockPath, "test session lock", time.Second)
+	if err != nil {
+		t.Fatalf("hold session lock: %v", err)
+	}
+
+	results := make(chan error, 2)
+	go func() {
+		results <- store1.Upsert(sessions.SessionRecord{
+			Provider:   sessions.ProviderCodex,
+			SessionID:  "shared-session",
+			LaunchID:   "launch-1",
+			Status:     "last_seen",
+			StartedAt:  started.Add(-time.Hour),
+			LastSeenAt: started.Add(2 * time.Minute),
+			Summary:    "new summary",
+		})
+	}()
+	go func() {
+		results <- store2.MarkLaunchEnded("launch-1", started.Add(3*time.Minute))
+	}()
+	select {
+	case err := <-results:
+		release()
+		t.Fatalf("session mutation completed while lock was held: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	release()
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent session mutation error = %v", err)
+		}
+	}
+
+	records, err := store1.List(sessions.SessionFilter{})
+	if err != nil || len(records) != 1 {
+		t.Fatalf("List() = %#v, %v; want one record", records, err)
+	}
+	got := records[0]
+	if got.Summary != "new summary" || got.Status != "ended" {
+		t.Fatalf("merged session summary/status = %q/%q", got.Summary, got.Status)
+	}
+	if !got.StartedAt.Equal(started.Add(-time.Hour)) || !got.EndedAt.Equal(started.Add(3*time.Minute)) || !got.LastSeenAt.Equal(started.Add(3*time.Minute)) {
+		t.Fatalf("merged session timestamps = started %v ended %v last-seen %v", got.StartedAt, got.EndedAt, got.LastSeenAt)
+	}
+}
+
+func TestStoreTranscriptPathMustBeRegularFileInsideProviderRoot(t *testing.T) {
+	stateRoot := t.TempDir()
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	transcriptRoot := filepath.Join(codexHome, "sessions")
+	if err := os.MkdirAll(transcriptRoot, 0o700); err != nil {
+		t.Fatalf("create transcript root: %v", err)
+	}
+	validPath := filepath.Join(transcriptRoot, "session.jsonl")
+	if err := os.WriteFile(validPath, []byte(`{"role":"user","kind":"message","text":"hello"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write valid transcript: %v", err)
+	}
+	store, err := sessions.NewStore(sessions.StoreOptions{
+		Root: stateRoot,
+		Env:  map[string]string{"CODEX_HOME": codexHome, "HOME": t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "valid", TranscriptPath: validPath}); err != nil {
+		t.Fatalf("valid in-root Upsert() error = %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write outside transcript: %v", err)
+	}
+	symlink := filepath.Join(transcriptRoot, "escape.jsonl")
+	if err := os.Symlink(outside, symlink); err != nil {
+		t.Fatalf("create transcript symlink: %v", err)
+	}
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "relative", path: "session.jsonl"},
+		{name: "outside", path: outside},
+		{name: "symlink escape", path: symlink},
+		{name: "directory", path: transcriptRoot},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionID := "rejected-" + strings.ReplaceAll(tt.name, " ", "-")
+			err := store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: sessionID, TranscriptPath: tt.path})
+			if err == nil {
+				t.Fatalf("Upsert(%q) error = nil, want transcript rejection", tt.path)
+			}
+			sum := sha256.Sum256([]byte(sessionID))
+			dir := filepath.Join(stateRoot, "sessions", "codex", hex.EncodeToString(sum[:]))
+			if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+				t.Fatalf("rejected transcript created session artifacts at %s: %v", dir, statErr)
+			}
+		})
+	}
+}
+
+func TestStoreUpsertReportsSessionLockTimeout(t *testing.T) {
+	root := t.TempDir()
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: root, LockTimeout: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "locked"}); err != nil {
+		t.Fatalf("seed Upsert() error = %v", err)
+	}
+	sum := sha256.Sum256([]byte("locked"))
+	lockPath := filepath.Join(root, "sessions", ".locks", "codex-"+hex.EncodeToString(sum[:])+".lock")
+	release, err := artifacts.AcquireFileLock(lockPath, "test session lock", time.Second)
+	if err != nil {
+		t.Fatalf("hold session lock: %v", err)
+	}
+	defer release()
+	err = store.Upsert(sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "locked", Summary: "new"})
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for session lock") {
+		t.Fatalf("Upsert() error = %v, want bounded session lock timeout", err)
+	}
+}
+
 func TestStoreListSkipsCorruptMetadata(t *testing.T) {
 	root := t.TempDir()
 	store, err := sessions.NewStore(sessions.StoreOptions{Root: root})
@@ -145,7 +300,7 @@ func TestStoreListSkipsCorruptMetadata(t *testing.T) {
 
 func TestStoreWritesArtifactsWithRestrictivePermissions(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
-	providerTranscript := filepath.Join(t.TempDir(), "provider.jsonl")
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "provider.jsonl")
 	if err := os.WriteFile(providerTranscript, []byte(`{"role":"user","kind":"message","text":"hello"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write provider transcript: %v", err)
 	}
@@ -177,7 +332,7 @@ func TestStoreWritesArtifactsWithRestrictivePermissions(t *testing.T) {
 func TestStoreMarksLaunchEnded(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	transcriptPath := filepath.Join(root, "codex.jsonl")
+	transcriptPath := providerTranscriptPath(t, sessions.ProviderCodex, "codex.jsonl")
 	if err := os.WriteFile(transcriptPath, []byte(`{"role":"user","kind":"message","text":"hello"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
@@ -374,7 +529,7 @@ func TestNewStoreRejectsRelativeRoot(t *testing.T) {
 
 func TestStoreCopiesRawTranscriptAndReadsNormalizedEvents(t *testing.T) {
 	root := t.TempDir()
-	providerTranscript := filepath.Join(root, "provider.jsonl")
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "provider.jsonl")
 	providerData := []byte(`{"timestamp":"2026-06-06T14:01:00Z","role":"user","kind":"message","text":"Implement the sessions view"}
 {"timestamp":"2026-06-06T14:02:00Z","role":"assistant","kind":"internal","text":"hidden provider-private note"}
 {"timestamp":"2026-06-06T14:03:00Z","role":"assistant","kind":"message","text":"Done"}
@@ -471,7 +626,7 @@ func TestStoreRejectsUnsupportedProviderAndCannotEscapeStateRoot(t *testing.T) {
 
 func TestStoreNormalizesProviderNativeTranscriptLines(t *testing.T) {
 	root := t.TempDir()
-	providerTranscript := filepath.Join(root, "provider.jsonl")
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderClaude, "provider.jsonl")
 	providerData := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
 {"type":"assistant","message":{"role":"assistant","content":"hi there"}}
 {"type":"system","content":"hidden"}
@@ -505,7 +660,7 @@ func TestStoreNormalizesProviderNativeTranscriptLines(t *testing.T) {
 
 func TestStoreNormalizesRoleContentTranscriptLines(t *testing.T) {
 	root := t.TempDir()
-	providerTranscript := filepath.Join(root, "provider.jsonl")
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "provider.jsonl")
 	providerData := []byte(`{"role":"user","content":"hello from content"}
 {"role":"assistant","content":[{"type":"text","text":"hi from array"},{"type":"text","text":"second part"}]}
 `)
@@ -541,7 +696,7 @@ func TestStoreNormalizesRoleContentTranscriptLines(t *testing.T) {
 
 func TestStoreReadsTranscriptLinesLargerThanScannerDefault(t *testing.T) {
 	root := t.TempDir()
-	providerTranscript := filepath.Join(root, "large.jsonl")
+	providerTranscript := providerTranscriptPath(t, sessions.ProviderCodex, "large.jsonl")
 	largeText := strings.Repeat("x", 70*1024)
 	if err := os.WriteFile(providerTranscript, []byte(`{"role":"assistant","kind":"message","text":`+quoteJSON(largeText)+`}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write provider transcript: %v", err)
@@ -588,4 +743,24 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("%s mode = %o, want %o", path, got, want)
 	}
+}
+
+func providerTranscriptPath(t *testing.T, provider sessions.Provider, name string) string {
+	t.Helper()
+	base := t.TempDir()
+	var root string
+	switch provider {
+	case sessions.ProviderCodex:
+		t.Setenv("CODEX_HOME", base)
+		root = filepath.Join(base, "sessions")
+	case sessions.ProviderClaude:
+		t.Setenv("CLAUDE_CONFIG_DIR", base)
+		root = filepath.Join(base, "projects")
+	default:
+		t.Fatalf("unsupported test provider %q", provider)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("create provider transcript root: %v", err)
+	}
+	return filepath.Join(root, name)
 }

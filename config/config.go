@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/brian-bell/wtui/agent"
 	"github.com/brian-bell/wtui/flowstore"
+	"github.com/brian-bell/wtui/internal/artifacts"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -109,8 +111,9 @@ type BootstrapHookConfig struct {
 }
 
 type loadOptions struct {
-	getenv  getenvFunc
-	homeDir homeDirFunc
+	getenv      getenvFunc
+	homeDir     homeDirFunc
+	lockTimeout time.Duration
 }
 
 // Option customizes config loading. It is primarily useful in tests.
@@ -127,6 +130,14 @@ func WithGetenv(getenv func(string) string) Option {
 func WithHomeDir(homeDir func() (string, error)) Option {
 	return func(opts *loadOptions) {
 		opts.homeDir = homeDir
+	}
+}
+
+// WithLockTimeout bounds config mutation lock waits. Production uses five
+// seconds; tests may select a shorter deterministic timeout.
+func WithLockTimeout(timeout time.Duration) Option {
+	return func(opts *loadOptions) {
+		opts.lockTimeout = timeout
 	}
 }
 
@@ -533,44 +544,43 @@ func savePromptTemplateTo(path, section, key, value string, options ...Option) e
 }
 
 func resetPromptTemplateTo(path, section, key string, options ...Option) error {
-	opts := defaultOptions(options...)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read config %s: %w", path, err)
-	}
-	if _, err := parseConfigData(path, data, opts); err != nil {
-		return err
-	}
-
-	patched := removeSectionAssignment(data, section, key)
-	if bytes.Equal(patched, data) {
-		return nil
-	}
-	if err := os.WriteFile(path, patched, 0o644); err != nil {
-		return fmt.Errorf("write config %s: %w", path, err)
-	}
-	return nil
+	return lockedConfigUpdate(path, options, false, func(data []byte) []byte {
+		return removeSectionAssignment(data, section, key)
+	})
 }
 
 func saveAgentConfigTo(path string, options []Option, patch func([]byte) []byte) error {
+	return lockedConfigUpdate(path, options, true, patch)
+}
+
+func lockedConfigUpdate(path string, options []Option, createIfMissing bool, patch func([]byte) []byte) error {
 	opts := defaultOptions(options...)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
+	}
+	release, err := artifacts.AcquireFileLock(path+".lock", fmt.Sprintf("config lock %q", path), opts.lockTimeout)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("read config %s: %w", path, err)
 		}
+		if !createIfMissing {
+			return nil
+		}
 	} else if _, err := parseConfigData(path, data, opts); err != nil {
 		return err
 	}
 
-	data = patch(data)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
+	patched := patch(data)
+	if bytes.Equal(patched, data) {
+		return nil
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, patched, 0o644); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
@@ -835,8 +845,9 @@ func defaultPaths(opts loadOptions) ([]string, error) {
 
 func defaultOptions(options ...Option) loadOptions {
 	opts := loadOptions{
-		getenv:  os.Getenv,
-		homeDir: os.UserHomeDir,
+		getenv:      os.Getenv,
+		homeDir:     os.UserHomeDir,
+		lockTimeout: 5 * time.Second,
 	}
 	for _, option := range options {
 		option(&opts)

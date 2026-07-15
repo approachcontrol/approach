@@ -82,18 +82,19 @@ const (
 type embeddedTerminalID int
 
 type embeddedTerminalSlot struct {
-	Number       int
-	Scope        embeddedTerminalScope
-	Provider     string
-	Identity     string
-	RepoPath     string
-	WorktreePath string
-	WorkingDir   string
-	FlowID       string
-	FlowPhaseID  string
-	LaunchID     string
-	Terminal     EmbeddedTerminal
-	ID           embeddedTerminalID
+	Number         int
+	Scope          embeddedTerminalScope
+	Provider       string
+	Identity       string
+	RepoPath       string
+	WorktreePath   string
+	WorkingDir     string
+	FlowID         string
+	FlowPhaseID    string
+	LaunchID       string
+	Terminal       EmbeddedTerminal
+	ID             embeddedTerminalID
+	PrefillPending bool
 }
 
 type embeddedSessionPickerSelectedMsg struct {
@@ -108,6 +109,12 @@ type quitEmbeddedTerminalsMsg struct{}
 
 type embeddedTerminalTickMsg struct {
 	Generation uint64
+}
+
+type embeddedPromptPrefillResultMsg struct {
+	ID            embeddedTerminalID
+	LaunchContext actions.AgentLaunchContext
+	Err           error
 }
 
 type realEmbeddedTerminal struct {
@@ -213,12 +220,12 @@ func (m Model) embeddedTerminalTickCmd() tea.Cmd {
 func (m Model) activeEmbeddedTerminalForScope(scope embeddedTerminalScope) (embeddedTerminalSlot, int, bool) {
 	activeNum := m.activeEmbeddedTerminalNumber(scope)
 	for i, slot := range m.embeddedTerminals {
-		if slot.Scope == scope && slot.Number == activeNum {
+		if slot.Scope == scope && !slot.PrefillPending && slot.Number == activeNum {
 			return slot, i, true
 		}
 	}
 	for i, slot := range m.embeddedTerminals {
-		if slot.Scope == scope {
+		if slot.Scope == scope && !slot.PrefillPending {
 			return slot, i, true
 		}
 	}
@@ -277,7 +284,7 @@ func (m Model) syncActiveFlowTerminalToSelectedFlow() Model {
 	activeNum := m.activeFlowTerminalNum
 	newestMatchingNum := 0
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.FlowID != flowID || !embeddedTerminalRunning(slot.Terminal) {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.PrefillPending || slot.FlowID != flowID || !embeddedTerminalRunning(slot.Terminal) {
 			continue
 		}
 		if slot.Number == activeNum {
@@ -384,58 +391,87 @@ func (m Model) nextEmbeddedTerminalNumber(scope embeddedTerminalScope) (int, boo
 }
 
 func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, bool, error) {
-	return m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), "", "", m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
-}
-
-func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, bool, error) {
-	activeNum := m.activeFlowTerminalNum
-	next, opened, err := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.flowEmbeddedTerminalContentHeight())
-	if opened && ctx.FlowAutoLaunch && activeNum != 0 {
-		next.activeFlowTerminalNum = activeNum
-	}
+	next, opened, err, _ := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), "", "", m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 	return next, opened, err
 }
 
-func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, scope embeddedTerminalScope, provider, identity, flowID, flowPhaseID string, width, height int) (Model, bool, error) {
+func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, bool, error, tea.Cmd) {
+	activeNum := m.activeFlowTerminalNum
+	next, opened, err, prefillCmd := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.flowEmbeddedTerminalContentHeight())
+	if opened && prefillCmd == nil && ctx.FlowAutoLaunch && activeNum != 0 {
+		next.activeFlowTerminalNum = activeNum
+	}
+	return next, opened, err, prefillCmd
+}
+
+func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, scope embeddedTerminalScope, provider, identity, flowID, flowPhaseID string, width, height int) (Model, bool, error, tea.Cmd) {
 	number, ok := m.nextEmbeddedTerminalNumber(scope)
 	if !ok {
 		m = m.setStatus(statusOther, "Maximum embedded terminals reached")
-		return m, false, nil
+		return m, false, nil, nil
 	}
 	ctx.Embedded = true
 	term, err := m.startEmbeddedTerminal(ctx, width, height)
 	if err != nil {
 		m = m.setStatus(statusOther, err.Error())
-		return m, false, err
-	}
-	if err := prefillEmbeddedPromptIfNeeded(term, ctx); err != nil {
-		if terminateErr := term.Terminate(); terminateErr != nil {
-			err = errors.Join(err, fmt.Errorf("terminate embedded terminal after prefill failure: %w", terminateErr))
-		}
-		m = m.setStatus(statusOther, err.Error())
-		return m, false, err
+		return m, false, err, nil
 	}
 	m.nextEmbeddedTerminalID++
+	id := embeddedTerminalID(m.nextEmbeddedTerminalID)
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
-		Number:       number,
-		Scope:        scope,
-		Provider:     provider,
-		Identity:     identity,
-		RepoPath:     cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
-		WorktreePath: cleanEmbeddedTerminalPath(ctx.WorktreePath),
-		WorkingDir:   cleanEmbeddedTerminalPath(ctx.WorkingDir),
-		FlowID:       flowID,
-		FlowPhaseID:  flowPhaseID,
-		LaunchID:     strings.TrimSpace(ctx.LaunchID),
-		Terminal:     term,
-		ID:           embeddedTerminalID(m.nextEmbeddedTerminalID),
+		Number:         number,
+		Scope:          scope,
+		Provider:       provider,
+		Identity:       identity,
+		RepoPath:       cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
+		WorktreePath:   cleanEmbeddedTerminalPath(ctx.WorktreePath),
+		WorkingDir:     cleanEmbeddedTerminalPath(ctx.WorkingDir),
+		FlowID:         flowID,
+		FlowPhaseID:    flowPhaseID,
+		LaunchID:       strings.TrimSpace(ctx.LaunchID),
+		Terminal:       term,
+		ID:             id,
+		PrefillPending: actions.ShouldPrefillEmbeddedPrompt(ctx),
 	})
-	if scope == embeddedTerminalScopeFlow {
-		m.activeFlowTerminalNum = number
-	} else {
-		m.activeEmbeddedTerminalNum = number
+	if actions.ShouldPrefillEmbeddedPrompt(ctx) {
+		return m, true, nil, func() tea.Msg {
+			err := prefillEmbeddedPromptIfNeeded(term, ctx)
+			if err != nil {
+				if terminateErr := term.Terminate(); terminateErr != nil {
+					err = errors.Join(err, fmt.Errorf("terminate embedded terminal after prefill failure: %w", terminateErr))
+				}
+			}
+			return embeddedPromptPrefillResultMsg{ID: id, LaunchContext: ctx, Err: err}
+		}
 	}
-	return m, true, nil
+	m = m.activateEmbeddedTerminal(id)
+	return m, true, nil, nil
+}
+
+func (m Model) activateEmbeddedTerminal(id embeddedTerminalID) Model {
+	for i := range m.embeddedTerminals {
+		slot := &m.embeddedTerminals[i]
+		if slot.ID != id {
+			continue
+		}
+		slot.PrefillPending = false
+		if slot.Scope == embeddedTerminalScopeFlow {
+			m.activeFlowTerminalNum = slot.Number
+		} else {
+			m.activeEmbeddedTerminalNum = slot.Number
+		}
+		break
+	}
+	return m
+}
+
+func (m Model) hasEmbeddedTerminalID(id embeddedTerminalID) bool {
+	for _, slot := range m.embeddedTerminals {
+		if slot.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func prefillEmbeddedPromptIfNeeded(term EmbeddedTerminal, ctx actions.AgentLaunchContext) error {
@@ -610,7 +646,7 @@ func shortSessionID(sessionID string) string {
 
 func (m Model) switchEmbeddedTerminalForScope(scope embeddedTerminalScope, number int) Model {
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope == scope && slot.Number == number {
+		if slot.Scope == scope && !slot.PrefillPending && slot.Number == number {
 			if scope == embeddedTerminalScopeFlow {
 				m.activeFlowTerminalNum = number
 				return m
@@ -630,7 +666,7 @@ func (m Model) cycleEmbeddedTerminalForScope(scope embeddedTerminalScope, direct
 	numbers := make([]int, 0, len(m.embeddedTerminals))
 	activeIndex := -1
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != scope {
+		if slot.Scope != scope || slot.PrefillPending {
 			continue
 		}
 		if slot.Number == activeNum {
@@ -655,10 +691,10 @@ func (m Model) cycleEmbeddedTerminalForScope(scope embeddedTerminalScope, direct
 }
 
 func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 		return m.handleEmbeddedTerminalKeyForScope(msg, embeddedTerminalScopeFlow)
 	}
-	if m.mode == ui.ModeSessions && !m.activeFlowSurfaceVisible() && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
+	if m.mode == ui.ModeSessions && !m.activeFlowSurfaceVisible() && m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
 		if msg.String() == "tab" {
 			m.terminalPrefixActive = false
 			return m.cyclePaneFocusForward(), nil, true
@@ -740,6 +776,15 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedT
 func (m Model) hasEmbeddedTerminalForScope(scope embeddedTerminalScope) bool {
 	for _, slot := range m.embeddedTerminals {
 		if slot.Scope == scope {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) hasActiveEmbeddedTerminalForScope(scope embeddedTerminalScope) bool {
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope == scope && !slot.PrefillPending {
 			return true
 		}
 	}
@@ -972,10 +1017,10 @@ func (m Model) embeddedTerminalPrefixScope() (embeddedTerminalScope, bool) {
 	if !m.terminalPrefixActive {
 		return "", false
 	}
-	if m.mode == ui.ModeSessions && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
+	if m.mode == ui.ModeSessions && m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
 		return embeddedTerminalScopeSession, true
 	}
-	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus == flowFocusTerminal && m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
 		return embeddedTerminalScopeFlow, true
 	}
 	return "", false

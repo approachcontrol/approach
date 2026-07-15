@@ -743,7 +743,11 @@ func putCommandOnPath(t *testing.T, name string) string {
 
 func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 	root := t.TempDir()
-	transcriptPath := filepath.Join(root, "claude.jsonl")
+	claudeConfigDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(claudeConfigDir, "projects"), 0o700); err != nil {
+		t.Fatalf("create Claude transcript root: %v", err)
+	}
+	transcriptPath := filepath.Join(claudeConfigDir, "projects", "claude.jsonl")
 	if err := os.WriteFile(transcriptPath, []byte(`{"timestamp":"2026-06-06T14:01:00Z","role":"user","kind":"message","text":"Fix scanner tests"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
@@ -762,6 +766,12 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 		scan: func(scanner.ScanOptions) ([]scanner.Repo, error) {
 			t.Fatal("scan should not run for session-hook")
 			return nil, nil
+		},
+		getenv: func(key string) string {
+			if key == "CLAUDE_CONFIG_DIR" {
+				return claudeConfigDir
+			}
+			return ""
 		},
 		stdin: stdin,
 	})
@@ -901,13 +911,23 @@ func TestRunSessionHookRejectsUnsupportedProvider(t *testing.T) {
 
 func TestRunSessionHookHonorsCopyRawTranscriptConfig(t *testing.T) {
 	root := t.TempDir()
-	transcriptPath := filepath.Join(root, "codex.jsonl")
+	codexHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(codexHome, "sessions"), 0o700); err != nil {
+		t.Fatalf("create Codex transcript root: %v", err)
+	}
+	transcriptPath := filepath.Join(codexHome, "sessions", "codex.jsonl")
 	if err := os.WriteFile(transcriptPath, []byte(`{"role":"user","kind":"message","text":"secret"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
 	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Sessions: config.SessionsConfig{CopyRawTranscripts: false}}, nil
+		},
+		getenv: func(key string) string {
+			if key == "CODEX_HOME" {
+				return codexHome
+			}
+			return ""
 		},
 		stdin: strings.NewReader(`{
 			"session_id": "codex-session-1",
@@ -920,6 +940,48 @@ func TestRunSessionHookHonorsCopyRawTranscriptConfig(t *testing.T) {
 	}
 	if matches, err := filepath.Glob(filepath.Join(root, "sessions", "codex", "*", "raw.jsonl")); err != nil || len(matches) != 0 {
 		t.Fatalf("expected no copied raw transcript, matches=%#v err=%v", matches, err)
+	}
+}
+
+func TestRunSessionHookRejectsOutOfRootTranscriptBeforeCreatingArtifacts(t *testing.T) {
+	for _, provider := range []sessions.Provider{sessions.ProviderCodex, sessions.ProviderClaude} {
+		t.Run(string(provider), func(t *testing.T) {
+			stateRoot := t.TempDir()
+			providerHome := t.TempDir()
+			outside := filepath.Join(t.TempDir(), "outside.jsonl")
+			if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+				t.Fatalf("write outside transcript: %v", err)
+			}
+			getenv := func(key string) string {
+				switch {
+				case provider == sessions.ProviderCodex && key == "CODEX_HOME":
+					return providerHome
+				case provider == sessions.ProviderClaude && key == "CLAUDE_CONFIG_DIR":
+					return providerHome
+				default:
+					return ""
+				}
+			}
+			rootName := "sessions"
+			if provider == sessions.ProviderClaude {
+				rootName = "projects"
+			}
+			if err := os.MkdirAll(filepath.Join(providerHome, rootName), 0o700); err != nil {
+				t.Fatalf("create provider root: %v", err)
+			}
+			err := run([]string{"wtui", "session-hook", "--provider", string(provider), "--state-root", stateRoot}, runDeps{
+				loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+				getenv:     getenv,
+				stdin:      strings.NewReader(`{"session_id":"reject-me","transcript_path":` + quoteJSON(outside) + `}`),
+			})
+			if err == nil || !strings.Contains(err.Error(), "outside expected") {
+				t.Fatalf("run() error = %v, want out-of-root rejection", err)
+			}
+			matches, globErr := filepath.Glob(filepath.Join(stateRoot, "sessions", string(provider), "*", "meta.json"))
+			if globErr != nil || len(matches) != 0 {
+				t.Fatalf("rejected hook created metadata: matches=%#v err=%v", matches, globErr)
+			}
+		})
 	}
 }
 

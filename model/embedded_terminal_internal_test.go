@@ -120,6 +120,111 @@ func TestPrefillEmbeddedPromptWaitsForVisibleTerminalOutput(t *testing.T) {
 	}
 }
 
+func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *testing.T) {
+	originalInterval := embeddedPromptPrefillPollInterval
+	embeddedPromptPrefillPollInterval = 0
+	t.Cleanup(func() {
+		embeddedPromptPrefillPollInterval = originalInterval
+	})
+
+	term := &prefillReadyFakeEmbeddedTerminal{lines: [][]string{{""}, {"Codex ready"}}}
+	m := Model{
+		mode:       ui.ModeFlows,
+		activePane: 1,
+		flowFocus:  flowFocusList,
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return term, nil
+		},
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:           "codex",
+		FlowID:            "flow-1",
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		InitialPrompt:     "Build it",
+	}
+
+	nextModel, cmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
+	next := nextModel.(Model)
+	if cmd == nil {
+		t.Fatal("interactive Flow launch returned nil command, want asynchronous prefill command")
+	}
+	if term.visibleHits != 0 || len(term.writes) != 0 {
+		t.Fatalf("Update performed prefill work: visible calls=%d writes=%#v", term.visibleHits, term.writes)
+	}
+	if len(next.embeddedTerminals) != 1 || next.embeddedTerminals[0].ID == 0 {
+		t.Fatalf("pending terminal slots = %#v, want one slot with stable ID", next.embeddedTerminals)
+	}
+	if next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
+		t.Fatalf("pending terminal stole focus: active=%d focus=%v", next.activeFlowTerminalNum, next.flowFocus)
+	}
+	if number, ok := next.nextEmbeddedTerminalNumber(embeddedTerminalScopeFlow); !ok || number != 2 {
+		t.Fatalf("next Flow terminal number = %d, %v; want reserved slot 1 and next number 2", number, ok)
+	}
+	beforeReadyModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyTab})
+	beforeReady := beforeReadyModel.(Model)
+	beforeReadyModel, _ = beforeReady.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	beforeReady = beforeReadyModel.(Model)
+	if len(term.writes) != 0 || beforeReady.flowFocus == flowFocusTerminal {
+		t.Fatalf("pending terminal accepted focus/input before prefill: writes=%#v focus=%v", term.writes, beforeReady.flowFocus)
+	}
+
+	msg := commandMessageOfType[embeddedPromptPrefillResultMsg](t, cmd)
+	activatedModel, _ := next.Update(msg)
+	activated := activatedModel.(Model)
+	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
+	if term.visibleHits != 2 || len(term.writes) != 1 || term.writes[0] != wantWrite {
+		t.Fatalf("async prefill calls=%d writes=%#v, want two polls and %q", term.visibleHits, term.writes, wantWrite)
+	}
+	if activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
+		t.Fatalf("successful prefill did not activate terminal: active=%d focus=%v", activated.activeFlowTerminalNum, activated.flowFocus)
+	}
+}
+
+func TestStaleEmbeddedPromptPrefillResultIsIgnoredAfterSlotRemoval(t *testing.T) {
+	phaseMutationRan := false
+	m := Model{
+		mode:       ui.ModeFlows,
+		activePane: 1,
+		flowFocus:  flowFocusList,
+		setFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseMutationRan = true
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+
+	nextModel, cmd := m.Update(embeddedPromptPrefillResultMsg{
+		ID:            42,
+		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "implementation"},
+		Err:           errors.New("late failure"),
+	})
+	next := nextModel.(Model)
+	if cmd != nil || phaseMutationRan || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
+		t.Fatalf("stale prefill result changed model: cmd=%T mutation=%v active=%d focus=%v", cmd, phaseMutationRan, next.activeFlowTerminalNum, next.flowFocus)
+	}
+}
+
+func commandMessageOfType[T any](t *testing.T, cmd tea.Cmd) T {
+	t.Helper()
+	var zero T
+	if cmd == nil {
+		t.Fatal("expected command")
+	}
+	msg := cmd()
+	if typed, ok := msg.(T); ok {
+		return typed
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			if typed, ok := child().(T); ok {
+				return typed
+			}
+		}
+	}
+	t.Fatalf("command returned %T, want message %T", msg, zero)
+	return zero
+}
+
 func internalFlowsModel(records ...flowstore.FlowRecord) Model {
 	return Model{
 		mode:       ui.ModeFlows,
@@ -372,7 +477,7 @@ func TestOpenFlowEmbeddedTerminalStoresFlowRepoPath(t *testing.T) {
 		},
 	}
 
-	next, opened, err := m.openFlowEmbeddedTerminal(actions.AgentLaunchContext{
+	next, opened, err, _ := m.openFlowEmbeddedTerminal(actions.AgentLaunchContext{
 		Command:       "codex",
 		RepoPath:      "/dev/alpha",
 		WorktreePath:  "/dev/alpha-worktrees/feature",

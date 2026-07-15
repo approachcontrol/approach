@@ -1187,6 +1187,16 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleTerminateEmbeddedTerminal(msg)
 	case quitEmbeddedTerminalsMsg:
 		return m.handleQuitEmbeddedTerminals()
+	case embeddedPromptPrefillResultMsg:
+		if !m.hasEmbeddedTerminalID(msg.ID) {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m = m.dismissEmbeddedTerminal(msg.ID)
+			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
+		}
+		m = m.activateEmbeddedTerminal(msg.ID)
+		return m.updateFlowTerminalFocusAfterLaunch(msg.LaunchContext), nil
 	case embeddedTerminalTickMsg:
 		if msg.Generation != m.embeddedTerminalTickGen {
 			return m, nil
@@ -1408,34 +1418,28 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
+	case flowPhaseResumePersistedMsg:
+		return m.handleFlowPhaseResumePersisted(msg)
+	case flowPhaseResumePersistFailedMsg:
+		return m.handleFlowPhaseResumePersistFailed(msg)
 	case FlowCreatedMsg:
 		return m.handleFlowCreated(msg)
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
 	case AgentResultMsg:
-		resultErr := msg.Err
 		// Detached launches only start the agent in an external
 		// terminal/multiplexer session and return while it keeps running, so the
 		// captured session must not be finalized here; provider hooks own that.
 		if !msg.Detached && msg.LaunchContext.LaunchID != "" {
-			if err := m.finalizeAgentSession(msg.LaunchContext); err != nil {
-				if resultErr != "" {
-					resultErr = fmt.Sprintf("%s; finalize session: %v", resultErr, err)
-				} else {
-					resultErr = fmt.Sprintf("finalize session: %v", err)
-				}
+			return m, func() tea.Msg {
+				return agentSessionFinalizedMsg{Result: msg, Err: m.finalizeAgentSession(msg.LaunchContext)}
 			}
 		}
-		if resultErr != "" {
-			m, resultErr = m.markFlowLaunchNeedsAttention(msg.LaunchContext, resultErr)
-			m = m.setStatus(statusOther, resultErr)
-			if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
-				return m.startFlowSurfaceFetch()
-			}
-		} else if msg.Detached {
-			m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
-		}
-		return m, nil
+		return m.handleAgentResultAfterFinalization(msg, nil)
+	case agentSessionFinalizedMsg:
+		return m.handleAgentResultAfterFinalization(msg.Result, msg.Err)
+	case flowLaunchFailurePersistedMsg:
+		return m.handleFlowLaunchFailurePersisted(msg)
 	case DeleteFailedMsg:
 		return m.handleDeleteFailed(msg), nil
 	case ForceDeleteFailedMsg:
@@ -1451,6 +1455,23 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return next, batchNonNil(statusCmd, refreshCmd)
 		}
 		return next, statusCmd
+	}
+	return m, nil
+}
+
+func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeErr error) (Model, tea.Cmd) {
+	resultErr := msg.Err
+	if finalizeErr != nil {
+		if resultErr != "" {
+			resultErr = fmt.Sprintf("%s; finalize session: %v", resultErr, finalizeErr)
+		} else {
+			resultErr = fmt.Sprintf("finalize session: %v", finalizeErr)
+		}
+	}
+	if resultErr != "" {
+		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
+	} else if msg.Detached {
+		m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
 	}
 	return m, nil
 }
