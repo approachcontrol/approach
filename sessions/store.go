@@ -116,22 +116,13 @@ func (s *Store) Upsert(record SessionRecord) error {
 	}
 	var transcript *os.File
 	if record.TranscriptPath != "" {
-		canonical, err := ValidateTranscriptPath(record.Provider, record.TranscriptPath, s.env)
+		var canonical string
+		var err error
+		transcript, canonical, err = openValidatedTranscript(record.Provider, record.TranscriptPath, s.env)
 		if err != nil {
 			return err
 		}
-		transcript, err = os.Open(canonical)
-		if err != nil {
-			return fmt.Errorf("open provider transcript %q: %w", canonical, err)
-		}
 		defer transcript.Close()
-		info, err := transcript.Stat()
-		if err != nil {
-			return fmt.Errorf("stat open provider transcript %q: %w", canonical, err)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("provider transcript %q is not a regular file", canonical)
-		}
 		record.TranscriptPath = canonical
 	}
 	release, err := s.acquireSessionLock(record.Provider, record.SessionID)
