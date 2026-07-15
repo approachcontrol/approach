@@ -1573,6 +1573,51 @@ func TestStoreMarkPhaseLaunchEndedUpdatesAttachedFlowSession(t *testing.T) {
 	}
 }
 
+func TestStoreMarkPhaseLaunchEndedAdvancesResumedSessionEndTime(t *testing.T) {
+	root := t.TempDir()
+	previousEnd := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	resumedEnd := previousEnd.Add(time.Hour)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := mustCreateFlow(t, store, "Finalize resumed Flow session")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "launch-2"})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{
+			Provider:  "codex",
+			SessionID: "session-1",
+			LaunchID:  "launch-2",
+			Status:    "last_seen",
+			EndedAt:   previousEnd,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession() error = %v", err)
+	}
+
+	record, err = store.MarkPhaseLaunchEnded(flowstore.PhaseLaunchEndUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "implementation",
+		LaunchID: "launch-2",
+		EndedAt:  resumedEnd,
+	})
+	if err != nil {
+		t.Fatalf("MarkPhaseLaunchEnded() error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "implementation")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].Status != "ended" || !phase.Sessions[0].EndedAt.Equal(resumedEnd) {
+		t.Fatalf("resumed session = %#v, want ended at %s", phase.Sessions, resumedEnd)
+	}
+}
+
 func TestStoreMarkPhaseLaunchEndedUpdatesSessionMergedFromDuplicateRow(t *testing.T) {
 	root := t.TempDir()
 	endedAt := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
@@ -5029,6 +5074,46 @@ func TestStoreAddPhaseLaunchIDResumePrefersRawExactRowBeforeNormalizedDuplicate(
 	}
 	if len(phase.LaunchIDs) != 2 || phase.LaunchIDs[0] != "launch-1" || phase.LaunchIDs[1] != "launch-2" {
 		t.Fatalf("launch ids = %#v, want [launch-1 launch-2]", phase.LaunchIDs)
+	}
+}
+
+func TestStoreAttachSessionDoesNotReplaceNewerLaunchWithStaleLaunch(t *testing.T) {
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := mustCreateFlow(t, store, "Fence stale session attachment")
+	mustCompleteFlowPhases(t, store, &record, "plan", "plan-review")
+	for _, launchID := range []string{"launch-1", "launch-2"} {
+		record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+			FlowID:   record.FlowID,
+			PhaseID:  "implementation",
+			LaunchID: launchID,
+		})
+		if err != nil {
+			t.Fatalf("AddPhaseLaunchID(%s) error = %v", launchID, err)
+		}
+		record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+			FlowID:  record.FlowID,
+			PhaseID: "implementation",
+			Session: flowstore.Session{Provider: "codex", SessionID: "session-1", LaunchID: launchID, Status: "last_seen"},
+		})
+		if err != nil {
+			t.Fatalf("AttachSession(%s) error = %v", launchID, err)
+		}
+	}
+	record, err = store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "implementation",
+		Session: flowstore.Session{Provider: "codex", SessionID: "session-1", LaunchID: "launch-1", Status: "ended"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(stale) error = %v", err)
+	}
+
+	phase := phaseByID(t, record, "implementation")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].LaunchID != "launch-2" || phase.Sessions[0].Status != "last_seen" {
+		t.Fatalf("session regressed after stale attachment: %#v", phase.Sessions)
 	}
 }
 

@@ -1194,8 +1194,9 @@ func (s *Store) MarkPhaseLaunchEnded(update PhaseLaunchEndUpdate) (FlowRecord, e
 			if phase.Sessions[i].LaunchID != launchID {
 				continue
 			}
+			wasEnded := strings.TrimSpace(phase.Sessions[i].Status) == "ended"
 			phase.Sessions[i].Status = "ended"
-			if phase.Sessions[i].EndedAt.IsZero() {
+			if phase.Sessions[i].EndedAt.IsZero() || (!wasEnded && update.EndedAt.After(phase.Sessions[i].EndedAt)) {
 				phase.Sessions[i].EndedAt = update.EndedAt
 			}
 			changed = true
@@ -1244,6 +1245,9 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		replaced := false
 		for i, existing := range phase.Sessions {
 			if sameSession(existing, session) {
+				if launchPrecedes(phase.LaunchIDs, session.LaunchID, existing.LaunchID) {
+					return record, nil
+				}
 				phase.Sessions[i] = session
 				replaced = true
 				break
@@ -1259,6 +1263,19 @@ func (s *Store) AttachSession(update SessionAttachUpdate) (FlowRecord, error) {
 		record.UpdatedAt = now
 		return record, nil
 	})
+}
+
+func launchPrecedes(launchIDs []string, candidate, current string) bool {
+	candidateIndex, currentIndex := -1, -1
+	for i, launchID := range launchIDs {
+		if launchID == candidate {
+			candidateIndex = i
+		}
+		if launchID == current {
+			currentIndex = i
+		}
+	}
+	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
 // Delete removes only the persisted Flow record directory.

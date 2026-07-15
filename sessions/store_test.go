@@ -115,6 +115,129 @@ func TestStoreUpsertUpdatesExistingSession(t *testing.T) {
 	}
 }
 
+func TestStoreUpsertUsesLatestEndTimeAcrossResumedLaunches(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	firstEnd := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	secondEnd := firstEnd.Add(time.Hour)
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderCodex,
+		SessionID:  "resumed-session",
+		LaunchID:   "launch-1",
+		Status:     "ended",
+		EndedAt:    firstEnd,
+		LastSeenAt: firstEnd,
+	}); err != nil {
+		t.Fatalf("first Upsert() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderCodex,
+		SessionID:  "resumed-session",
+		LaunchID:   "launch-2",
+		Status:     "ended",
+		EndedAt:    secondEnd,
+		LastSeenAt: secondEnd,
+	}); err != nil {
+		t.Fatalf("resumed Upsert() error = %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List() returned %d records, want 1", len(records))
+	}
+	got := records[0]
+	if got.LaunchID != "launch-2" || !got.EndedAt.Equal(secondEnd) {
+		t.Fatalf("resumed session launch/end = %q/%s, want launch-2/%s", got.LaunchID, got.EndedAt, secondEnd)
+	}
+}
+
+func TestStoreUpsertDoesNotRegressToStaleLaunch(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	firstEnd := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	secondEnd := firstEnd.Add(time.Hour)
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderCodex,
+		SessionID:  "shared-session",
+		LaunchID:   "launch-2",
+		Status:     "ended",
+		EndedAt:    secondEnd,
+		LastSeenAt: secondEnd,
+	}); err != nil {
+		t.Fatalf("current Upsert() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderCodex,
+		SessionID:  "shared-session",
+		LaunchID:   "launch-1",
+		Status:     "last_seen",
+		LastSeenAt: firstEnd,
+	}); err != nil {
+		t.Fatalf("stale Upsert() error = %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List() returned %d records, want 1", len(records))
+	}
+	got := records[0]
+	if got.LaunchID != "launch-2" || got.Status != "ended" || !got.EndedAt.Equal(secondEnd) {
+		t.Fatalf("session regressed after stale launch update: %#v", got)
+	}
+}
+
+func TestStoreUpsertIgnoresStaleEndedLaunchWhileResumeIsActive(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	oldEnd := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	resumeSeen := oldEnd.Add(time.Hour)
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderClaude,
+		SessionID:  "shared-session",
+		LaunchID:   "launch-2",
+		Status:     "last_seen",
+		LastSeenAt: resumeSeen,
+		Summary:    "current launch",
+	}); err != nil {
+		t.Fatalf("current Upsert() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderClaude,
+		SessionID:  "shared-session",
+		LaunchID:   "launch-1",
+		Status:     "ended",
+		EndedAt:    oldEnd,
+		LastSeenAt: oldEnd,
+		Summary:    "stale launch",
+	}); err != nil {
+		t.Fatalf("stale Upsert() error = %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List() returned %d records, want 1", len(records))
+	}
+	got := records[0]
+	if got.LaunchID != "launch-2" || got.Status != "last_seen" || !got.EndedAt.IsZero() || got.Summary != "current launch" {
+		t.Fatalf("active resume changed after stale ended update: %#v", got)
+	}
+}
+
 func TestStoreConcurrentUpsertAndMarkLaunchEndedMergeWithoutLostUpdate(t *testing.T) {
 	root := t.TempDir()
 	store1, err := sessions.NewStore(sessions.StoreOptions{Root: root, LockTimeout: time.Second})
@@ -370,6 +493,50 @@ func TestStoreMarksLaunchEnded(t *testing.T) {
 	got := records[0]
 	if got.Status != "ended" || !got.EndedAt.Equal(endedAt) || !got.LastSeenAt.Equal(endedAt) {
 		t.Fatalf("launch was not ended: %#v", got)
+	}
+}
+
+func TestStoreMarkLaunchEndedAdvancesResumedLaunch(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	firstEnd := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	resumeSeen := firstEnd.Add(30 * time.Minute)
+	secondEnd := firstEnd.Add(time.Hour)
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderClaude,
+		SessionID:  "resumed-session",
+		LaunchID:   "launch-1",
+		Status:     "ended",
+		EndedAt:    firstEnd,
+		LastSeenAt: firstEnd,
+	}); err != nil {
+		t.Fatalf("first Upsert() error = %v", err)
+	}
+	if err := store.Upsert(sessions.SessionRecord{
+		Provider:   sessions.ProviderClaude,
+		SessionID:  "resumed-session",
+		LaunchID:   "launch-2",
+		Status:     "last_seen",
+		LastSeenAt: resumeSeen,
+	}); err != nil {
+		t.Fatalf("resumed Upsert() error = %v", err)
+	}
+	if err := store.MarkLaunchEnded("launch-2", secondEnd); err != nil {
+		t.Fatalf("MarkLaunchEnded() error = %v", err)
+	}
+
+	records, err := store.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List() returned %d records, want 1", len(records))
+	}
+	got := records[0]
+	if got.LaunchID != "launch-2" || got.Status != "ended" || !got.EndedAt.Equal(secondEnd) || !got.LastSeenAt.Equal(secondEnd) {
+		t.Fatalf("finalized resumed session = %#v, want launch-2 ended at %s", got, secondEnd)
 	}
 }
 

@@ -138,7 +138,10 @@ func LatestPhaseLaunchID(phase FlowPhase) string {
 }
 
 func sessionEnded(session Session) bool {
-	return strings.TrimSpace(session.Status) == "ended" || !session.EndedAt.IsZero()
+	if status := strings.TrimSpace(session.Status); status != "" {
+		return status == "ended"
+	}
+	return !session.EndedAt.IsZero()
 }
 
 func sessionNewer(a, b Session) bool {

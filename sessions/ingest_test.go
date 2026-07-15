@@ -314,6 +314,75 @@ func TestIngestHookPersistsFlowMetadataAndAttachesSession(t *testing.T) {
 	}
 }
 
+func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
+	root := t.TempDir()
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flow, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-launch-order",
+		Title:        "Fence stale hook",
+		Instructions: "Keep the resumed launch current",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for _, launchID := range []string{"launch-1", "launch-2"} {
+		flow, err = flowStore.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+			FlowID:   flow.FlowID,
+			PhaseID:  "plan",
+			LaunchID: launchID,
+		})
+		if err != nil {
+			t.Fatalf("AddPhaseLaunchID(%s) error = %v", launchID, err)
+		}
+	}
+	envForLaunch := func(launchID string) map[string]string {
+		return map[string]string{
+			"WTUI_LAUNCH_ID":          launchID,
+			"WTUI_SESSION_STATE_ROOT": root,
+			"WTUI_FLOW_STATE_ROOT":    root,
+			"WTUI_FLOW_ID":            flow.FlowID,
+			"WTUI_FLOW_PHASE_ID":      "plan",
+		}
+	}
+	if _, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "shared-session",
+		"timestamp": "2026-07-15T14:20:00Z"
+	}`)), sessions.IngestOptions{Env: envForLaunch("launch-2")}); err != nil {
+		t.Fatalf("current IngestHook() error = %v", err)
+	}
+	if _, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "shared-session",
+		"timestamp": "2026-07-15T14:30:00Z",
+		"hook_event_name": "Stop"
+	}`)), sessions.IngestOptions{Env: envForLaunch("launch-1")}); err != nil {
+		t.Fatalf("stale IngestHook() error = %v", err)
+	}
+
+	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	records, err := sessionStore.List(sessions.SessionFilter{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].LaunchID != "launch-2" || records[0].Status != "last_seen" {
+		t.Fatalf("session regressed after stale hook: %#v", records)
+	}
+	flow, err = flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	phase := flowPhaseByID(t, flow, "plan")
+	if len(phase.Sessions) != 1 || phase.Sessions[0].LaunchID != "launch-2" || phase.Sessions[0].Status != "last_seen" {
+		t.Fatalf("Flow session regressed after stale hook: %#v", phase.Sessions)
+	}
+}
+
 func TestIngestHookPersistsToDefaultRootWhenNoStateRootProvided(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)

@@ -32,7 +32,10 @@ type Store struct {
 	copyRawTranscripts bool
 	lockTimeout        time.Duration
 	env                map[string]string
+	launchStale        launchStaleFunc
 }
+
+type launchStaleFunc func(existing, incoming SessionRecord) (stale, known bool)
 
 type StoreOptions struct {
 	Root               string
@@ -111,8 +114,13 @@ func DefaultRoot() (string, error) {
 }
 
 func (s *Store) Upsert(record SessionRecord) error {
+	_, err := s.upsert(record)
+	return err
+}
+
+func (s *Store) upsert(record SessionRecord) (SessionRecord, error) {
 	if err := validateRecordKey(record.Provider, record.SessionID); err != nil {
-		return err
+		return SessionRecord{}, err
 	}
 	var transcript *os.File
 	if record.TranscriptPath != "" {
@@ -120,36 +128,39 @@ func (s *Store) Upsert(record SessionRecord) error {
 		var err error
 		transcript, canonical, err = openValidatedTranscript(record.Provider, record.TranscriptPath, s.env)
 		if err != nil {
-			return err
+			return SessionRecord{}, err
 		}
 		defer transcript.Close()
 		record.TranscriptPath = canonical
 	}
 	release, err := s.acquireSessionLock(record.Provider, record.SessionID)
 	if err != nil {
-		return err
+		return SessionRecord{}, err
 	}
 	defer release()
 	existing, ok, err := s.readMetadata(record.Provider, record.SessionID)
 	if err != nil {
-		return err
+		return SessionRecord{}, err
 	}
 	hasIncomingTranscript := record.TranscriptPath != ""
 	if ok {
+		if s.isStaleLaunchUpdate(existing, record) {
+			return existing, nil
+		}
 		record = mergeSessionRecord(existing, record)
 	}
 	if record.SchemaVersion == 0 {
 		record.SchemaVersion = schemaVersion
 	}
 	if err := s.writeMetadata(record); err != nil {
-		return err
+		return SessionRecord{}, err
 	}
 	if hasIncomingTranscript {
 		if err := s.writeTranscriptFiles(record, transcript); err != nil {
-			return err
+			return SessionRecord{}, err
 		}
 	}
-	return nil
+	return record, nil
 }
 
 func (s *Store) writeMetadata(record SessionRecord) error {
@@ -246,9 +257,10 @@ func (s *Store) MarkLaunchEnded(launchID string, endedAt time.Time) error {
 			release()
 			continue
 		}
+		wasEnded := current.Status == "ended"
 		current.Status = "ended"
-		if current.EndedAt.IsZero() {
-			current.EndedAt = endedAt
+		if current.EndedAt.IsZero() || !wasEnded {
+			current.EndedAt = latestTime(current.EndedAt, endedAt)
 		}
 		if current.LastSeenAt.IsZero() || endedAt.After(current.LastSeenAt) {
 			current.LastSeenAt = endedAt
@@ -306,6 +318,7 @@ func (s *Store) readMetadata(provider Provider, sessionID string) (SessionRecord
 func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	incoming.Provider = existing.Provider
 	incoming.SessionID = existing.SessionID
+	newerLaunch := incoming.LaunchID != "" && incoming.LaunchID != existing.LaunchID
 	if incoming.SchemaVersion == 0 {
 		incoming.SchemaVersion = existing.SchemaVersion
 	}
@@ -329,15 +342,25 @@ func mergeSessionRecord(existing, incoming SessionRecord) SessionRecord {
 	preserveBlank(&incoming.Summary, existing.Summary)
 	preserveBlank(&incoming.TranscriptPath, existing.TranscriptPath)
 	preserveBlank(&incoming.CaptureSource, existing.CaptureSource)
-	if existing.Status == "ended" {
+	if existing.Status == "ended" && !newerLaunch {
 		incoming.Status = "ended"
 	}
 	incoming.StartedAt = earliestNonzero(existing.StartedAt, incoming.StartedAt)
 	incoming.LastSeenAt = latestTime(existing.LastSeenAt, incoming.LastSeenAt)
-	if !existing.EndedAt.IsZero() {
-		incoming.EndedAt = existing.EndedAt
-	}
+	incoming.EndedAt = latestTime(existing.EndedAt, incoming.EndedAt)
 	return incoming
+}
+
+func (s *Store) isStaleLaunchUpdate(existing, incoming SessionRecord) bool {
+	if incoming.LaunchID == "" || incoming.LaunchID == existing.LaunchID {
+		return false
+	}
+	if s.launchStale != nil {
+		if stale, known := s.launchStale(existing, incoming); known {
+			return stale
+		}
+	}
+	return !sortTime(incoming).After(sortTime(existing))
 }
 
 func earliestNonzero(a, b time.Time) time.Time {
