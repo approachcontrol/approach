@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/flowstore"
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 func TestAllowedNextPhaseStatusesCanonicalTable(t *testing.T) {

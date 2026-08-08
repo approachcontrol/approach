@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/config"
-	"github.com/brian-bell/wtui/flowstore"
+	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/flowstore"
 )
 
-// runFlow handles `wtui flow ...` subcommands. It may load config to resolve
+// runFlow handles `approach flow ...` subcommands. It may load config to resolve
 // the artifact root but must never scan repositories or start the TUI.
 func runFlow(args []string, deps runDeps) error {
 	if len(args) == 3 && isHelpArg(args[2]) {
@@ -23,7 +23,7 @@ func runFlow(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]")
+		return fmt.Errorf("usage: approach flow <create|list|read|phase|plan|issue|pr|merge> [flags]")
 	}
 	switch args[2] {
 	case "create":
@@ -51,9 +51,9 @@ func printFlowHelp(w io.Writer) {
 	io.WriteString(w, flowHelpText)
 }
 
-const flowHelpText = `Usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]
+const flowHelpText = `Usage: approach flow <create|list|read|phase|plan|issue|pr|merge> [flags]
 
-Create and update task-centric Flow records under the wtui agent-artifact root.
+Create and update task-centric Flow records under the approach agent-artifact root.
 
 Commands:
   create           Create a Flow; prints JSON when --json is present.
@@ -73,18 +73,18 @@ Commands:
   merge set        Record merge metadata.
 
 Examples:
-  wtui flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
-  wtui flow read --flow-id "$FLOW_ID"
-  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
-  wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
-  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --notes "Revise scope"
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
-  wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
-  wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
-  wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
-  wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
+  approach flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
+  approach flow read --flow-id "$FLOW_ID"
+  approach flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+  approach flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
+  approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --notes "Revise scope"
+  approach flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Plan saved"
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  approach flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
+  approach flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
+  approach flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
 
 Most commands accept:
   --state-root PATH  Override the artifact state root after the leaf command.
@@ -101,11 +101,11 @@ func newFlowStore(stateRoot string, deps runDeps) (*flowstore.Store, error) {
 func newFlowStoreWithConfig(stateRoot string, cfg config.Config, deps runDeps) (*flowstore.Store, error) {
 	root := stateRoot
 	if root == "" {
-		if envRoot := deps.getenv("WTUI_FLOW_STATE_ROOT"); envRoot != "" {
+		if envRoot := deps.getenv("APPROACH_FLOW_STATE_ROOT"); envRoot != "" {
 			root = envRoot
-		} else if envRoot := deps.getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
+		} else if envRoot := deps.getenv("APPROACH_PLAN_STATE_ROOT"); envRoot != "" {
 			root = envRoot
-		} else if envRoot := deps.getenv("WTUI_SESSION_STATE_ROOT"); envRoot != "" {
+		} else if envRoot := deps.getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
 			root = envRoot
 		} else {
 			root = cfg.Sessions.Root
@@ -216,7 +216,7 @@ func normalizeFlowPresetName(name string) string {
 }
 
 func printFlowCreateHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow create [flags]
+	io.WriteString(w, `Usage: approach flow create [flags]
 
 Create a Flow record. JSON output is required in v1.
 
@@ -235,7 +235,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
+  approach flow create --title "Ship saved plans" --instructions "Build it" --repo-path "$REPO" --json
 `)
 }
 
@@ -270,7 +270,7 @@ func runFlowList(args []string, deps runDeps) error {
 }
 
 func printFlowListHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow list [flags]
+	io.WriteString(w, `Usage: approach flow list [flags]
 
 List Flow records as JSON.
 
@@ -282,7 +282,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow list --repo-path "$REPO" --json
+  approach flow list --repo-path "$REPO" --json
 `)
 }
 
@@ -313,7 +313,7 @@ func runFlowRead(args []string, deps runDeps) error {
 }
 
 func printFlowReadHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow read [flags]
+	io.WriteString(w, `Usage: approach flow read [flags]
 
 Print one Flow record as JSON.
 
@@ -324,7 +324,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow read --flow-id "$FLOW_ID"
+  approach flow read --flow-id "$FLOW_ID"
 `)
 }
 
@@ -334,7 +334,7 @@ func runFlowPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]")
+		return fmt.Errorf("usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]")
 	}
 	switch args[0] {
 	case "set":
@@ -375,9 +375,9 @@ func printFlowPhaseHelp(w io.Writer) {
 	io.WriteString(w, flowPhaseHelpText)
 }
 
-const flowPhaseHelpText = `Usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]
+const flowPhaseHelpText = `Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]
 
-Update Flow phase state. Readiness is derived by wtui; agents set running,
+Update Flow phase state. Readiness is derived by approach; agents set running,
 completed, needs_attention, blocked, or skipped.
 
 Commands:
@@ -390,15 +390,15 @@ Commands:
   add-child        Add or update an implementation child phase.
 
 Examples:
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
-  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
-  wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
-  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
-  wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
-  wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  approach flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+  approach flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
+  approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
+  approach flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id implementation --status blocked --notes "Waiting on review"
+  approach flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
 
 Common flags:
   --state-root PATH  Override the artifact state root.
@@ -480,7 +480,7 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 }
 
 func printFlowPhaseSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase set [flags]
+	io.WriteString(w, `Usage: approach flow phase set [flags]
 
 Set a Flow phase status, outcome, summary, or notes.
 
@@ -496,8 +496,8 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
-  wtui flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id plan --status completed --summary "Saved plan"
+  approach flow phase set --flow-id "$FLOW_ID" --phase-id plan-review --status completed --outcome approved
 `)
 }
 
@@ -689,7 +689,7 @@ func defaultPhaseTitle(phaseID string) string {
 }
 
 func printFlowPhaseCompleteHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase complete [flags]
+	io.WriteString(w, `Usage: approach flow phase complete [flags]
 
 Mark a Flow phase completed and print the next actionable phase state.
 
@@ -704,13 +704,13 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
-  wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan-review --outcome approved
+  approach flow phase complete --flow-id "$FLOW_ID" --phase-id plan --summary "Saved plan"
+  approach flow phase complete --flow-id "$FLOW_ID" --phase-id plan-review --outcome approved
 `)
 }
 
 func printFlowPhaseBlockHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase block [flags]
+	io.WriteString(w, `Usage: approach flow phase block [flags]
 
 Mark a Flow phase blocked and print the next actionable phase state.
 Notes may be required by phase rules.
@@ -726,13 +726,13 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
-  wtui flow phase block --flow-id "$FLOW_ID" --phase-id plan-review --outcome blocked --notes "Waiting on product"
+  approach flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"
+  approach flow phase block --flow-id "$FLOW_ID" --phase-id plan-review --outcome blocked --notes "Waiting on product"
 `)
 }
 
 func printFlowPhaseNeedsAttentionHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase needs-attention [flags]
+	io.WriteString(w, `Usage: approach flow phase needs-attention [flags]
 
 Mark a Flow phase as needing attention and print the next actionable phase state.
 Notes may be required by phase rules.
@@ -748,17 +748,17 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id implementation --notes "Tests need revision"
-  wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
+  approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id implementation --notes "Tests need revision"
+  approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested --notes "Revise scope"
 `)
 }
 
 func printFlowPhaseRestartHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase restart [flags]
+	io.WriteString(w, `Usage: approach flow phase restart [flags]
 
 Restart a blocked or needs-attention Flow phase as running and print the next
 actionable phase state.
-When --notes is omitted, wtui writes a standard rerun note.
+When --notes is omitted, approach writes a standard rerun note.
 
 Required flags:
   --flow-id FLOW_ID
@@ -769,16 +769,16 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
-  wtui flow phase restart --flow-id "$FLOW_ID" --phase-id implementation --notes "Rerunning after fixing review findings."
+  approach flow phase restart --flow-id "$FLOW_ID" --phase-id autoreview
+  approach flow phase restart --flow-id "$FLOW_ID" --phase-id implementation --notes "Rerunning after fixing review findings."
 `)
 }
 
 func printFlowPhaseResetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase reset [flags]
+	io.WriteString(w, `Usage: approach flow phase reset [flags]
 
 Recover a stale running Flow phase back to ready and print the next actionable
-phase state. wtui derives ready after removing the latest stale launch.
+phase state. approach derives ready after removing the latest stale launch.
 
 Required flags:
   --flow-id FLOW_ID
@@ -788,7 +788,7 @@ Common flags:
   --state-root PATH
 
 Examples:
-  wtui flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
+  approach flow phase reset --flow-id "$FLOW_ID" --phase-id implementation
 `)
 }
 
@@ -882,7 +882,7 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 }
 
 func printFlowPhaseAddChildHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow phase add-child [flags]
+	io.WriteString(w, `Usage: approach flow phase add-child [flags]
 
 Add or update an implementation child phase.
 
@@ -897,7 +897,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
+  approach flow phase add-child --flow-id "$FLOW_ID" --parent-phase-id implementation --phase-id api --title "API work" --order 1
 `)
 }
 
@@ -907,7 +907,7 @@ func runFlowPlan(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow plan set [flags]")
+		return fmt.Errorf("usage: approach flow plan set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowPlanHelpText)
@@ -919,12 +919,12 @@ func printFlowPlanHelp(w io.Writer) {
 	io.WriteString(w, flowPlanHelpText)
 }
 
-const flowPlanHelpText = `Usage: wtui flow plan set [flags]
+const flowPlanHelpText = `Usage: approach flow plan set [flags]
 
 Link a saved plan artifact to a Flow.
 
 Example:
-  wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+  approach flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 `
 
 func runFlowPlanSet(args []string, deps runDeps) error {
@@ -963,7 +963,7 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 }
 
 func printFlowPlanSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow plan set [flags]
+	io.WriteString(w, `Usage: approach flow plan set [flags]
 
 Link a saved plan artifact to a Flow.
 
@@ -976,7 +976,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
+  approach flow plan set --flow-id "$FLOW_ID" --plan-id "$PLAN_ID"
 `)
 }
 
@@ -986,7 +986,7 @@ func runFlowIssue(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow issue set [flags]")
+		return fmt.Errorf("usage: approach flow issue set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowIssueHelpText)
@@ -998,7 +998,7 @@ func printFlowIssueHelp(w io.Writer) {
 	io.WriteString(w, flowIssueHelpText)
 }
 
-const flowIssueHelpText = `Usage: wtui flow issue set [flags]
+const flowIssueHelpText = `Usage: approach flow issue set [flags]
 
 Record GitHub issue metadata for a Flow.
 
@@ -1012,7 +1012,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
+  approach flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
 `
 
 func runFlowIssueSet(args []string, deps runDeps) error {
@@ -1056,7 +1056,7 @@ func runFlowIssueSet(args []string, deps runDeps) error {
 }
 
 func printFlowIssueSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow issue set [flags]
+	io.WriteString(w, `Usage: approach flow issue set [flags]
 
 Record GitHub issue metadata for a Flow.
 
@@ -1070,7 +1070,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
+  approach flow issue set --flow-id "$FLOW_ID" --provider github --number 123 --url "$ISSUE_URL"
 `)
 }
 
@@ -1080,7 +1080,7 @@ func runFlowPR(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow pr set [flags]")
+		return fmt.Errorf("usage: approach flow pr set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowPRHelpText)
@@ -1092,12 +1092,12 @@ func printFlowPRHelp(w io.Writer) {
 	io.WriteString(w, flowPRHelpText)
 }
 
-const flowPRHelpText = `Usage: wtui flow pr set [flags]
+const flowPRHelpText = `Usage: approach flow pr set [flags]
 
 Record pull request metadata for a Flow.
 
 Example:
-  wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
+  approach flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
 `
 
 func runFlowPRSet(args []string, deps runDeps) error {
@@ -1153,7 +1153,7 @@ func runFlowPRSet(args []string, deps runDeps) error {
 }
 
 func printFlowPRSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow pr set [flags]
+	io.WriteString(w, `Usage: approach flow pr set [flags]
 
 Record pull request metadata for a Flow.
 
@@ -1170,7 +1170,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
+  approach flow pr set --flow-id "$FLOW_ID" --provider github --number 155 --url "$PR_URL" --head "$BRANCH" --base main
 `)
 }
 
@@ -1180,7 +1180,7 @@ func runFlowMerge(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui flow merge set [flags]")
+		return fmt.Errorf("usage: approach flow merge set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, flowMergeHelpText)
@@ -1192,12 +1192,12 @@ func printFlowMergeHelp(w io.Writer) {
 	io.WriteString(w, flowMergeHelpText)
 }
 
-const flowMergeHelpText = `Usage: wtui flow merge set [flags]
+const flowMergeHelpText = `Usage: approach flow merge set [flags]
 
 Record merge metadata for a Flow.
 
 Example:
-  wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
+  approach flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
 `
 
 func runFlowMergeSet(args []string, deps runDeps) error {
@@ -1252,7 +1252,7 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 }
 
 func printFlowMergeSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui flow merge set [flags]
+	io.WriteString(w, `Usage: approach flow merge set [flags]
 
 Record merge metadata for a Flow.
 
@@ -1268,7 +1268,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
+  approach flow merge set --flow-id "$FLOW_ID" --status merged --commit "$SHA" --merged-at "2026-06-09T12:00:00Z"
 `)
 }
 

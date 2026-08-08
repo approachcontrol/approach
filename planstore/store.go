@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 const schemaVersion = 1

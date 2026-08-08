@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/gitquery"
+	"github.com/approachcontrol/approach/gitquery"
 )
 
 type fakeReply struct {

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brian-bell/wtui/actions"
+	"github.com/approachcontrol/approach/actions"
 )
 
 type commandRunner func(*exec.Cmd) error
 
 // TmuxBackedTerminal embeds a tmux client while the agent process runs inside
-// the tmux session. Detach closes only wtui's client; Terminate remains
+// the tmux session. Detach closes only approach's client; Terminate remains
 // destructive for sessions this launch created.
 type TmuxBackedTerminal struct {
 	term        *Terminal

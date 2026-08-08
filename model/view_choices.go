@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/ui"
 )
 
 type ViewChoice struct {

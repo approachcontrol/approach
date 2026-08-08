@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/model"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model"
 )
 
 func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
@@ -68,7 +68,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		BaseRef:          "main",
 		AgentCommand:     "codex",
 		Model:            "gpt-5.5",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanPhaseID:      "plan",
 		PlanPhaseTitle:   "Plan",
 		PlanPhaseStatus:  flowstore.PhaseRunning,
@@ -113,7 +113,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		ctx.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
 		ctx.Branch != "flow/add-flow-mode" ||
 		ctx.Commit != "abc123" ||
-		ctx.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		ctx.SessionStateRoot != "/state/approach/sessions/v1" ||
 		ctx.FlowID != "flow-1" ||
 		ctx.FlowPhaseID != "plan" ||
 		ctx.PlanPhaseID != "plan" ||
@@ -123,7 +123,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		t.Fatalf("launch context = %#v", ctx)
 	}
 	prompt := strings.ToLower(ctx.InitialPrompt)
-	for _, want := range []string{"wtui-flow", "build the thing", "produce a plan only", "do not start coding", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+	for _, want := range []string{"approach-flow", "build the thing", "produce a plan only", "do not start coding", "create and persist the plan", "approach plan save", "approach flow plan set"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("launch prompt missing %q: %q", want, ctx.InitialPrompt)
 		}
@@ -610,7 +610,7 @@ func TestFlowStarterStartPlanUsesExplicitZeroRequestTimePromptTemplates(t *testi
 	if strings.Contains(result.LaunchContext.InitialPrompt, "old startup template") {
 		t.Fatalf("explicit zero request templates should not use startup template: %q", result.LaunchContext.InitialPrompt)
 	}
-	for _, want := range []string{"Use the wtui-flow skill", "Build reset", "After completing this phase goal"} {
+	for _, want := range []string{"Use the approach-flow skill", "Build reset", "After completing this phase goal"} {
 		if !strings.Contains(result.LaunchContext.InitialPrompt, want) {
 			t.Fatalf("built-in plan prompt missing %q: %q", want, result.LaunchContext.InitialPrompt)
 		}
@@ -640,7 +640,7 @@ func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 			if repoPath != "/dev/alpha" {
 				t.Fatalf("BootstrapHookForRepo(%q)", repoPath)
 			}
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
 		},
 		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
 			calls = append(calls, "bootstrap")
@@ -671,7 +671,7 @@ func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 		gotCtx.Kind != actions.WorktreeCreateFlow {
 		t.Fatalf("bootstrap context = %#v", gotCtx)
 	}
-	if gotHook.Script != ".wtui/bootstrap" || gotHook.TimeoutSeconds != 7 {
+	if gotHook.Script != ".approach/bootstrap" || gotHook.TimeoutSeconds != 7 {
 		t.Fatalf("bootstrap hook = %#v", gotHook)
 	}
 }
@@ -695,7 +695,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
 		},
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			calls = append(calls, "bootstrap")
@@ -759,7 +759,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *te
 			}, nil
 		},
 		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
 		},
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			return errors.New("missing env file")

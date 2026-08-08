@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func TestCreateDefaultSeedGolden(t *testing.T) {
@@ -162,7 +162,7 @@ func TestCreateWithPresetSeedsNonLinearFlow(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     42,
-		URL:        "https://github.com/brian-bell/wtui/pull/42",
+		URL:        "https://github.com/approachcontrol/approach/pull/42",
 		HeadBranch: "flow/nonlinear-preset",
 		BaseBranch: "main",
 	})

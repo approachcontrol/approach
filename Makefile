@@ -1,6 +1,6 @@
 BIN_DIR  = bin
-BINARY   = $(BIN_DIR)/wtui
-VERSION_PACKAGE = github.com/brian-bell/wtui/internal/version
+BINARY   = $(BIN_DIR)/approach
+VERSION_PACKAGE = github.com/approachcontrol/approach/internal/version
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X $(VERSION_PACKAGE).version=dev -X $(VERSION_PACKAGE).commit=$(COMMIT) -X $(VERSION_PACKAGE).date=$(DATE)
@@ -9,7 +9,7 @@ LDFLAGS := -X $(VERSION_PACKAGE).version=dev -X $(VERSION_PACKAGE).commit=$(COMM
 
 build:
 	mkdir -p $(BIN_DIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/wtui
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/approach
 
 test:
 	go test ./...

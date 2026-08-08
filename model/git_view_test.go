@@ -5,10 +5,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 // pressKey sends a single-rune key to the model.

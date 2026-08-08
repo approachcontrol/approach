@@ -3,7 +3,7 @@ package gitquery_test
 import (
 	"testing"
 
-	"github.com/brian-bell/wtui/gitquery"
+	"github.com/approachcontrol/approach/gitquery"
 )
 
 func TestParseCommitLog_ParsesMultipleCommits(t *testing.T) {

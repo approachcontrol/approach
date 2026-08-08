@@ -7,10 +7,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func plansInRightPane(t *testing.T, m model.Model, records []planstore.PlanRecord) model.Model {

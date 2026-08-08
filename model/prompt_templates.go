@@ -6,10 +6,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/model/modal"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model/modal"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 const promptTemplateEditorVisibleLines = 16

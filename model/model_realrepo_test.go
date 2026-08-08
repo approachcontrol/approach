@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/ui"
 )
 
 // These tests back the Model with a real temporary git repository so the fetch
@@ -446,7 +446,7 @@ func TestModel_AgentLaunchFromBranchPaneIncludesCommit(t *testing.T) {
 			if err != nil {
 				return actions.TerminalLaunchSpec{}, err
 			}
-			launchedEnvCommit = envValue(built.Env, "WTUI_COMMIT")
+			launchedEnvCommit = envValue(built.Env, "APPROACH_COMMIT")
 			cmd := exec.Command("true")
 			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
@@ -470,7 +470,7 @@ func TestModel_AgentLaunchFromBranchPaneIncludesCommit(t *testing.T) {
 		t.Fatalf("expected launch path %q, got %q", dir, launched.WorktreePath)
 	}
 	if want := gitOut(t, dir, "rev-parse", "HEAD"); launchedEnvCommit != want {
-		t.Fatalf("expected WTUI_COMMIT %q, got %q", want, launchedEnvCommit)
+		t.Fatalf("expected APPROACH_COMMIT %q, got %q", want, launchedEnvCommit)
 	}
 }
 
@@ -485,7 +485,7 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 			if err != nil {
 				return actions.TerminalLaunchSpec{}, err
 			}
-			launchedEnvCommit = envValue(built.Env, "WTUI_COMMIT")
+			launchedEnvCommit = envValue(built.Env, "APPROACH_COMMIT")
 			cmd := exec.Command("pwd")
 			cmd.Dir = ctx.WorktreePath
 			return actions.TerminalLaunchSpec{Cmd: cmd}, nil
@@ -535,7 +535,7 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 		t.Fatalf("expected launch from created worktree %q, got %q", want, launchedPath)
 	}
 	if wantCommit := gitOut(t, want, "rev-parse", "HEAD"); launchedEnvCommit != wantCommit {
-		t.Fatalf("expected WTUI_COMMIT %q, got %q", wantCommit, launchedEnvCommit)
+		t.Fatalf("expected APPROACH_COMMIT %q, got %q", wantCommit, launchedEnvCommit)
 	}
 }
 
@@ -584,7 +584,7 @@ func TestModel_CreateWorktreeRunsBootstrapHookAgainstRealRepo(t *testing.T) {
 			if repoPath != dir {
 				t.Fatalf("expected hook lookup for %q, got %q", dir, repoPath)
 			}
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 7}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 7}, true
 		},
 		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
 			gotCtx = ctx
@@ -612,7 +612,7 @@ func TestModel_CreateWorktreeRunsBootstrapHookAgainstRealRepo(t *testing.T) {
 	if gotCtx.RepoPath != dir || gotCtx.WorktreePath != wantPath || gotCtx.Ref != "bootstrap-smoke" || gotCtx.Kind != actions.WorktreeCreateGeneric {
 		t.Fatalf("unexpected bootstrap context: %#v", gotCtx)
 	}
-	if gotHook.Script != ".wtui/bootstrap" || gotHook.TimeoutSeconds != 7 {
+	if gotHook.Script != ".approach/bootstrap" || gotHook.TimeoutSeconds != 7 {
 		t.Fatalf("unexpected bootstrap hook: %#v", gotHook)
 	}
 }
@@ -724,7 +724,7 @@ func TestModel_PullRequestWorktreeBootstrapFailureAgainstRealRepo(t *testing.T) 
 	var dir string
 	m, dir = setupModelPullRequestRepoWithOptions(t, model.Options{
 		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 5}, true
 		},
 		RunBootstrapHook: func(ctx actions.BootstrapContext, hook actions.BootstrapHook) error {
 			if ctx.Kind != actions.WorktreeCreatePullRequest || ctx.Ref != "123" || ctx.RepoPath != dir {
@@ -757,7 +757,7 @@ func TestModel_CreateThenAgentLaunchWaitsForBootstrapHook(t *testing.T) {
 	m, dir := setupModelRepoWithOptions(t, model.Options{
 		AgentCommand: "codex",
 		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 5}, true
 		},
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			hookRan = true
@@ -800,7 +800,7 @@ func TestModel_CreateThenAgentLaunchSkipsAgentWhenBootstrapFails(t *testing.T) {
 	m, _ := setupModelRepoWithOptions(t, model.Options{
 		AgentCommand: "codex",
 		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
-			return actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5}, true
+			return actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 5}, true
 		},
 		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
 			return errors.New("setup failed")

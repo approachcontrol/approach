@@ -46,9 +46,9 @@ func planAgentContext() AgentLaunchContext {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "main",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanID:           "plan-1",
-		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:         "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		InitialPrompt:    "Read the plan and begin implementation.",
 	}
 }
@@ -67,7 +67,7 @@ func putAgentOnPath(t *testing.T, name string) string {
 
 func agentLaunchScript(t *testing.T) string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "wtui-agent-*.sh"))
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "approach-agent-*.sh"))
 	if err != nil {
 		t.Fatalf("glob agent launch script: %v", err)
 	}
@@ -109,8 +109,8 @@ func TestAgentLaunch_InsideTmuxRunsAgentInSession(t *testing.T) {
 		"codex",
 		"--config",
 		"session-hook --provider codex",
-		"WTUI_PLAN_ID='plan-1'",
-		"WTUI_PLAN_PATH='/state/wtui/sessions/v1/plans/plan-1/plan.md'",
+		"APPROACH_PLAN_ID='plan-1'",
+		"APPROACH_PLAN_PATH='/state/approach/sessions/v1/plans/plan-1/plan.md'",
 		"Read the plan and begin implementation.",
 	} {
 		requireScriptContains(t, script, want)
@@ -132,7 +132,7 @@ func TestAgentLaunch_InsideZellijRunsAgentInSession(t *testing.T) {
 		t.Fatalf("unexpected zellij run args: %#v", args)
 	}
 	script := agentLaunchScript(t)
-	for _, want := range []string{"codex", "WTUI_PLAN_ID='plan-1'", "Read the plan and begin implementation."} {
+	for _, want := range []string{"codex", "APPROACH_PLAN_ID='plan-1'", "Read the plan and begin implementation."} {
 		requireScriptContains(t, script, want)
 	}
 }
@@ -175,7 +175,7 @@ func TestAgentLaunchWithOptions_DarwinConfiguredITermRunsGeneratedScript(t *test
 			t.Fatalf("expected iTerm agent args to contain %q, got %#v", want, launch.Cmd.Args)
 		}
 	}
-	for _, unwanted := range []string{"Read the plan and begin implementation.", "WTUI_PLAN_ID", "codex --config"} {
+	for _, unwanted := range []string{"Read the plan and begin implementation.", "APPROACH_PLAN_ID", "codex --config"} {
 		if strings.Contains(joined, unwanted) {
 			t.Fatalf("agent details leaked into AppleScript args: %q in %#v", unwanted, launch.Cmd.Args)
 		}
@@ -201,7 +201,7 @@ func TestAgentLaunch_TerminalEnvRunsAgentWithDashE(t *testing.T) {
 	if !strings.Contains(joined, "-e\x00sh\x00-c\x00") {
 		t.Fatalf("expected -e sh -c invocation, got %#v", args)
 	}
-	if !strings.Contains(joined, "wtui-agent-") {
+	if !strings.Contains(joined, "approach-agent-") {
 		t.Fatalf("expected agent script path in TERMINAL launch, got %#v", args)
 	}
 	if launch.Cmd.Dir != "/repo/worktree" {
@@ -275,7 +275,7 @@ func TestAgentLaunch_ShellFallbackIsInteractive(t *testing.T) {
 		t.Fatal("shell fallback agent launch should be interactive (hands over the TTY)")
 	}
 	joined := strings.Join(launch.Cmd.Args, "\x00")
-	if !strings.Contains(joined, "wtui-agent-") {
+	if !strings.Contains(joined, "approach-agent-") {
 		t.Fatalf("expected agent script path in shell fallback, got %#v", launch.Cmd.Args)
 	}
 	requireScriptContains(t, agentLaunchScript(t), "codex")
@@ -292,7 +292,7 @@ func TestAgentLaunch_WorkingDirControlsCommandDirKeepsWorktreeMetadata(t *testin
 	}
 	script := agentLaunchScript(t)
 	requireScriptContains(t, script, "cd '/repo/worktree/subdir'")
-	requireScriptContains(t, script, "WTUI_WORKTREE_PATH='/repo/worktree'")
+	requireScriptContains(t, script, "APPROACH_WORKTREE_PATH='/repo/worktree'")
 	requireScriptContains(t, script, "'resume' 'codex-session-1'")
 }
 
@@ -311,7 +311,7 @@ func TestAgentLaunch_UsesResolvedAgentExecutablePath(t *testing.T) {
 
 func TestAgentLaunch_PropagatesInheritedAgentEnvironment(t *testing.T) {
 	putAgentOnPath(t, "codex")
-	t.Setenv("OPENAI_API_KEY", "secret-from-wtui-process")
+	t.Setenv("OPENAI_API_KEY", "secret-from-approach-process")
 	env := fakeGetenv(map[string]string{"TMUX": "/tmp/tmux.sock"})
 
 	launch, err := agentLaunch(planAgentContext(), "linux", env, fakeLookPath("tmux"))
@@ -320,11 +320,11 @@ func TestAgentLaunch_PropagatesInheritedAgentEnvironment(t *testing.T) {
 	}
 
 	joined := strings.Join(launch.Cmd.Args, "\x00")
-	if strings.Contains(joined, "secret-from-wtui-process") {
+	if strings.Contains(joined, "secret-from-approach-process") {
 		t.Fatalf("secret leaked into transport argv: %#v", launch.Cmd.Args)
 	}
 	script := agentLaunchScript(t)
-	if !strings.Contains(script, "export OPENAI_API_KEY='secret-from-wtui-process'") {
+	if !strings.Contains(script, "export OPENAI_API_KEY='secret-from-approach-process'") {
 		t.Fatal("expected detached launch script to propagate inherited agent env")
 	}
 }
@@ -350,7 +350,7 @@ func TestAgentLaunch_CleansScriptWhenTransportSelectionFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected terminal selection error")
 	}
-	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "wtui-agent-*.sh"))
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "approach-agent-*.sh"))
 	if err != nil {
 		t.Fatalf("glob agent launch script: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestTerminalCommand_ShellCommandResistsInjection(t *testing.T) {
 	tmp := t.TempDir()
 	tc, err := newTerminalCommand(tmp, []string{
 		// Attempts to break out of the `export KEY=VAL` token.
-		`WTUI_BRANCH=x$(touch pwned_env)`,
+		`APPROACH_BRANCH=x$(touch pwned_env)`,
 	}, []string{
 		// argv[0] is the legitimate command; the trailing arg attempts injection.
 		"touch", "ran", `$(touch pwned_arg)`,
@@ -498,7 +498,7 @@ func TestAgentLaunch_SessionNameIsUniquePerLaunchAndDistinctFromTerminal(t *test
 		t.Fatalf("agentLaunch returned error: %v", err)
 	}
 
-	// The session name is the 5th arg (sh -c <script> wtui <session> <cmd>).
+	// The session name is the 5th arg (sh -c <script> approach <session> <cmd>).
 	firstSession := first.Cmd.Args[4]
 	secondSession := second.Cmd.Args[4]
 	if firstSession == secondSession {
@@ -516,7 +516,7 @@ func TestAgentLaunch_SessionNameIsUniquePerLaunchAndDistinctFromTerminal(t *test
 }
 
 func TestClaudeSessionHookSettingsEncodesJSONString(t *testing.T) {
-	hookCommand := "/tmp/wtui\a\v session-hook --provider claude"
+	hookCommand := "/tmp/approach\a\v session-hook --provider claude"
 
 	settings := claudeSessionHookSettings(hookCommand)
 
@@ -539,7 +539,7 @@ func TestClaudeSessionHookSettingsEncodesJSONString(t *testing.T) {
 }
 
 func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
-	t.Setenv("WTUI_LAUNCH_ID", "inherited-launch")
+	t.Setenv("APPROACH_LAUNCH_ID", "inherited-launch")
 	launch, err := agentLaunch(AgentLaunchContext{
 		Command:       "codex-app",
 		WorktreePath:  "/repo/work tree+plus",
@@ -554,7 +554,7 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 	if launch.Cmd.Dir != "" {
 		t.Fatalf("expected open command to have no working dir, got %q", launch.Cmd.Dir)
 	}
-	assertNoWTUIEnv(t, launch.Cmd.Environ())
+	assertNoAPPROACHEnv(t, launch.Cmd.Environ())
 	if !reflect.DeepEqual(launch.Cmd.Args[:1], []string{"open"}) {
 		t.Fatalf("unexpected codex-app args: %#v", launch.Cmd.Args)
 	}
@@ -568,17 +568,17 @@ func TestCodexAppLaunchOpensNewThreadDeepLink(t *testing.T) {
 	prompt := gotURL.Query().Get("prompt")
 	for _, want := range []string{
 		"Read the plan & begin + ship.",
-		"WTUI_WORKTREE_PATH: " + shellQuote("/repo/work tree+plus"),
+		"APPROACH_WORKTREE_PATH: " + shellQuote("/repo/work tree+plus"),
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	if strings.Contains(prompt, "WTUI_AGENT") {
+	if strings.Contains(prompt, "APPROACH_AGENT") {
 		t.Fatalf("prompt should not include agent metadata:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "inherited-launch") {
-		t.Fatalf("prompt leaked inherited WTUI_LAUNCH_ID:\n%s", prompt)
+		t.Fatalf("prompt leaked inherited APPROACH_LAUNCH_ID:\n%s", prompt)
 	}
 }
 
@@ -618,7 +618,7 @@ func TestCodexAppLaunchUsesWorkingDirForNewThreadPath(t *testing.T) {
 		t.Fatalf("path query = %q, want working dir", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo/worktree")) {
+	if !strings.Contains(prompt, "APPROACH_WORKTREE_PATH: "+shellQuote("/repo/worktree")) {
 		t.Fatalf("prompt should carry worktree metadata:\n%s", prompt)
 	}
 }
@@ -642,7 +642,7 @@ func TestCodexAppLaunchUsesRepoProjectPathForWorktreeLaunch(t *testing.T) {
 		t.Fatalf("path query = %q, want repo project path", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo-worktrees/feature")) {
+	if !strings.Contains(prompt, "APPROACH_WORKTREE_PATH: "+shellQuote("/repo-worktrees/feature")) {
 		t.Fatalf("prompt should still carry worktree metadata:\n%s", prompt)
 	}
 }
@@ -665,13 +665,13 @@ func TestCodexAppLaunchIncludesWorktreeMetadataWithoutInitialPrompt(t *testing.T
 		t.Fatalf("path query = %q, want repo project path", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo-worktrees/feature")) {
+	if !strings.Contains(prompt, "APPROACH_WORKTREE_PATH: "+shellQuote("/repo-worktrees/feature")) {
 		t.Fatalf("prompt should carry worktree metadata without an initial prompt:\n%s", prompt)
 	}
 }
 
-func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
-	t.Setenv("WTUI_PLAN_STATE_ROOT", "/inherited/state")
+func TestCodexAppLaunchPromptIncludesAPPROACHMetadata(t *testing.T) {
+	t.Setenv("APPROACH_PLAN_STATE_ROOT", "/inherited/state")
 	launch, err := agentLaunch(AgentLaunchContext{
 		Command:          "codex-app",
 		LaunchID:         "launch-1",
@@ -679,9 +679,9 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 		WorktreePath:     "/repo/work'tree$(bad)",
 		Branch:           "feature/$(echo pwned)",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanID:           "plan-1",
-		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:         "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		PlanPhaseID:      "phase-1",
 		PlanPhaseTitle:   "Resolve conflicts",
 		PlanPhaseStatus:  "in_progress",
@@ -692,7 +692,7 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agentLaunch returned error: %v", err)
 	}
-	assertNoWTUIEnv(t, launch.Cmd.Environ())
+	assertNoAPPROACHEnv(t, launch.Cmd.Environ())
 
 	gotURL, err := url.Parse(launch.Cmd.Args[1])
 	if err != nil {
@@ -701,42 +701,42 @@ func TestCodexAppLaunchPromptIncludesWTUIMetadata(t *testing.T) {
 	prompt := gotURL.Query().Get("prompt")
 	for _, want := range []string{
 		"Read the plan and begin implementation.",
-		"These WTUI_* values are launch metadata included in this prompt only.",
+		"These APPROACH_* values are launch metadata included in this prompt only.",
 		"Codex App does not receive them as shell environment variables.",
-		"WTUI_LAUNCH_ID: " + shellQuote("launch-1"),
-		"WTUI_WORKTREE_PATH: " + shellQuote("/repo/work'tree$(bad)"),
-		"WTUI_SESSION_STATE_ROOT: " + shellQuote("/state/wtui/sessions/v1"),
-		"WTUI_PLAN_STATE_ROOT: " + shellQuote("/state/wtui/sessions/v1"),
-		"WTUI_FLOW_STATE_ROOT: " + shellQuote("/state/wtui/sessions/v1"),
-		"WTUI_PLAN_ID: " + shellQuote("plan-1"),
-		"WTUI_PLAN_PATH: " + shellQuote("/state/wtui/sessions/v1/plans/plan-1/plan.md"),
-		"WTUI_PLAN_PHASE_ID: " + shellQuote("phase-1"),
-		"WTUI_FLOW_ID: " + shellQuote("flow-1"),
-		"WTUI_FLOW_PHASE_ID: " + shellQuote("plan"),
-		"wtui plan list --json --state-root " + shellQuote("/state/wtui/sessions/v1"),
-		"wtui flow list --json --state-root " + shellQuote("/state/wtui/sessions/v1"),
+		"APPROACH_LAUNCH_ID: " + shellQuote("launch-1"),
+		"APPROACH_WORKTREE_PATH: " + shellQuote("/repo/work'tree$(bad)"),
+		"APPROACH_SESSION_STATE_ROOT: " + shellQuote("/state/approach/sessions/v1"),
+		"APPROACH_PLAN_STATE_ROOT: " + shellQuote("/state/approach/sessions/v1"),
+		"APPROACH_FLOW_STATE_ROOT: " + shellQuote("/state/approach/sessions/v1"),
+		"APPROACH_PLAN_ID: " + shellQuote("plan-1"),
+		"APPROACH_PLAN_PATH: " + shellQuote("/state/approach/sessions/v1/plans/plan-1/plan.md"),
+		"APPROACH_PLAN_PHASE_ID: " + shellQuote("phase-1"),
+		"APPROACH_FLOW_ID: " + shellQuote("flow-1"),
+		"APPROACH_FLOW_PHASE_ID: " + shellQuote("plan"),
+		"approach plan list --json --state-root " + shellQuote("/state/approach/sessions/v1"),
+		"approach flow list --json --state-root " + shellQuote("/state/approach/sessions/v1"),
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
 	for _, unwanted := range []string{
-		"WTUI_LAUNCH_ID=",
-		"WTUI_WORKTREE_PATH=",
-		"WTUI_SESSION_STATE_ROOT=",
-		"WTUI_PLAN_STATE_ROOT=",
-		"WTUI_FLOW_STATE_ROOT=",
-		"WTUI_PLAN_ID=",
-		"WTUI_PLAN_PATH=",
-		"WTUI_PLAN_PHASE_ID=",
-		"WTUI_FLOW_ID=",
-		"WTUI_FLOW_PHASE_ID=",
-		"export WTUI_",
-		"WTUI_REPO_PATH",
-		"WTUI_BRANCH",
-		"WTUI_COMMIT",
-		"WTUI_PLAN_PHASE_TITLE",
-		"WTUI_PLAN_PHASE_STATUS",
+		"APPROACH_LAUNCH_ID=",
+		"APPROACH_WORKTREE_PATH=",
+		"APPROACH_SESSION_STATE_ROOT=",
+		"APPROACH_PLAN_STATE_ROOT=",
+		"APPROACH_FLOW_STATE_ROOT=",
+		"APPROACH_PLAN_ID=",
+		"APPROACH_PLAN_PATH=",
+		"APPROACH_PLAN_PHASE_ID=",
+		"APPROACH_FLOW_ID=",
+		"APPROACH_FLOW_PHASE_ID=",
+		"export APPROACH_",
+		"APPROACH_REPO_PATH",
+		"APPROACH_BRANCH",
+		"APPROACH_COMMIT",
+		"APPROACH_PLAN_PHASE_TITLE",
+		"APPROACH_PLAN_PHASE_STATUS",
 	} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("prompt should not include %s:\n%s", unwanted, prompt)
@@ -751,7 +751,7 @@ func TestCodexAppFlowLaunchUsesRepoProjectPath(t *testing.T) {
 		WorktreePath:  "/repo-worktrees/flow-add-flow-mode",
 		FlowID:        "flow-1",
 		FlowPhaseID:   "plan",
-		InitialPrompt: "Use wtui-flow.",
+		InitialPrompt: "Use approach-flow.",
 	}, "darwin", fakeGetenv(nil), fakeLookPath())
 	if err != nil {
 		t.Fatalf("agentLaunch returned error: %v", err)
@@ -765,19 +765,19 @@ func TestCodexAppFlowLaunchUsesRepoProjectPath(t *testing.T) {
 		t.Fatalf("path query = %q, want repo project path", got)
 	}
 	prompt := gotURL.Query().Get("prompt")
-	if !strings.Contains(prompt, "WTUI_WORKTREE_PATH: "+shellQuote("/repo-worktrees/flow-add-flow-mode")) {
+	if !strings.Contains(prompt, "APPROACH_WORKTREE_PATH: "+shellQuote("/repo-worktrees/flow-add-flow-mode")) {
 		t.Fatalf("prompt should still carry worktree metadata:\n%s", prompt)
 	}
 }
 
 func TestCodexAppLaunchOpensResumeDeepLink(t *testing.T) {
-	t.Setenv("WTUI_SESSION_STATE_ROOT", "/inherited/state")
+	t.Setenv("APPROACH_SESSION_STATE_ROOT", "/inherited/state")
 	launch, err := agentLaunch(AgentLaunchContext{
 		Command:          "codex-app",
 		WorktreePath:     "/repo/worktree",
 		InitialPrompt:    "ignored for resume",
 		ResumeSessionID:  "9a0c8d4e-1111-2222-3333-abcdefabcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 	}, "darwin", fakeGetenv(nil), fakeLookPath())
 	if err != nil {
 		t.Fatalf("agentLaunch returned error: %v", err)
@@ -786,7 +786,7 @@ func TestCodexAppLaunchOpensResumeDeepLink(t *testing.T) {
 	if !reflect.DeepEqual(launch.Cmd.Args, []string{"open", "codex://threads/9a0c8d4e-1111-2222-3333-abcdefabcdef"}) {
 		t.Fatalf("unexpected codex-app resume args: %#v", launch.Cmd.Args)
 	}
-	assertNoWTUIEnv(t, launch.Cmd.Environ())
+	assertNoAPPROACHEnv(t, launch.Cmd.Environ())
 }
 
 func TestCodexAppLaunchRejectsMissingNewThreadPath(t *testing.T) {
@@ -851,8 +851,8 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 		t.Fatal("expected status path for tmux exit propagation")
 	}
 	socketName := spec.HasSessionCommand.Args[4]
-	if !strings.HasPrefix(socketName, "wtui-agent-") || len(socketName) != len("wtui-agent-00000000") {
-		t.Fatalf("socket name = %q, want short hashed wtui-agent name", socketName)
+	if !strings.HasPrefix(socketName, "approach-agent-") || len(socketName) != len("approach-agent-00000000") {
+		t.Fatalf("socket name = %q, want short hashed approach-agent name", socketName)
 	}
 	if strings.Contains(socketName, spec.SessionName) {
 		t.Fatalf("socket name %q should not embed full session name %q", socketName, spec.SessionName)
@@ -866,7 +866,7 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	if got, want := spec.AttachCommand.Args[:3], []string{"/bin/sh", "-c", "tmux -f /dev/null -L \"$1\" attach-session -t \"$2\"\ntmux_status=$?\nif [ -r \"$3\" ]; then\n\tIFS= read -r agent_status < \"$3\"\n\trm -f \"$3\"\n\tcase \"$agent_status\" in\n\t\t\"\"|*[!0-9]*) exit \"$tmux_status\" ;;\n\t\t*) exit \"$agent_status\" ;;\n\tesac\nfi\nexit \"$tmux_status\""}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attach args prefix = %#v, want %#v", got, want)
 	}
-	if got, want := spec.AttachCommand.Args[3:], []string{"wtui", socketName, spec.SessionName, spec.StatusPath}; !reflect.DeepEqual(got, want) {
+	if got, want := spec.AttachCommand.Args[3:], []string{"approach", socketName, spec.SessionName, spec.StatusPath}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attach wrapper args = %#v, want %#v", got, want)
 	}
 	if envValue(spec.AttachCommand.Env, "TMUX") != "" {
@@ -890,8 +890,8 @@ func TestEmbeddedTmuxAgentCommandBuildsPrivateScriptTransport(t *testing.T) {
 	script := agentLaunchScript(t)
 	for _, want := range []string{
 		"cd '/repo/worktree' || exit",
-		"WTUI_LAUNCH_ID='launch/tmux'",
-		"WTUI_PLAN_ID='plan-1'",
+		"APPROACH_LAUNCH_ID='launch/tmux'",
+		"APPROACH_PLAN_ID='plan-1'",
 		"codex",
 		"exec",
 		"Read the plan and begin implementation.",
@@ -922,12 +922,12 @@ func TestEmbeddedTmuxAgentCommandReportsMissingTmux(t *testing.T) {
 	}
 }
 
-func assertNoWTUIEnv(t *testing.T, env []string) {
+func assertNoAPPROACHEnv(t *testing.T, env []string) {
 	t.Helper()
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok && strings.HasPrefix(key, "WTUI_") {
-			t.Fatalf("expected codex-app open command to scrub WTUI env, found %q in %#v", key, env)
+		if ok && strings.HasPrefix(key, "APPROACH_") {
+			t.Fatalf("expected codex-app open command to scrub APPROACH env, found %q in %#v", key, env)
 		}
 	}
 }

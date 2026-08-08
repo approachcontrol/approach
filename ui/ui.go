@@ -10,12 +10,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/internal/artifacts"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // OverlayState represents what overlay (if any) is displayed.

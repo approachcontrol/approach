@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 type IngestOptions struct {
@@ -68,7 +68,7 @@ func IngestHook(provider Provider, input io.Reader, opts IngestOptions) (Session
 	}
 	stateRoot := opts.StateRoot
 	if stateRoot == "" {
-		stateRoot = opts.Env["WTUI_SESSION_STATE_ROOT"]
+		stateRoot = opts.Env["APPROACH_SESSION_STATE_ROOT"]
 	}
 	store, err := NewStore(StoreOptions{Root: stateRoot, CopyRawTranscripts: opts.CopyRawTranscripts, Env: opts.Env})
 	if err != nil {
@@ -124,31 +124,31 @@ func summaryForPayload(payload hookPayload) string {
 
 func applyEnvMetadata(record *SessionRecord, env map[string]string) {
 	if record.LaunchID == "" {
-		record.LaunchID = env["WTUI_LAUNCH_ID"]
+		record.LaunchID = env["APPROACH_LAUNCH_ID"]
 	}
 	if record.RepoPath == "" {
-		record.RepoPath = env["WTUI_REPO_PATH"]
+		record.RepoPath = env["APPROACH_REPO_PATH"]
 	}
 	if record.WorktreePath == "" {
-		record.WorktreePath = env["WTUI_WORKTREE_PATH"]
+		record.WorktreePath = env["APPROACH_WORKTREE_PATH"]
 	}
 	if record.PlanID == "" {
-		record.PlanID = env["WTUI_PLAN_ID"]
+		record.PlanID = env["APPROACH_PLAN_ID"]
 	}
 	if record.PlanPath == "" {
-		record.PlanPath = env["WTUI_PLAN_PATH"]
+		record.PlanPath = env["APPROACH_PLAN_PATH"]
 	}
 	if record.FlowID == "" {
-		record.FlowID = env["WTUI_FLOW_ID"]
+		record.FlowID = env["APPROACH_FLOW_ID"]
 	}
 	if record.FlowPhaseID == "" {
-		record.FlowPhaseID = env["WTUI_FLOW_PHASE_ID"]
+		record.FlowPhaseID = env["APPROACH_FLOW_PHASE_ID"]
 	}
 	if record.Branch == "" {
-		record.Branch = env["WTUI_BRANCH"]
+		record.Branch = env["APPROACH_BRANCH"]
 	}
 	if record.Commit == "" {
-		record.Commit = env["WTUI_COMMIT"]
+		record.Commit = env["APPROACH_COMMIT"]
 	}
 }
 
@@ -271,16 +271,16 @@ func flowLaunchStaleResolver(record SessionRecord, opts IngestOptions) launchSta
 }
 
 func flowStateRoot(opts IngestOptions) string {
-	if root := opts.Env["WTUI_FLOW_STATE_ROOT"]; root != "" {
+	if root := opts.Env["APPROACH_FLOW_STATE_ROOT"]; root != "" {
 		return root
 	}
-	if root := opts.Env["WTUI_PLAN_STATE_ROOT"]; root != "" {
+	if root := opts.Env["APPROACH_PLAN_STATE_ROOT"]; root != "" {
 		return root
 	}
 	if opts.StateRoot != "" {
 		return opts.StateRoot
 	}
-	return opts.Env["WTUI_SESSION_STATE_ROOT"]
+	return opts.Env["APPROACH_SESSION_STATE_ROOT"]
 }
 
 func repoPathFromGitMetadata(worktreePath, gitDir, commonDir string, isBare, commonDirIsBare bool) string {

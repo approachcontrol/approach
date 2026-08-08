@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func TestStoreCreatePersistsDefaultFlowRecord(t *testing.T) {
@@ -1802,7 +1802,7 @@ func TestStoreSetPhaseExplainsNeedsAttentionRecovery(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/autoreview-recovery",
 		BaseBranch: "main",
 		Status:     "open",
@@ -1883,7 +1883,7 @@ func TestStoreRestartPhaseAtomicallyRequiresRecoveryState(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/atomic-restart",
 		BaseBranch: "main",
 	})
@@ -1944,7 +1944,7 @@ func TestStoreRestartPhaseClearsBlockedMergeMetadata(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/restart-merge",
 		BaseBranch: "main",
 	})
@@ -2012,7 +2012,7 @@ func TestStoreAddPhaseLaunchIDRestartsNeedsAttentionPhase(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/autoreview-relaunch",
 		BaseBranch: "main",
 		Status:     "open",
@@ -3008,7 +3008,7 @@ func TestStoreMutatorsReportNotFoundAfterDelete(t *testing.T) {
 					FlowID:     record.FlowID,
 					Provider:   "github",
 					Number:     12,
-					URL:        "https://github.com/brian-bell/wtui/pull/12",
+					URL:        "https://github.com/approachcontrol/approach/pull/12",
 					HeadBranch: "flow/stale",
 					BaseBranch: "main",
 					Status:     "open",
@@ -3216,7 +3216,7 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/pr-metadata",
 		BaseBranch: "main",
 		Status:     "open",
@@ -3227,7 +3227,7 @@ func TestStoreSetPRPersistsMetadataAndUngatesAutoreview(t *testing.T) {
 
 	if updated.PR.Provider != "github" ||
 		updated.PR.Number != 115 ||
-		updated.PR.URL != "https://github.com/brian-bell/wtui/pull/115" ||
+		updated.PR.URL != "https://github.com/approachcontrol/approach/pull/115" ||
 		updated.PR.HeadBranch != "flow/pr-metadata" ||
 		updated.PR.BaseBranch != "main" ||
 		updated.PR.Status != "open" {
@@ -3289,7 +3289,7 @@ func TestStoreSetPRNormalizesLegacyPlanReviewApprovalBeforeRefresh(t *testing.T)
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     116,
-		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		URL:        "https://github.com/approachcontrol/approach/pull/116",
 		HeadBranch: "flow/legacy-pr-metadata",
 		BaseBranch: "main",
 		Status:     "open",
@@ -3341,7 +3341,7 @@ func TestStoreSetIssuePersistsMetadata(t *testing.T) {
 		FlowID:   record.FlowID,
 		Provider: "github",
 		Number:   123,
-		URL:      "https://github.com/brian-bell/wtui/issues/123",
+		URL:      "https://github.com/approachcontrol/approach/issues/123",
 	})
 	if err != nil {
 		t.Fatalf("SetIssue() error = %v", err)
@@ -3349,7 +3349,7 @@ func TestStoreSetIssuePersistsMetadata(t *testing.T) {
 
 	if updated.Issue.Provider != "github" ||
 		updated.Issue.Number != 123 ||
-		updated.Issue.URL != "https://github.com/brian-bell/wtui/issues/123" {
+		updated.Issue.URL != "https://github.com/approachcontrol/approach/issues/123" {
 		t.Fatalf("Issue metadata = %#v", updated.Issue)
 	}
 	if updated.UpdatedAt != later {
@@ -3416,7 +3416,7 @@ func TestStoreSetIssueDoesNotRefreshCustomFlowReadiness(t *testing.T) {
 		FlowID:   record.FlowID,
 		Provider: "github",
 		Number:   123,
-		URL:      "https://github.com/brian-bell/wtui/issues/123",
+		URL:      "https://github.com/approachcontrol/approach/issues/123",
 	})
 	if err != nil {
 		t.Fatalf("SetIssue() error = %v", err)
@@ -3461,7 +3461,7 @@ func TestStoreSetIssueIdempotent(t *testing.T) {
 		FlowID:   record.FlowID,
 		Provider: "github",
 		Number:   123,
-		URL:      "https://github.com/brian-bell/wtui/issues/123",
+		URL:      "https://github.com/approachcontrol/approach/issues/123",
 	}
 	record, err = store.SetIssue(update)
 	if err != nil {
@@ -3542,7 +3542,7 @@ func TestHasIssueTargetRequiresValidGitHubIssue(t *testing.T) {
 	valid := flowstore.Issue{
 		Provider: "github",
 		Number:   123,
-		URL:      "https://github.com/brian-bell/wtui/issues/123",
+		URL:      "https://github.com/approachcontrol/approach/issues/123",
 	}
 	if !flowstore.HasIssueTarget(valid) {
 		t.Fatalf("HasIssueTarget(valid) = false, want true")
@@ -3553,7 +3553,7 @@ func TestHasIssueTargetRequiresValidGitHubIssue(t *testing.T) {
 	}{
 		{name: "provider", issue: flowstore.Issue{Provider: "gitlab", Number: 123, URL: valid.URL}},
 		{name: "number", issue: flowstore.Issue{Provider: "github", Number: 0, URL: valid.URL}},
-		{name: "url", issue: flowstore.Issue{Provider: "github", Number: 123, URL: "https://github.com/brian-bell/wtui/pull/123"}},
+		{name: "url", issue: flowstore.Issue{Provider: "github", Number: 123, URL: "https://github.com/approachcontrol/approach/pull/123"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if flowstore.HasIssueTarget(tc.issue) {
@@ -3571,12 +3571,12 @@ func TestStoreSetIssueValidatesMetadata(t *testing.T) {
 	}{
 		{
 			name:   "provider",
-			update: flowstore.IssueUpdate{Provider: "gitlab", Number: 1, URL: "https://github.com/brian-bell/wtui/issues/1"},
+			update: flowstore.IssueUpdate{Provider: "gitlab", Number: 1, URL: "https://github.com/approachcontrol/approach/issues/1"},
 			want:   "unsupported issue provider",
 		},
 		{
 			name:   "number",
-			update: flowstore.IssueUpdate{Provider: "github", Number: 0, URL: "https://github.com/brian-bell/wtui/issues/1"},
+			update: flowstore.IssueUpdate{Provider: "github", Number: 0, URL: "https://github.com/approachcontrol/approach/issues/1"},
 			want:   "issue number must be positive",
 		},
 		{
@@ -3586,22 +3586,22 @@ func TestStoreSetIssueValidatesMetadata(t *testing.T) {
 		},
 		{
 			name:   "url host",
-			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://example.com/brian-bell/wtui/issues/1"},
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://example.com/approachcontrol/approach/issues/1"},
 			want:   "GitHub issue URL must use github.com",
 		},
 		{
 			name:   "url number",
-			update: flowstore.IssueUpdate{Provider: "github", Number: 2, URL: "https://github.com/brian-bell/wtui/issues/1"},
+			update: flowstore.IssueUpdate{Provider: "github", Number: 2, URL: "https://github.com/approachcontrol/approach/issues/1"},
 			want:   "GitHub issue URL number",
 		},
 		{
 			name:   "url pull path",
-			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1"},
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://github.com/approachcontrol/approach/pull/1"},
 			want:   "GitHub issue URL must have /owner/repo/issues/number path",
 		},
 		{
 			name:   "url extra path",
-			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/issues/1/comments"},
+			update: flowstore.IssueUpdate{Provider: "github", Number: 1, URL: "https://github.com/approachcontrol/approach/issues/1/comments"},
 			want:   "GitHub issue URL must have /owner/repo/issues/number path",
 		},
 	} {
@@ -3666,7 +3666,7 @@ func TestHasPRTargetRequiresValidGitHubTarget(t *testing.T) {
 	valid := flowstore.PullRequest{
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/pr",
 		BaseBranch: "main",
 	}
@@ -3679,7 +3679,7 @@ func TestHasPRTargetRequiresValidGitHubTarget(t *testing.T) {
 	}{
 		{name: "provider", pr: flowstore.PullRequest{Provider: "gitlab", Number: 115, URL: valid.URL, HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
 		{name: "number", pr: flowstore.PullRequest{Provider: "github", Number: 0, URL: valid.URL, HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
-		{name: "url", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: "https://github.com/brian-bell/wtui/issues/115", HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
+		{name: "url", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: "https://github.com/approachcontrol/approach/issues/115", HeadBranch: valid.HeadBranch, BaseBranch: valid.BaseBranch}},
 		{name: "head", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: valid.URL, BaseBranch: valid.BaseBranch}},
 		{name: "base", pr: flowstore.PullRequest{Provider: "github", Number: 115, URL: valid.URL, HeadBranch: valid.HeadBranch}},
 	} {
@@ -3699,12 +3699,12 @@ func TestStoreSetPRValidatesMetadata(t *testing.T) {
 	}{
 		{
 			name:   "provider",
-			update: flowstore.PRUpdate{Provider: "gitlab", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "gitlab", Number: 1, URL: "https://github.com/approachcontrol/approach/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
 			want:   "unsupported PR provider",
 		},
 		{
 			name:   "number",
-			update: flowstore.PRUpdate{Provider: "github", Number: 0, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 0, URL: "https://github.com/approachcontrol/approach/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
 			want:   "PR number must be positive",
 		},
 		{
@@ -3714,32 +3714,32 @@ func TestStoreSetPRValidatesMetadata(t *testing.T) {
 		},
 		{
 			name:   "url host",
-			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://example.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://example.com/approachcontrol/approach/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
 			want:   "GitHub PR URL must use github.com",
 		},
 		{
 			name:   "url number",
-			update: flowstore.PRUpdate{Provider: "github", Number: 2, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 2, URL: "https://github.com/approachcontrol/approach/pull/1", HeadBranch: "flow/pr", BaseBranch: "main"},
 			want:   "GitHub PR URL number",
 		},
 		{
 			name:   "url extra path",
-			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1/files", HeadBranch: "flow/pr", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/approachcontrol/approach/pull/1/files", HeadBranch: "flow/pr", BaseBranch: "main"},
 			want:   "GitHub PR URL must have /owner/repo/pull/number path",
 		},
 		{
 			name:   "head branch",
-			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/approachcontrol/approach/pull/1", BaseBranch: "main"},
 			want:   "PR head branch is required",
 		},
 		{
 			name:   "base branch",
-			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "flow/pr"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/approachcontrol/approach/pull/1", HeadBranch: "flow/pr"},
 			want:   "PR base branch is required",
 		},
 		{
 			name:   "branch consistency",
-			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/brian-bell/wtui/pull/1", HeadBranch: "feature/other", BaseBranch: "main"},
+			update: flowstore.PRUpdate{Provider: "github", Number: 1, URL: "https://github.com/approachcontrol/approach/pull/1", HeadBranch: "feature/other", BaseBranch: "main"},
 			want:   "PR head branch",
 		},
 	} {
@@ -3789,7 +3789,7 @@ func TestStoreSetMergePersistsMergedMetadataAndCompletesFlow(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     116,
-		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		URL:        "https://github.com/approachcontrol/approach/pull/116",
 		HeadBranch: "flow/merge-metadata",
 		BaseBranch: "main",
 		Status:     "open",
@@ -3860,7 +3860,7 @@ func TestStoreMarkManualMergeCompletesMergeAndRecordsMetadata(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     116,
-		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		URL:        "https://github.com/approachcontrol/approach/pull/116",
 		HeadBranch: "flow/manual-merge",
 		BaseBranch: "main",
 		Status:     "open",
@@ -3881,7 +3881,7 @@ func TestStoreMarkManualMergeCompletesMergeAndRecordsMetadata(t *testing.T) {
 	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
 		PRNumber: 116,
-		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		PRURL:    "https://github.com/approachcontrol/approach/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -3920,7 +3920,7 @@ func TestStoreMarkManualMergeRejectsUnresolvedMissingDependsOn(t *testing.T) {
 	writeRawFlowMeta(t, root, flowID, `
   "branch": "flow/manual-merge",
   "preset_name": "research",
-  "pr": {"provider": "github", "number": 116, "url": "https://github.com/brian-bell/wtui/pull/116", "head_branch": "flow/manual-merge", "base_branch": "main", "status": "open"},
+  "pr": {"provider": "github", "number": 116, "url": "https://github.com/approachcontrol/approach/pull/116", "head_branch": "flow/manual-merge", "base_branch": "main", "status": "open"},
   "phases": [
     {"phase_id": "research", "title": "Research", "kind": "plan", "status": "completed", "order": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
     {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "completed", "order": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
@@ -3930,7 +3930,7 @@ func TestStoreMarkManualMergeRejectsUnresolvedMissingDependsOn(t *testing.T) {
 	_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   flowID,
 		PRNumber: 116,
-		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		PRURL:    "https://github.com/approachcontrol/approach/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -3968,7 +3968,7 @@ func TestStoreMarkManualMergeRejectsChangedPRTarget(t *testing.T) {
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     117,
-		URL:        "https://github.com/brian-bell/wtui/pull/117",
+		URL:        "https://github.com/approachcontrol/approach/pull/117",
 		HeadBranch: "flow/manual-merge",
 		BaseBranch: "main",
 		Status:     "open",
@@ -3980,7 +3980,7 @@ func TestStoreMarkManualMergeRejectsChangedPRTarget(t *testing.T) {
 	_, err = store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
 		PRNumber: 116,
-		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		PRURL:    "https://github.com/approachcontrol/approach/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -4096,7 +4096,7 @@ func TestStoreMarkManualMergeCollapsesDuplicateMergePhases(t *testing.T) {
 	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
 		PRNumber: 116,
-		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		PRURL:    "https://github.com/approachcontrol/approach/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -4138,7 +4138,7 @@ func TestStoreMarkManualMergeLinkedPlanSyncFailureKeepsFlowRecoverable(t *testin
 	updated, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
 		FlowID:   record.FlowID,
 		PRNumber: 116,
-		PRURL:    "https://github.com/brian-bell/wtui/pull/116",
+		PRURL:    "https://github.com/approachcontrol/approach/pull/116",
 		Commit:   "0123456789abcdef",
 		MergedAt: mergedAt,
 	})
@@ -4253,7 +4253,7 @@ func TestStoreSetMergeValidatesMergedMetadata(t *testing.T) {
 					FlowID:     record.FlowID,
 					Provider:   "github",
 					Number:     116,
-					URL:        "https://github.com/brian-bell/wtui/pull/116",
+					URL:        "https://github.com/approachcontrol/approach/pull/116",
 					HeadBranch: "flow/merge-validation",
 					BaseBranch: "main",
 					Status:     "open",
@@ -4373,7 +4373,7 @@ func TestStoreSetPhaseReopeningMergeClearsTerminalMergeMetadata(t *testing.T) {
 				FlowID:     record.FlowID,
 				Provider:   "github",
 				Number:     116,
-				URL:        "https://github.com/brian-bell/wtui/pull/116",
+				URL:        "https://github.com/approachcontrol/approach/pull/116",
 				HeadBranch: "flow/reopen-merge",
 				BaseBranch: "main",
 				Status:     "open",
@@ -4448,7 +4448,7 @@ func TestStoreAddPhaseLaunchIDReopeningMergeClearsTerminalMergeMetadata(t *testi
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     116,
-		URL:        "https://github.com/brian-bell/wtui/pull/116",
+		URL:        "https://github.com/approachcontrol/approach/pull/116",
 		HeadBranch: "flow/relaunch-merge",
 		BaseBranch: "main",
 		Status:     "open",
@@ -4503,7 +4503,7 @@ func TestStoreAddPhaseLaunchIDResumePreservesTerminalMergeMetadata(t *testing.T)
 		FlowID:     record.FlowID,
 		Provider:   "github",
 		Number:     189,
-		URL:        "https://github.com/brian-bell/wtui/pull/189",
+		URL:        "https://github.com/approachcontrol/approach/pull/189",
 		HeadBranch: "flow/resume-merge",
 		BaseBranch: "main",
 		Status:     "open",
@@ -5997,7 +5997,7 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 		FlowID:   flowID,
 		Provider: "github",
 		Number:   276,
-		URL:      "https://github.com/brian-bell/wtui/issues/276",
+		URL:      "https://github.com/approachcontrol/approach/issues/276",
 	}); err != nil {
 		t.Fatalf("SetIssue() error = %v", err)
 	}
@@ -6295,7 +6295,7 @@ func TestDownstreamGateByKind(t *testing.T) {
 	pr := flowstore.PullRequest{
 		Provider:   "github",
 		Number:     42,
-		URL:        "https://github.com/brian-bell/wtui/pull/42",
+		URL:        "https://github.com/approachcontrol/approach/pull/42",
 		HeadBranch: "flow/kind",
 		BaseBranch: "main",
 	}
@@ -6375,7 +6375,7 @@ func TestMergeKindPhaseByCustomID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetPhase(ship completed) error = %v", err)
 	}
-	record.PR = flowstore.PullRequest{Provider: "github", Number: 42, URL: "https://github.com/brian-bell/wtui/pull/42", HeadBranch: "flow/custom-merge", BaseBranch: "main"}
+	record.PR = flowstore.PullRequest{Provider: "github", Number: 42, URL: "https://github.com/approachcontrol/approach/pull/42", HeadBranch: "flow/custom-merge", BaseBranch: "main"}
 	record, err = store.SetPR(flowstore.PRUpdate{FlowID: record.FlowID, Provider: record.PR.Provider, Number: record.PR.Number, URL: record.PR.URL, HeadBranch: record.PR.HeadBranch, BaseBranch: record.PR.BaseBranch})
 	if err != nil {
 		t.Fatalf("SetPR() error = %v", err)
@@ -6585,7 +6585,7 @@ func TestFirstLaunchablePhasePreservesPRMetadataForAutoreviewGate(t *testing.T) 
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     273,
-			URL:        "https://github.com/brian-bell/wtui/pull/273",
+			URL:        "https://github.com/approachcontrol/approach/pull/273",
 			HeadBranch: "flow/phase-graph",
 			BaseBranch: "main",
 		},
@@ -6906,7 +6906,7 @@ func mustCreateManualMergeFlow(t *testing.T, store *flowstore.Store, root string
 			FlowID:     record.FlowID,
 			Provider:   "github",
 			Number:     116,
-			URL:        "https://github.com/brian-bell/wtui/pull/116",
+			URL:        "https://github.com/approachcontrol/approach/pull/116",
 			HeadBranch: "flow/manual-merge",
 			BaseBranch: "main",
 			Status:     "open",

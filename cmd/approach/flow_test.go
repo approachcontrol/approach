@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/config"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "--help"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "--help"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for flow help")
 			return config.Config{}, nil
@@ -28,23 +28,23 @@ func TestRunFlowHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]",
-		"wtui flow read --flow-id",
-		"wtui flow phase complete --flow-id",
-		"wtui flow phase block --flow-id",
-		"wtui flow phase needs-attention --flow-id",
-		"wtui flow phase restart --flow-id",
-		"wtui flow phase reset --flow-id",
-		"wtui flow phase set --flow-id",
-		"wtui flow issue set --flow-id",
-		"wtui flow pr set --flow-id",
-		"wtui flow merge set --flow-id",
+		"Usage: approach flow <create|list|read|phase|plan|issue|pr|merge> [flags]",
+		"approach flow read --flow-id",
+		"approach flow phase complete --flow-id",
+		"approach flow phase block --flow-id",
+		"approach flow phase needs-attention --flow-id",
+		"approach flow phase restart --flow-id",
+		"approach flow phase reset --flow-id",
+		"approach flow phase set --flow-id",
+		"approach flow issue set --flow-id",
+		"approach flow pr set --flow-id",
+		"approach flow merge set --flow-id",
 	})
 }
 
 func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "phase", "--help"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "phase", "--help"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for flow phase help")
 			return config.Config{}, nil
@@ -55,15 +55,15 @@ func TestRunFlowPhaseHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
-		"wtui flow phase set --flow-id",
-		"wtui flow phase complete --flow-id",
-		"wtui flow phase block --flow-id",
-		"wtui flow phase needs-attention --flow-id",
-		"wtui flow phase restart --flow-id",
-		"wtui flow phase reset --flow-id",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
+		"approach flow phase set --flow-id",
+		"approach flow phase complete --flow-id",
+		"approach flow phase block --flow-id",
+		"approach flow phase needs-attention --flow-id",
+		"approach flow phase restart --flow-id",
+		"approach flow phase reset --flow-id",
 		"--status completed",
-		"wtui flow phase add-child --flow-id",
+		"approach flow phase add-child --flow-id",
 	})
 }
 
@@ -75,35 +75,35 @@ func TestRunFlowPhaseActionHelpPrintsExamplesWithoutLoadingConfig(t *testing.T) 
 	}{
 		{
 			name: "complete",
-			args: []string{"wtui", "flow", "phase", "complete", "--help"},
+			args: []string{"approach", "flow", "phase", "complete", "--help"},
 			wants: []string{
-				"Usage: wtui flow phase complete [flags]",
+				"Usage: approach flow phase complete [flags]",
 				"--flow-id FLOW_ID",
 				"--phase-id PHASE_ID",
 				"--outcome OUTCOME",
-				`wtui flow phase complete --flow-id "$FLOW_ID" --phase-id plan`,
+				`approach flow phase complete --flow-id "$FLOW_ID" --phase-id plan`,
 			},
 		},
 		{
 			name: "block",
-			args: []string{"wtui", "flow", "phase", "block", "--help"},
+			args: []string{"approach", "flow", "phase", "block", "--help"},
 			wants: []string{
-				"Usage: wtui flow phase block [flags]",
+				"Usage: approach flow phase block [flags]",
 				"--flow-id FLOW_ID",
 				"--phase-id PHASE_ID",
 				"--notes TEXT",
-				`wtui flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"`,
+				`approach flow phase block --flow-id "$FLOW_ID" --phase-id implementation --notes "Waiting on review"`,
 			},
 		},
 		{
 			name: "needs-attention",
-			args: []string{"wtui", "flow", "phase", "needs-attention", "--help"},
+			args: []string{"approach", "flow", "phase", "needs-attention", "--help"},
 			wants: []string{
-				"Usage: wtui flow phase needs-attention [flags]",
+				"Usage: approach flow phase needs-attention [flags]",
 				"--flow-id FLOW_ID",
 				"--phase-id PHASE_ID",
 				"--notes TEXT",
-				`wtui flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested`,
+				`approach flow phase needs-attention --flow-id "$FLOW_ID" --phase-id plan-review --outcome changes_requested`,
 			},
 		},
 	} {
@@ -129,7 +129,7 @@ func TestRunFlowPhaseActionHelpPrintsExamplesWithoutLoadingConfig(t *testing.T) 
 
 func TestRunFlowPhaseSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "phase", "set", "--help"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "phase", "set", "--help"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for flow phase set help")
 			return config.Config{}, nil
@@ -143,7 +143,7 @@ func TestRunFlowPhaseSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 		t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow phase set [flags]",
+		"Usage: approach flow phase set [flags]",
 		"--flow-id FLOW_ID",
 		"--phase-id PHASE_ID",
 		"--status STATUS",
@@ -152,7 +152,7 @@ func TestRunFlowPhaseSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 
 func TestRunFlowPRSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "pr", "set", "--help"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "pr", "set", "--help"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for flow pr set help")
 			return config.Config{}, nil
@@ -166,7 +166,7 @@ func TestRunFlowPRSetHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 		t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui flow pr set [flags]",
+		"Usage: approach flow pr set [flags]",
 		"--number N",
 		"--url URL",
 		"--head BRANCH",
@@ -178,8 +178,8 @@ func TestRunFlowIssueHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "issue", args: []string{"wtui", "flow", "issue", "--help"}},
-		{name: "issue set", args: []string{"wtui", "flow", "issue", "set", "--help"}},
+		{name: "issue", args: []string{"approach", "flow", "issue", "--help"}},
+		{name: "issue set", args: []string{"approach", "flow", "issue", "set", "--help"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout bytes.Buffer
@@ -197,10 +197,10 @@ func TestRunFlowIssueHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 				t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
 			}
 			requireContainsAll(t, stdout.String(), []string{
-				"Usage: wtui flow issue set [flags]",
+				"Usage: approach flow issue set [flags]",
 				"--number N",
 				"--url URL",
-				"wtui flow issue set --flow-id",
+				"approach flow issue set --flow-id",
 			})
 		})
 	}
@@ -214,64 +214,64 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	}{
 		{
 			name: "create",
-			args: []string{"wtui", "flow", "create", "--help"},
+			args: []string{"approach", "flow", "create", "--help"},
 			wants: []string{
-				"Usage: wtui flow create [flags]",
+				"Usage: approach flow create [flags]",
 				"--title TITLE",
 				"--instructions TEXT",
 			},
 		},
 		{
 			name: "list",
-			args: []string{"wtui", "flow", "list", "--help"},
+			args: []string{"approach", "flow", "list", "--help"},
 			wants: []string{
-				"Usage: wtui flow list [flags]",
+				"Usage: approach flow list [flags]",
 				"--json",
 				"--repo-path PATH",
 			},
 		},
 		{
 			name: "read",
-			args: []string{"wtui", "flow", "read", "--help"},
+			args: []string{"approach", "flow", "read", "--help"},
 			wants: []string{
-				"Usage: wtui flow read [flags]",
+				"Usage: approach flow read [flags]",
 				"--flow-id FLOW_ID",
-				"wtui flow read --flow-id",
+				"approach flow read --flow-id",
 			},
 		},
 		{
 			name: "phase add-child",
-			args: []string{"wtui", "flow", "phase", "add-child", "--help"},
+			args: []string{"approach", "flow", "phase", "add-child", "--help"},
 			wants: []string{
-				"Usage: wtui flow phase add-child [flags]",
+				"Usage: approach flow phase add-child [flags]",
 				"--phase-id PHASE_ID",
 				"--order N",
 			},
 		},
 		{
 			name: "phase reset",
-			args: []string{"wtui", "flow", "phase", "reset", "--help"},
+			args: []string{"approach", "flow", "phase", "reset", "--help"},
 			wants: []string{
-				"Usage: wtui flow phase reset [flags]",
+				"Usage: approach flow phase reset [flags]",
 				"--flow-id FLOW_ID",
 				"--phase-id PHASE_ID",
-				"wtui flow phase reset --flow-id",
+				"approach flow phase reset --flow-id",
 			},
 		},
 		{
 			name: "plan set",
-			args: []string{"wtui", "flow", "plan", "set", "--help"},
+			args: []string{"approach", "flow", "plan", "set", "--help"},
 			wants: []string{
-				"Usage: wtui flow plan set [flags]",
+				"Usage: approach flow plan set [flags]",
 				"--flow-id FLOW_ID",
 				"--plan-id PLAN_ID",
 			},
 		},
 		{
 			name: "merge set",
-			args: []string{"wtui", "flow", "merge", "set", "--help"},
+			args: []string{"approach", "flow", "merge", "set", "--help"},
 			wants: []string{
-				"Usage: wtui flow merge set [flags]",
+				"Usage: approach flow merge set [flags]",
 				"--status STATUS",
 				"--merged-at RFC3339_TIMESTAMP",
 			},
@@ -298,7 +298,7 @@ func TestRunFlowLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 }
 
 func TestRunFlowUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
-	err := run([]string{"wtui", "flow", "phaze"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "phaze"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown flow subcommand")
 			return config.Config{}, nil
@@ -310,13 +310,13 @@ func TestRunFlowUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "phaze"; did you mean "phase"?`,
-		"Usage: wtui flow <create|list|read|phase|plan|issue|pr|merge> [flags]",
+		"Usage: approach flow <create|list|read|phase|plan|issue|pr|merge> [flags]",
 		"issue set",
 	})
 }
 
 func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
-	err := run([]string{"wtui", "flow", "phase", "ste"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "phase", "ste"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown flow phase subcommand")
 			return config.Config{}, nil
@@ -328,12 +328,12 @@ func TestRunFlowPhaseUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "ste"; did you mean "set"?`,
-		"Usage: wtui flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
+		"Usage: approach flow phase <set|complete|block|needs-attention|restart|reset|add-child> [flags]",
 	})
 }
 
 func TestRunFlowPhaseUnknownSubcommandSuggestsReset(t *testing.T) {
-	err := run([]string{"wtui", "flow", "phase", "rese"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "flow", "phase", "rese"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown flow phase subcommand")
 			return config.Config{}, nil
@@ -354,10 +354,10 @@ func TestRunFlowNestedSetSubcommandsSuggestSet(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "plan", args: []string{"wtui", "flow", "plan", "sete"}},
-		{name: "issue", args: []string{"wtui", "flow", "issue", "sete"}},
-		{name: "pr", args: []string{"wtui", "flow", "pr", "sete"}},
-		{name: "merge", args: []string{"wtui", "flow", "merge", "sete"}},
+		{name: "plan", args: []string{"approach", "flow", "plan", "sete"}},
+		{name: "issue", args: []string{"approach", "flow", "issue", "sete"}},
+		{name: "pr", args: []string{"approach", "flow", "pr", "sete"}},
+		{name: "merge", args: []string{"approach", "flow", "merge", "sete"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := run(tc.args, noScanDeps(t, runDeps{
@@ -372,7 +372,7 @@ func TestRunFlowNestedSetSubcommandsSuggestSet(t *testing.T) {
 			}
 			requireContainsAll(t, err.Error(), []string{
 				`unknown command "sete"; did you mean "set"?`,
-				"Usage: wtui flow",
+				"Usage: approach flow",
 			})
 		})
 	}
@@ -388,7 +388,7 @@ func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Add Flow Mode",
 		"--instructions-file", instructionsFile,
 		"--repo-path", repoPath,
@@ -426,10 +426,10 @@ func TestRunFlowCreatePrintsJSONRecord(t *testing.T) {
 func TestRunFlowReadWithExplicitStateRootUsesRequestedRoot(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Readable", "--instructions", "read it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Readable", "--instructions", "read it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+	err := run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
 		noScanDeps(t, runDeps{
 			stdout: &stdout,
 		}))
@@ -445,11 +445,11 @@ func TestRunFlowListJSONFiltersByRepo(t *testing.T) {
 	root := t.TempDir()
 	alpha := filepath.Join(root, "alpha")
 	bravo := filepath.Join(root, "bravo")
-	mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Alpha", "--instructions", "alpha", "--repo-path", alpha, "--json", "--state-root", root})
-	mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Bravo", "--instructions", "bravo", "--repo-path", bravo, "--json", "--state-root", root})
+	mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Alpha", "--instructions", "alpha", "--repo-path", alpha, "--json", "--state-root", root})
+	mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Bravo", "--instructions", "bravo", "--repo-path", bravo, "--json", "--state-root", root})
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "list", "--repo-path", alpha, "--json", "--state-root", root},
+	err := run([]string{"approach", "flow", "list", "--repo-path", alpha, "--json", "--state-root", root},
 		noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -464,7 +464,7 @@ func TestRunFlowListJSONFiltersByRepo(t *testing.T) {
 }
 
 func TestRunFlowListRequiresJSON(t *testing.T) {
-	err := run([]string{"wtui", "flow", "list", "--state-root", t.TempDir()},
+	err := run([]string{"approach", "flow", "list", "--state-root", t.TempDir()},
 		noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --json")
@@ -477,10 +477,10 @@ func TestRunFlowListRequiresJSON(t *testing.T) {
 func TestRunFlowReadPrintsJSONRecord(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Readable", "--instructions", "read it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Readable", "--instructions", "read it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+	err := run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
 		noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -498,14 +498,14 @@ func TestRunFlowPlanSetLinksPlanArtifact(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
 	planPath := filepath.Join(root, "plans", "plan-1", "plan.md")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Plan Link", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Plan Link", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
 	savePlanArtifact(t, root, "plan-1")
 
 	var linkedAt string
 	for i := 0; i < 2; i++ {
 		var stdout bytes.Buffer
 		args := []string{
-			"wtui", "flow", "plan", "set",
+			"approach", "flow", "plan", "set",
 			"--flow-id", created.FlowID,
 			"--plan-id", "plan-1",
 			"--state-root", root,
@@ -550,7 +550,7 @@ func TestRunFlowPlanSetLinksPlanArtifact(t *testing.T) {
 func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Plan Link Validation", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Plan Link Validation", "--instructions", "plan it", "--repo-path", repoPath, "--json", "--state-root", root})
 	savePlanArtifact(t, root, "plan-1")
 
 	for _, tc := range []struct {
@@ -560,27 +560,27 @@ func TestRunFlowPlanSetValidatesInputsAndKeepsRecordUnchanged(t *testing.T) {
 	}{
 		{
 			name: "missing plan id",
-			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-path", filepath.Join(root, "plans", "plan-1", "plan.md"), "--state-root", root},
+			args: []string{"approach", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-path", filepath.Join(root, "plans", "plan-1", "plan.md"), "--state-root", root},
 			want: "requires --plan-id",
 		},
 		{
 			name: "missing plan",
-			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "missing-plan", "--state-root", root},
+			args: []string{"approach", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "missing-plan", "--state-root", root},
 			want: `plan "missing-plan" not found`,
 		},
 		{
 			name: "relative plan path",
-			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-1", "--plan-path", "plans/plan-1/plan.md", "--state-root", root},
+			args: []string{"approach", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-1", "--plan-path", "plans/plan-1/plan.md", "--state-root", root},
 			want: "flow plan path must be absolute",
 		},
 		{
 			name: "mismatched plan path",
-			args: []string{"wtui", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-1", "--plan-path", filepath.Join(root, "plans", "other", "plan.md"), "--state-root", root},
+			args: []string{"approach", "flow", "plan", "set", "--flow-id", created.FlowID, "--plan-id", "plan-1", "--plan-path", filepath.Join(root, "plans", "other", "plan.md"), "--state-root", root},
 			want: "does not match plan",
 		},
 		{
 			name: "missing flow",
-			args: []string{"wtui", "flow", "plan", "set", "--flow-id", "missing-flow", "--plan-id", "plan-1", "--plan-path", filepath.Join(root, "plans", "plan-1", "plan.md"), "--state-root", root},
+			args: []string{"approach", "flow", "plan", "set", "--flow-id", "missing-flow", "--plan-id", "plan-1", "--plan-path", filepath.Join(root, "plans", "plan-1", "plan.md"), "--state-root", root},
 			want: `flow "missing-flow" not found`,
 		},
 	} {
@@ -609,7 +609,7 @@ func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "PR metadata",
 		"--instructions", "open a pull request",
 		"--repo-path", repoPath,
@@ -627,11 +627,11 @@ func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "pr", "set",
+		"approach", "flow", "pr", "set",
 		"--flow-id", created.FlowID,
 		"--provider", "github",
 		"--number", "115",
-		"--url", "https://github.com/brian-bell/wtui/pull/115",
+		"--url", "https://github.com/approachcontrol/approach/pull/115",
 		"--head", "flow/pr-metadata",
 		"--base", "main",
 		"--status", "open",
@@ -647,7 +647,7 @@ func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
 	}
 	if updated.PR.Provider != "github" ||
 		updated.PR.Number != 115 ||
-		updated.PR.URL != "https://github.com/brian-bell/wtui/pull/115" ||
+		updated.PR.URL != "https://github.com/approachcontrol/approach/pull/115" ||
 		updated.PR.HeadBranch != "flow/pr-metadata" ||
 		updated.PR.BaseBranch != "main" ||
 		updated.PR.Status != "open" {
@@ -661,7 +661,7 @@ func TestRunFlowPRSetPrintsJSONRecordAndUngatesAutoreview(t *testing.T) {
 func TestRunFlowPRSetValidatesRequiredInputs(t *testing.T) {
 	root := t.TempDir()
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "PR validation",
 		"--instructions", "validate input",
 		"--repo-path", filepath.Join(root, "repo"),
@@ -677,17 +677,17 @@ func TestRunFlowPRSetValidatesRequiredInputs(t *testing.T) {
 	}{
 		{
 			name: "missing number",
-			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--url", "https://github.com/brian-bell/wtui/pull/115", "--head", "flow/pr-validation", "--base", "main", "--state-root", root},
+			args: []string{"approach", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--url", "https://github.com/approachcontrol/approach/pull/115", "--head", "flow/pr-validation", "--base", "main", "--state-root", root},
 			want: "requires positive --number",
 		},
 		{
 			name: "missing url",
-			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--head", "flow/pr-validation", "--base", "main", "--state-root", root},
+			args: []string{"approach", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--head", "flow/pr-validation", "--base", "main", "--state-root", root},
 			want: "requires --url",
 		},
 		{
 			name: "branch mismatch",
-			args: []string{"wtui", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--url", "https://github.com/brian-bell/wtui/pull/115", "--head", "feature/other", "--base", "main", "--state-root", root},
+			args: []string{"approach", "flow", "pr", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "115", "--url", "https://github.com/approachcontrol/approach/pull/115", "--head", "feature/other", "--base", "main", "--state-root", root},
 			want: "must match flow branch",
 		},
 	} {
@@ -704,7 +704,7 @@ func TestRunFlowIssueSetPrintsJSONRecord(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Issue metadata",
 		"--instructions", "link an issue",
 		"--repo-path", repoPath,
@@ -715,11 +715,11 @@ func TestRunFlowIssueSetPrintsJSONRecord(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "issue", "set",
+		"approach", "flow", "issue", "set",
 		"--flow-id", created.FlowID,
 		"--provider", "github",
 		"--number", "123",
-		"--url", "https://github.com/brian-bell/wtui/issues/123",
+		"--url", "https://github.com/approachcontrol/approach/issues/123",
 		"--state-root", root,
 	}, noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
@@ -732,12 +732,12 @@ func TestRunFlowIssueSetPrintsJSONRecord(t *testing.T) {
 	}
 	if updated.Issue.Provider != "github" ||
 		updated.Issue.Number != 123 ||
-		updated.Issue.URL != "https://github.com/brian-bell/wtui/issues/123" {
+		updated.Issue.URL != "https://github.com/approachcontrol/approach/issues/123" {
 		t.Fatalf("Issue metadata = %#v", updated.Issue)
 	}
 
 	stdout.Reset()
-	err = run([]string{"wtui", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
+	err = run([]string{"approach", "flow", "read", "--flow-id", created.FlowID, "--state-root", root},
 		noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
 		t.Fatalf("flow read returned error: %v", err)
@@ -754,7 +754,7 @@ func TestRunFlowIssueSetPrintsJSONRecord(t *testing.T) {
 func TestRunFlowIssueSetValidatesRequiredInputs(t *testing.T) {
 	root := t.TempDir()
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Issue validation",
 		"--instructions", "validate input",
 		"--repo-path", filepath.Join(root, "repo"),
@@ -770,17 +770,17 @@ func TestRunFlowIssueSetValidatesRequiredInputs(t *testing.T) {
 	}{
 		{
 			name: "missing flow id",
-			args: []string{"wtui", "flow", "issue", "set", "--provider", "github", "--number", "123", "--url", "https://github.com/brian-bell/wtui/issues/123", "--state-root", root},
+			args: []string{"approach", "flow", "issue", "set", "--provider", "github", "--number", "123", "--url", "https://github.com/approachcontrol/approach/issues/123", "--state-root", root},
 			want: "requires --flow-id",
 		},
 		{
 			name: "missing number",
-			args: []string{"wtui", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--url", "https://github.com/brian-bell/wtui/issues/123", "--state-root", root},
+			args: []string{"approach", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--url", "https://github.com/approachcontrol/approach/issues/123", "--state-root", root},
 			want: "requires positive --number",
 		},
 		{
 			name: "missing url",
-			args: []string{"wtui", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "123", "--state-root", root},
+			args: []string{"approach", "flow", "issue", "set", "--flow-id", created.FlowID, "--provider", "github", "--number", "123", "--state-root", root},
 			want: "requires --url",
 		},
 	} {
@@ -797,7 +797,7 @@ func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Merge metadata",
 		"--instructions", "merge deliberately",
 		"--repo-path", repoPath,
@@ -813,11 +813,11 @@ func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
 		mustSetFlowPhase(t, root, created.FlowID, phaseID, flowstore.PhaseCompleted, outcome, "", "")
 	}
 	mustRunFlow(t, []string{
-		"wtui", "flow", "pr", "set",
+		"approach", "flow", "pr", "set",
 		"--flow-id", created.FlowID,
 		"--provider", "github",
 		"--number", "116",
-		"--url", "https://github.com/brian-bell/wtui/pull/116",
+		"--url", "https://github.com/approachcontrol/approach/pull/116",
 		"--head", "flow/merge-metadata",
 		"--base", "main",
 		"--status", "open",
@@ -828,7 +828,7 @@ func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "merge", "set",
+		"approach", "flow", "merge", "set",
 		"--flow-id", created.FlowID,
 		"--status", "merged",
 		"--commit", "0123456789abcdef",
@@ -855,7 +855,7 @@ func TestRunFlowMergeSetPrintsJSONRecord(t *testing.T) {
 func TestRunFlowMergeSetValidatesInputs(t *testing.T) {
 	root := t.TempDir()
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Merge validation",
 		"--instructions", "validate merge input",
 		"--repo-path", filepath.Join(root, "repo"),
@@ -871,27 +871,27 @@ func TestRunFlowMergeSetValidatesInputs(t *testing.T) {
 	}{
 		{
 			name: "missing status",
-			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--commit", "abc123", "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
+			args: []string{"approach", "flow", "merge", "set", "--flow-id", created.FlowID, "--commit", "abc123", "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
 			want: "requires --status",
 		},
 		{
 			name: "missing commit",
-			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
+			args: []string{"approach", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
 			want: "requires --commit",
 		},
 		{
 			name: "missing merged at",
-			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--commit", "abc123", "--state-root", root},
+			args: []string{"approach", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--commit", "abc123", "--state-root", root},
 			want: "requires --merged-at",
 		},
 		{
 			name: "bad merged at",
-			args: []string{"wtui", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--commit", "abc123", "--merged-at", "not-a-time", "--state-root", root},
+			args: []string{"approach", "flow", "merge", "set", "--flow-id", created.FlowID, "--status", flowstore.MergeMerged, "--commit", "abc123", "--merged-at", "not-a-time", "--state-root", root},
 			want: "invalid --merged-at",
 		},
 		{
 			name: "missing flow",
-			args: []string{"wtui", "flow", "merge", "set", "--flow-id", "missing-flow", "--status", flowstore.MergeMerged, "--commit", "abc123", "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
+			args: []string{"approach", "flow", "merge", "set", "--flow-id", "missing-flow", "--status", flowstore.MergeMerged, "--commit", "abc123", "--merged-at", "2026-06-08T15:04:05Z", "--state-root", root},
 			want: `flow "missing-flow" not found`,
 		},
 	} {
@@ -920,10 +920,10 @@ func TestRunFlowPhaseSetUpdatesAgentFacingStatus(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoPath := filepath.Join(root, "repo-"+tc.name)
-			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 			args := []string{
-				"wtui", "flow", "phase", "set",
+				"approach", "flow", "phase", "set",
 				"--flow-id", created.FlowID,
 				"--phase-id", "plan",
 				"--status", tc.status,
@@ -969,13 +969,13 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoPath := filepath.Join(root, "repo-implementation-"+strings.ReplaceAll(tc.name, " ", "-"))
-			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 			mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
 			mustSetFlowPhase(t, root, created.FlowID, "plan-review", flowstore.PhaseCompleted, "approved", "", "")
 
 			var stdout bytes.Buffer
 			err := run([]string{
-				"wtui", "flow", "phase", "set",
+				"approach", "flow", "phase", "set",
 				"--flow-id", created.FlowID,
 				"--phase-id", "implementation",
 				"--status", tc.status,
@@ -1005,11 +1005,11 @@ func TestRunFlowPhaseSetImplementationOutcomesAfterApprovedReview(t *testing.T) 
 func TestRunFlowPhaseActionCompletePrintsNextActionablePhase(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Action Complete", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Action Complete", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "phase", "complete",
+		"approach", "flow", "phase", "complete",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
 		"--summary", "Saved the implementation plan.",
@@ -1060,10 +1060,10 @@ func TestRunFlowPhaseActionsMapToCanonicalStatuses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoPath := filepath.Join(root, "repo-"+strings.ReplaceAll(tc.name, " ", "-"))
-			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 			args := []string{
-				"wtui", "flow", "phase", tc.command,
+				"approach", "flow", "phase", tc.command,
 				"--flow-id", created.FlowID,
 				"--phase-id", "plan",
 				"--state-root", root,
@@ -1111,11 +1111,11 @@ func TestRunFlowPhaseActionsDefaultPlanReviewOutcomes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoPath := filepath.Join(root, "repo-plan-review-"+strings.ReplaceAll(tc.name, " ", "-"))
-			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 			mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
 
 			args := []string{
-				"wtui", "flow", "phase", tc.command,
+				"approach", "flow", "phase", tc.command,
 				"--flow-id", created.FlowID,
 				"--phase-id", "plan-review",
 				"--state-root", root,
@@ -1168,7 +1168,7 @@ func TestRunFlowPhaseActionsDefaultOutcomesByKind(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err = run([]string{
-		"wtui", "flow", "phase", "complete",
+		"approach", "flow", "phase", "complete",
 		"--flow-id", record.FlowID,
 		"--phase-id", "design-review",
 		"--state-root", root,
@@ -1186,7 +1186,7 @@ func TestRunFlowPhaseActionsDefaultOutcomesByKind(t *testing.T) {
 
 	stdout.Reset()
 	err = run([]string{
-		"wtui", "flow", "phase", "complete",
+		"approach", "flow", "phase", "complete",
 		"--flow-id", record.FlowID,
 		"--phase-id", "second-review",
 		"--state-root", root,
@@ -1220,7 +1220,7 @@ func TestRunFlowPhaseActionsDefaultAutoreviewOutcomes(t *testing.T) {
 			created := mustRunFlowReadyForAutoreview(t, root, tc.name, branch)
 
 			args := []string{
-				"wtui", "flow", "phase", tc.command,
+				"approach", "flow", "phase", tc.command,
 				"--flow-id", created.FlowID,
 				"--phase-id", "autoreview",
 				"--state-root", root,
@@ -1274,7 +1274,7 @@ func TestRunFlowPhaseRestartRerunsAttentionAndBlockedPhases(t *testing.T) {
 
 			var stdout bytes.Buffer
 			err := run([]string{
-				"wtui", "flow", "phase", "restart",
+				"approach", "flow", "phase", "restart",
 				"--flow-id", created.FlowID,
 				"--phase-id", "autoreview",
 				"--state-root", root,
@@ -1309,7 +1309,7 @@ func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
 			name: "pending",
 			prepare: func(t *testing.T) flowstore.FlowRecord {
 				return mustRunFlow(t, []string{
-					"wtui", "flow", "create",
+					"approach", "flow", "create",
 					"--title", "pending restart",
 					"--instructions", "phase it",
 					"--repo-path", filepath.Join(root, "repo-pending"),
@@ -1346,7 +1346,7 @@ func TestRunFlowPhaseRestartRejectsNonRecoveryStates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			record := tc.prepare(t)
 			err := run([]string{
-				"wtui", "flow", "phase", "restart",
+				"approach", "flow", "phase", "restart",
 				"--flow-id", record.FlowID,
 				"--phase-id", "autoreview",
 				"--state-root", root,
@@ -1398,7 +1398,7 @@ func TestRunFlowPhaseResetReturnsEndedSessionPhaseToReady(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err = run([]string{
-		"wtui", "flow", "phase", "reset",
+		"approach", "flow", "phase", "reset",
 		"--flow-id", record.FlowID,
 		"--phase-id", "implementation",
 		"--state-root", root,
@@ -1438,7 +1438,7 @@ func TestRunFlowPhaseResetReturnsAwaitingSessionPhaseToReady(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err = run([]string{
-		"wtui", "flow", "phase", "reset",
+		"approach", "flow", "phase", "reset",
 		"--flow-id", record.FlowID,
 		"--phase-id", "implementation",
 		"--state-root", root,
@@ -1528,7 +1528,7 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 			before := phaseByID(record, "implementation")
 
 			err := run([]string{
-				"wtui", "flow", "phase", "reset",
+				"approach", "flow", "phase", "reset",
 				"--flow-id", record.FlowID,
 				"--phase-id", "implementation",
 				"--state-root", root,
@@ -1555,10 +1555,10 @@ func TestRunFlowPhaseResetRejectsIneligiblePhasesWithoutChangingRecord(t *testin
 func TestRunFlowPhaseActionRejectsInvalidTransitionAndKeepsRecordUnchanged(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Invalid Action", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Invalid Action", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	err := run([]string{
-		"wtui", "flow", "phase", "complete",
+		"approach", "flow", "phase", "complete",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan-review",
 		"--outcome", flowstore.OutcomeApproved,
@@ -1625,11 +1625,11 @@ func TestRunFlowPhaseActionsRejectInvalidPlanReviewOutcomes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoPath := filepath.Join(root, "repo-invalid-plan-review-"+strings.ReplaceAll(tc.name, " ", "-"))
-			created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+			created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", tc.name, "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 			mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
 
 			args := []string{
-				"wtui", "flow", "phase", tc.command,
+				"approach", "flow", "phase", tc.command,
 				"--flow-id", created.FlowID,
 				"--phase-id", "plan-review",
 				"--state-root", root,
@@ -1651,7 +1651,7 @@ func TestRunFlowPhaseActionsRejectInvalidPlanReviewOutcomes(t *testing.T) {
 func TestRunFlowPhaseAddChildCreatesIdempotentImplementationChild(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Children", "--instructions", "split implementation", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Children", "--instructions", "split implementation", "--repo-path", repoPath, "--json", "--state-root", root})
 	mustSetFlowPhase(t, root, created.FlowID, "plan", flowstore.PhaseCompleted, "", "", "")
 	mustSetFlowPhase(t, root, created.FlowID, "plan-review", flowstore.PhaseCompleted, "approved", "", "")
 
@@ -1659,7 +1659,7 @@ func TestRunFlowPhaseAddChildCreatesIdempotentImplementationChild(t *testing.T) 
 	for i := 0; i < 2; i++ {
 		var stdout bytes.Buffer
 		err := run([]string{
-			"wtui", "flow", "phase", "add-child",
+			"approach", "flow", "phase", "add-child",
 			"--flow-id", created.FlowID,
 			"--parent-phase-id", "implementation",
 			"--phase-id", "implementation-api",
@@ -1692,10 +1692,10 @@ func TestRunFlowPhaseAddChildCreatesIdempotentImplementationChild(t *testing.T) 
 func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Restart Blocked", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Restart Blocked", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	err := run([]string{
-		"wtui", "flow", "phase", "set",
+		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
 		"--status", flowstore.PhaseBlocked,
@@ -1706,7 +1706,7 @@ func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 	}
 
 	err = run([]string{
-		"wtui", "flow", "phase", "set",
+		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
 		"--status", flowstore.PhaseRunning,
@@ -1718,7 +1718,7 @@ func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err = run([]string{
-		"wtui", "flow", "phase", "set",
+		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
 		"--status", flowstore.PhaseRunning,
@@ -1743,7 +1743,7 @@ func TestRunFlowPhaseSetRestartsBlockedPhaseWithNotes(t *testing.T) {
 func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Reject Status", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Reject Status", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	for _, tc := range []struct {
 		name   string
@@ -1755,7 +1755,7 @@ func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := run([]string{
-				"wtui", "flow", "phase", "set",
+				"approach", "flow", "phase", "set",
 				"--flow-id", created.FlowID,
 				"--phase-id", "plan",
 				"--status", tc.status,
@@ -1771,10 +1771,10 @@ func TestRunFlowPhaseSetRejectsUnsupportedStatuses(t *testing.T) {
 func TestRunFlowPhaseSetRejectsSkippedWithoutNotes(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
-	created := mustRunFlow(t, []string{"wtui", "flow", "create", "--title", "Reject Skip", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Reject Skip", "--instructions", "phase it", "--repo-path", repoPath, "--json", "--state-root", root})
 
 	err := run([]string{
-		"wtui", "flow", "phase", "set",
+		"approach", "flow", "phase", "set",
 		"--flow-id", created.FlowID,
 		"--phase-id", "plan",
 		"--status", flowstore.PhaseSkipped,
@@ -1805,18 +1805,18 @@ func TestRunFlowCreateStateRootPrecedence(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "repo")
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", repoPath, "--json"},
+	err := run([]string{"approach", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", repoPath, "--json"},
 		noScanDeps(t, runDeps{
 			loadConfig: func() (config.Config, error) {
 				return config.Config{Sessions: config.SessionsConfig{Root: configRoot}}, nil
 			},
 			getenv: func(key string) string {
 				switch key {
-				case "WTUI_FLOW_STATE_ROOT":
+				case "APPROACH_FLOW_STATE_ROOT":
 					return flowRoot
-				case "WTUI_PLAN_STATE_ROOT":
+				case "APPROACH_PLAN_STATE_ROOT":
 					return planRoot
-				case "WTUI_SESSION_STATE_ROOT":
+				case "APPROACH_SESSION_STATE_ROOT":
 					return sessionRoot
 				}
 				return ""
@@ -1831,7 +1831,7 @@ func TestRunFlowCreateStateRootPrecedence(t *testing.T) {
 		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(flowRoot, "flows", record.FlowID, "meta.json")); err != nil {
-		t.Fatalf("expected flow under WTUI_FLOW_STATE_ROOT: %v", err)
+		t.Fatalf("expected flow under APPROACH_FLOW_STATE_ROOT: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(planRoot, "flows", record.FlowID, "meta.json")); !os.IsNotExist(err) {
 		t.Fatalf("flow should not be under plan root")
@@ -1844,8 +1844,8 @@ func TestRunFlowCreateFallsBackToPlanThenSessionRoot(t *testing.T) {
 		envKey  string
 		rootKey string
 	}{
-		{name: "plan root", envKey: "WTUI_PLAN_STATE_ROOT", rootKey: "plan"},
-		{name: "session root", envKey: "WTUI_SESSION_STATE_ROOT", rootKey: "session"},
+		{name: "plan root", envKey: "APPROACH_PLAN_STATE_ROOT", rootKey: "plan"},
+		{name: "session root", envKey: "APPROACH_SESSION_STATE_ROOT", rootKey: "session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			roots := map[string]string{
@@ -1854,7 +1854,7 @@ func TestRunFlowCreateFallsBackToPlanThenSessionRoot(t *testing.T) {
 			}
 			repoPath := filepath.Join(t.TempDir(), "repo")
 			var stdout bytes.Buffer
-			err := run([]string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", repoPath, "--json"},
+			err := run([]string{"approach", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", repoPath, "--json"},
 				noScanDeps(t, runDeps{
 					getenv: func(key string) string {
 						if key == tc.envKey {
@@ -1906,7 +1906,7 @@ func TestRunFlowReadEnvRootLoadsConfigPresetsForRecovery(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "read", "--flow-id", flowID},
+	err := run([]string{"approach", "flow", "read", "--flow-id", flowID},
 		noScanDeps(t, runDeps{
 			loadConfig: func() (config.Config, error) {
 				return config.Config{
@@ -1916,7 +1916,7 @@ func TestRunFlowReadEnvRootLoadsConfigPresetsForRecovery(t *testing.T) {
 				}, nil
 			},
 			getenv: func(key string) string {
-				if key == "WTUI_FLOW_STATE_ROOT" {
+				if key == "APPROACH_FLOW_STATE_ROOT" {
 					return root
 				}
 				return ""
@@ -1963,7 +1963,7 @@ func TestRunFlowReadExplicitStateRootLoadsConfigPresetsForRecovery(t *testing.T)
 	}
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "flow", "read", "--flow-id", flowID, "--state-root", root},
+	err := run([]string{"approach", "flow", "read", "--flow-id", flowID, "--state-root", root},
 		noScanDeps(t, runDeps{
 			loadConfig: func() (config.Config, error) {
 				return config.Config{
@@ -1991,7 +1991,7 @@ func TestRunFlowCreateWithPresetFlagSeedsCustomGraph(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Research",
 		"--instructions", "phase it",
 		"--repo-path", repoPath,
@@ -2032,7 +2032,7 @@ func TestRunFlowCreateUsesConfiguredDefaultPreset(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Research",
 		"--instructions", "phase it",
 		"--repo-path", repoPath,
@@ -2069,7 +2069,7 @@ func TestRunFlowCreateRejectsUnknownPreset(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	err := run([]string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Research",
 		"--instructions", "phase it",
 		"--repo-path", repoPath,
@@ -2101,7 +2101,7 @@ func TestRunFlowCreateWithoutPresetUsesDefault(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", "Default",
 		"--instructions", "phase it",
 		"--repo-path", repoPath,
@@ -2129,7 +2129,7 @@ func TestRunFlowCreateWithoutPresetUsesDefault(t *testing.T) {
 }
 
 func TestRunFlowCreateRequiresJSON(t *testing.T) {
-	err := run([]string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", "/repo", "--state-root", t.TempDir()},
+	err := run([]string{"approach", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", "/repo", "--state-root", t.TempDir()},
 		noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --json")
@@ -2163,12 +2163,12 @@ func TestRunFlowCreateValidatesRepoPathBeforeLoadingConfig(t *testing.T) {
 	}{
 		{
 			name: "missing repo path",
-			args: []string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--json"},
+			args: []string{"approach", "flow", "create", "--title", "P", "--instructions", "i", "--json"},
 			want: "requires --repo-path",
 		},
 		{
 			name: "relative repo path",
-			args: []string{"wtui", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", "repo", "--json"},
+			args: []string{"approach", "flow", "create", "--title", "P", "--instructions", "i", "--repo-path", "repo", "--json"},
 			want: "requires absolute --repo-path",
 		},
 	} {
@@ -2203,7 +2203,7 @@ func mustRunFlow(t *testing.T, args []string) flowstore.FlowRecord {
 func mustRunFlowReadyForImplementation(t *testing.T, root, title, branch string) flowstore.FlowRecord {
 	t.Helper()
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", title,
 		"--instructions", "phase it",
 		"--repo-path", filepath.Join(root, "repo-"+strings.ReplaceAll(title, " ", "-")),
@@ -2218,7 +2218,7 @@ func mustRunFlowReadyForImplementation(t *testing.T, root, title, branch string)
 func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flowstore.FlowRecord {
 	t.Helper()
 	created := mustRunFlow(t, []string{
-		"wtui", "flow", "create",
+		"approach", "flow", "create",
 		"--title", title,
 		"--instructions", "phase it",
 		"--repo-path", filepath.Join(root, "repo-"+strings.ReplaceAll(title, " ", "-")),
@@ -2234,11 +2234,11 @@ func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flo
 		mustSetFlowPhase(t, root, created.FlowID, phaseID, flowstore.PhaseCompleted, outcome, "", "")
 	}
 	return mustRunFlow(t, []string{
-		"wtui", "flow", "pr", "set",
+		"approach", "flow", "pr", "set",
 		"--flow-id", created.FlowID,
 		"--provider", "github",
 		"--number", "115",
-		"--url", "https://github.com/brian-bell/wtui/pull/115",
+		"--url", "https://github.com/approachcontrol/approach/pull/115",
 		"--head", branch,
 		"--base", "main",
 		"--state-root", root,
@@ -2248,7 +2248,7 @@ func mustRunFlowReadyForAutoreview(t *testing.T, root, title, branch string) flo
 func mustSetFlowPhase(t *testing.T, root, flowID, phaseID, status, outcome, summary, notes string) flowstore.FlowRecord {
 	t.Helper()
 	args := []string{
-		"wtui", "flow", "phase", "set",
+		"approach", "flow", "phase", "set",
 		"--flow-id", flowID,
 		"--phase-id", phaseID,
 		"--status", status,

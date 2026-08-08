@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/agent"
+	"github.com/approachcontrol/approach/agent"
 )
 
 func TestNormalizeSupportsCodexApp(t *testing.T) {

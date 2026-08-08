@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brian-bell/wtui/flowstore"
+	"github.com/approachcontrol/approach/flowstore"
 )
 
-const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with wtui-flow."
+const flowPhaseDoneInstruction = "After completing this phase goal, mark this Flow phase done with approach-flow."
 
 // FlowPromptTemplates stores optional launch prompt templates for Flow phases.
 // Unknown placeholders are left literal so users can evolve templates safely.
@@ -149,7 +149,7 @@ func flowPhasePromptNeedsPlanBody(phase flowstore.FlowPhase) bool {
 }
 
 func flowPlanReviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalArtifactPrompt("Use the review-loop skill to review the saved plan, max 6 loops.\nUse the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
+	return flowMinimalArtifactPrompt("Use the review-loop skill to review the saved plan, max 6 loops.\nUse the approach-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.", planPath, record, phase)
 }
 
 func flowImplementationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -168,12 +168,12 @@ func flowImplementationWithoutPlanPrompt(record flowstore.FlowRecord, phase flow
 	writeFlowPromptPhaseSummaryByKind(&b, record, "Plan Review context", flowstore.KindPlanReview)
 	writeFlowRestartPromptIfNeeded(&b, record, phase)
 	b.WriteString("\nUse the commit skill before completing this phase.")
-	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the implementation is complete, blocked, or needs attention.")
+	b.WriteString("\nAdvance this phase with `approach flow phase set` only after the implementation is complete, blocked, or needs attention.")
 	return b.String()
 }
 
 func flowReviewLoopPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
-	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
+	return flowMinimalChangePrompt("Use the review-loop workflow with goal: review-and-revise.\nUse the commit skill when revisions are made.\nUse the approach-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.", record, phase)
 }
 
 func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -185,7 +185,7 @@ func flowPRCreationPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 	if base == "" {
 		base = "<base>"
 	}
-	instruction := fmt.Sprintf("Use the ship skill to create a PR for the changes.\nAfter the PR exists, run `wtui flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
+	instruction := fmt.Sprintf("Use the ship skill to create a PR for the changes.\nAfter the PR exists, run `approach flow pr set --flow-id %s --provider github --number <number> --url <url> --head %s --base %s` before completing this phase.", record.FlowID, head, base)
 	return flowMinimalChangePrompt(instruction, record, phase)
 }
 
@@ -204,7 +204,7 @@ func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 	var b strings.Builder
 	b.WriteString("Use the autoreview skill for this second-level review.\n")
 	b.WriteString("Use the ship skill when fixes require commits or pushes.\n")
-	b.WriteString("Use the wtui-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
+	b.WriteString("Use the approach-flow skill to record the Autoreview result before finishing; the phase is not done until the result is persisted.\n\n")
 	writeFlowChangeMetadata(&b, record)
 	if flowstore.HasPRTarget(record.PR) {
 		fmt.Fprintf(&b, "\nPR target:\n- PR: %s #%d\n- URL: %s\n- Head: %s\n- Base: %s", record.PR.Provider, record.PR.Number, record.PR.URL, record.PR.HeadBranch, record.PR.BaseBranch)
@@ -212,7 +212,7 @@ func flowAutoreviewPrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase
 			fmt.Fprintf(&b, "\n- Status: %s", record.PR.Status)
 		}
 	} else {
-		b.WriteString("\nPR target: missing. Do not run Autoreview until `wtui flow pr set` records provider, number, URL, head, and base.\n")
+		b.WriteString("\nPR target: missing. Do not run Autoreview until `approach flow pr set` records provider, number, URL, head, and base.\n")
 	}
 	return b.String()
 }
@@ -222,7 +222,7 @@ func writeFlowRestartPromptIfNeeded(b *strings.Builder, record flowstore.FlowRec
 		return
 	}
 	fmt.Fprintf(b, "\nRestart required: this phase is %s. Before marking it completed, record the rerun:\n", phase.Status)
-	fmt.Fprintf(b, "wtui flow phase restart --flow-id %s --phase-id %s --notes \"Rerunning %s after addressing prior findings.\"\n", record.FlowID, phase.PhaseID, phase.Title)
+	fmt.Fprintf(b, "approach flow phase restart --flow-id %s --phase-id %s --notes \"Rerunning %s after addressing prior findings.\"\n", record.FlowID, phase.PhaseID, phase.Title)
 }
 
 func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
@@ -235,13 +235,13 @@ func flowMergePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, pla
 			fmt.Fprintf(&b, "- Status: %s\n", record.PR.Status)
 		}
 	} else {
-		b.WriteString("\n\nPR target: missing. Do not merge until `wtui flow pr set` records provider, number, URL, head, and base.\n")
+		b.WriteString("\n\nPR target: missing. Do not merge until `approach flow pr set` records provider, number, URL, head, and base.\n")
 	}
 	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	fmt.Fprintf(&b, "\nmerged:\nwtui flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "wtui flow merge set --flow-id %s --status merged --commit <merge-commit> --merged-at <rfc3339>\n\n", record.FlowID)
-	fmt.Fprintf(&b, "blocked:\nwtui flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"\n", record.FlowID, phase.PhaseID)
-	fmt.Fprintf(&b, "wtui flow merge set --flow-id %s --status blocked", record.FlowID)
+	fmt.Fprintf(&b, "\nmerged:\napproach flow phase set --flow-id %s --phase-id %s --status completed --outcome merged --summary \"...\"\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "approach flow merge set --flow-id %s --status merged --commit <merge-commit> --merged-at <rfc3339>\n\n", record.FlowID)
+	fmt.Fprintf(&b, "blocked:\napproach flow phase set --flow-id %s --phase-id %s --status blocked --outcome blocked --notes \"...\"\n", record.FlowID, phase.PhaseID)
+	fmt.Fprintf(&b, "approach flow merge set --flow-id %s --status blocked", record.FlowID)
 	return b.String()
 }
 
@@ -273,7 +273,7 @@ func writeFlowChangeMetadata(b *strings.Builder, record flowstore.FlowRecord) {
 
 func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPhase, planPath, planBody string) string {
 	var b strings.Builder
-	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
+	b.WriteString("Use the approach-flow skill for this launch.\n\n")
 	b.WriteString("Flow phase: ")
 	if phase.Title != "" {
 		b.WriteString(phase.Title)
@@ -286,7 +286,7 @@ func flowGenericPhasePrompt(record flowstore.FlowRecord, phase flowstore.FlowPha
 	writeFlowPromptHeader(&b, record, planPath)
 	writeFlowPromptPlanContext(&b, record, planBody)
 	writeFlowRestartPromptIfNeeded(&b, record, phase)
-	b.WriteString("\nAdvance this phase with `wtui flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
+	b.WriteString("\nAdvance this phase with `approach flow phase set` only after the corresponding work is complete, blocked, or needs attention.")
 	return b.String()
 }
 

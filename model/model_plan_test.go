@@ -9,11 +9,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/model/modal"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/model/modal"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func TestModel_Key7SwitchesToPlansAndFetches(t *testing.T) {
@@ -129,12 +129,12 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	var launched bool
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
 			}
-			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+			return "/state/approach/sessions/v1/plans/plan-1/plan.md", nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			launched = true
@@ -170,7 +170,7 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 		t.Fatalf("expected launch instructions prompt in view:\n%s", m.View())
 	}
 	prompt := strings.ToLower(m.WorktreeInput())
-	for _, want := range []string{"implement plans", "plan-1", "/state/wtui/sessions/v1/plans/plan-1/plan.md", "read the plan file", "begin implementation"} {
+	for _, want := range []string{"implement plans", "plan-1", "/state/approach/sessions/v1/plans/plan-1/plan.md", "read the plan file", "begin implementation"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("initial prompt missing %q: %q", want, m.WorktreeInput())
 		}
@@ -212,7 +212,7 @@ func TestModel_AKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	if got := m.InputMode(); got != modal.InputMultiLine {
 		t.Fatalf("launch instructions input mode = %v, want multi-line", got)
 	}
-	if !strings.Contains(m.WorktreeInput(), "Implement the saved wtui plan") {
+	if !strings.Contains(m.WorktreeInput(), "Implement the saved approach plan") {
 		t.Fatalf("expected plan launch prompt, got %q", m.WorktreeInput())
 	}
 }
@@ -310,7 +310,7 @@ func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected nil cmd opening launch instructions, got %T", cmd)
 	}
-	want := `Implement the saved wtui plan "Implement plans" (ID: plan-1) at /state/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
+	want := `Implement the saved approach plan "Implement plans" (ID: plan-1) at /state/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
 	if m.WorktreeInput() != want {
 		t.Fatalf("default launch instructions = %q, want %q", m.WorktreeInput(), want)
 	}
@@ -321,12 +321,12 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		CodexReasoningEffort: "xhigh",
-		SessionStateRoot:     "/state/wtui/sessions/v1",
+		SessionStateRoot:     "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
 			}
-			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+			return "/state/approach/sessions/v1/plans/plan-1/plan.md", nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -376,9 +376,9 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		got.WorktreePath != "/dev/alpha-worktrees/plans" ||
 		got.Branch != "feature/plans" ||
 		got.Commit != "abc123" ||
-		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.SessionStateRoot != "/state/approach/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		got.PlanPath != "/state/approach/sessions/v1/plans/plan-1/plan.md" ||
 		got.ReasoningEffort != "xhigh" ||
 		got.InitialPrompt != "Custom launch\ninstructions" {
 		t.Fatalf("unexpected launch context: %#v", got)
@@ -446,12 +446,12 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
 			}
-			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+			return "/state/approach/sessions/v1/plans/plan-1/plan.md", nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -513,9 +513,9 @@ func TestModel_AKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(string) (string, error) {
-			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+			return "/state/approach/sessions/v1/plans/plan-1/plan.md", nil
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -744,7 +744,7 @@ func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
 			}
-			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+			return "/state/approach/sessions/v1/plans/plan-1/plan.md", nil
 		},
 		CopyToClipboard: func(text string) error {
 			copied = text
@@ -764,7 +764,7 @@ func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 	if msg := cmd(); msg != (model.ClipboardResultMsg{}) {
 		t.Fatalf("copy command msg = %#v", msg)
 	}
-	if copied != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
+	if copied != "/state/approach/sessions/v1/plans/plan-1/plan.md" {
 		t.Fatalf("copied = %q", copied)
 	}
 }
@@ -777,7 +777,7 @@ func TestModel_EKeyEditsSelectedPlanAndRefreshesPlansAfterExit(t *testing.T) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
 			}
-			return "/state/wtui/sessions/v1/plans/plan-1/plan.md", nil
+			return "/state/approach/sessions/v1/plans/plan-1/plan.md", nil
 		},
 		EditFile: func(path string) (actions.TerminalLaunchSpec, error) {
 			editedPaths = append(editedPaths, path)
@@ -802,7 +802,7 @@ func TestModel_EKeyEditsSelectedPlanAndRefreshesPlansAfterExit(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 
 	m, refreshCmd := update(m, cmd())
-	if len(editedPaths) != 1 || editedPaths[0] != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
+	if len(editedPaths) != 1 || editedPaths[0] != "/state/approach/sessions/v1/plans/plan-1/plan.md" {
 		t.Fatalf("edited paths = %#v", editedPaths)
 	}
 	if refreshCmd == nil {

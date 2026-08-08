@@ -3,9 +3,9 @@ package model
 import (
 	"testing"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func TestConfirmFlowDeleteAllowsStalePhaseSelectionOnly(t *testing.T) {

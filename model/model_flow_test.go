@@ -13,12 +13,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
@@ -138,7 +138,7 @@ func manualMergeEligibleFlow() flowstore.FlowRecord {
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     116,
-			URL:        "https://github.com/brian-bell/wtui/pull/116",
+			URL:        "https://github.com/approachcontrol/approach/pull/116",
 			HeadBranch: "flow/manual-merge",
 			BaseBranch: "main",
 			Status:     "open",
@@ -835,7 +835,7 @@ func TestModel_RKeyResumesActiveFlowPhaseSession(t *testing.T) {
 	var started actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui",
+		SessionStateRoot: "/state/approach",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -1614,7 +1614,7 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		LookupPRMerge: func(number int, url string) (actions.PullRequestMerge, error) {
 			lookupCalls++
-			if number != 116 || url != "https://github.com/brian-bell/wtui/pull/116" {
+			if number != 116 || url != "https://github.com/approachcontrol/approach/pull/116" {
 				t.Fatalf("LookupPRMerge(%d, %q), want stored PR", number, url)
 			}
 			return actions.PullRequestMerge{Commit: "0123456789abcdef", MergedAt: mergedAt}, nil
@@ -1652,7 +1652,7 @@ func TestModel_MKeyMarksSelectedFlowAsManuallyMerged(t *testing.T) {
 	if len(markCalls) != 1 ||
 		markCalls[0].FlowID != "flow-1" ||
 		markCalls[0].PRNumber != 116 ||
-		markCalls[0].PRURL != "https://github.com/brian-bell/wtui/pull/116" ||
+		markCalls[0].PRURL != "https://github.com/approachcontrol/approach/pull/116" ||
 		markCalls[0].Commit != "0123456789abcdef" ||
 		!markCalls[0].MergedAt.Equal(mergedAt) {
 		t.Fatalf("manual merge calls = %#v", markCalls)
@@ -3273,7 +3273,7 @@ func TestModel_FlowAutoModeLaunchesAutoreviewAfterPRCreationCompletesWithPRMetad
 	current.PR = flowstore.PullRequest{
 		Provider:   "github",
 		Number:     115,
-		URL:        "https://github.com/brian-bell/wtui/pull/115",
+		URL:        "https://github.com/approachcontrol/approach/pull/115",
 		HeadBranch: "flow/auto",
 		BaseBranch: "main",
 	}
@@ -3703,7 +3703,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 		AgentCommand:          "claude",
 		ClaudeModel:           "claude-sonnet-5",
 		ClaudeReasoningEffort: "max",
-		SessionStateRoot:      "/state/wtui/sessions/v1",
+		SessionStateRoot:      "/state/approach/sessions/v1",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -3924,7 +3924,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 			fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 			m := model.NewWithOptions(testRepos(), model.Options{
 				AgentCommand:     command,
-				SessionStateRoot: "/state/wtui/sessions/v1",
+				SessionStateRoot: "/state/approach/sessions/v1",
 				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 					launchUpdate = update
 					return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -3973,7 +3973,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 				started.WorktreePath != "/dev/alpha-worktrees/flow-interactive" ||
 				started.Branch != "flow/interactive" ||
 				started.Commit != "abc123" ||
-				started.SessionStateRoot != "/state/wtui/sessions/v1" {
+				started.SessionStateRoot != "/state/approach/sessions/v1" {
 				t.Fatalf("embedded launch context = %#v", started)
 			}
 			if !started.Embedded || started.Headless || !started.FlowLaunchTracked {
@@ -4558,7 +4558,7 @@ func TestModel_CKeyStillOpensCodeOutsideFlowSurfaces(t *testing.T) {
 }
 
 func TestModel_PKeyOpensSelectedFlowPullRequest(t *testing.T) {
-	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	var opened []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		OpenURL: func(url string) error {
@@ -4592,7 +4592,7 @@ func TestModel_PKeyOpensSelectedFlowPullRequest(t *testing.T) {
 }
 
 func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
-	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	var opened []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		OpenURL: func(url string) error {
@@ -4619,7 +4619,7 @@ func TestModel_PKeyOpensSelectedActiveFlowPullRequest(t *testing.T) {
 }
 
 func TestModel_IKeyOpensSelectedFlowIssue(t *testing.T) {
-	const issueURL = "https://github.com/brian-bell/wtui/issues/123"
+	const issueURL = "https://github.com/approachcontrol/approach/issues/123"
 	var opened []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		OpenURL: func(url string) error {
@@ -4649,7 +4649,7 @@ func TestModel_IKeyOpensSelectedFlowIssue(t *testing.T) {
 }
 
 func TestModel_IKeyOpensSelectedActiveFlowIssue(t *testing.T) {
-	const issueURL = "https://github.com/brian-bell/wtui/issues/123"
+	const issueURL = "https://github.com/approachcontrol/approach/issues/123"
 	var opened []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		OpenURL: func(url string) error {
@@ -4676,7 +4676,7 @@ func TestModel_IKeyOpensSelectedActiveFlowIssue(t *testing.T) {
 }
 
 func TestModel_IKeyFlowIssueGuards(t *testing.T) {
-	const issueURL = "https://github.com/brian-bell/wtui/issues/123"
+	const issueURL = "https://github.com/approachcontrol/approach/issues/123"
 	valid := flowWithIssueTarget("flow-1", issueURL)
 	incomplete := valid
 	incomplete.Issue.URL = ""
@@ -4765,7 +4765,7 @@ func TestModel_IKeyFlowIssueGuards(t *testing.T) {
 func TestModel_FlowFilterMatchesIssueMetadata(t *testing.T) {
 	m := model.New(testRepos())
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{
-		flowWithIssueTarget("flow-1", "https://github.com/brian-bell/wtui/issues/123"),
+		flowWithIssueTarget("flow-1", "https://github.com/approachcontrol/approach/issues/123"),
 		{
 			FlowID: "flow-2",
 			Title:  "Unrelated flow",
@@ -4792,7 +4792,7 @@ func TestModel_FlowFilterMatchesIssueMetadata(t *testing.T) {
 }
 
 func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
-	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	m := model.NewWithOptions(testRepos(), model.Options{
 		OpenURL: func(string) error {
 			return errors.New("browser unavailable")
@@ -4818,7 +4818,7 @@ func TestModel_PKeyOpenFlowPullRequestFailureSetsStatus(t *testing.T) {
 }
 
 func TestModel_UppercasePDoesNotOpenSelectedFlowPullRequest(t *testing.T) {
-	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	var opened []string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		OpenURL: func(url string) error {
@@ -4838,7 +4838,7 @@ func TestModel_UppercasePDoesNotOpenSelectedFlowPullRequest(t *testing.T) {
 }
 
 func TestModel_PKeyFlowPullRequestGuards(t *testing.T) {
-	const prURL = "https://github.com/brian-bell/wtui/pull/123"
+	const prURL = "https://github.com/approachcontrol/approach/pull/123"
 	valid := flowWithPullRequestTarget("flow-1", prURL)
 	incomplete := valid
 	incomplete.PR.BaseBranch = ""
@@ -5772,7 +5772,7 @@ func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-mode",
 		Branch:       "flow/add-flow-mode",
-		PR:           flowstore.PullRequest{URL: "https://github.com/brian-bell/wtui/pull/123"},
+		PR:           flowstore.PullRequest{URL: "https://github.com/approachcontrol/approach/pull/123"},
 		UpdatedAt:    time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady},
@@ -5831,7 +5831,7 @@ func TestModel_OKeyOnFlowOpensLinkedPlanText(t *testing.T) {
 		Title:     "Linked flow",
 		Status:    flowstore.StatusInProgress,
 		PlanID:    "plan-1",
-		PlanPath:  "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:  "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		UpdatedAt: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
 	}})
 
@@ -5882,7 +5882,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		AgentCommand:         "codex",
 		CodexModel:           "gpt-5.5",
 		CodexReasoningEffort: "high",
-		SessionStateRoot:     "/state/wtui",
+		SessionStateRoot:     "/state/approach",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			launchUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
@@ -5939,7 +5939,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 		started.WorkingDir != "/dev/alpha-worktrees/flow-resume-sessions" ||
 		started.Branch != "flow/resume-sessions" ||
 		started.Commit != "abc123" ||
-		started.SessionStateRoot != "/state/wtui" ||
+		started.SessionStateRoot != "/state/approach" ||
 		started.Model != "" ||
 		started.ReasoningEffort != "" ||
 		!started.Embedded ||
@@ -6689,7 +6689,7 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Plan Review launch should pass the plan path without pre-reading %q", planID)
 			return "", nil
@@ -6717,7 +6717,7 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 		Instructions: "Custom flow instructions from the user.",
 		Status:       flowstore.StatusInProgress,
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		UpdatedAt:    time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC),
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Outcome: "plan_saved", Summary: "Saved and linked plan-1.", Notes: "Plan author noted a migration risk."},
@@ -6738,11 +6738,11 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 	if launched.FlowID != "flow-1" ||
 		launched.FlowPhaseID != "plan-review" ||
 		launched.PlanID != "plan-1" ||
-		launched.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		launched.PlanPath != "/state/approach/sessions/v1/plans/plan-1/plan.md" ||
 		launched.WorktreePath != "/dev/alpha-worktrees/flow-review" ||
 		launched.Branch != "flow/review" ||
 		launched.Commit != "abc123" ||
-		launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		launched.SessionStateRoot != "/state/approach/sessions/v1" ||
 		!launched.Embedded ||
 		launched.Headless ||
 		!launched.FlowLaunchTracked {
@@ -6750,9 +6750,9 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 	}
 	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the review-loop skill to review the saved plan, max 6 loops.",
-		"Use the wtui-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
+		"Use the approach-flow skill to record the Plan Review verdict before finishing; the phase is not done until the verdict is persisted.",
 		"",
-		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"Plan: /state/approach/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-review",
 		"Branch: flow/review",
 		"Start commit: abc123",
@@ -6767,7 +6767,7 @@ func TestModel_GLaunchesFlowPhaseReadyPlanReviewWithLinkedPlanContext(t *testing
 		"implement issue 112 with tests",
 		"saved and linked plan-1",
 		"plan author noted a migration risk",
-		"wtui flow phase set",
+		"approach flow phase set",
 		"approved_with_concerns",
 		"changes_requested",
 	} {
@@ -6833,7 +6833,7 @@ func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Implementation launch should pass the plan path without pre-reading %q", planID)
 			return "", nil
@@ -6861,7 +6861,7 @@ func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 		Instructions: "Custom flow instructions from the user.",
 		Status:       flowstore.StatusInProgress,
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Summary: "Saved and linked plan-1."},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved", Summary: "Plan approved."},
@@ -6882,11 +6882,11 @@ func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 	if launched.FlowID != "flow-1" ||
 		launched.FlowPhaseID != "implementation" ||
 		launched.PlanID != "plan-1" ||
-		launched.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		launched.PlanPath != "/state/approach/sessions/v1/plans/plan-1/plan.md" ||
 		launched.WorktreePath != "/dev/alpha-worktrees/flow-implementation" ||
 		launched.Branch != "flow/implementation" ||
 		launched.Commit != "fed321" ||
-		launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		launched.SessionStateRoot != "/state/approach/sessions/v1" ||
 		!launched.Embedded ||
 		launched.Headless ||
 		!launched.FlowLaunchTracked {
@@ -6896,7 +6896,7 @@ func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 		"Implement the approved plan.",
 		"Use the commit skill before completing this phase.",
 		"",
-		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"Plan: /state/approach/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-implementation",
 		"Branch: flow/implementation",
 		"Start commit: fed321",
@@ -6910,7 +6910,7 @@ func TestModel_GLaunchesFlowPhaseImplementationWithMinimalPrompt(t *testing.T) {
 		"saved and linked plan-1",
 		"plan approved",
 		"plan review gate",
-		"wtui flow phase set",
+		"approach flow phase set",
 		"verify the target behavior",
 	} {
 		if strings.Contains(prompt, unwanted) {
@@ -6928,7 +6928,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		CodexReasoningEffort: "high",
-		SessionStateRoot:     "/state/wtui/sessions/v1",
+		SessionStateRoot:     "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Implementation launch should pass the plan path without pre-reading %q", planID)
 			return "", nil
@@ -6960,7 +6960,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		Title:        "Implement saved plan",
 		Status:       flowstore.StatusInProgress,
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -6991,11 +6991,11 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		started.FlowID != "flow-1" ||
 		started.FlowPhaseID != "implementation" ||
 		started.PlanID != "plan-1" ||
-		started.PlanPath != "/state/wtui/sessions/v1/plans/plan-1/plan.md" ||
+		started.PlanPath != "/state/approach/sessions/v1/plans/plan-1/plan.md" ||
 		started.WorktreePath != "/dev/alpha-worktrees/flow-implementation" ||
 		started.Branch != "flow/implementation" ||
 		started.Commit != "fed321" ||
-		started.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		started.SessionStateRoot != "/state/approach/sessions/v1" ||
 		started.ReasoningEffort != "high" ||
 		!started.Embedded ||
 		!started.Headless {
@@ -7030,7 +7030,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		"Implement the approved plan.",
 		"Use the commit skill before completing this phase.",
 		"",
-		"Plan: /state/wtui/sessions/v1/plans/plan-1/plan.md",
+		"Plan: /state/approach/sessions/v1/plans/plan-1/plan.md",
 		"Worktree: /dev/alpha-worktrees/flow-implementation",
 		"Branch: flow/implementation",
 		"Start commit: fed321",
@@ -7803,7 +7803,7 @@ func TestModel_GOnFlowPhaseWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 	startEmbeddedRan := false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex-app",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
@@ -9263,7 +9263,7 @@ func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("Review Loop launch should pass metadata without pre-reading %q", planID)
 			return "", nil
@@ -9291,7 +9291,7 @@ func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		Instructions: "Custom flow instructions from the user.",
 		Status:       flowstore.StatusInProgress,
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -9316,7 +9316,7 @@ func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the review-loop workflow with goal: review-and-revise.",
 		"Use the commit skill when revisions are made.",
-		"Use the wtui-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.",
+		"Use the approach-flow skill to record the Review Loop result before finishing; the phase is not done until the result is persisted.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-review-loop",
 		"Branch: flow/review-loop",
@@ -9341,7 +9341,7 @@ func TestModel_GLaunchesFlowPhaseReviewLoopWithFirstLevelPrompt(t *testing.T) {
 		"implementation-api",
 		"api integration",
 		"# saved plan",
-		"wtui flow phase set",
+		"approach flow phase set",
 		"--status completed",
 		"--status needs_attention",
 		"--status blocked",
@@ -9412,7 +9412,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 	var launched actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ReadPlan: func(planID string) (string, error) {
 			t.Fatalf("PR Creation launch should pass metadata without pre-reading %q", planID)
 			return "", nil
@@ -9440,7 +9440,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 		Instructions: "Custom flow instructions from the user.",
 		Status:       flowstore.StatusInProgress,
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -9464,7 +9464,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 	}
 	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the ship skill to create a PR for the changes.",
-		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
+		"After the PR exists, run `approach flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
@@ -9479,7 +9479,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithMinimalPrompt(t *testing.T) {
 		"implemented the main slice",
 		"no blocking findings",
 		"# saved plan",
-		"wtui flow phase set",
+		"approach flow phase set",
 		"advance this phase",
 	} {
 		if strings.Contains(prompt, unwanted) {
@@ -9533,7 +9533,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testi
 
 	wantPrompt := appendFlowDoneInstructionForTest(strings.Join([]string{
 		"Use the ship skill to create a PR for the changes.",
-		"After the PR exists, run `wtui flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
+		"After the PR exists, run `approach flow pr set --flow-id flow-1 --provider github --number <number> --url <url> --head flow/pr --base <base>` before completing this phase.",
 		"",
 		"Worktree: /dev/alpha-worktrees/flow-pr",
 		"Branch: flow/pr",
@@ -9545,7 +9545,7 @@ func TestModel_GLaunchesFlowPhasePRCreationWithStructuredMetadataPrompt(t *testi
 	prompt := strings.ToLower(launched.InitialPrompt)
 	for _, unwanted := range []string{
 		"flow phase: pr creation",
-		"wtui flow phase set",
+		"approach flow phase set",
 		"--status completed",
 		"--status blocked",
 	} {
@@ -9586,7 +9586,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithPRContext(t *testing.T) {
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     115,
-			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			URL:        "https://github.com/approachcontrol/approach/pull/115",
 			HeadBranch: "flow/pr",
 			BaseBranch: "main",
 			Status:     "open",
@@ -9611,13 +9611,13 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithPRContext(t *testing.T) {
 	for _, want := range []string{
 		"second-level review",
 		"use the ship skill when fixes require commits or pushes",
-		"use the wtui-flow skill to record the autoreview result before finishing",
+		"use the approach-flow skill to record the autoreview result before finishing",
 		"worktree: /dev/alpha-worktrees/flow-pr",
 		"branch: flow/pr",
 		"start commit: ghi789",
 		"pr target:",
 		"github #115",
-		"https://github.com/brian-bell/wtui/pull/115",
+		"https://github.com/approachcontrol/approach/pull/115",
 		"head: flow/pr",
 		"base: main",
 		"status: open",
@@ -9626,7 +9626,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithPRContext(t *testing.T) {
 			t.Fatalf("autoreview prompt missing %q:\n%s", want, launched.InitialPrompt)
 		}
 	}
-	for _, unwanted := range []string{"saved plan body", "wtui flow phase", "--status completed", "--status needs_attention", "--status blocked"} {
+	for _, unwanted := range []string{"saved plan body", "approach flow phase", "--status completed", "--status needs_attention", "--status blocked"} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("autoreview prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
@@ -9664,7 +9664,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     115,
-			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			URL:        "https://github.com/approachcontrol/approach/pull/115",
 			HeadBranch: "flow/pr",
 			BaseBranch: "main",
 			Status:     "open",
@@ -9689,7 +9689,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 	for _, want := range []string{
 		"second-level review",
 		"use the ship skill when fixes require commits or pushes",
-		"use the wtui-flow skill to record the autoreview result before finishing",
+		"use the approach-flow skill to record the autoreview result before finishing",
 		"worktree: /dev/alpha-worktrees/flow-pr",
 		"branch: flow/pr",
 		"start commit: ghi789",
@@ -9702,7 +9702,7 @@ func TestModel_GLaunchesFlowPhaseAutoreviewWithRecoveryPrompt(t *testing.T) {
 			t.Fatalf("autoreview recovery prompt missing %q:\n%s", want, launched.InitialPrompt)
 		}
 	}
-	for _, unwanted := range []string{"restart required", "--status running", "rerunning autoreview", "wtui flow phase"} {
+	for _, unwanted := range []string{"restart required", "--status running", "rerunning autoreview", "approach flow phase"} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("autoreview recovery prompt should not include %q:\n%s", unwanted, launched.InitialPrompt)
 		}
@@ -9772,7 +9772,7 @@ func TestModel_GDoesNotRelaunchFlowPhaseAutoreviewWhenPredecessorsAreUnsatisfied
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     115,
-			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			URL:        "https://github.com/approachcontrol/approach/pull/115",
 			HeadBranch: "flow/pr",
 			BaseBranch: "main",
 			Status:     "open",
@@ -9828,7 +9828,7 @@ func TestModel_GLaunchesFlowPhaseMergeWithStructuredReportingPrompt(t *testing.T
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     116,
-			URL:        "https://github.com/brian-bell/wtui/pull/116",
+			URL:        "https://github.com/approachcontrol/approach/pull/116",
 			HeadBranch: "flow/merge",
 			BaseBranch: "main",
 			Status:     "open",
@@ -9857,11 +9857,11 @@ func TestModel_GLaunchesFlowPhaseMergeWithStructuredReportingPrompt(t *testing.T
 	for _, want := range []string{
 		"merge the pr deliberately",
 		"github #116",
-		"https://github.com/brian-bell/wtui/pull/116",
-		"wtui flow merge set --flow-id flow-1 --status merged",
+		"https://github.com/approachcontrol/approach/pull/116",
+		"approach flow merge set --flow-id flow-1 --status merged",
 		"--commit <merge-commit>",
 		"--merged-at <rfc3339>",
-		"wtui flow phase set --flow-id flow-1 --phase-id merge --status completed",
+		"approach flow phase set --flow-id flow-1 --phase-id merge --status completed",
 		"blocked",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -10044,7 +10044,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				AgentCommand:          command,
 				CodexReasoningEffort:  "xhigh",
 				ClaudeReasoningEffort: "max",
-				SessionStateRoot:      "/state/wtui/sessions/v1",
+				SessionStateRoot:      "/state/approach/sessions/v1",
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					calls = append(calls, "start-flow")
 					startRequest = req
@@ -10068,7 +10068,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						FlowID:           "flow-1",
 						FlowPhaseID:      "plan",
 						ReasoningEffort:  req.ReasoningEffort,
-						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+						InitialPrompt:    "Use the approach-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with approach plan save, link it back with approach flow plan set.",
 					}}, nil
 				},
 				LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -10114,7 +10114,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				t.Fatalf("call order = %#v", calls)
 			}
 			if startRequest.AgentCommand != command ||
-				startRequest.SessionStateRoot != "/state/wtui/sessions/v1" ||
+				startRequest.SessionStateRoot != "/state/approach/sessions/v1" ||
 				startRequest.PlanPhaseID != "" ||
 				startRequest.PlanPhaseTitle != "" ||
 				startRequest.PlanPhaseStatus != "" ||
@@ -10126,7 +10126,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				started.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
 				started.Branch != "flow/add-flow-mode" ||
 				started.Commit != "abc123" ||
-				started.SessionStateRoot != "/state/wtui/sessions/v1" ||
+				started.SessionStateRoot != "/state/approach/sessions/v1" ||
 				started.FlowID != "flow-1" ||
 				started.FlowPhaseID != "plan" ||
 				started.PlanPhaseID != "plan" ||
@@ -10143,7 +10143,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				t.Fatalf("embedded terminal size = %dx%d, want positive", startWidth, startHeight)
 			}
 			prompt := strings.ToLower(started.InitialPrompt)
-			for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+			for _, want := range []string{"approach-flow", "build\nthe thing", "create and persist the plan", "approach plan save", "approach flow plan set"} {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("launch prompt missing %q: %q", want, started.InitialPrompt)
 				}
@@ -10297,7 +10297,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:          "codex",
 		ClaudeReasoningEffort: "max",
-		SessionStateRoot:      "/state/wtui/sessions/v1",
+		SessionStateRoot:      "/state/approach/sessions/v1",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			startRequest = req
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
@@ -10357,7 +10357,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 			var started actions.AgentLaunchContext
 			m := model.NewWithOptions(testRepos(), model.Options{
 				AgentCommand:     command,
-				SessionStateRoot: "/state/wtui/sessions/v1",
+				SessionStateRoot: "/state/approach/sessions/v1",
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
 						Command:          req.AgentCommand,
@@ -10424,7 +10424,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	var started actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
 				Command:          req.AgentCommand,
@@ -10489,7 +10489,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 			startEmbeddedRan := false
 			m := model.NewWithOptions(testRepos(), model.Options{
 				AgentCommand:     "codex-app",
-				SessionStateRoot: "/state/wtui/sessions/v1",
+				SessionStateRoot: "/state/approach/sessions/v1",
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					if req.RepoPath != "/dev/alpha" ||
 						req.AgentCommand != "codex-app" ||
@@ -10511,7 +10511,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 						PlanPhaseStatus:  flowstore.PhaseRunning,
 						FlowID:           "flow-1",
 						FlowPhaseID:      "plan",
-						InitialPrompt:    "Use the wtui-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set.",
+						InitialPrompt:    "Use the approach-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with approach plan save, link it back with approach flow plan set.",
 					}}, nil
 				},
 				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -10552,7 +10552,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 				launched.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
 				launched.Branch != "flow/add-flow-mode" ||
 				launched.Commit != "abc123" ||
-				launched.SessionStateRoot != "/state/wtui/sessions/v1" ||
+				launched.SessionStateRoot != "/state/approach/sessions/v1" ||
 				launched.FlowID != "flow-1" ||
 				launched.FlowPhaseID != "plan" ||
 				launched.PlanPhaseID != "plan" ||
@@ -10566,7 +10566,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 				t.Fatalf("codex-app launch context = %#v", launched)
 			}
 			prompt := strings.ToLower(launched.InitialPrompt)
-			for _, want := range []string{"wtui-flow", "build\nthe thing", "create and persist the plan", "wtui plan save", "wtui flow plan set"} {
+			for _, want := range []string{"approach-flow", "build\nthe thing", "create and persist the plan", "approach plan save", "approach flow plan set"} {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("launch prompt missing %q: %q", want, launched.InitialPrompt)
 				}

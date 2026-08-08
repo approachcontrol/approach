@@ -3,7 +3,7 @@ package flowstore
 // phaseTransitions is the canonical Flow phase transition table. Keys are
 // current phase statuses; values are the agent-settable statuses reachable
 // from that state, in canonical order. Readiness (pending -> ready) is derived
-// by wtui and never settable, so it does not appear as a target here.
+// by approach and never settable, so it does not appear as a target here.
 var phaseTransitions = map[string][]string{
 	PhasePending:        {PhaseSkipped},
 	PhaseReady:          {PhaseRunning, PhaseNeedsAttention, PhaseCompleted, PhaseBlocked, PhaseSkipped},

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/model/pane"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/model/pane"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func fixedHeight[T any](T, int) int {

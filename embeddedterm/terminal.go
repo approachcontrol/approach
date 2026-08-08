@@ -486,7 +486,7 @@ func (f *terminalQueryFilter) Filter(p []byte, final bool) []byte {
 		response string
 	}{
 		{sequence: "\x1b[?u", response: "\x1b[?0u"},
-		// This vt version answers DSR-5 with DEC private syntax; wtui needs
+		// This vt version answers DSR-5 with DEC private syntax; approach needs
 		// the ANSI status form so children do not block waiting for ESC[0n.
 		{sequence: "\x1b[5n", response: "\x1b[0n"},
 	}

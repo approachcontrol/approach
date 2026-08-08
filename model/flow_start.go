@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/flowstore"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 const flowPlanPhaseID = "plan"
@@ -381,10 +381,10 @@ func flowPlanPrompt(flow flowstore.FlowRecord, phase flowstore.FlowPhase, templa
 		return ensureFlowPhaseDoneInstruction(prompt, templates.Plan)
 	}
 	var b strings.Builder
-	b.WriteString("Use the wtui-flow skill for this launch.\n\n")
+	b.WriteString("Use the approach-flow skill for this launch.\n\n")
 	b.WriteString(flow.Instructions)
 	b.WriteString("\n\nProduce a plan only; do not start coding in this phase.")
-	b.WriteString("\nCreate and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.")
-	b.WriteString("\nIf the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.")
+	b.WriteString("\nCreate and persist the plan with approach plan save, link it back with approach flow plan set, then report Flow persistence failures explicitly before ending.")
+	b.WriteString("\nIf the task references a GitHub issue, link it with approach flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.")
 	return ensureFlowPhaseDoneInstruction(b.String(), "")
 }

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/actions"
+	"github.com/approachcontrol/approach/actions"
 )
 
 var errFakeCommand = errors.New("fake command failed")
@@ -672,7 +672,7 @@ func TestTerminalLaunch_InsideTmuxCreatesOrSwitchesSession(t *testing.T) {
 		t.Fatal("inside-tmux launch should be non-interactive")
 	}
 	sessionName := actions.WorktreeSessionName(worktreePath)
-	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "wtui" || got[4] != sessionName || got[5] != worktreePath {
+	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "approach" || got[4] != sessionName || got[5] != worktreePath {
 		t.Fatalf("unexpected tmux launch args: %#v", got)
 	}
 }
@@ -1247,17 +1247,17 @@ func TestRunBootstrapHook_RunsExecutableScriptInWorktree(t *testing.T) {
 	repoPath := filepath.Join(dir, "repo")
 	worktreePath := filepath.Join(dir, "worktree")
 	for _, key := range []string{
-		"WTUI_REPO_PATH",
-		"WTUI_WORKTREE_PATH",
-		"WTUI_WORKTREE_REF",
-		"WTUI_WORKTREE_CREATE_KIND",
+		"APPROACH_REPO_PATH",
+		"APPROACH_WORKTREE_PATH",
+		"APPROACH_WORKTREE_REF",
+		"APPROACH_WORKTREE_CREATE_KIND",
 	} {
 		t.Setenv(key, "inherited-"+key)
 	}
 	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	scriptPath := filepath.Join(worktreePath, ".wtui", "bootstrap")
+	scriptPath := filepath.Join(worktreePath, ".approach", "bootstrap")
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1267,8 +1267,8 @@ printf "%s
 %s
 %s
 %s
-" "$WTUI_REPO_PATH" "$WTUI_WORKTREE_PATH" "$WTUI_WORKTREE_REF" "$WTUI_WORKTREE_CREATE_KIND" > env.txt
-env | awk -F= '/^WTUI_REPO_PATH=|^WTUI_WORKTREE_PATH=|^WTUI_WORKTREE_REF=|^WTUI_WORKTREE_CREATE_KIND=/ { count[$1]++ } END { for (key in count) print key "=" count[key] }' | sort > env-counts.txt
+" "$APPROACH_REPO_PATH" "$APPROACH_WORKTREE_PATH" "$APPROACH_WORKTREE_REF" "$APPROACH_WORKTREE_CREATE_KIND" > env.txt
+env | awk -F= '/^APPROACH_REPO_PATH=|^APPROACH_WORKTREE_PATH=|^APPROACH_WORKTREE_REF=|^APPROACH_WORKTREE_CREATE_KIND=/ { count[$1]++ } END { for (key in count) print key "=" count[key] }' | sort > env-counts.txt
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1278,7 +1278,7 @@ env | awk -F= '/^WTUI_REPO_PATH=|^WTUI_WORKTREE_PATH=|^WTUI_WORKTREE_REF=|^WTUI_
 		WorktreePath: worktreePath,
 		Ref:          "feature/one",
 		Kind:         actions.WorktreeCreateGeneric,
-	}, actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 5})
+	}, actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 5})
 	if err != nil {
 		t.Fatalf("RunBootstrapHook returned error: %v", err)
 	}
@@ -1307,10 +1307,10 @@ env | awk -F= '/^WTUI_REPO_PATH=|^WTUI_WORKTREE_PATH=|^WTUI_WORKTREE_REF=|^WTUI_
 		t.Fatal(err)
 	}
 	wantCounts := strings.Join([]string{
-		"WTUI_REPO_PATH=1",
-		"WTUI_WORKTREE_CREATE_KIND=1",
-		"WTUI_WORKTREE_PATH=1",
-		"WTUI_WORKTREE_REF=1",
+		"APPROACH_REPO_PATH=1",
+		"APPROACH_WORKTREE_CREATE_KIND=1",
+		"APPROACH_WORKTREE_PATH=1",
+		"APPROACH_WORKTREE_REF=1",
 	}, "\n")
 	if strings.TrimSpace(string(counts)) != wantCounts {
 		t.Fatalf("unexpected hook env counts:\n%s", counts)
@@ -1349,7 +1349,7 @@ func TestRunBootstrapHook_ReportsScriptValidationErrors(t *testing.T) {
 		WorktreePath: worktreePath,
 		Ref:          "feat",
 		Kind:         actions.WorktreeCreateGeneric,
-	}, actions.BootstrapHook{Script: ".wtui/missing", TimeoutSeconds: 5})
+	}, actions.BootstrapHook{Script: ".approach/missing", TimeoutSeconds: 5})
 	if missingErr == nil || !strings.Contains(missingErr.Error(), "bootstrap hook not found") {
 		t.Fatalf("expected missing hook error, got %v", missingErr)
 	}
@@ -1757,7 +1757,7 @@ func TestAgentCommandAddsSessionMetadataEnvironment(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "main",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 	})
 	if err != nil {
 		t.Fatalf("AgentCommand returned error: %v", err)
@@ -1765,14 +1765,14 @@ func TestAgentCommandAddsSessionMetadataEnvironment(t *testing.T) {
 
 	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
-		"WTUI_AGENT":              "codex",
-		"WTUI_LAUNCH_ID":          "launch-1",
-		"WTUI_REPO_PATH":          "/repo",
-		"WTUI_WORKTREE_PATH":      "/repo/worktree",
-		"WTUI_BRANCH":             "main",
-		"WTUI_COMMIT":             "abcdef",
-		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
-		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
+		"APPROACH_AGENT":              "codex",
+		"APPROACH_LAUNCH_ID":          "launch-1",
+		"APPROACH_REPO_PATH":          "/repo",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_BRANCH":             "main",
+		"APPROACH_COMMIT":             "abcdef",
+		"APPROACH_SESSION_STATE_ROOT": "/state/approach/sessions/v1",
+		"APPROACH_PLAN_STATE_ROOT":    "/state/approach/sessions/v1",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -1787,9 +1787,9 @@ func TestAgentCommandAddsFlowEnvironment(t *testing.T) {
 		RepoPath:         "/repo",
 		WorktreePath:     "/repo/worktree",
 		Branch:           "flow/add-flow-mode",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanID:           "plan-1",
-		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:         "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		PlanPhaseID:      "plan",
 		FlowID:           "flow-1",
 		FlowPhaseID:      "plan",
@@ -1800,11 +1800,11 @@ func TestAgentCommandAddsFlowEnvironment(t *testing.T) {
 
 	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
-		"WTUI_FLOW_ID":         "flow-1",
-		"WTUI_FLOW_PHASE_ID":   "plan",
-		"WTUI_FLOW_STATE_ROOT": "/state/wtui/sessions/v1",
-		"WTUI_PLAN_ID":         "plan-1",
-		"WTUI_PLAN_PHASE_ID":   "plan",
+		"APPROACH_FLOW_ID":         "flow-1",
+		"APPROACH_FLOW_PHASE_ID":   "plan",
+		"APPROACH_FLOW_STATE_ROOT": "/state/approach/sessions/v1",
+		"APPROACH_PLAN_ID":         "plan-1",
+		"APPROACH_PLAN_PHASE_ID":   "plan",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -1820,7 +1820,7 @@ func TestAgentCommandBuildsHeadlessCodexExecCommand(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "flow/add-flow-mode",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		FlowID:           "flow-1",
 		FlowPhaseID:      "implementation",
 		Embedded:         true,
@@ -1846,13 +1846,13 @@ func TestAgentCommandBuildsHeadlessCodexExecCommand(t *testing.T) {
 	}
 	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
-		"WTUI_AGENT":              "codex",
-		"WTUI_FLOW_ID":            "flow-1",
-		"WTUI_FLOW_PHASE_ID":      "implementation",
-		"WTUI_FLOW_STATE_ROOT":    "/state/wtui/sessions/v1",
-		"WTUI_WORKTREE_PATH":      "/repo/worktree",
-		"WTUI_COMMIT":             "abcdef",
-		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+		"APPROACH_AGENT":              "codex",
+		"APPROACH_FLOW_ID":            "flow-1",
+		"APPROACH_FLOW_PHASE_ID":      "implementation",
+		"APPROACH_FLOW_STATE_ROOT":    "/state/approach/sessions/v1",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_COMMIT":             "abcdef",
+		"APPROACH_SESSION_STATE_ROOT": "/state/approach/sessions/v1",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -1868,7 +1868,7 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "flow/add-flow-mode",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		FlowID:           "flow-1",
 		FlowPhaseID:      "implementation",
 		Embedded:         true,
@@ -1891,13 +1891,13 @@ func TestAgentCommandBuildsHeadlessClaudePrintCommand(t *testing.T) {
 	}
 	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
-		"WTUI_AGENT":              "claude",
-		"WTUI_FLOW_ID":            "flow-1",
-		"WTUI_FLOW_PHASE_ID":      "implementation",
-		"WTUI_FLOW_STATE_ROOT":    "/state/wtui/sessions/v1",
-		"WTUI_WORKTREE_PATH":      "/repo/worktree",
-		"WTUI_COMMIT":             "abcdef",
-		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
+		"APPROACH_AGENT":              "claude",
+		"APPROACH_FLOW_ID":            "flow-1",
+		"APPROACH_FLOW_PHASE_ID":      "implementation",
+		"APPROACH_FLOW_STATE_ROOT":    "/state/approach/sessions/v1",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_COMMIT":             "abcdef",
+		"APPROACH_SESSION_STATE_ROOT": "/state/approach/sessions/v1",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -1982,7 +1982,7 @@ func TestAgentCommandCodexAddsReasoningEffortConfig(t *testing.T) {
 		Command:          "codex",
 		LaunchID:         "launch-1",
 		WorktreePath:     "/repo/worktree",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		FlowID:           "flow-1",
 		FlowPhaseID:      "implementation",
 		Embedded:         true,
@@ -2013,7 +2013,7 @@ func TestAgentCommandClaudeAddsReasoningEffortArg(t *testing.T) {
 		Command:          "claude",
 		LaunchID:         "launch-1",
 		WorktreePath:     "/repo/worktree",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		FlowID:           "flow-1",
 		FlowPhaseID:      "implementation",
 		Embedded:         true,
@@ -2087,7 +2087,7 @@ func TestAgentCommandRejectsResumeWithReasoningEffort(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		ResumeSessionID:  "session-1",
 		ReasoningEffort:  "high",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 	})
 	if err == nil {
 		t.Fatal("expected resume reasoning effort error")
@@ -2222,7 +2222,7 @@ func TestAgentCommandRejectsResumeWithModel(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		ResumeSessionID:  "session-1",
 		Model:            "claude-opus-4-8",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 	})
 	if err == nil {
 		t.Fatal("expected resume model error")
@@ -2252,7 +2252,7 @@ func TestAgentCommandBuildsEmbeddedInteractiveCodexCommand(t *testing.T) {
 		LaunchID:          "launch-1",
 		RepoPath:          "/repo",
 		WorktreePath:      "/repo/worktree",
-		SessionStateRoot:  "/state/wtui/sessions/v1",
+		SessionStateRoot:  "/state/approach/sessions/v1",
 		FlowID:            "flow-1",
 		FlowPhaseID:       "implementation",
 		FlowLaunchTracked: true,
@@ -2287,7 +2287,7 @@ func TestAgentCommandBuildsEmbeddedInteractiveClaudeCommand(t *testing.T) {
 		LaunchID:          "launch-1",
 		RepoPath:          "/repo",
 		WorktreePath:      "/repo/worktree",
-		SessionStateRoot:  "/state/wtui/sessions/v1",
+		SessionStateRoot:  "/state/approach/sessions/v1",
 		FlowID:            "flow-1",
 		FlowPhaseID:       "implementation",
 		FlowLaunchTracked: true,
@@ -2322,7 +2322,7 @@ func TestAgentCommandEmbeddedInteractiveUntrackedFlowKeepsPromptArg(t *testing.T
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
 		WorktreePath:     "/repo/worktree",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		FlowID:           "flow-1",
 		FlowPhaseID:      "implementation",
 		Embedded:         true,
@@ -2380,9 +2380,9 @@ func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 		LaunchID:         "launch-1",
 		RepoPath:         "/repo",
 		WorktreePath:     "/repo/worktree",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanID:           "plan-1",
-		PlanPath:         "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:         "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		InitialPrompt:    "Read the plan and begin implementation.",
 	})
 	if err != nil {
@@ -2390,11 +2390,11 @@ func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 	}
 
 	env := envMap(cmd.Env)
-	if env["WTUI_PLAN_ID"] != "plan-1" {
-		t.Fatalf("WTUI_PLAN_ID = %q, want plan-1", env["WTUI_PLAN_ID"])
+	if env["APPROACH_PLAN_ID"] != "plan-1" {
+		t.Fatalf("APPROACH_PLAN_ID = %q, want plan-1", env["APPROACH_PLAN_ID"])
 	}
-	if env["WTUI_PLAN_PATH"] != "/state/wtui/sessions/v1/plans/plan-1/plan.md" {
-		t.Fatalf("WTUI_PLAN_PATH = %q", env["WTUI_PLAN_PATH"])
+	if env["APPROACH_PLAN_PATH"] != "/state/approach/sessions/v1/plans/plan-1/plan.md" {
+		t.Fatalf("APPROACH_PLAN_PATH = %q", env["APPROACH_PLAN_PATH"])
 	}
 	if got := cmd.Args[len(cmd.Args)-1]; got != "Read the plan and begin implementation." {
 		t.Fatalf("final arg = %q, want initial prompt; args=%#v", got, cmd.Args)
@@ -2406,7 +2406,7 @@ func TestAgentCommandAddsPlanPhaseEnvironment(t *testing.T) {
 		Command:         "codex",
 		WorktreePath:    "/repo/worktree",
 		PlanID:          "plan-1",
-		PlanPath:        "/state/wtui/sessions/v1/plans/plan-1/plan.md",
+		PlanPath:        "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		PlanPhaseID:     "p2",
 		PlanPhaseTitle:  "CLI subcommands",
 		PlanPhaseStatus: "pending",
@@ -2417,9 +2417,9 @@ func TestAgentCommandAddsPlanPhaseEnvironment(t *testing.T) {
 
 	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
-		"WTUI_PLAN_PHASE_ID":     "p2",
-		"WTUI_PLAN_PHASE_TITLE":  "CLI subcommands",
-		"WTUI_PLAN_PHASE_STATUS": "pending",
+		"APPROACH_PLAN_PHASE_ID":     "p2",
+		"APPROACH_PLAN_PHASE_TITLE":  "CLI subcommands",
+		"APPROACH_PLAN_PHASE_STATUS": "pending",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -2427,22 +2427,22 @@ func TestAgentCommandAddsPlanPhaseEnvironment(t *testing.T) {
 	}
 }
 
-func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
+func TestAgentCommandReplacesInheritedAPPROACHEnvironment(t *testing.T) {
 	t.Setenv("CUSTOM_KEEP", "still-here")
 	for _, key := range []string{
-		"WTUI_AGENT",
-		"WTUI_LAUNCH_ID",
-		"WTUI_REPO_PATH",
-		"WTUI_WORKTREE_PATH",
-		"WTUI_BRANCH",
-		"WTUI_COMMIT",
-		"WTUI_SESSION_STATE_ROOT",
-		"WTUI_PLAN_STATE_ROOT",
-		"WTUI_PLAN_ID",
-		"WTUI_PLAN_PATH",
-		"WTUI_PLAN_PHASE_ID",
-		"WTUI_PLAN_PHASE_TITLE",
-		"WTUI_PLAN_PHASE_STATUS",
+		"APPROACH_AGENT",
+		"APPROACH_LAUNCH_ID",
+		"APPROACH_REPO_PATH",
+		"APPROACH_WORKTREE_PATH",
+		"APPROACH_BRANCH",
+		"APPROACH_COMMIT",
+		"APPROACH_SESSION_STATE_ROOT",
+		"APPROACH_PLAN_STATE_ROOT",
+		"APPROACH_PLAN_ID",
+		"APPROACH_PLAN_PATH",
+		"APPROACH_PLAN_PHASE_ID",
+		"APPROACH_PLAN_PHASE_TITLE",
+		"APPROACH_PLAN_PHASE_STATUS",
 	} {
 		t.Setenv(key, "inherited-"+key)
 	}
@@ -2454,9 +2454,9 @@ func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "main",
 		Commit:           "ctx-commit",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanID:           "plan-2",
-		PlanPath:         "/state/wtui/sessions/v1/plans/plan-2/plan.md",
+		PlanPath:         "/state/approach/sessions/v1/plans/plan-2/plan.md",
 		PlanPhaseID:      "phase-2",
 		PlanPhaseTitle:   "Phase two",
 		PlanPhaseStatus:  "pending",
@@ -2466,19 +2466,19 @@ func TestAgentCommandReplacesInheritedWTUIEnvironment(t *testing.T) {
 	}
 
 	for key, want := range map[string]string{
-		"WTUI_AGENT":              "codex",
-		"WTUI_LAUNCH_ID":          "launch-2",
-		"WTUI_REPO_PATH":          "/repo",
-		"WTUI_WORKTREE_PATH":      "/repo/worktree",
-		"WTUI_BRANCH":             "main",
-		"WTUI_COMMIT":             "ctx-commit",
-		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
-		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
-		"WTUI_PLAN_ID":            "plan-2",
-		"WTUI_PLAN_PATH":          "/state/wtui/sessions/v1/plans/plan-2/plan.md",
-		"WTUI_PLAN_PHASE_ID":      "phase-2",
-		"WTUI_PLAN_PHASE_TITLE":   "Phase two",
-		"WTUI_PLAN_PHASE_STATUS":  "pending",
+		"APPROACH_AGENT":              "codex",
+		"APPROACH_LAUNCH_ID":          "launch-2",
+		"APPROACH_REPO_PATH":          "/repo",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_BRANCH":             "main",
+		"APPROACH_COMMIT":             "ctx-commit",
+		"APPROACH_SESSION_STATE_ROOT": "/state/approach/sessions/v1",
+		"APPROACH_PLAN_STATE_ROOT":    "/state/approach/sessions/v1",
+		"APPROACH_PLAN_ID":            "plan-2",
+		"APPROACH_PLAN_PATH":          "/state/approach/sessions/v1/plans/plan-2/plan.md",
+		"APPROACH_PLAN_PHASE_ID":      "phase-2",
+		"APPROACH_PLAN_PHASE_TITLE":   "Phase two",
+		"APPROACH_PLAN_PHASE_STATUS":  "pending",
 	} {
 		got, count := envEntryValue(cmd.Env, key)
 		if got != want || count != 1 {
@@ -2505,7 +2505,7 @@ func TestAgentCommandClaudeAddsPromptAsFinalArg(t *testing.T) {
 	}
 
 	env := envMap(cmd.Env)
-	if env["WTUI_PLAN_ID"] != "plan-1" || env["WTUI_PLAN_PATH"] != "/state/plans/plan-1/plan.md" {
+	if env["APPROACH_PLAN_ID"] != "plan-1" || env["APPROACH_PLAN_PATH"] != "/state/plans/plan-1/plan.md" {
 		t.Fatalf("plan env not exported: %#v", env)
 	}
 	if got := cmd.Args[len(cmd.Args)-1]; got != "Read the plan and begin implementation." {
@@ -2557,8 +2557,8 @@ func TestAgentCommandResolvesMissingCommitFromWorktree(t *testing.T) {
 		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if got := envMap(cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
-		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
+	if got := envMap(cmd.Env)["APPROACH_COMMIT"]; got != wantCommit {
+		t.Fatalf("APPROACH_COMMIT = %q, want %q", got, wantCommit)
 	}
 }
 
@@ -2577,8 +2577,8 @@ func TestAgentCommandResolvesMissingCommitFromWorkingDir(t *testing.T) {
 		t.Fatalf("AgentCommand returned error: %v", err)
 	}
 
-	if got := envMap(cmd.Env)["WTUI_COMMIT"]; got != wantCommit {
-		t.Fatalf("WTUI_COMMIT = %q, want %q", got, wantCommit)
+	if got := envMap(cmd.Env)["APPROACH_COMMIT"]; got != wantCommit {
+		t.Fatalf("APPROACH_COMMIT = %q, want %q", got, wantCommit)
 	}
 }
 
@@ -2590,7 +2590,7 @@ func TestAgentCommandWiresCodexSessionHook(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "main",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 	})
 	if err != nil {
 		t.Fatalf("AgentCommand returned error: %v", err)
@@ -2616,7 +2616,7 @@ func TestAgentCommandBuildsCodexResumeCommand(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "main",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ResumeSessionID:  "codex-session-1",
 	})
 	if err != nil {
@@ -2639,14 +2639,14 @@ func TestAgentCommandBuildsCodexResumeCommand(t *testing.T) {
 
 	env := envMap(cmd.Env)
 	for key, want := range map[string]string{
-		"WTUI_AGENT":              "codex",
-		"WTUI_LAUNCH_ID":          "launch-1",
-		"WTUI_REPO_PATH":          "/repo",
-		"WTUI_WORKTREE_PATH":      "/repo/worktree",
-		"WTUI_BRANCH":             "main",
-		"WTUI_COMMIT":             "abcdef",
-		"WTUI_SESSION_STATE_ROOT": "/state/wtui/sessions/v1",
-		"WTUI_PLAN_STATE_ROOT":    "/state/wtui/sessions/v1",
+		"APPROACH_AGENT":              "codex",
+		"APPROACH_LAUNCH_ID":          "launch-1",
+		"APPROACH_REPO_PATH":          "/repo",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_BRANCH":             "main",
+		"APPROACH_COMMIT":             "abcdef",
+		"APPROACH_SESSION_STATE_ROOT": "/state/approach/sessions/v1",
+		"APPROACH_PLAN_STATE_ROOT":    "/state/approach/sessions/v1",
 	} {
 		if env[key] != want {
 			t.Fatalf("%s = %q, want %q in env %#v", key, env[key], want, cmd.Env)
@@ -2662,7 +2662,7 @@ func TestAgentCommandWiresClaudeSessionHook(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "main",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 	})
 	if err != nil {
 		t.Fatalf("AgentCommand returned error: %v", err)
@@ -2726,7 +2726,7 @@ func TestAgentCommandBuildsClaudeResumeCommand(t *testing.T) {
 		WorktreePath:     "/repo/worktree",
 		Branch:           "docs",
 		Commit:           "123456",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ResumeSessionID:  "claude-session-1",
 	})
 	if err != nil {
@@ -2787,7 +2787,7 @@ func TestAgentCommandResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing
 		WorkingDir:       "/repo/worktree/subdir",
 		Branch:           "main",
 		Commit:           "abcdef",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ResumeSessionID:  "codex-session-1",
 	})
 	if err != nil {
@@ -2797,8 +2797,8 @@ func TestAgentCommandResumeWorkingDirDoesNotOverwriteWorktreeMetadata(t *testing
 	if cmd.Dir != "/repo/worktree/subdir" {
 		t.Fatalf("command dir = %q, want /repo/worktree/subdir", cmd.Dir)
 	}
-	if got := envMap(cmd.Env)["WTUI_WORKTREE_PATH"]; got != "/repo/worktree" {
-		t.Fatalf("WTUI_WORKTREE_PATH = %q, want /repo/worktree", got)
+	if got := envMap(cmd.Env)["APPROACH_WORKTREE_PATH"]; got != "/repo/worktree" {
+		t.Fatalf("APPROACH_WORKTREE_PATH = %q, want /repo/worktree", got)
 	}
 }
 

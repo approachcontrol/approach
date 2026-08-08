@@ -9,10 +9,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 func TestClearDarkThemeUsesSemanticTruecolorPalette(t *testing.T) {
@@ -421,7 +421,7 @@ func TestRenderFlowCreateFormOverlayFitsNarrowTerminal(t *testing.T) {
 
 func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   10,
@@ -430,8 +430,8 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 			Provider:     sessions.ProviderCodex,
 			SessionID:    "codex-session-1",
 			Status:       "ended",
-			RepoPath:     "/dev/wtui",
-			WorktreePath: "/dev/wtui-worktrees/sessions",
+			RepoPath:     "/dev/approach",
+			WorktreePath: "/dev/approach-worktrees/sessions",
 			Branch:       "feature/headers",
 			Summary:      "Implement session capture",
 		}},
@@ -464,7 +464,7 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 
 func TestRender_SessionsModeShowsEmbeddedTerminalInsteadOfSessionRows(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   10,
@@ -658,7 +658,7 @@ func TestRenderEmbeddedTerminalPaneBorderUsesFocusColor(t *testing.T) {
 
 func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   10,
@@ -725,7 +725,7 @@ func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
 
 func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 	params := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -735,7 +735,7 @@ func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 				Provider:  sessions.ProviderCodex,
 				SessionID: "codex-above",
 				Status:    "ended",
-				RepoPath:  "/dev/wtui",
+				RepoPath:  "/dev/approach",
 				Branch:    "above",
 				Summary:   "above summary",
 			},
@@ -743,7 +743,7 @@ func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 				Provider:  sessions.ProviderCodex,
 				SessionID: "codex-selected",
 				Status:    "ended",
-				RepoPath:  "/dev/wtui",
+				RepoPath:  "/dev/approach",
 				Branch:    "selected",
 				Summary:   "selected first line\n\nselected third line",
 			},
@@ -751,7 +751,7 @@ func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 				Provider:  sessions.ProviderClaude,
 				SessionID: "claude-below",
 				Status:    "ended",
-				RepoPath:  "/dev/wtui",
+				RepoPath:  "/dev/approach",
 				Branch:    "below",
 				Summary:   "below summary",
 			},
@@ -786,7 +786,7 @@ func TestRender_SessionsModeTruncatesSummaryToPaneWidth(t *testing.T) {
 		Provider:  sessions.ProviderCodex,
 		SessionID: "codex-selected",
 		Status:    "ended",
-		RepoPath:  "/dev/wtui",
+		RepoPath:  "/dev/approach",
 		Branch:    "selected",
 		Summary:   "selected first line " + strings.Repeat("very long summary ", 20),
 	}}, 0, 0, rightContentWidth, 4)
@@ -897,7 +897,7 @@ func TestRender_SessionsModeEmptyMessages(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:             []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+				Repos:             []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 				Selected:          0,
 				Width:             120,
 				Height:            10,
@@ -913,7 +913,7 @@ func TestRender_SessionsModeEmptyMessages(t *testing.T) {
 
 func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   10,
@@ -922,7 +922,7 @@ func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 			Provider:  sessions.ProviderCodex,
 			SessionID: "codex-session-1",
 			Status:    "ended",
-			RepoPath:  "/dev/wtui",
+			RepoPath:  "/dev/approach",
 			Summary:   "Implement session capture",
 		}},
 		ActivePane:      1,
@@ -941,7 +941,7 @@ func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 
 func TestRender_SessionsModeHidesSessionActionsWithoutSelection(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   10,
@@ -950,7 +950,7 @@ func TestRender_SessionsModeHidesSessionActionsWithoutSelection(t *testing.T) {
 			Provider:  sessions.ProviderCodex,
 			SessionID: "codex-session-1",
 			Status:    "ended",
-			RepoPath:  "/dev/wtui",
+			RepoPath:  "/dev/approach",
 		}},
 		ActivePane:      1,
 		SessionSelected: -1,
@@ -1031,9 +1031,9 @@ func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
 
 func TestRender_WorktreesModeShowsInlineSessionHints(t *testing.T) {
 	base := RenderParams{
-		Repos: []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos: []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Worktrees: []gitquery.Worktree{
-			{Path: "/dev/wtui-worktrees/inline", BranchName: "feature/inline"},
+			{Path: "/dev/approach-worktrees/inline", BranchName: "feature/inline"},
 		},
 		Selected:          0,
 		Width:             140,
@@ -1068,13 +1068,13 @@ func TestRender_WorktreesModeShowsInlineSessionHints(t *testing.T) {
 
 func TestRender_WorktreesInlineSessionsVisibleWhenSelectedAtViewportBottom(t *testing.T) {
 	view := Render(RenderParams{
-		Repos: []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos: []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Worktrees: []gitquery.Worktree{
-			{Path: "/dev/wtui-worktrees/row-0", BranchName: "row-0"},
-			{Path: "/dev/wtui-worktrees/row-1", BranchName: "row-1"},
-			{Path: "/dev/wtui-worktrees/row-2", BranchName: "row-2"},
-			{Path: "/dev/wtui-worktrees/row-3", BranchName: "row-3"},
-			{Path: "/dev/wtui-worktrees/row-4", BranchName: "row-4"},
+			{Path: "/dev/approach-worktrees/row-0", BranchName: "row-0"},
+			{Path: "/dev/approach-worktrees/row-1", BranchName: "row-1"},
+			{Path: "/dev/approach-worktrees/row-2", BranchName: "row-2"},
+			{Path: "/dev/approach-worktrees/row-3", BranchName: "row-3"},
+			{Path: "/dev/approach-worktrees/row-4", BranchName: "row-4"},
 		},
 		Selected:                0,
 		Width:                   140,
@@ -1103,9 +1103,9 @@ func TestRender_WorktreesInlineSessionsVisibleWhenSelectedAtViewportBottom(t *te
 
 func TestRender_WorktreesModeShowsEmptyInlineSessions(t *testing.T) {
 	view := Render(RenderParams{
-		Repos: []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos: []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Worktrees: []gitquery.Worktree{
-			{Path: "/dev/wtui-worktrees/inline", BranchName: "feature/inline"},
+			{Path: "/dev/approach-worktrees/inline", BranchName: "feature/inline"},
 		},
 		Selected:               0,
 		Width:                  140,
@@ -1754,7 +1754,7 @@ func TestRender_ShortBranchPaneClipsLegendAfterActions(t *testing.T) {
 
 func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   10,
@@ -1763,7 +1763,7 @@ func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 			Provider:  sessions.ProviderCodex,
 			SessionID: "codex-session-1",
 			Status:    "ended",
-			RepoPath:  "/dev/wtui",
+			RepoPath:  "/dev/approach",
 		}},
 		ActivePane:      1,
 		SessionSelected: 0,
@@ -3580,7 +3580,7 @@ func selectPanelCandidateContainsPrompt(lines []string, bounds selectPanelBounds
 }
 
 func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
-	longInput := `Implement the saved wtui plan "Persist custom launch instructions" at /state/wtui/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
+	longInput := `Implement the saved approach plan "Persist custom launch instructions" at /state/approach/plans/plan-1/plan.md. Read the plan file, then begin implementation.`
 	view := Render(RenderParams{
 		Repos:            []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
 		Width:            120,
@@ -3600,7 +3600,7 @@ func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
 	if strings.Contains(view, longInput) {
 		t.Fatalf("launch instructions should wrap instead of rendering on one line:\n%s", view)
 	}
-	for _, want := range []string{"Implement the saved wtui plan", "Read the", "plan file", "then begin"} {
+	for _, want := range []string{"Implement the saved approach plan", "Read the", "plan file", "then begin"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wrapped launch instructions missing %q:\n%s", want, view)
 		}
@@ -3620,7 +3620,7 @@ func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
 
 func TestRender_LaunchInstructionsInputDialogMarksOverflow(t *testing.T) {
 	longInput := strings.Join([]string{
-		"Start with the saved wtui plan title and repository path.",
+		"Start with the saved approach plan title and repository path.",
 		"Keep this middle instruction one.",
 		"Keep this middle instruction two.",
 		"Keep this middle instruction three.",

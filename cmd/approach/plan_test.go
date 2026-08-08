@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/config"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
+	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
 )
 
 func noScanDeps(t *testing.T, deps runDeps) runDeps {
@@ -35,7 +35,7 @@ func noScanDeps(t *testing.T, deps runDeps) runDeps {
 
 func TestRunPlanHelpPrintsUsageAndExamples(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "--help"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "plan", "--help"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for plan help")
 			return config.Config{}, nil
@@ -46,16 +46,16 @@ func TestRunPlanHelpPrintsUsageAndExamples(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui plan <save|list|read|phase> [flags]",
-		"wtui plan save --title",
-		"wtui plan read --plan-id",
-		"wtui plan phase set --plan-id",
+		"Usage: approach plan <save|list|read|phase> [flags]",
+		"approach plan save --title",
+		"approach plan read --plan-id",
+		"approach plan phase set --plan-id",
 	})
 }
 
 func TestRunPlanSaveHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "save", "--help"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "plan", "save", "--help"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for plan save help")
 			return config.Config{}, nil
@@ -69,7 +69,7 @@ func TestRunPlanSaveHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 		t.Fatalf("help output should not contain flag error:\n%s", stdout.String())
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui plan save [flags]",
+		"Usage: approach plan save [flags]",
 		"--title TITLE",
 		"--file PATH",
 		"--state-root PATH",
@@ -84,27 +84,27 @@ func TestRunPlanLeafHelpPrintsUsageWithoutLoadingConfig(t *testing.T) {
 	}{
 		{
 			name: "list",
-			args: []string{"wtui", "plan", "list", "--help"},
+			args: []string{"approach", "plan", "list", "--help"},
 			wants: []string{
-				"Usage: wtui plan list [flags]",
+				"Usage: approach plan list [flags]",
 				"--json",
 				"--repo-path PATH",
 			},
 		},
 		{
 			name: "read",
-			args: []string{"wtui", "plan", "read", "--help"},
+			args: []string{"approach", "plan", "read", "--help"},
 			wants: []string{
-				"Usage: wtui plan read [flags]",
+				"Usage: approach plan read [flags]",
 				"--plan-id PLAN_ID",
-				"wtui plan read --plan-id",
+				"approach plan read --plan-id",
 			},
 		},
 		{
 			name: "phase set",
-			args: []string{"wtui", "plan", "phase", "set", "--help"},
+			args: []string{"approach", "plan", "phase", "set", "--help"},
 			wants: []string{
-				"Usage: wtui plan phase set [flags]",
+				"Usage: approach plan phase set [flags]",
 				"--plan-id PLAN_ID",
 				"--phase-id PHASE_ID",
 			},
@@ -134,7 +134,7 @@ func TestRunPlanSaveAllowsHelpAsFlagValue(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer
 	err := run([]string{
-		"wtui", "plan", "save",
+		"approach", "plan", "save",
 		"--title", "help",
 		"--plan-id", "help-title",
 		"--state-root", root,
@@ -159,7 +159,7 @@ func TestRunPlanSaveAllowsHelpAsFlagValue(t *testing.T) {
 }
 
 func TestRunPlanUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
-	err := run([]string{"wtui", "plan", "reed"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "plan", "reed"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown plan subcommand")
 			return config.Config{}, nil
@@ -171,12 +171,12 @@ func TestRunPlanUnknownSubcommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "reed"; did you mean "read"?`,
-		"Usage: wtui plan <save|list|read|phase> [flags]",
+		"Usage: approach plan <save|list|read|phase> [flags]",
 	})
 }
 
 func TestRunPlanPhaseUnknownSubcommandSuggestsSet(t *testing.T) {
-	err := run([]string{"wtui", "plan", "phase", "sete"}, noScanDeps(t, runDeps{
+	err := run([]string{"approach", "plan", "phase", "sete"}, noScanDeps(t, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown plan phase subcommand")
 			return config.Config{}, nil
@@ -188,14 +188,14 @@ func TestRunPlanPhaseUnknownSubcommandSuggestsSet(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "sete"; did you mean "set"?`,
-		"Usage: wtui plan phase set [flags]",
+		"Usage: approach plan phase set [flags]",
 	})
 }
 
 func TestRunPlanSaveFromStdinPrintsPlanID(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "save", "--title", "My Plan", "--plan-id", "my-plan", "--state-root", root, "--status", "draft"},
+	err := run([]string{"approach", "plan", "save", "--title", "My Plan", "--plan-id", "my-plan", "--state-root", root, "--status", "draft"},
 		noScanDeps(t, runDeps{
 			stdin:  strings.NewReader("# My Plan\n\nbody\n"),
 			stdout: &stdout,
@@ -226,7 +226,7 @@ func TestRunPlanSaveFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "save", "--title", "File Plan", "--plan-id", "file-plan", "--file", file, "--state-root", root},
+	err := run([]string{"approach", "plan", "save", "--title", "File Plan", "--plan-id", "file-plan", "--file", file, "--state-root", root},
 		noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -245,16 +245,16 @@ func TestRunPlanSaveStateRootPrecedence(t *testing.T) {
 	sessionRoot := t.TempDir()
 	configRoot := t.TempDir()
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p"},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p"},
 		noScanDeps(t, runDeps{
 			loadConfig: func() (config.Config, error) {
 				return config.Config{Sessions: config.SessionsConfig{Root: configRoot}}, nil
 			},
 			getenv: func(key string) string {
 				switch key {
-				case "WTUI_PLAN_STATE_ROOT":
+				case "APPROACH_PLAN_STATE_ROOT":
 					return planRoot
-				case "WTUI_SESSION_STATE_ROOT":
+				case "APPROACH_SESSION_STATE_ROOT":
 					return sessionRoot
 				}
 				return ""
@@ -266,7 +266,7 @@ func TestRunPlanSaveStateRootPrecedence(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(planRoot, "plans", "p", "meta.json")); err != nil {
-		t.Fatalf("expected plan under WTUI_PLAN_STATE_ROOT: %v", err)
+		t.Fatalf("expected plan under APPROACH_PLAN_STATE_ROOT: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(sessionRoot, "plans", "p", "meta.json")); !os.IsNotExist(err) {
 		t.Fatalf("plan should not be under session root")
@@ -276,10 +276,10 @@ func TestRunPlanSaveStateRootPrecedence(t *testing.T) {
 func TestRunPlanSaveSessionRootFallback(t *testing.T) {
 	sessionRoot := t.TempDir()
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p"},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p"},
 		noScanDeps(t, runDeps{
 			getenv: func(key string) string {
-				if key == "WTUI_SESSION_STATE_ROOT" {
+				if key == "APPROACH_SESSION_STATE_ROOT" {
 					return sessionRoot
 				}
 				return ""
@@ -291,28 +291,28 @@ func TestRunPlanSaveSessionRootFallback(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(sessionRoot, "plans", "p", "meta.json")); err != nil {
-		t.Fatalf("expected plan under WTUI_SESSION_STATE_ROOT: %v", err)
+		t.Fatalf("expected plan under APPROACH_SESSION_STATE_ROOT: %v", err)
 	}
 }
 
 func TestRunPlanSaveFillsMetadataFromEnv(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", root},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", root},
 		noScanDeps(t, runDeps{
 			getenv: func(key string) string {
 				switch key {
-				case "WTUI_AGENT":
+				case "APPROACH_AGENT":
 					return "claude"
-				case "WTUI_LAUNCH_ID":
+				case "APPROACH_LAUNCH_ID":
 					return "launch-9"
-				case "WTUI_REPO_PATH":
+				case "APPROACH_REPO_PATH":
 					return "/repo"
-				case "WTUI_WORKTREE_PATH":
+				case "APPROACH_WORKTREE_PATH":
 					return "/repo/wt"
-				case "WTUI_BRANCH":
+				case "APPROACH_BRANCH":
 					return "feature/env"
-				case "WTUI_COMMIT":
+				case "APPROACH_COMMIT":
 					return "deadbeef"
 				}
 				return ""
@@ -346,7 +346,7 @@ func TestRunPlanSaveFromLinkedWorktreeUsesRootRepoPath(t *testing.T) {
 	repoDir, worktreeDir := makeLinkedWorktree(t)
 	var stdout bytes.Buffer
 
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return worktreeDir, nil },
 			stdin:  strings.NewReader("body"),
@@ -376,11 +376,11 @@ func TestRunPlanSaveNormalizesLinkedWorktreeRepoPathFromEnv(t *testing.T) {
 	repoDir, worktreeDir := makeLinkedWorktree(t)
 	var stdout bytes.Buffer
 
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
 		noScanDeps(t, runDeps{
 			getenv: func(key string) string {
 				switch key {
-				case "WTUI_REPO_PATH", "WTUI_WORKTREE_PATH":
+				case "APPROACH_REPO_PATH", "APPROACH_WORKTREE_PATH":
 					return worktreeDir
 				}
 				return ""
@@ -407,7 +407,7 @@ func TestRunPlanSaveExplicitRepoPathDoesNotUseUnrelatedCWDMetadata(t *testing.T)
 	_, worktreeDir := makeLinkedWorktree(t)
 	var stdout bytes.Buffer
 
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot, "--repo-path", "/repo"},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot, "--repo-path", "/repo"},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return worktreeDir, nil },
 			stdin:  strings.NewReader("body"),
@@ -432,7 +432,7 @@ func TestRunPlanSaveUpdatePreservesExistingGitMetadataWhenOmitted(t *testing.T) 
 	otherRepoDir, otherWorktreeDir := makeLinkedWorktree(t)
 	var stdout bytes.Buffer
 
-	err := run([]string{"wtui", "plan", "save", "--title", "Original", "--plan-id", "p", "--state-root", stateRoot},
+	err := run([]string{"approach", "plan", "save", "--title", "Original", "--plan-id", "p", "--state-root", stateRoot},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return worktreeDir, nil },
 			stdin:  strings.NewReader("first body"),
@@ -443,7 +443,7 @@ func TestRunPlanSaveUpdatePreservesExistingGitMetadataWhenOmitted(t *testing.T) 
 	}
 
 	stdout.Reset()
-	err = run([]string{"wtui", "plan", "save", "--title", "Updated", "--plan-id", "p", "--state-root", stateRoot},
+	err = run([]string{"approach", "plan", "save", "--title", "Updated", "--plan-id", "p", "--state-root", stateRoot},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return otherWorktreeDir, nil },
 			stdin:  strings.NewReader("second body"),
@@ -479,7 +479,7 @@ func TestRunPlanSaveUpdateWithBranchOnlyPreservesOmittedGitMetadata(t *testing.T
 	otherRepoDir, otherWorktreeDir := makeLinkedWorktree(t)
 	var stdout bytes.Buffer
 
-	err := run([]string{"wtui", "plan", "save", "--title", "Original", "--plan-id", "p", "--state-root", stateRoot},
+	err := run([]string{"approach", "plan", "save", "--title", "Original", "--plan-id", "p", "--state-root", stateRoot},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return worktreeDir, nil },
 			stdin:  strings.NewReader("first body"),
@@ -491,7 +491,7 @@ func TestRunPlanSaveUpdateWithBranchOnlyPreservesOmittedGitMetadata(t *testing.T
 	original := readPlanRecord(t, stateRoot, "p")
 
 	stdout.Reset()
-	err = run([]string{"wtui", "plan", "save", "--title", "Updated", "--plan-id", "p", "--state-root", stateRoot, "--branch", "manual-branch"},
+	err = run([]string{"approach", "plan", "save", "--title", "Updated", "--plan-id", "p", "--state-root", stateRoot, "--branch", "manual-branch"},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return otherWorktreeDir, nil },
 			stdin:  strings.NewReader("second body"),
@@ -519,7 +519,7 @@ func TestRunPlanSaveFromBareRepoUsesBareRepoPath(t *testing.T) {
 	bareDir, commit := makeBareRepo(t)
 	var stdout bytes.Buffer
 
-	err := run([]string{"wtui", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
+	err := run([]string{"approach", "plan", "save", "--title", "P", "--plan-id", "p", "--state-root", stateRoot},
 		noScanDeps(t, runDeps{
 			getwd:  func() (string, error) { return bareDir, nil },
 			stdin:  strings.NewReader("body"),
@@ -546,11 +546,11 @@ func TestRunPlanSaveFromBareRepoUsesBareRepoPath(t *testing.T) {
 
 func TestRunPlanListJSON(t *testing.T) {
 	root := t.TempDir()
-	mustRun(t, []string{"wtui", "plan", "save", "--title", "Alpha", "--plan-id", "alpha", "--state-root", root, "--repo-path", "/repo"}, "alpha body")
-	mustRun(t, []string{"wtui", "plan", "save", "--title", "Beta", "--plan-id", "beta", "--state-root", root, "--repo-path", "/other"}, "beta body")
+	mustRun(t, []string{"approach", "plan", "save", "--title", "Alpha", "--plan-id", "alpha", "--state-root", root, "--repo-path", "/repo"}, "alpha body")
+	mustRun(t, []string{"approach", "plan", "save", "--title", "Beta", "--plan-id", "beta", "--state-root", root, "--repo-path", "/other"}, "beta body")
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "list", "--repo-path", "/repo", "--state-root", root, "--json"},
+	err := run([]string{"approach", "plan", "list", "--repo-path", "/repo", "--state-root", root, "--json"},
 		noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -566,7 +566,7 @@ func TestRunPlanListJSON(t *testing.T) {
 
 func TestRunPlanListRequiresJSON(t *testing.T) {
 	root := t.TempDir()
-	err := run([]string{"wtui", "plan", "list", "--state-root", root},
+	err := run([]string{"approach", "plan", "list", "--state-root", root},
 		noScanDeps(t, runDeps{stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --json")
@@ -578,10 +578,10 @@ func TestRunPlanListRequiresJSON(t *testing.T) {
 
 func TestRunPlanReadPrintsMarkdownOnly(t *testing.T) {
 	root := t.TempDir()
-	mustRun(t, []string{"wtui", "plan", "save", "--title", "Readable", "--plan-id", "readable", "--state-root", root}, "# Readable\n\nbody\n")
+	mustRun(t, []string{"approach", "plan", "save", "--title", "Readable", "--plan-id", "readable", "--state-root", root}, "# Readable\n\nbody\n")
 
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "plan", "read", "--plan-id", "readable", "--state-root", root},
+	err := run([]string{"approach", "plan", "read", "--plan-id", "readable", "--state-root", root},
 		noScanDeps(t, runDeps{stdout: &stdout}))
 	if err != nil {
 		t.Fatalf("run returned error: %v", err)
@@ -592,7 +592,7 @@ func TestRunPlanReadPrintsMarkdownOnly(t *testing.T) {
 }
 
 func TestRunPlanSaveRequiresTitle(t *testing.T) {
-	err := run([]string{"wtui", "plan", "save", "--state-root", t.TempDir()},
+	err := run([]string{"approach", "plan", "save", "--state-root", t.TempDir()},
 		noScanDeps(t, runDeps{stdin: strings.NewReader("body"), stdout: &bytes.Buffer{}}))
 	if err == nil {
 		t.Fatal("expected error requiring --title")

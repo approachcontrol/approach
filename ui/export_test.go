@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/brian-bell/wtui/gitquery"
+import "github.com/approachcontrol/approach/gitquery"
 
 // renderBranchPane is a test-only convenience wrapper around
 // renderBranchPaneSelected with selection/scroll disabled and no repo path.

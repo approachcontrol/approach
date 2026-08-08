@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/model"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model"
 )
 
 func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
@@ -14,13 +14,13 @@ func TestFlowPlanPromptAppendsPhaseDoneInstruction(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"Use the wtui-flow skill for this launch.",
+		"Use the approach-flow skill for this launch.",
 		"",
 		"Build the thing",
 		"",
 		"Produce a plan only; do not start coding in this phase.",
-		"Create and persist the plan with wtui plan save, link it back with wtui flow plan set, then report Flow persistence failures explicitly before ending.",
-		"If the task references a GitHub issue, link it with wtui flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.",
+		"Create and persist the plan with approach plan save, link it back with approach flow plan set, then report Flow persistence failures explicitly before ending.",
+		"If the task references a GitHub issue, link it with approach flow issue set using the issue number and URL; when only #N is given, derive the URL from an unambiguous GitHub origin remote or note the ambiguity instead of guessing.",
 		"",
 		model.FlowPhaseDoneInstructionForTest(),
 	}, "\n")
@@ -43,7 +43,7 @@ func TestFlowPhasePromptsAppendPhaseDoneInstruction(t *testing.T) {
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     42,
-			URL:        "https://github.com/brian-bell/wtui/pull/42",
+			URL:        "https://github.com/approachcontrol/approach/pull/42",
 			HeadBranch: "flow/build",
 			BaseBranch: "main",
 			Status:     "open",
@@ -87,7 +87,7 @@ func TestFlowPromptTemplatesAppendPhaseDoneInstruction(t *testing.T) {
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     24,
-			URL:        "https://github.com/brian-bell/wtui/pull/24",
+			URL:        "https://github.com/approachcontrol/approach/pull/24",
 			HeadBranch: "flow/template",
 			BaseBranch: "main",
 			Status:     "open",
@@ -95,7 +95,7 @@ func TestFlowPromptTemplatesAppendPhaseDoneInstruction(t *testing.T) {
 		Issue: flowstore.Issue{
 			Provider: "github",
 			Number:   123,
-			URL:      "https://github.com/brian-bell/wtui/issues/123",
+			URL:      "https://github.com/approachcontrol/approach/issues/123",
 		},
 	}
 	template := "Custom {phase_id} for {flow_id}: {plan_path} at {worktree_path}; issue {issue_provider}#{issue_number} {issue_url}; keep {unknown}"
@@ -148,13 +148,13 @@ func TestFlowPhasePromptIncludesIssueMetadata(t *testing.T) {
 		Issue: flowstore.Issue{
 			Provider: "github",
 			Number:   123,
-			URL:      "https://github.com/brian-bell/wtui/issues/123",
+			URL:      "https://github.com/approachcontrol/approach/issues/123",
 		},
 	}
 
 	got := model.FlowPhasePromptForTest(record, flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation"}, "", "", model.FlowPromptTemplates{})
 
-	if !strings.Contains(got, "Issue: github #123 https://github.com/brian-bell/wtui/issues/123") {
+	if !strings.Contains(got, "Issue: github #123 https://github.com/approachcontrol/approach/issues/123") {
 		t.Fatalf("prompt should include linked issue metadata:\n%s", got)
 	}
 }
@@ -172,7 +172,7 @@ func TestFlowPhasePromptUsesSemanticKindForCustomID(t *testing.T) {
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     42,
-			URL:        "https://github.com/brian-bell/wtui/pull/42",
+			URL:        "https://github.com/approachcontrol/approach/pull/42",
 			HeadBranch: "flow/kind",
 			BaseBranch: "main",
 		},
@@ -272,7 +272,7 @@ func TestFlowGenericPhasePromptPreservesContextAndAppendsPhaseDoneInstruction(t 
 	planBody := "Confirm the release notes."
 
 	want := appendFlowDoneInstructionForTest(strings.Join([]string{
-		"Use the wtui-flow skill for this launch.",
+		"Use the approach-flow skill for this launch.",
 		"",
 		"Flow phase: QA Check (qa-check).",
 		"",
@@ -284,7 +284,7 @@ func TestFlowGenericPhasePromptPreservesContextAndAppendsPhaseDoneInstruction(t 
 		"Saved plan body:",
 		"Confirm the release notes.",
 		"",
-		"Advance this phase with `wtui flow phase set` only after the corresponding work is complete, blocked, or needs attention.",
+		"Advance this phase with `approach flow phase set` only after the corresponding work is complete, blocked, or needs attention.",
 	}, "\n"))
 	if got := model.FlowPhasePromptForTest(record, phase, record.PlanPath, planBody, model.FlowPromptTemplates{}); got != want {
 		t.Fatalf("generic phase prompt = %q, want %q", got, want)

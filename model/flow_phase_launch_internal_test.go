@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/scanner"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/scanner"
 )
 
 type flowPhaseLaunchTestTerminal struct {
@@ -174,7 +174,7 @@ func TestFlowPhaseLaunchCoordinatorNormalizesPhaseIDsForPreflightAndRecovery(t *
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     115,
-			URL:        "https://github.com/brian-bell/wtui/pull/115",
+			URL:        "https://github.com/approachcontrol/approach/pull/115",
 			HeadBranch: "flow/review",
 			BaseBranch: "main",
 		},

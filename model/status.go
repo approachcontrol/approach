@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/ui"
 )
 
 const statusLifetime = 3 * time.Second

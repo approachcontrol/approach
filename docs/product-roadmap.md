@@ -1,13 +1,13 @@
-# wtui Product Roadmap
+# approach Product Roadmap
 
 ## Vision
 
-wtui is a multi-repository command center for git worktree workflows. Its job is
+approach is a multi-repository command center for git worktree workflows. Its job is
 to answer "what is happening across my repos and worktrees?" quickly, then make
 the common next action safe: inspect, open, fetch, pull, create, clean up, or
 hand off to another tool.
 
-The product should stay narrower than a full git client. wtui wins by being the
+The product should stay narrower than a full git client. approach wins by being the
 dashboard and launcher for worktree-heavy development, not by reimplementing
 lazygit.
 
@@ -45,11 +45,11 @@ are already implemented and should be treated as the baseline product:
   full sessions-view embedded PTY resumes for CLI Codex/Claude sessions,
   `codex-app` deep-link resumes, raw session ID copying, and user-state storage
   outside repos.
-- Saved agent plans persisted through the `wtui plan` CLI and browsed in the
+- Saved agent plans persisted through the `approach plan` CLI and browsed in the
   plans pane with per-phase progress, phase expansion, plan-path copying, and
   plan Markdown editing plus editable launch instructions for whole-plan or
   selected-phase agent launch.
-- Flow records persisted through the `wtui flow` CLI and started from the
+- Flow records persisted through the `approach flow` CLI and started from the
   default flows pane with new-flow creation, ready-phase agent launch, derived
   status, phase progress, linked plan metadata, PR metadata, repo-scoped
   filtering, linked-plan body opening, expanded-phase session resume, and
@@ -62,15 +62,15 @@ are already implemented and should be treated as the baseline product:
 
 ## Positioning
 
-| Tool type | Strength | wtui distinction |
+| Tool type | Strength | approach distinction |
 |-----------|----------|------------------|
-| Full git TUIs | Rich commit, staging, rebase, push, and branch workflows | wtui stays focused on multi-repo worktree visibility and safe launcher actions |
-| Single-repo worktree tools | Deep lifecycle management inside one repository | wtui scans the workspace and puts all repos in one dashboard |
-| CLI worktree helpers | Fast scripted operations | wtui makes state visible before mutation and gates destructive actions |
+| Full git TUIs | Rich commit, staging, rebase, push, and branch workflows | approach stays focused on multi-repo worktree visibility and safe launcher actions |
+| Single-repo worktree tools | Deep lifecycle management inside one repository | approach scans the workspace and puts all repos in one dashboard |
+| CLI worktree helpers | Fast scripted operations | approach makes state visible before mutation and gates destructive actions |
 
 The core message is now:
 
-> wtui is a terminal dashboard for managing git worktrees across all your repos,
+> approach is a terminal dashboard for managing git worktrees across all your repos,
 > with safe cleanup, quick creation, and launcher actions for real development
 > sessions.
 
@@ -84,7 +84,7 @@ features can build on.
 | Item | Why it matters | Priority |
 |------|----------------|----------|
 | Git command error surfacing | Several async list/diff fetchers currently discard git errors. Surface failures in the status bar so empty panes are not confused with command failures. | P0 |
-| Config file foundation | Add `~/.config/wtui/config.toml` and load it early enough to support future scan, editor, terminal, provider, and launch settings. | P0 |
+| Config file foundation | Add `~/.config/approach/config.toml` and load it early enough to support future scan, editor, terminal, provider, and launch settings. | P0 |
 | Empty-state clarity | Distinguish "nothing to show" from "command failed" and "repo has no matching filtered results." | P1 |
 | Stale async result clarity | Keep ignoring outdated async results, but make current command failures obvious when they belong to the selected repo/mode. | P1 |
 
@@ -103,7 +103,7 @@ clear.
 
 ### Phase 3: Multi-Repo Operations
 
-Goal: make wtui more than a per-repo switcher while preserving safety and
+Goal: make approach more than a per-repo switcher while preserving safety and
 clarity.
 
 | Item | Why it matters | Priority |
@@ -141,7 +141,7 @@ surface is stronger.
 
 ### Phase 6: Configuration and Personal Workflow
 
-Goal: let users adapt wtui without changing source or environment wrappers.
+Goal: let users adapt approach without changing source or environment wrappers.
 
 | Item | Why it matters | Priority |
 |------|----------------|----------|
@@ -155,8 +155,8 @@ Goal: let users adapt wtui without changing source or environment wrappers.
 The critical distribution path is now mostly implemented:
 
 1. GitHub Releases via GoReleaser for macOS and Linux on amd64/arm64.
-2. Homebrew cask published to `brian-bell/homebrew-tap` for macOS users.
-3. `go install github.com/brian-bell/wtui/cmd/wtui@latest` support through the
+2. Homebrew cask published to `approachcontrol/homebrew-tap` for macOS users.
+3. `go install github.com/approachcontrol/approach/cmd/approach@latest` support through the
    module path and tagged releases.
 
 Next distribution work should be ordered by user demand:
@@ -190,9 +190,9 @@ Useful launch surfaces:
 
 ## Scope Discipline
 
-wtui should keep saying no to general git-client work unless it directly serves
+approach should keep saying no to general git-client work unless it directly serves
 worktree management across repositories. Commit creation, staging, rebasing,
-conflict resolution, and push workflows belong in dedicated git clients. wtui
+conflict resolution, and push workflows belong in dedicated git clients. approach
 should make those workflows easier to reach by opening the right worktree in the
 right terminal, editor, or companion tool.
 
@@ -201,5 +201,5 @@ Good roadmap questions:
 - Does this help users understand worktree state across repos?
 - Does this make common worktree lifecycle actions safer or faster?
 - Does this preserve the read-only default and destructive-mode boundary?
-- Can this be represented clearly in the two-pane dashboard without turning wtui
+- Can this be represented clearly in the two-pane dashboard without turning approach
   into a full git client?

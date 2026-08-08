@@ -8,16 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/agent"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/pelletier/go-toml/v2"
 )
 
 type getenvFunc func(string) string
 type homeDirFunc func() (string, error)
 
-// Config is wtui's parsed configuration file.
+// Config is approach's parsed configuration file.
 type Config struct {
 	Scan        ScanConfig       `toml:"scan"`
 	Editor      EditorConfig     `toml:"editor"`
@@ -141,7 +141,7 @@ func WithLockTimeout(timeout time.Duration) Option {
 	}
 }
 
-// Load reads wtui's default config file.
+// Load reads approach's default config file.
 func Load(options ...Option) (Config, error) {
 	opts := defaultOptions(options...)
 	paths, err := defaultPaths(opts)
@@ -343,7 +343,7 @@ func normalizeBootstrapConfig(path string, cfg *BootstrapConfig, opts loadOption
 }
 
 // DefaultPath returns the default config path:
-// $XDG_CONFIG_HOME/wtui/config.toml, or ~/.config/wtui/config.toml.
+// $XDG_CONFIG_HOME/approach/config.toml, or ~/.config/approach/config.toml.
 func DefaultPath(options ...Option) (string, error) {
 	opts := defaultOptions(options...)
 	paths, err := defaultPaths(opts)
@@ -353,7 +353,7 @@ func DefaultPath(options ...Option) (string, error) {
 	return paths[0], nil
 }
 
-// SaveAgentCommand persists the selected coding agent to wtui's default config
+// SaveAgentCommand persists the selected coding agent to approach's default config
 // file, creating the config directory when needed.
 func SaveAgentCommand(command string, options ...Option) error {
 	command = agent.Normalize(command)
@@ -370,7 +370,7 @@ func SaveAgentCommand(command string, options ...Option) error {
 }
 
 // SaveAgentReasoningEffort persists the selected provider-specific reasoning
-// effort to wtui's default config file, creating the config directory when
+// effort to approach's default config file, creating the config directory when
 // needed. An empty effort is saved as "default".
 func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
 	command = agent.Normalize(command)
@@ -396,7 +396,7 @@ func SaveAgentReasoningEffort(command, effort string, options ...Option) error {
 	return saveAgentReasoningEffortTo(path, command, effort, options...)
 }
 
-// SaveAgentModel persists the selected provider-specific model to wtui's
+// SaveAgentModel persists the selected provider-specific model to approach's
 // default config file, creating the config directory when needed. An empty
 // model is saved as "default".
 func SaveAgentModel(command, model string, options ...Option) error {
@@ -423,7 +423,7 @@ func SaveAgentModel(command, model string, options ...Option) error {
 	return saveAgentModelTo(path, command, model, options...)
 }
 
-// SaveDefaultView persists the startup default view number to wtui's default
+// SaveDefaultView persists the startup default view number to approach's default
 // config file, creating the config directory when needed.
 func SaveDefaultView(view int, options ...Option) error {
 	if err := validateDefaultView(view); err != nil {
@@ -438,7 +438,7 @@ func SaveDefaultView(view int, options ...Option) error {
 	return saveDefaultViewTo(path, view, options...)
 }
 
-// SavePromptTemplate persists a configurable prompt template to wtui's default
+// SavePromptTemplate persists a configurable prompt template to approach's default
 // config file. plan_prompt is stored under [agent]; Flow phase prompt keys are
 // stored under [flow_prompts].
 func SavePromptTemplate(section, key, value string, options ...Option) error {
@@ -456,7 +456,7 @@ func SavePromptTemplate(section, key, value string, options ...Option) error {
 }
 
 // ResetPromptTemplate removes a configurable prompt template override from
-// wtui's default config file. Missing assignments are treated as already reset.
+// approach's default config file. Missing assignments are treated as already reset.
 func ResetPromptTemplate(section, key string, options ...Option) error {
 	section, key, err := normalizePromptTemplateTarget(section, key)
 	if err != nil {
@@ -826,7 +826,7 @@ func insertLine(lines []string, index int, line string) []string {
 func defaultPaths(opts loadOptions) ([]string, error) {
 	var paths []string
 	if xdg := opts.getenv("XDG_CONFIG_HOME"); xdg != "" {
-		paths = append(paths, filepath.Join(xdg, "wtui", "config.toml"))
+		paths = append(paths, filepath.Join(xdg, "approach", "config.toml"))
 	}
 
 	home, err := opts.homeDir()
@@ -836,7 +836,7 @@ func defaultPaths(opts loadOptions) ([]string, error) {
 		}
 		return nil, err
 	}
-	homePath := filepath.Join(home, ".config", "wtui", "config.toml")
+	homePath := filepath.Join(home, ".config", "approach", "config.toml")
 	if len(paths) == 0 || paths[len(paths)-1] != homePath {
 		paths = append(paths, homePath)
 	}

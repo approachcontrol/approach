@@ -8,15 +8,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/agent"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/internal/artifacts"
-	"github.com/brian-bell/wtui/model/modal"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/model/modal"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1881,7 +1881,7 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 		return next, nil
 	}
 	if ctx.Command == agent.CommandCodexApp {
-		// Codex App resume deep links cannot carry wtui launch metadata, so treat
+		// Codex App resume deep links cannot carry approach launch metadata, so treat
 		// them as app navigation instead of a tracked Flow launch attempt.
 		ctx.LaunchID = ""
 		ctx.FlowID = ""
@@ -2108,7 +2108,7 @@ func defaultImplementationPrompt(plan planstore.PlanRecord, planPath string) str
 	if title == "" {
 		title = "(untitled)"
 	}
-	return fmt.Sprintf("Implement the saved wtui plan %q (ID: %s) at %s. Read the plan file, then begin implementation.", title, plan.PlanID, planPath)
+	return fmt.Sprintf("Implement the saved approach plan %q (ID: %s) at %s. Read the plan file, then begin implementation.", title, plan.PlanID, planPath)
 }
 
 func defaultImplementationPromptForPhase(plan planstore.PlanRecord, planPath string, phase planstore.PlanPhase) string {
@@ -2124,7 +2124,7 @@ func defaultImplementationPromptForPhase(plan planstore.PlanRecord, planPath str
 	if phaseStatus == "" {
 		phaseStatus = "(unknown)"
 	}
-	return fmt.Sprintf("Implement only the selected phase of the saved wtui plan %q (ID: %s) at %s. Selected phase: %s (%q), status %s. Read the plan file, then begin implementation of only that phase.", title, plan.PlanID, planPath, phase.PhaseID, phaseTitle, phaseStatus)
+	return fmt.Sprintf("Implement only the selected phase of the saved approach plan %q (ID: %s) at %s. Selected phase: %s (%q), status %s. Read the plan file, then begin implementation of only that phase.", title, plan.PlanID, planPath, phase.PhaseID, phaseTitle, phaseStatus)
 }
 
 func flowPhaseByID(record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
@@ -2265,7 +2265,7 @@ func (m Model) handleFlowPhaseResumePersistFailed(msg flowPhaseResumePersistFail
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
 	if launch.Interactive {
-		// wtui hands over the TTY until the launch command exits. Some launch
+		// approach hands over the TTY until the launch command exits. Some launch
 		// commands are only terminal/multiplexer clients; launch.Detached records
 		// whether provider hooks, not this result, own session completion.
 		return m, tea.ExecProcess(launch.Cmd, func(err error) tea.Msg {

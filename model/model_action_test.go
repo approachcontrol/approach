@@ -16,16 +16,16 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/embeddedterm"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/model/modal"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/embeddedterm"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/model/modal"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 // --- Worktree diff (enter key in ModeWorktrees) ---
@@ -3788,7 +3788,7 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 		t.Fatalf("overlay = %v, want text preview", m.Overlay())
 	}
 	preview := m.OverlayText()
-	for _, want := range []string{"Implement the saved wtui plan", "{title}", "{plan_id}", "{plan_path}"} {
+	for _, want := range []string{"Implement the saved approach plan", "{title}", "{plan_id}", "{plan_path}"} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("expected plan prompt preview to contain %q:\n%s", want, preview)
 		}
@@ -3800,7 +3800,7 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 
 	preview = m.OverlayText()
-	for _, want := range []string{"Use the wtui-flow skill", "{instructions}", "After completing this phase goal"} {
+	for _, want := range []string{"Use the approach-flow skill", "{instructions}", "After completing this phase goal"} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("expected Flow plan preview to contain %q:\n%s", want, preview)
 		}
@@ -4232,7 +4232,7 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand:     "codex",
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
@@ -4252,7 +4252,7 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 		got.WorktreePath != "/dev/alpha" ||
 		got.Branch != "main" ||
 		got.Commit != "abc123" ||
-		got.SessionStateRoot != "/state/wtui/sessions/v1" {
+		got.SessionStateRoot != "/state/approach/sessions/v1" {
 		t.Fatalf("unexpected launch context: %#v", got)
 	}
 	if got.LaunchID == "" {
@@ -4909,7 +4909,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}}
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
 			return fakeTerm, nil
@@ -4932,7 +4932,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 			Branch:       "feature/api",
 			Commit:       "abc123",
 			PlanID:       "plan-1",
-			PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+			PlanPath:     "/state/approach/plans/plan-1/plan.md",
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
@@ -4943,9 +4943,9 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	if got.Command != "codex" ||
 		got.ResumeSessionID != "codex-session-1" ||
 		got.WorkingDir != "/dev/alpha-worktrees/feat/subdir" ||
-		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.SessionStateRoot != "/state/approach/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
+		got.PlanPath != "/state/approach/plans/plan-1/plan.md" {
 		t.Fatalf("unexpected embedded resume context: %#v", got)
 	}
 	view := m.View()
@@ -5158,7 +5158,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd != nil {
-		t.Fatalf("plain terminal key should not return wtui command, got %T", cmd)
+		t.Fatalf("plain terminal key should not return approach command, got %T", cmd)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeySpace})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
@@ -5715,7 +5715,7 @@ func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
 			return &fakeEmbeddedTerminal{}, nil
@@ -5734,7 +5734,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 			Branch:       "feat",
 			Commit:       "abc123",
 			PlanID:       "plan-1",
-			PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+			PlanPath:     "/state/approach/plans/plan-1/plan.md",
 			FlowID:       "flow-1",
 			FlowPhaseID:  "review-loop",
 		},
@@ -5752,9 +5752,9 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		got.WorkingDir != "/dev/alpha-worktrees/feat/subdir" ||
 		got.Branch != "feat" ||
 		got.Commit != "abc123" ||
-		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.SessionStateRoot != "/state/approach/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" ||
+		got.PlanPath != "/state/approach/plans/plan-1/plan.md" ||
 		!got.Embedded {
 		t.Fatalf("unexpected resume launch context: %#v", got)
 	}
@@ -6083,7 +6083,7 @@ func TestModel_ArrowKeysSelectInlineWorktreeSessions(t *testing.T) {
 func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{{
 				Provider:     sessions.ProviderClaude,
@@ -6095,7 +6095,7 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 				Branch:       "feature/inline",
 				Commit:       "abc123",
 				PlanID:       "plan-1",
-				PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+				PlanPath:     "/state/approach/plans/plan-1/plan.md",
 				FlowID:       "flow-1",
 				FlowPhaseID:  "implementation",
 			}}, nil
@@ -6130,9 +6130,9 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 		got.WorkingDir != "/dev/alpha-worktrees/inline/subdir" ||
 		got.Branch != "feature/inline" ||
 		got.Commit != "abc123" ||
-		got.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		got.SessionStateRoot != "/state/approach/sessions/v1" ||
 		got.PlanID != "plan-1" ||
-		got.PlanPath != "/state/wtui/plans/plan-1/plan.md" {
+		got.PlanPath != "/state/approach/plans/plan-1/plan.md" {
 		t.Fatalf("unexpected inline resume launch context: %#v", got)
 	}
 	if got.FlowID != "" || got.FlowPhaseID != "" {
@@ -6249,7 +6249,7 @@ func TestModel_SessionsFilterMatchesSessionFields(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
-		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/wtui-worktrees/sessions", Branch: "main", Model: "gpt-5", Status: "ended", Summary: "Implement capture"},
+		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/approach-worktrees/sessions", Branch: "main", Model: "gpt-5", Status: "ended", Summary: "Implement capture"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha", Branch: "docs", Model: "opus", Status: "last_seen", Summary: "Write docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 

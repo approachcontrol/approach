@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/claudestream"
+	"github.com/approachcontrol/approach/claudestream"
 )
 
 // sampleEvents mirrors the JSONL shape emitted by
@@ -131,7 +131,7 @@ const partialEvents = `{"type":"system","subtype":"init","model":"claude-opus-4-
 {"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\", \"description\": \"read\"}"}}}
 {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cat notes.txt","description":"read"}}]}}
 {"type":"stream_event","event":{"type":"content_block_stop","index":1}}
-{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"wtui is a worktree TUI."}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"approach is a worktree TUI."}]}}
 {"type":"stream_event","event":{"type":"message_start"}}
 {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
 {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"notes.txt "}}}
@@ -157,7 +157,7 @@ func TestRendererStreamsPartialMessagesWithoutDuplication(t *testing.T) {
 	if !strings.Contains(got, "✻ Thinking…") {
 		t.Errorf("missing thinking marker, got:\n%s", got)
 	}
-	if !strings.Contains(got, "wtui is a worktree TUI.") {
+	if !strings.Contains(got, "approach is a worktree TUI.") {
 		t.Errorf("missing tool result, got:\n%s", got)
 	}
 	if !strings.Contains(got, "2 turns") {

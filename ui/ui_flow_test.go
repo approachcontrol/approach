@@ -10,13 +10,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/scanner"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/scanner"
 )
 
 func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    230,
 		Height:   10,
@@ -26,10 +26,10 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 			Title:        "Add Flow mode",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/add-flow-mode",
-			WorktreePath: "/dev/wtui-worktrees/flow-add-flow-mode",
+			WorktreePath: "/dev/approach-worktrees/flow-add-flow-mode",
 			PlanID:       "plan-1",
-			Issue:        flowstore.Issue{Number: 456, URL: "https://github.com/brian-bell/wtui/issues/456"},
-			PR:           flowstore.PullRequest{Number: 123, URL: "https://github.com/brian-bell/wtui/pull/123"},
+			Issue:        flowstore.Issue{Number: 456, URL: "https://github.com/approachcontrol/approach/issues/456"},
+			PR:           flowstore.PullRequest{Number: 123, URL: "https://github.com/approachcontrol/approach/pull/123"},
 			UpdatedAt:    time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1},
@@ -59,7 +59,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 
 func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    230,
 		Height:   10,
@@ -90,7 +90,7 @@ func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 
 func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       180,
 		Height:      24,
@@ -125,7 +125,7 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 	view := Render(RenderParams{
 		Repos: []scanner.Repo{
-			{Path: "/dev/wtui", DisplayName: "wtui"},
+			{Path: "/dev/approach", DisplayName: "approach"},
 			{Path: "/dev/client/api", DisplayName: "client/api"},
 		},
 		Selected:    0,
@@ -138,7 +138,7 @@ func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 			FlowID:   "flow-1",
 			Title:    "Active repo flow",
 			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/wtui",
+			RepoPath: "/dev/approach",
 			Branch:   "flow/active-repo",
 		}, {
 			FlowID:   "flow-2",
@@ -154,7 +154,7 @@ func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 	row := lineContaining(view, "flow/active-repo")
 	nestedRow := lineContaining(view, "flow/nested-repo")
 	requireOrderedColumns(t, header, "Status", "Repo", "Branch")
-	requireOrderedColumns(t, row, flowstore.StatusInProgress, "wtui", "flow/active-repo")
+	requireOrderedColumns(t, row, flowstore.StatusInProgress, "approach", "flow/active-repo")
 	requireOrderedColumns(t, nestedRow, flowstore.StatusInProgress, "client/api", "flow/nested-repo")
 	if strings.Contains(nestedRow, " api ") {
 		t.Fatalf("nested active-flow repo label should preserve scanner display context, got basename row: %q", nestedRow)
@@ -163,7 +163,7 @@ func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 
 func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    260,
 		Height:   18,
@@ -215,7 +215,7 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 
 func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       240,
 		Height:      14,
@@ -226,7 +226,7 @@ func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 			FlowID:   "flow-1",
 			Title:    "Split active repo flow",
 			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/wtui",
+			RepoPath: "/dev/approach",
 			Branch:   "flow/split-repo",
 		}},
 		FlowSelected: 0,
@@ -243,7 +243,7 @@ func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 	header := lineContaining(view, "Status")
 	row := lineContaining(view, "flow/split-repo")
 	requireOrderedColumns(t, header, "Status", "Repo", "Branch")
-	requireOrderedColumns(t, row, flowstore.StatusInProgress, "wtui", "flow/split-repo")
+	requireOrderedColumns(t, row, flowstore.StatusInProgress, "approach", "flow/split-repo")
 	if !strings.Contains(view, "terminal line") {
 		t.Fatalf("active-flow split pane should still render terminal content:\n%s", view)
 	}
@@ -257,7 +257,7 @@ func TestRender_FlowsModeSplitTerminalTinyViewportDoesNotPanic(t *testing.T) {
 	}()
 
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   BranchContentOverhead - 1,
@@ -353,7 +353,7 @@ func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 
 func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       240,
 		Height:      12,
@@ -364,7 +364,7 @@ func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T
 			FlowID:   "flow-1",
 			Title:    "Expanded active repo flow",
 			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/wtui",
+			RepoPath: "/dev/approach",
 			Branch:   "flow/expanded",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
@@ -380,8 +380,8 @@ func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T
 
 	flowRow := lineContaining(view, "flow/expanded")
 	phaseRow := lineContaining(view, "implementation:ready")
-	requireOrderedColumns(t, flowRow, flowstore.StatusInProgress, "wtui", "flow/expanded")
-	if repoColumn := visibleColumn(flowRow, "wtui"); repoColumn >= visibleColumn(phaseRow, "implementation:ready") {
+	requireOrderedColumns(t, flowRow, flowstore.StatusInProgress, "approach", "flow/expanded")
+	if repoColumn := visibleColumn(flowRow, "approach"); repoColumn >= visibleColumn(phaseRow, "implementation:ready") {
 		t.Fatalf("phase detail should render after the empty repo and branch cells, flow=%q phase=%q", flowRow, phaseRow)
 	}
 	if visibleColumn(phaseRow, "implementation:ready") <= visibleColumn(flowRow, "flow/expanded") {
@@ -391,7 +391,7 @@ func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T
 
 func TestRender_ActiveFlowsExpandedNoPhasesKeepsRepoColumnAlignment(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       240,
 		Height:      12,
@@ -402,7 +402,7 @@ func TestRender_ActiveFlowsExpandedNoPhasesKeepsRepoColumnAlignment(t *testing.T
 			FlowID:   "flow-1",
 			Title:    "Expanded active repo flow",
 			Status:   flowstore.StatusInProgress,
-			RepoPath: "/dev/wtui",
+			RepoPath: "/dev/approach",
 			Branch:   "flow/empty-phases",
 		}},
 		FlowSelected:   0,
@@ -411,7 +411,7 @@ func TestRender_ActiveFlowsExpandedNoPhasesKeepsRepoColumnAlignment(t *testing.T
 
 	flowRow := lineContaining(view, "flow/empty-phases")
 	noPhasesRow := lineContaining(view, "No phases")
-	requireOrderedColumns(t, flowRow, flowstore.StatusInProgress, "wtui", "flow/empty-phases")
+	requireOrderedColumns(t, flowRow, flowstore.StatusInProgress, "approach", "flow/empty-phases")
 	if visibleColumn(noPhasesRow, "No phases") <= visibleColumn(flowRow, "flow/empty-phases") {
 		t.Fatalf("no-phases detail should stay aligned after the active-flow branch column, flow=%q noPhases=%q", flowRow, noPhasesRow)
 	}
@@ -480,7 +480,7 @@ func TestRender_ActiveFlowsSelectedActiveRowsPreserveSelectionAfterRepoColumn(t 
 		FlowID:   "flow-1",
 		Title:    "Active repo flow",
 		Status:   flowstore.StatusInProgress,
-		RepoPath: "/dev/wtui",
+		RepoPath: "/dev/approach",
 		Branch:   "flow/active-repo",
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
@@ -499,11 +499,11 @@ func TestRender_ActiveFlowsSelectedActiveRowsPreserveSelectionAfterRepoColumn(t 
 	if !strings.HasPrefix(strippedFlowRow, ">● in_progress") {
 		t.Fatalf("selected active flow row prefix = %q, want selection and marker:\n%s", strippedFlowRow, view)
 	}
-	requireOrderedColumns(t, strippedFlowRow, flowstore.StatusInProgress, "wtui", "flow/active-repo")
+	requireOrderedColumns(t, strippedFlowRow, flowstore.StatusInProgress, "approach", "flow/active-repo")
 	if !strings.Contains(flowRow, selectedSegment(flowTerminalStyle, "●")) {
 		t.Fatalf("selected active flow marker should keep semantic marker style:\n%q", flowRow)
 	}
-	if want := selectedStyle.Render(fitSessionColumn("wtui", flowRepoWidth)); !strings.Contains(flowRow, want) {
+	if want := selectedStyle.Render(fitSessionColumn("approach", flowRepoWidth)); !strings.Contains(flowRow, want) {
 		t.Fatalf("selected active flow row should style repo column after marker:\n%q\nmissing %q", flowRow, want)
 	}
 
@@ -739,7 +739,7 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 
 func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:            0,
 		Width:               180,
 		Height:              12,
@@ -764,7 +764,7 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 
 func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:          []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:       0,
 		Width:          180,
 		Height:         28,
@@ -787,7 +787,7 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 
 func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:            0,
 		Width:               180,
 		Height:              28,
@@ -809,7 +809,7 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) 
 
 func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   28,
@@ -819,7 +819,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 			Title:        "Grouped shortcuts",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/grouped-shortcuts",
-			WorktreePath: "/dev/wtui-worktrees/flow-grouped-shortcuts",
+			WorktreePath: "/dev/approach-worktrees/flow-grouped-shortcuts",
 			PlanID:       "plan-1",
 			AutoMode:     true,
 			Phases: []flowstore.FlowPhase{{
@@ -870,7 +870,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 
 func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       180,
 		Height:      28,
@@ -881,7 +881,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 			Title:        "Grouped shortcuts",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/grouped-shortcuts",
-			WorktreePath: "/dev/wtui-worktrees/flow-grouped-shortcuts",
+			WorktreePath: "/dev/approach-worktrees/flow-grouped-shortcuts",
 			PlanID:       "plan-1",
 			AutoMode:     true,
 			Phases: []flowstore.FlowPhase{{
@@ -927,7 +927,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 
 func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:     0,
 		Width:        180,
 		Height:       28,
@@ -941,7 +941,7 @@ func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 			PR: flowstore.PullRequest{
 				Provider:   "github",
 				Number:     123,
-				URL:        "https://github.com/brian-bell/wtui/pull/123",
+				URL:        "https://github.com/approachcontrol/approach/pull/123",
 				HeadBranch: "flow/add-pr-shortcut",
 				BaseBranch: "main",
 			},
@@ -972,7 +972,7 @@ func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 
 func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:     0,
 		Width:        180,
 		Height:       28,
@@ -986,7 +986,7 @@ func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
 			Issue: flowstore.Issue{
 				Provider: "github",
 				Number:   123,
-				URL:      "https://github.com/brian-bell/wtui/issues/123",
+				URL:      "https://github.com/approachcontrol/approach/issues/123",
 			},
 			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}},
 		}},
@@ -1015,7 +1015,7 @@ func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
 
 func TestRender_FlowShortcutPaneHidesOpenPRWithoutTopLevelPRTarget(t *testing.T) {
 	base := RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:     0,
 		Width:        180,
 		Height:       28,
@@ -1090,7 +1090,7 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:               []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+				Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 				Selected:            0,
 				Width:               180,
 				Height:              12,
@@ -1182,7 +1182,7 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 
 func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:   0,
 		Width:      180,
 		Height:     12,
@@ -1373,7 +1373,7 @@ func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *tes
 
 func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   14,
@@ -1405,7 +1405,7 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 
 func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   16,
@@ -1414,7 +1414,7 @@ func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 			FlowID:       "flow-1",
 			Title:        "Phase copy flow",
 			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/wtui-worktrees/phase-copy-flow",
+			WorktreePath: "/dev/approach-worktrees/phase-copy-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -1438,7 +1438,7 @@ func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 
 func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   16,
@@ -1473,7 +1473,7 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 
 func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   16,
@@ -1482,7 +1482,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 			FlowID:       "flow-1",
 			Title:        "Launch phase flow",
 			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/wtui-worktrees/launch-phase-flow",
+			WorktreePath: "/dev/approach-worktrees/launch-phase-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -1512,7 +1512,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 
 func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	base := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -1804,7 +1804,7 @@ func TestRender_ActiveFlowsOverSessionsUsesFlowTerminalPrefixShortcuts(t *testin
 
 func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       180,
 		Height:      18,
@@ -1814,7 +1814,7 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 			FlowID:       "flow-1",
 			Title:        "Active Flow",
 			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/wtui-worktrees/active-flow",
+			WorktreePath: "/dev/approach-worktrees/active-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -1851,7 +1851,7 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 
 func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -1860,7 +1860,7 @@ func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) 
 			FlowID:       "flow-1",
 			Title:        "Stale phase copy flow",
 			Status:       flowstore.StatusInProgress,
-			WorktreePath: "/dev/wtui-worktrees/stale-phase-copy-flow",
+			WorktreePath: "/dev/approach-worktrees/stale-phase-copy-flow",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID: "implementation",
 				Title:   "Implementation",
@@ -1884,7 +1884,7 @@ func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) 
 
 func TestRender_FlowsModeHidesCopyPathShortcutWithoutWorktreePath(t *testing.T) {
 	base := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   16,
@@ -1917,7 +1917,7 @@ func TestRender_FlowsModeHidesCopyPathShortcutWithoutWorktreePath(t *testing.T) 
 
 func TestRender_FlowsModeHidesResumeShortcutWithoutResumableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -1946,7 +1946,7 @@ func TestRender_FlowsModeHidesResumeShortcutWithoutResumableSelectedPhase(t *tes
 
 func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   10,
@@ -1980,7 +1980,7 @@ func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 
 func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   10,
@@ -1990,7 +1990,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
 			Title:        "Flow sessions",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/sessions",
-			WorktreePath: "/dev/wtui-worktrees/flow-sessions",
+			WorktreePath: "/dev/approach-worktrees/flow-sessions",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID:   "implementation",
 				Title:     "Implementation",
@@ -2016,7 +2016,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
 
 func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   10,
@@ -2026,7 +2026,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 			Title:        "Legacy sessions",
 			Status:       flowstore.StatusNeedsAttention,
 			Branch:       "flow/legacy-sessions",
-			WorktreePath: "/dev/wtui-worktrees/flow-legacy-sessions",
+			WorktreePath: "/dev/approach-worktrees/flow-legacy-sessions",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID:   "review-loop",
 				Title:     "Review loop",
@@ -2056,7 +2056,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 
 func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   10,
@@ -2066,7 +2066,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T)
 			Title:        "Ended latest session",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/ended-session",
-			WorktreePath: "/dev/wtui-worktrees/flow-ended-session",
+			WorktreePath: "/dev/approach-worktrees/flow-ended-session",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID:   "implementation",
 				Title:     "Implementation",
@@ -2089,7 +2089,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T)
 
 func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSession(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   10,
@@ -2099,7 +2099,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSes
 			Title:        "Ended latest session with live older session",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/ended-session",
-			WorktreePath: "/dev/wtui-worktrees/flow-ended-session",
+			WorktreePath: "/dev/approach-worktrees/flow-ended-session",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID:   "implementation",
 				Title:     "Implementation",
@@ -2123,7 +2123,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSes
 
 func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLiveSession(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   10,
@@ -2133,7 +2133,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLive
 			Title:        "Await latest session with live older session",
 			Status:       flowstore.StatusInProgress,
 			Branch:       "flow/await-session",
-			WorktreePath: "/dev/wtui-worktrees/flow-await-session",
+			WorktreePath: "/dev/approach-worktrees/flow-await-session",
 			Phases: []flowstore.FlowPhase{{
 				PhaseID:   "implementation",
 				Title:     "Implementation",
@@ -2156,7 +2156,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLive
 
 func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   12,
@@ -2194,7 +2194,7 @@ func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T
 
 func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    230,
 		Height:   12,
@@ -2250,7 +2250,7 @@ func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   12,
@@ -2261,7 +2261,7 @@ func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
 			Status: flowstore.StatusMerged,
 			Branch: "flow/merged",
 			PlanID: "plan-merged",
-			PR:     flowstore.PullRequest{Number: 116, URL: "https://github.com/brian-bell/wtui/pull/116"},
+			PR:     flowstore.PullRequest{Number: 116, URL: "https://github.com/approachcontrol/approach/pull/116"},
 			Merge: flowstore.Merge{
 				Status:   flowstore.MergeMerged,
 				Commit:   "0123456789abcdef",
@@ -2287,7 +2287,7 @@ func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
 
 func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   12,
@@ -2323,7 +2323,7 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 
 func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   12,
@@ -2355,7 +2355,7 @@ func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 
 func TestRender_FlowsModeShowsAutoreviewKindMissingPRMetadata(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   12,
@@ -2381,7 +2381,7 @@ func TestRender_FlowsModeShowsAutoreviewKindMissingPRMetadata(t *testing.T) {
 
 func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
 		Height:   14,
@@ -2400,7 +2400,7 @@ func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 				Title:        "Launch has not attached a session",
 				Status:       flowstore.StatusInProgress,
 				Branch:       "flow/awaiting-session",
-				WorktreePath: "/dev/wtui-worktrees/flow-awaiting-session",
+				WorktreePath: "/dev/approach-worktrees/flow-awaiting-session",
 				Phases: []flowstore.FlowPhase{
 					{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, LaunchIDs: []string{"launch-2"}},
 				},
@@ -2410,7 +2410,7 @@ func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 				Title:        "Session launch mismatch",
 				Status:       flowstore.StatusNeedsAttention,
 				Branch:       "flow/session-mismatch",
-				WorktreePath: "/dev/wtui-worktrees/flow-session-mismatch",
+				WorktreePath: "/dev/approach-worktrees/flow-session-mismatch",
 				Phases: []flowstore.FlowPhase{
 					{
 						PhaseID:   "review-loop",
@@ -2428,7 +2428,7 @@ func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 				Title:        "Latest session ended",
 				Status:       flowstore.StatusInProgress,
 				Branch:       "flow/ended-session",
-				WorktreePath: "/dev/wtui-worktrees/flow-ended-session",
+				WorktreePath: "/dev/approach-worktrees/flow-ended-session",
 				Phases: []flowstore.FlowPhase{
 					{
 						PhaseID:   "implementation",
@@ -2461,7 +2461,7 @@ func TestRender_FlowRecoveryWarningsPreferSessionMismatchOverEndedSession(t *tes
 		Title:        "Mismatched ended flow",
 		Status:       flowstore.StatusNeedsAttention,
 		Branch:       "flow/mismatched-ended",
-		WorktreePath: "/dev/wtui-worktrees/flow-mismatched-ended",
+		WorktreePath: "/dev/approach-worktrees/flow-mismatched-ended",
 		Phases: []flowstore.FlowPhase{{
 			PhaseID:   "implementation",
 			Title:     "Implementation",
@@ -2484,7 +2484,7 @@ func TestRender_FlowRecoveryWarningsFlagLatestRelaunchWithoutSession(t *testing.
 		Title:        "Relaunched flow",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/relaunch",
-		WorktreePath: "/dev/wtui-worktrees/flow-relaunch",
+		WorktreePath: "/dev/approach-worktrees/flow-relaunch",
 		Phases: []flowstore.FlowPhase{{
 			PhaseID:   "implementation",
 			Title:     "Implementation",
@@ -2500,7 +2500,7 @@ func TestRender_FlowRecoveryWarningsFlagLatestRelaunchWithoutSession(t *testing.
 		t.Fatalf("phase progress = %q, want latest relaunch without session to await session", got)
 	}
 	view := Render(RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:     0,
 		Width:        240,
 		Height:       10,
@@ -2529,7 +2529,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		},
 	}
 	view := Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:          []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:       0,
 		Width:          240,
 		Height:         12,
@@ -2551,7 +2551,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 
 	flow.Phases[2].Status = flowstore.PhaseCompleted
 	view = Render(RenderParams{
-		Repos:          []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:          []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:       0,
 		Width:          240,
 		Height:         12,
@@ -2588,7 +2588,7 @@ func TestFlowRecoveryLabelsDoNotFlagHealthySessionOrBranchOnlyRecord(t *testing.
 		t.Fatalf("phase progress = %q, want healthy session and branch-only state preserved", got)
 	}
 	view := Render(RenderParams{
-		Repos:        []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:     0,
 		Width:        240,
 		Height:       10,
@@ -2624,7 +2624,7 @@ func TestRender_FlowsModeEmptyMessages(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:             []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+				Repos:             []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 				Selected:          0,
 				Width:             120,
 				Height:            10,

@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/brian-bell/wtui/gitquery"
-	"github.com/brian-bell/wtui/scanner"
+	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/scanner"
 )
 
 func TestModeHeader_GitActiveShowsGroupedTwoRows(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/flowstore"
+	"github.com/approachcontrol/approach/flowstore"
 )
 
 func TestLatestPhaseSessionLatestLaunchWins(t *testing.T) {

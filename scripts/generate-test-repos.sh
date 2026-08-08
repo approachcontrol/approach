@@ -14,7 +14,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Generate test git repositories for wtui manual testing.
+Generate test git repositories for approach manual testing.
 
 Options:
   --count N       Number of repos to generate (1–$MAX_COUNT, default: $count)
@@ -53,7 +53,7 @@ if [[ $worktrees -lt 2 ]]; then
 fi
 
 if [[ -z "$root" ]]; then
-    root=$(mktemp -d "${TMPDIR:-/tmp}/wtui-test-repos-XXXXXXXXXX")
+    root=$(mktemp -d "${TMPDIR:-/tmp}/approach-test-repos-XXXXXXXXXX")
 fi
 mkdir -p "$root"
 
@@ -132,7 +132,7 @@ create_initial_files() {
 
     write_file "$repo_dir/README.md" "# $name
 
-A sample project for testing wtui.
+A sample project for testing approach.
 
 ## Getting Started
 
@@ -203,10 +203,10 @@ database:
 push_behind_commits() {
     local bare_dir="$1" branch="$2" n="${3:-2}"
     local tmp_clone
-    tmp_clone=$(mktemp -d "${TMPDIR:-/tmp}/wtui-behind-XXXXXXXXXX")
+    tmp_clone=$(mktemp -d "${TMPDIR:-/tmp}/approach-behind-XXXXXXXXXX")
 
     git clone --quiet "$bare_dir" "$tmp_clone" 2>/dev/null
-    git -C "$tmp_clone" config user.email "colleague@wtui.dev"
+    git -C "$tmp_clone" config user.email "colleague@approach.dev"
     git -C "$tmp_clone" config user.name "Colleague"
     run_quiet "$tmp_clone" checkout "$branch"
 
@@ -235,7 +235,7 @@ generate_repo() {
 
     # Clone (creates origin automatically)
     git clone --quiet "$bare_dir" "$repo_dir" 2>/dev/null
-    git -C "$repo_dir" config user.email "test@wtui.dev"
+    git -C "$repo_dir" config user.email "test@approach.dev"
     git -C "$repo_dir" config user.name "Test User"
 
     # Initial content
@@ -525,7 +525,7 @@ done
 
 echo "Done! Generated $count repo(s) in: $root"
 echo ""
-echo "Run wtui with:"
+echo "Run approach with:"
 echo "  WORKTREE_ROOT=$root make run"
 echo ""
 echo "Clean up with:"
