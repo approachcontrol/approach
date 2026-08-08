@@ -28,21 +28,21 @@ func TestString(t *testing.T) {
 			version: "dev",
 			commit:  "unknown",
 			date:    "unknown",
-			want:    "wtui dev (unknown) built unknown",
+			want:    "approach dev (unknown) built unknown",
 		},
 		{
 			name:    "release build",
 			version: "v0.1.0",
 			commit:  "abc1234",
 			date:    "2026-04-19T10:20:30Z",
-			want:    "wtui v0.1.0 (abc1234) built 2026-04-19T10:20:30Z",
+			want:    "approach v0.1.0 (abc1234) built 2026-04-19T10:20:30Z",
 		},
 		{
 			name:    "empty values fall back",
 			version: "",
 			commit:  "",
 			date:    "",
-			want:    "wtui dev (unknown) built unknown",
+			want:    "approach dev (unknown) built unknown",
 		},
 	}
 
@@ -69,7 +69,7 @@ func TestStringFallsBackToBuildInfoWhenLdflagsDefault(t *testing.T) {
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
 		return &debug.BuildInfo{
 			Main: debug.Module{
-				Path:    "github.com/brian-bell/wtui",
+				Path:    "github.com/approachcontrol/approach",
 				Version: "v0.1.0",
 			},
 			Settings: []debug.BuildSetting{
@@ -79,7 +79,7 @@ func TestStringFallsBackToBuildInfoWhenLdflagsDefault(t *testing.T) {
 		}, true
 	}
 
-	want := "wtui v0.1.0 (abcdef1234567890) built 2026-04-19T10:20:30Z"
+	want := "approach v0.1.0 (abcdef1234567890) built 2026-04-19T10:20:30Z"
 	if got := String(); got != want {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
@@ -97,7 +97,7 @@ func TestStringPrefersLdflagsOverBuildInfo(t *testing.T) {
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
 		return &debug.BuildInfo{
 			Main: debug.Module{
-				Path:    "github.com/brian-bell/wtui",
+				Path:    "github.com/approachcontrol/approach",
 				Version: "v0.1.0",
 			},
 			Settings: []debug.BuildSetting{
@@ -107,7 +107,7 @@ func TestStringPrefersLdflagsOverBuildInfo(t *testing.T) {
 		}, true
 	}
 
-	want := "wtui v0.2.0 (ldflags-commit) built 2026-05-10T12:00:00Z"
+	want := "approach v0.2.0 (ldflags-commit) built 2026-05-10T12:00:00Z"
 	if got := String(); got != want {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}

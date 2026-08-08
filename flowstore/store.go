@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 const schemaVersion = 1
@@ -264,7 +264,7 @@ type ChildPhaseUpdate struct {
 	Order         int
 }
 
-// PlanLinkUpdate links a saved wtui plan artifact to an existing Flow.
+// PlanLinkUpdate links a saved approach plan artifact to an existing Flow.
 type PlanLinkUpdate struct {
 	FlowID   string
 	PlanID   string
@@ -797,7 +797,7 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 }
 
 // MarkManualMerge completes the merge phase and records verified GitHub merge
-// metadata for a PR that was merged outside wtui.
+// metadata for a PR that was merged outside approach.
 func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
@@ -1064,14 +1064,14 @@ func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
 }
 
 // ResetAwaitingSessionPhase removes an orphaned latest launch attempt from a
-// running phase and lets wtui derive it back to ready. This is intentionally
+// running phase and lets approach derive it back to ready. This is intentionally
 // not part of the agent-facing phase transition table.
 func (s *Store) ResetAwaitingSessionPhase(update PhaseResetUpdate) (FlowRecord, error) {
 	return s.ResetRecoverableRunningPhase(update)
 }
 
 // ResetRecoverableRunningPhase removes the latest stale launch attempt from a
-// running phase and lets wtui derive it back to ready. This is intentionally
+// running phase and lets approach derive it back to ready. This is intentionally
 // not part of the agent-facing phase transition table.
 func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {

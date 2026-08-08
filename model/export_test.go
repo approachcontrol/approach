@@ -3,9 +3,9 @@ package model
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/embeddedterm"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/embeddedterm"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func NewRealEmbeddedTerminalForTest(term *embeddedterm.Terminal) EmbeddedTerminal {

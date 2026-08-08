@@ -1,19 +1,19 @@
-# wtui Configuration
+# Approach Configuration
 
-wtui reads an optional TOML config file before scanning repositories.
+Approach reads an optional TOML config file before scanning repositories.
 
 ## Config Path
 
-wtui looks for config in this order:
+Approach looks for config in this order:
 
-1. `$XDG_CONFIG_HOME/wtui/config.toml`
-2. `~/.config/wtui/config.toml`
+1. `$XDG_CONFIG_HOME/approach/config.toml`
+2. `~/.config/approach/config.toml`
 
-The file is optional. If it does not exist, wtui starts with built-in defaults.
+The file is optional. If it does not exist, Approach starts with built-in defaults.
 If a config file exists but cannot be read, has malformed TOML, uses the wrong
 type for a known key, or contains an invalid known value, startup fails before
 repository scanning. Unknown sections and keys are ignored so config written by
-a newer wtui version does not block older versions from starting. wtui only
+a newer Approach version does not block older versions from starting. Approach only
 falls through to the next path when the earlier path does not exist.
 
 ## Precedence
@@ -32,18 +32,18 @@ exist:
 | Startup default view | none | `[ui].default_view` | flows view (config number `8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
-| Flow phase graph preset | `wtui flow create --preset` | `[flow].preset` | `default` |
-| TUI artifact root | `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/wtui/sessions/v1` or `~/.local/state/wtui/sessions/v1` |
-| Session hook root | `--state-root` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
-| Plan state root | `--state-root` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
-| Flow state root | `--state-root` > `WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/flows/...`) |
+| Flow phase graph preset | `approach flow create --preset` | `[flow].preset` | `default` |
+| TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1` |
+| Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
+| Plan state root | `--state-root` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
+| Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/flows/...`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
 Session roots must resolve to absolute paths so captured transcripts stay out of
 repositories. The scan root is cleaned before repository discovery; explicit
 relative roots, including `WORKTREE_ROOT`, preserve relative repo paths for
-compatibility. The same root is resolved from wtui's current working directory
+compatibility. The same root is resolved from Approach's current working directory
 when used as the parent directory for left-pane repo creation.
 
 ## Example
@@ -74,7 +74,7 @@ codex_model = "gpt-5.5"
 claude_model = "claude-sonnet-5"
 codex_reasoning_effort = "high"
 claude_reasoning_effort = "max"
-plan_prompt = "Implement the saved wtui plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
+plan_prompt = "Implement the saved approach plan {title} (ID: {plan_id}) at {plan_path}. Read the plan file, then begin implementation."
 
 [flow_prompts]
 plan = "Produce a plan only for: {instructions}"
@@ -107,15 +107,15 @@ kind = "merge"
 depends_on = ["draft"]
 
 [sessions]
-root = "~/.local/state/wtui/sessions/v1"
+root = "~/.local/state/approach/sessions/v1"
 copy_raw_transcripts = false
 
 [bootstrap]
 timeout_seconds = 120
 
 [[bootstrap.hooks]]
-repo_path = "~/dev/wtui"
-script = ".wtui/bootstrap"
+repo_path = "~/dev/approach"
+script = ".approach/bootstrap"
 
 [[bootstrap.hooks]]
 repo_path = "~/dev/client-api"
@@ -134,16 +134,16 @@ Controls repository discovery.
 | `root` | string | Directory to scan for git repositories and parent directory for repos created from the left pane. |
 | `max_depth` | integer | Scan depth below `root`; `1` scans immediate children, `2` also scans one level deeper. |
 
-When `max_depth` is omitted or set to `0`, wtui uses the scanner default of `2`.
+When `max_depth` is omitted or set to `0`, Approach uses the scanner default of `2`.
 Values greater than `2` behave like `2`.
 
 Pressing `n` in the left repo pane creates a new local Git repository directly
-under the resolved scan root. If the form's GitHub checkbox is enabled, wtui
+under the resolved scan root. If the form's GitHub checkbox is enabled, Approach
 also runs `gh repo create <name> --public|--private --source <path> --remote origin`;
 `gh` must be installed and authenticated. A GitHub failure after local creation
 keeps the local repository and allows retrying only the GitHub/origin setup.
 Repo names must be one path segment: they cannot be empty, `.`, `..`, start
-with `-`, contain path separators, or end with `-worktrees` (reserved for wtui
+with `-`, contain path separators, or end with `-worktrees` (reserved for Approach
 worktree directories).
 
 ### `[ui]`
@@ -154,7 +154,7 @@ Stores user-interface preferences.
 |-----|------|-------------|
 | `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens the Git view, `2`–`4` open sessions/plans/flows outside Active Flows, `ctrl+a` toggles active flows, `5`–`9` are unbound, and `w`/`b`/`s`/`h`/`r` pick git subviews). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default. |
 
-Press `V` in wtui to choose and persist this value from a picker. The picker
+Press `V` in Approach to choose and persist this value from a picker. The picker
 changes future launches only; use the keyboard keys `1`–`4`, `ctrl+a`, the
 `w`/`b`/`s`/`h`/`r` git subview letters, or arrows to switch the current view.
 
@@ -163,7 +163,7 @@ changes future launches only; use the keyboard keys `1`–`4`, `ctrl+a`, the
 Configures the editor used by the plans pane `e` action. The selected plan's
 `plan.md` path is appended to the command, and the plans pane refreshes after
 the configured command exits. Use wait flags such as `code --wait` for GUI
-editors that detach by default. When this setting is omitted, wtui falls back
+editors that detach by default. When this setting is omitted, Approach falls back
 to `$EDITOR`.
 
 | Key | Type | Description |
@@ -176,7 +176,7 @@ Configures the external terminal fallback used by the `t` action, detached
 agent-launch scripts, and embedded-terminal detach handoff. Active tmux/Zellij
 sessions still take precedence for normal `t` and agent launches, and
 `TERMINAL` still overrides this setting. Embedded detach handoff is different:
-after `ctrl+] d` detaches a tmux-backed embedded terminal, wtui uses
+after `ctrl+] d` detaches a tmux-backed embedded terminal, Approach uses
 `TERMINAL`, then `[terminal].command`, then the macOS Terminal AppleScript
 fallback when available. It never uses the active tmux/Zellij client, installed
 inactive tmux/Zellij commands, `$SHELL`, or the current TTY as the handoff
@@ -230,7 +230,7 @@ Parsed for future launch behavior.
 
 ### `[agent]`
 
-Stores the selected coding agent for interactive launches. Pressing `A` in wtui
+Stores the selected coding agent for interactive launches. Pressing `A` in Approach
 opens an agent picker for `codex`, `codex-app`, or `claude` and updates this
 value immediately, creating the config file if needed.
 
@@ -259,8 +259,8 @@ because the current deep-link path cannot carry verified provider settings.
 ### `[flow_prompts]`
 
 Optional templates for Flow phase launch prompts. Blank or omitted keys use
-the built-in prompt for that phase. Unknown placeholders remain literal. wtui
-appends `After completing this phase goal, mark this Flow phase done with wtui-flow.`
+the built-in prompt for that phase. Unknown placeholders remain literal. Approach
+appends `After completing this phase goal, mark this Flow phase done with approach-flow.`
 to both built-in prompts and configured templates unless the template already
 ends with that exact standalone instruction.
 
@@ -294,7 +294,7 @@ Configures the default phase graph for newly created Flows.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `preset` | string | Optional preset name used by TUI Flow creation and `wtui flow create` when `--preset` is omitted. Empty or `default` uses the built-in graph. |
+| `preset` | string | Optional preset name used by TUI Flow creation and `approach flow create` when `--preset` is omitted. Empty or `default` uses the built-in graph. |
 | `presets` | array of tables | Custom phase graph presets. User presets cannot be named `default`, and duplicate normalized names are startup-fatal. |
 
 Each `[[flow.presets]]` table requires `name` and one or more
@@ -309,9 +309,9 @@ Each `[[flow.presets]]` table requires `name` and one or more
 
 Custom presets must form an acyclic top-level graph, may include multiple root
 phases, and may include at most one `merge`-kind phase. Child implementation
-phases are still created dynamically with `wtui flow phase add-child`; they are
+phases are still created dynamically with `approach flow phase add-child`; they are
 not declared in config. Records created from a named preset persist
-`preset_name` so wtui can restore missing `depends_on` edges if an older binary
+`preset_name` so Approach can restore missing `depends_on` edges if an older binary
 partially rewrites the record.
 
 ### `[sessions]`
@@ -326,8 +326,8 @@ stored under a hashed session directory, with the raw provider session ID kept i
 | `root` | string | Optional absolute state root for session files. Supports `~` expansion. |
 | `copy_raw_transcripts` | boolean | Whether hook ingestion also preserves provider-native transcript JSONL as `raw.jsonl`. Defaults to `false`. |
 
-When `root` is omitted, wtui uses `$XDG_STATE_HOME/wtui/sessions/v1`, or
-`~/.local/state/wtui/sessions/v1` when `XDG_STATE_HOME` is unset.
+When `root` is omitted, Approach uses `$XDG_STATE_HOME/approach/sessions/v1`, or
+`~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset.
 Relative roots other than `~`/`~/...` fail config parsing.
 
 `[sessions].root` doubles as the **agent-artifact root**: sessions, saved plans,
@@ -338,7 +338,7 @@ also moves or removes saved plans and Flow records.**
 
 ## Saved Plans
 
-Agents persist plans explicitly through the `wtui plan` subcommands; plans are
+Agents persist plans explicitly through the `approach plan` subcommands; plans are
 not captured from provider hooks in v1. Each plan is stored as
 `<artifact-root>/plans/<plan-id>/meta.json` plus `plan.md`, with the same
 restrictive permissions (`0700` directories, `0600` files) and atomic writes as
@@ -350,14 +350,14 @@ pane refreshes when the configured editor command exits.
 ```bash
 # Save or update (reuse --plan-id) a plan; Markdown comes from --file or stdin.
 # Prints only the plan_id.
-printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" [--plan-id ID] \
+printf '%s' "$PLAN_MD" | approach plan save --title "Persist plans" [--plan-id ID] \
     [--summary TEXT] [--status STATUS] [--source SOURCE] [--provider PROVIDER] \
     [--session-id ID] [--launch-id ID] [--repo-path PATH] [--worktree-path PATH] \
     [--branch BRANCH] [--commit HASH] [--file PATH] [--state-root PATH]
 
-wtui plan phase set --plan-id ID --phase-id ID --title TITLE --status STATUS [--order N] [--state-root PATH]
-wtui plan list [--repo-path PATH] [--state-root PATH] --json   # --json required in v1
-wtui plan read --plan-id ID [--state-root PATH]                # prints Markdown only
+approach plan phase set --plan-id ID --phase-id ID --title TITLE --status STATUS [--order N] [--state-root PATH]
+approach plan list [--repo-path PATH] [--state-root PATH] --json   # --json required in v1
+approach plan read --plan-id ID [--state-root PATH]                # prints Markdown only
 ```
 
 Plan statuses: `draft`, `approved`, `in_progress`, `completed`, `blocked`,
@@ -366,7 +366,7 @@ Plan statuses: `draft`, `approved`, `in_progress`, `completed`, `blocked`,
 so re-running `phase set` with the same logical `--phase-id` -- including case
 or whitespace variants -- updates that phase in place instead of adding a
 duplicate row, and repairs records that already contain duplicates. `plan_id` must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`; when
-omitted, wtui generates `YYYYMMDDTHHMMSSZ-<title-slug>` with a `-2`, `-3`, …
+omitted, Approach generates `YYYYMMDDTHHMMSSZ-<title-slug>` with a `-2`, `-3`, …
 suffix on collision.
 
 `save` always replaces Markdown and title from the command (both required), and
@@ -374,29 +374,29 @@ updates `status`, `source`, `summary`, and repo/session metadata only when
 supplied; otherwise it preserves the stored values, `created_at`, and recorded
 phases. A body-only re-save keeps the existing status.
 
-The plan state root is resolved as: `--state-root` > `WTUI_PLAN_STATE_ROOT` >
-`WTUI_SESSION_STATE_ROOT` > `[sessions].root` > the user state default. The
-`wtui plan` commands may load config to resolve the root but never scan repos or
-start the TUI. Omitted metadata is filled from `WTUI_AGENT` (provider),
-`WTUI_LAUNCH_ID`, `WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, and
-`WTUI_COMMIT`; for new plans, and for updates that provide a repo or worktree
-location, wtui also resolves best-effort repo, worktree, branch, and commit
-metadata from git. `codex-app` launches do not inherit `WTUI_*` shell
-environment variables because wtui opens a macOS deep link; wtui uses the repo
+The plan state root is resolved as: `--state-root` > `APPROACH_PLAN_STATE_ROOT` >
+`APPROACH_SESSION_STATE_ROOT` > `[sessions].root` > the user state default. The
+`approach plan` commands may load config to resolve the root but never scan repos or
+start the TUI. Omitted metadata is filled from `APPROACH_AGENT` (provider),
+`APPROACH_LAUNCH_ID`, `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and
+`APPROACH_COMMIT`; for new plans, and for updates that provide a repo or worktree
+location, Approach also resolves best-effort repo, worktree, branch, and commit
+metadata from git. `codex-app` launches do not inherit `APPROACH_*` shell
+environment variables because Approach opens a macOS deep link; Approach uses the repo
 path as the deep-link project path and includes worktree, state-root, plan, and
 flow values as prompt-only launch metadata. That metadata includes copyable
-`wtui plan list --json --state-root ...` and
-`wtui flow list --json --state-root ...` examples that show where to pass the
+`approach plan list --json --state-root ...` and
+`approach flow list --json --state-root ...` examples that show where to pass the
 state root for subsequent plan and flow commands. The
-`wtui-plan-persist` skill instructs agents on when and how to save plans; its
+`approach-plan-persist` skill instructs agents on when and how to save plans; its
 canonical source lives in
-`agent-skills/wtui-plan-persist/` for symlinking into user-level Codex/Claude
+`agent-skills/approach-plan-persist/` for symlinking into user-level Codex/Claude
 skill directories.
 
 ## Flows
 
 Flow records are task-centric workflow records created by the TUI or explicitly
-through `wtui flow`. Each record is stored as
+through `approach flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
 flows pane (keyboard `4`), which is the startup default unless `[ui].default_view`
@@ -410,7 +410,7 @@ one of its expanded phase rows. Press `a` to toggle per-Flow auto mode. New Flow
 records start with auto mode on, and the toggle is persisted on each Flow. Flows
 created before this field existed remain manual until auto mode is toggled on.
 Press `m` on an eligible Flow row to mark a recorded GitHub PR as already
-merged; wtui verifies the PR with `gh`, records the existing merge commit and
+merged; Approach verifies the PR with `gh`, records the existing merge commit and
 timestamp, completes the Merge phase, and does not launch a Merge phase agent.
 When auto mode is on, completed
 CLI phases running in an embedded Flow terminal advance only after the completed
@@ -447,7 +447,7 @@ provider session from the selected phase row; CLI resumes open in runtime-only
 embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
 While a Flow terminal is open, `tab` cycles focus through the repo pane, Flow
 list, and Flow terminal. Manually tabbing into Flow terminal focus starts in
-wtui command mode:
+Approach command mode:
 `left`/`right` cycles Flow terminals, `1`-`9` switches by number, `d` detaches to
 tmux when available, `x` closes, `q`/`esc` quits, unknown ordinary keys do not
 pass through to the PTY, and `ctrl+]` sends a literal `ctrl+]`; `i` enters
@@ -456,7 +456,7 @@ agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command mode. Embedded
 headless output is rendered as
 readable terminal text rather than raw provider event JSON; `codex exec` streams
 its progress directly, whereas headless `claude --print` runs with
-`--output-format stream-json --include-partial-messages` and wtui translates
+`--output-format stream-json --include-partial-messages` and Approach translates
 those events (thinking, tool calls and results, the final answer streamed
 token-by-token, and a closing summary) into readable lines so the panel shows
 live progress instead of staying blank until the run completes. Expanded rows
@@ -472,39 +472,39 @@ Other phase and progression mutation remains CLI/agent-driven in v1.
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
 # --json is required in v1.
-wtui flow create --title "Ship saved plans" \
+approach flow create --title "Ship saved plans" \
     --instructions "Plan, implement, review, open a PR, and merge." \
     --repo-path "$REPO" [--worktree-path PATH] [--branch BRANCH] \
     [--base-ref REF] [--commit HASH] [--preset NAME] [--state-root PATH] --json
 
 # You may also read instructions from a file.
-wtui flow create --title "Ship saved plans" \
+approach flow create --title "Ship saved plans" \
     --instructions-file ./instructions.md --repo-path "$REPO" --json
 
-wtui flow list [--repo-path PATH] [--state-root PATH] --json
-wtui flow read --flow-id ID [--state-root PATH]
-wtui flow phase complete --flow-id ID --phase-id ID \
+approach flow list [--repo-path PATH] [--state-root PATH] --json
+approach flow read --flow-id ID [--state-root PATH]
+approach flow phase complete --flow-id ID --phase-id ID \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
-wtui flow phase block --flow-id ID --phase-id ID \
+approach flow phase block --flow-id ID --phase-id ID \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
-wtui flow phase needs-attention --flow-id ID --phase-id ID \
+approach flow phase needs-attention --flow-id ID --phase-id ID \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
-wtui flow phase restart --flow-id ID --phase-id ID \
+approach flow phase restart --flow-id ID --phase-id ID \
     [--notes TEXT] [--state-root PATH]
-wtui flow phase reset --flow-id ID --phase-id ID [--state-root PATH]
-wtui flow phase set --flow-id ID --phase-id ID --status STATUS \
+approach flow phase reset --flow-id ID --phase-id ID [--state-root PATH]
+approach flow phase set --flow-id ID --phase-id ID --status STATUS \
     [--outcome OUTCOME] [--summary TEXT] [--notes TEXT] [--state-root PATH]
-wtui flow phase add-child --flow-id ID --parent-phase-id implementation \
+approach flow phase add-child --flow-id ID --parent-phase-id implementation \
     --phase-id ID --title TITLE --order N [--state-root PATH]
-wtui flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
-wtui flow issue set --flow-id ID --provider github --number N --url URL [--state-root PATH]
-wtui flow pr set --flow-id ID --provider github --number N --url URL \
+approach flow plan set --flow-id ID --plan-id ID [--plan-path ABSOLUTE_PATH] [--state-root PATH]
+approach flow issue set --flow-id ID --provider github --number N --url URL [--state-root PATH]
+approach flow pr set --flow-id ID --provider github --number N --url URL \
     --head HEAD_BRANCH --base BASE_BRANCH [--status STATUS] [--state-root PATH]
 ```
 
 When a Flow is linked to a saved plan, transitioning a Flow phase to `completed`
 also marks a matching saved-plan phase with the same normalized phase ID as
-`completed`. Missing saved-plan phases are ignored. If that sync fails, wtui
+`completed`. Missing saved-plan phases are ignored. If that sync fails, Approach
 marks the Flow phase `needs_attention` and reports the persistence error.
 Repeating `completed` for an already-completed Flow phase preserves that
 completed state even if the linked-plan sync later fails.
@@ -537,10 +537,10 @@ Autoreview phase when PR Creation completed without structured PR metadata.
 
 On a selected `await-session` or `ended-session` phase row, `x` offers a
 confirmed reset back to derived `ready` only when no running or starting
-embedded Flow terminal is attached to that same Flow phase. `wtui flow phase
+embedded Flow terminal is attached to that same Flow phase. `approach flow phase
 reset` performs the same persisted recovery from the CLI. The reset removes the
 stale latest launch attempt, removes sessions tied to that launch, persists the
-phase as `pending`, and lets wtui derive `ready`. Any non-ended attached
+phase as `pending`, and lets Approach derive `ready`. Any non-ended attached
 session on the merged logical phase and any session mismatch are rejected;
 agents still cannot set `ready` directly.
 
@@ -552,8 +552,8 @@ The Plan Review phase gates Implementation. Plan Review completion must use
 ready only after approved Plan Review outcomes, or after an explicit
 skipped-with-notes Plan Review override.
 
-For common phase outcomes, `wtui flow phase complete`, `wtui flow phase block`,
-and `wtui flow phase needs-attention` wrap the same validation and persistence
+For common phase outcomes, `approach flow phase complete`, `approach flow phase block`,
+and `approach flow phase needs-attention` wrap the same validation and persistence
 as `phase set`, then print JSON containing the updated phase, the next
 actionable phase state, and allowed statuses for that next action. Notes
 requirements are still enforced by the same store rules as `phase set`. Plan
@@ -561,18 +561,18 @@ Review wrappers fill the unambiguous outcomes when omitted: `complete` uses
 `approved`, `block` uses `blocked`, and `needs-attention` uses
 `changes_requested`. Autoreview wrappers fill `passed`, `blocked`, and
 `needs_attention` for the matching common outcomes. Use
-`wtui flow phase restart` to rerun a blocked or needs-attention phase as
-`running`; if `--notes` is omitted, wtui records a standard rerun note. Use
-`wtui flow phase reset` only for wtui-owned stale running recovery
+`approach flow phase restart` to rerun a blocked or needs-attention phase as
+`running`; if `--notes` is omitted, Approach records a standard rerun note. Use
+`approach flow phase reset` only for Approach-owned stale running recovery
 (`await-session` or `ended-session`). Use `phase set` when a phase needs an
 explicit uncommon status or a
 skipped-with-notes override.
 
 Implementation can be split into ordered child phases with
-`wtui flow phase add-child`. Child phase IDs are stable and normalized (trimmed
+`approach flow phase add-child`. Child phase IDs are stable and normalized (trimmed
 and lowercased): re-running the command with the same logical id -- including
 case or whitespace variants -- updates the same child instead of duplicating
-it, and updates collapse duplicate rows left by older records. `wtui flow phase
+it, and updates collapse duplicate rows left by older records. `approach flow phase
 set` resolves phase ids the same way. Child phases currently belong
 under `implementation`; they gate review loop and PR creation until completed or
 skipped with notes. Flow phase launch prompts stay minimal: Plan Review and
@@ -584,42 +584,42 @@ use the `commit` skill, Review Loop to use the review-loop workflow with goal
 `review-and-revise` and `commit` when revisions are made, PR Creation to use
 the `ship` skill, and Autoreview to use `ship` when fixes require commits or
 pushes. All Flow phase launch prompts also end with:
-`After completing this phase goal, mark this Flow phase done with wtui-flow.`
+`After completing this phase goal, mark this Flow phase done with approach-flow.`
 Autoreview launch prompts include the PR target metadata but leave detailed
 completion, needs-attention, blocked, and restart mechanics to the high-level
 Flow phase commands.
-Override `[flow_prompts]` keys to customize those phase templates; wtui still
+Override `[flow_prompts]` keys to customize those phase templates; Approach still
 appends the common phase-done instruction to custom templates.
 
 The PR Creation phase should record structured PR metadata with
-`wtui flow pr set` after a pull request exists. The command currently supports
+`approach flow pr set` after a pull request exists. The command currently supports
 GitHub PRs and validates the provider, absolute http(s) URL, positive PR
 number, required head/base branches, and that the head branch matches the Flow
 branch. Autoreview stays pending when PR Creation is complete but this PR target
 metadata is missing.
 
 The Plan phase can record an optional GitHub issue reference with
-`wtui flow issue set`. The command stores provider, positive issue number, and
-an absolute GitHub issue URL so wtui can show the Issue column and open it with
+`approach flow issue set`. The command stores provider, positive issue number, and
+an absolute GitHub issue URL so Approach can show the Issue column and open it with
 the `i` shortcut.
 
 The flow state root is resolved as: `--state-root` >
-`WTUI_FLOW_STATE_ROOT` > `WTUI_PLAN_STATE_ROOT` > `WTUI_SESSION_STATE_ROOT` >
+`APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` >
 `[sessions].root` > the user state default. In TUI startup,
-`WTUI_FLOW_STATE_ROOT` has highest precedence for the shared artifact root; if
+`APPROACH_FLOW_STATE_ROOT` has highest precedence for the shared artifact root; if
 it is set, the TUI reads sessions, plans, and flows from that root.
 
 The canonical provider-agnostic Flow phase skill lives at
-`agent-skills/wtui-flow/`, beside `agent-skills/wtui-plan-persist/`. The
-companion creation skill lives at `agent-skills/wtui-flow-create/`. Install or
-symlink both `wtui-flow` and `wtui-flow-create` into the user-level skill
+`agent-skills/approach-flow/`, beside `agent-skills/approach-plan-persist/`. The
+companion creation skill lives at `agent-skills/approach-flow-create/`. Install or
+symlink both `approach-flow` and `approach-flow-create` into the user-level skill
 directory for supported agents such as Codex or Claude; for Codex, typical
-targets are `~/.codex/skills/wtui-flow` and
-`~/.codex/skills/wtui-flow-create`. `wtui-flow` activates when `WTUI_FLOW_ID`
-and `WTUI_FLOW_PHASE_ID` are present, reads the active flow with
-`wtui flow read --flow-id "$WTUI_FLOW_ID"`, and documents the implemented
-`wtui flow` / `wtui plan` commands for phase persistence and saved-plan linkage.
-`wtui-flow-create` is for ad hoc sessions where the user asks to create a Flow
+targets are `~/.codex/skills/approach-flow` and
+`~/.codex/skills/approach-flow-create`. `approach-flow` activates when `APPROACH_FLOW_ID`
+and `APPROACH_FLOW_PHASE_ID` are present, reads the active flow with
+`approach flow read --flow-id "$APPROACH_FLOW_ID"`, and documents the implemented
+`approach flow` / `approach plan` commands for phase persistence and saved-plan linkage.
+`approach-flow-create` is for ad hoc sessions where the user asks to create a Flow
 from the current task or an already-written plan. It creates the Flow, can save
 and link an imported plan, and reports persistence failures explicitly. In v1,
 the imported ad hoc session itself is not attached to the Flow; the created
@@ -628,9 +628,9 @@ resumes are tracked normally.
 
 ### `[bootstrap]`
 
-Configures optional per-repo scripts that run after wtui successfully creates a
+Configures optional per-repo scripts that run after Approach successfully creates a
 worktree with `n`, `P`, or `N`. Hooks are opt-in and are matched by configured
-repo path. wtui does not auto-discover scripts from scanned repositories.
+repo path. Approach does not auto-discover scripts from scanned repositories.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -645,39 +645,39 @@ Add one `[[bootstrap.hooks]]` entry per repo:
 | `timeout_seconds` | integer | Optional per-hook timeout override; negative values fail startup. |
 
 Bootstrap scripts execute directly, not through a shell. The script file must
-exist, be a regular file, and be executable. wtui sets the script working
+exist, be a regular file, and be executable. Approach sets the script working
 directory to the new worktree and appends these environment variables:
-`WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_WORKTREE_REF`, and
-`WTUI_WORKTREE_CREATE_KIND`.
+`APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_WORKTREE_REF`, and
+`APPROACH_WORKTREE_CREATE_KIND`.
 
-If a hook fails, wtui keeps the created worktree and branch, refreshes the
+If a hook fails, Approach keeps the created worktree and branch, refreshes the
 worktree list, and shows the hook error in the status bar. For `N`, a hook
 failure prevents automatic agent launch; the agent can still be launched
 manually afterward.
 
 ## Agent Session Hooks
 
-Agents launched from wtui with `a`, `N`, Flow `g`, or session
-resume `r` are wired automatically. wtui passes Claude Code or Codex a
-session-end hook that calls the current wtui binary, and it appends the
+Agents launched from Approach with `a`, `N`, Flow `g`, or session
+resume `r` are wired automatically. Approach passes Claude Code or Codex a
+session-end hook that calls the current Approach binary, and it appends the
 environment metadata listed below so the hook can associate the session with
 the selected repo and worktree.
 
-wtui can also ingest hook payloads from manual provider configuration:
+Approach can also ingest hook payloads from manual provider configuration:
 
 ```bash
-wtui session-hook --provider claude
-wtui session-hook --provider codex
+approach session-hook --provider claude
+approach session-hook --provider codex
 ```
 
 For development and tests, pass an explicit state root:
 
 ```bash
-wtui session-hook --provider codex --state-root /tmp/wtui-sessions-test
+approach session-hook --provider codex --state-root /tmp/approach-sessions-test
 ```
 
-`session-hook` loads the normal wtui config before ingesting the hook payload.
-`--state-root` overrides `[sessions].root`, and `WTUI_SESSION_STATE_ROOT`
+`session-hook` loads the normal Approach config before ingesting the hook payload.
+`--state-root` overrides `[sessions].root`, and `APPROACH_SESSION_STATE_ROOT`
 overrides the configured root when `--state-root` is omitted. The
 `copy_raw_transcripts` setting controls whether provider-native transcript data
 is copied to `raw.jsonl`; it is off by default, and normalized transcript events
@@ -685,7 +685,7 @@ are still written for the sessions view.
 
 Codex may ask you to review and trust the injected hook with `/hooks` before it
 runs it. After trust is recorded for the unchanged hook command, later
-wtui-launched Codex sessions can save normally.
+Approach-launched Codex sessions can save normally.
 
 Claude Code hook example:
 
@@ -697,7 +697,7 @@ Claude Code hook example:
         "hooks": [
           {
             "type": "command",
-            "command": "wtui session-hook --provider claude"
+            "command": "approach session-hook --provider claude"
           }
         ]
       }
@@ -716,7 +716,7 @@ Codex hook example:
         "hooks": [
           {
             "type": "command",
-            "command": "wtui session-hook --provider codex"
+            "command": "approach session-hook --provider codex"
           }
         ]
       }
@@ -725,29 +725,29 @@ Codex hook example:
 }
 ```
 
-When wtui launches or resumes a CLI agent session, it appends `WTUI_*`
-environment metadata, including `WTUI_AGENT`, `WTUI_LAUNCH_ID`,
-`WTUI_REPO_PATH`, `WTUI_WORKTREE_PATH`, `WTUI_BRANCH`, `WTUI_COMMIT`,
-`WTUI_SESSION_STATE_ROOT`, `WTUI_PLAN_STATE_ROOT`, `WTUI_FLOW_STATE_ROOT`, and
+When Approach launches or resumes a CLI agent session, it appends `APPROACH_*`
+environment metadata, including `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
+`APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, `APPROACH_COMMIT`,
+`APPROACH_SESSION_STATE_ROOT`, `APPROACH_PLAN_STATE_ROOT`, `APPROACH_FLOW_STATE_ROOT`, and
 plan or flow IDs, paths, and phase fields when available.
-`codex-app` launches are the exception: wtui opens a macOS deep link, scrubs
-inherited `WTUI_*` from `open`, and includes prompt-only launch metadata with
+`codex-app` launches are the exception: Approach opens a macOS deep link, scrubs
+inherited `APPROACH_*` from `open`, and includes prompt-only launch metadata with
 copyable `--state-root` command examples. New `codex-app` threads use the repo
 path for Codex App project identity when available; the selected worktree path
 is still included in the prompt metadata.
 
 Session resume uses the stored provider session ID. Codex resumes with
 `codex ... resume <session-id>` and Claude Code resumes with
-`claude ... --resume <session-id>`, while preserving the same wtui hook and
+`claude ... --resume <session-id>`, while preserving the same Approach hook and
 metadata environment wiring as fresh launches. In the full sessions view, those
 CLI resumes run inside runtime-only embedded PTYs in the sessions pane. When
 `tmux` is available at launch time, those embedded CLI terminals are backed by a
-per-launch tmux session and `ctrl+] d` detaches wtui's embedded client while the
-agent continues in tmux. wtui then opens a new external terminal running the
+per-launch tmux session and `ctrl+] d` detaches Approach's embedded client while the
+agent continues in tmux. Approach then opens a new external terminal running the
 tmux reattach command, using the detach handoff order described in
 `[terminal]`. Platforms without `$TERMINAL`, `[terminal].command`, or the macOS
 Terminal AppleScript fallback report the handoff error after detach; the agent
-continues in the detached tmux session. When `tmux` is unavailable, wtui uses
+continues in the detached tmux session. When `tmux` is unavailable, Approach uses
 the direct embedded PTY path and reports detach unavailable. Fresh Flow `g`
 launches and Flow phase-session resumes run CLI agents inside runtime-only
 embedded PTYs in the flows pane; Flow headless mode chooses
@@ -758,7 +758,7 @@ pane. Other non-Flow agent launches keep using their existing external terminal
 transport, and `codex-app` Flow launches and resumes keep using deep-link
 transport. `ctrl+] x` and quit cleanup terminate embedded terminals and kill
 tmux sessions created by the current embedded launch; detached sessions are no
-longer owned by wtui and are not terminated when wtui exits. The TUI refuses to
+longer owned by Approach and are not terminated when Approach exits. The TUI refuses to
 resume a stored session whose provider session ID is blank (it reports this in
 the status line instead), and command construction trims resume session IDs and
 rejects whitespace-only ones, so a resume command never carries a blank `--resume`
@@ -768,7 +768,7 @@ Hook payloads whose `session_id` is blank or whitespace-only are rejected at
 ingest time: no session record is persisted and no Flow phase attachment is
 made.
 
-For Codex hook payloads with `hook_event_name = "Stop"`, wtui records the
+For Codex hook payloads with `hook_event_name = "Stop"`, Approach records the
 session as ended. Claude hook ingestion also records ended sessions, using the
 payload end time when present and the current time as a fallback.
 

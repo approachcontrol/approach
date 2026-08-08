@@ -9,30 +9,30 @@ import (
 	"testing"
 )
 
-func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
+func TestApproachFlowSkillDocumentsAgentContract(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
 
 	requireContainsAll(t, "skill metadata", skill, []string{
-		"name: wtui-flow",
-		"WTUI_FLOW_ID",
-		"WTUI_FLOW_PHASE_ID",
-		"WTUI_CURRENT_PHASE_ID",
+		"name: approach-flow",
+		"APPROACH_FLOW_ID",
+		"APPROACH_FLOW_PHASE_ID",
+		"APPROACH_CURRENT_PHASE_ID",
 	})
 	requireContainsAll(t, "flow commands", skill, []string{
-		"wtui flow read --flow-id",
-		"wtui flow phase complete",
-		"wtui flow phase block",
-		"wtui flow phase needs-attention",
-		"wtui flow phase restart",
-		"wtui flow phase reset",
-		"wtui flow phase set",
-		"wtui flow plan set",
-		"wtui flow issue set",
-		"wtui flow pr set",
-		"wtui plan save",
-		"wtui plan phase set",
-		"wtui plan read",
+		"approach flow read --flow-id",
+		"approach flow phase complete",
+		"approach flow phase block",
+		"approach flow phase needs-attention",
+		"approach flow phase restart",
+		"approach flow phase reset",
+		"approach flow phase set",
+		"approach flow plan set",
+		"approach flow issue set",
+		"approach flow pr set",
+		"approach plan save",
+		"approach plan phase set",
+		"approach plan read",
 	})
 	requireContainsAll(t, "default phase playbooks", skill, []string{
 		"plan",
@@ -61,41 +61,41 @@ func TestWtuiFlowSkillDocumentsAgentContract(t *testing.T) {
 	})
 }
 
-func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
+func TestApproachFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
-	flowCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "flow.go"))
-	planCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "plan.go"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
+	flowCLI := readFile(t, filepath.Join(root, "cmd", "approach", "flow.go"))
+	planCLI := readFile(t, filepath.Join(root, "cmd", "approach", "plan.go"))
 	flowStore := readFile(t, filepath.Join(root, "flowstore", "store.go"))
 
-	if !strings.Contains(skill, "wtui flow phase set") || !strings.Contains(flowCLI, "runFlowPhaseSet") {
+	if !strings.Contains(skill, "approach flow phase set") || !strings.Contains(flowCLI, "runFlowPhaseSet") {
 		t.Fatal("skill and CLI should both expose flow phase set")
 	}
-	if !strings.Contains(skill, "wtui flow phase complete") || !strings.Contains(flowCLI, `command:        "complete"`) {
+	if !strings.Contains(skill, "approach flow phase complete") || !strings.Contains(flowCLI, `command:        "complete"`) {
 		t.Fatal("skill and CLI should both expose flow phase complete")
 	}
-	if !strings.Contains(skill, "wtui flow phase block") || !strings.Contains(flowCLI, `command:        "block"`) {
+	if !strings.Contains(skill, "approach flow phase block") || !strings.Contains(flowCLI, `command:        "block"`) {
 		t.Fatal("skill and CLI should both expose flow phase block")
 	}
-	if !strings.Contains(skill, "wtui flow phase needs-attention") || !strings.Contains(flowCLI, `command:        "needs-attention"`) {
+	if !strings.Contains(skill, "approach flow phase needs-attention") || !strings.Contains(flowCLI, `command:        "needs-attention"`) {
 		t.Fatal("skill and CLI should both expose flow phase needs-attention")
 	}
-	if !strings.Contains(skill, "wtui flow phase restart") || !strings.Contains(flowCLI, "runFlowPhaseRestart") {
+	if !strings.Contains(skill, "approach flow phase restart") || !strings.Contains(flowCLI, "runFlowPhaseRestart") {
 		t.Fatal("skill and CLI should both expose flow phase restart")
 	}
-	if !strings.Contains(skill, "wtui flow phase reset") || !strings.Contains(flowCLI, "runFlowPhaseReset") {
+	if !strings.Contains(skill, "approach flow phase reset") || !strings.Contains(flowCLI, "runFlowPhaseReset") {
 		t.Fatal("skill and CLI should both expose flow phase reset")
 	}
-	if !strings.Contains(skill, "wtui flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
+	if !strings.Contains(skill, "approach flow plan set") || !strings.Contains(flowCLI, "runFlowPlanSet") {
 		t.Fatal("skill and CLI should both expose flow plan set")
 	}
-	if !strings.Contains(skill, "wtui flow issue set") || !strings.Contains(flowCLI, "runFlowIssueSet") {
+	if !strings.Contains(skill, "approach flow issue set") || !strings.Contains(flowCLI, "runFlowIssueSet") {
 		t.Fatal("skill and CLI should both expose flow issue set")
 	}
-	if !strings.Contains(skill, "wtui flow pr set") || !strings.Contains(flowCLI, "runFlowPRSet") {
+	if !strings.Contains(skill, "approach flow pr set") || !strings.Contains(flowCLI, "runFlowPRSet") {
 		t.Fatal("skill and CLI should both expose flow pr set")
 	}
-	if !strings.Contains(skill, "wtui flow merge set") || !strings.Contains(flowCLI, "runFlowMergeSet") {
+	if !strings.Contains(skill, "approach flow merge set") || !strings.Contains(flowCLI, "runFlowMergeSet") {
 		t.Fatal("skill and CLI should both expose flow merge set")
 	}
 	for _, flagName := range []string{
@@ -148,8 +148,8 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 
 	for _, unimplementedCommand := range []string{
-		"wtui flow session attach",
-		"wtui flow abandon",
+		"approach flow session attach",
+		"approach flow abandon",
 	} {
 		if hasRunnableCommandExample(skill, unimplementedCommand) {
 			t.Fatalf("skill includes a runnable example for unimplemented command %q", unimplementedCommand)
@@ -157,101 +157,101 @@ func TestWtuiFlowSkillMatchesImplementedFlowCLIContract(t *testing.T) {
 	}
 }
 
-func TestWtuiFlowCreateSkillDocumentsAgentContract(t *testing.T) {
+func TestApproachFlowCreateSkillDocumentsAgentContract(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow-create", "SKILL.md"))
 
 	requireContainsAll(t, "skill metadata", skill, []string{
-		"name: wtui-flow-create",
+		"name: approach-flow-create",
 		"make a flow from this",
-		"add this as a wtui flow",
-		"create a wtui flow for this plan",
+		"add this as an Approach flow",
+		"create an Approach flow for this plan",
 	})
 	requireContainsAll(t, "independent flow creation", skill, []string{
-		"does not require `WTUI_FLOW_ID` or `WTUI_FLOW_PHASE_ID`",
+		"does not require `APPROACH_FLOW_ID` or `APPROACH_FLOW_PHASE_ID`",
 		"Codex App prompt-only metadata",
 		"ask the user",
 		"absolute",
 	})
 	requireContainsAll(t, "shared artifact root setup", skill, []string{
-		"WTUI_ARTIFACT_ROOT",
-		"WTUI_FLOW_STATE_ROOT",
-		"WTUI_PLAN_STATE_ROOT",
-		"WTUI_SESSION_STATE_ROOT",
+		"APPROACH_ARTIFACT_ROOT",
+		"APPROACH_FLOW_STATE_ROOT",
+		"APPROACH_PLAN_STATE_ROOT",
+		"APPROACH_SESSION_STATE_ROOT",
 		"FLOW_STATE_ARGS",
 		"PLAN_STATE_ARGS",
 	})
 	requireContainsAll(t, "flow creation commands", skill, []string{
-		"wtui flow create",
+		"approach flow create",
 		"--json",
 		"--instructions-file",
 		"--instructions",
-		"wtui flow read --flow-id",
+		"approach flow read --flow-id",
 	})
 	requireContainsAll(t, "plan import commands", skill, []string{
-		"wtui plan save",
-		"wtui flow plan set",
-		"wtui plan read",
-		"wtui flow phase complete",
+		"approach plan save",
+		"approach flow plan set",
+		"approach plan read",
+		"approach flow phase complete",
 		"Imported plan",
 	})
 	requireContainsAll(t, "failure handling", skill, []string{
 		"persistence failures",
 		"must not be treated as success",
 		"report the command error",
-		"wtui flow phase block",
-		"wtui flow phase needs-attention",
+		"approach flow phase block",
+		"approach flow phase needs-attention",
 	})
 
-	if hasRunnableCommandExample(skill, "wtui flow session attach") {
-		t.Fatal("skill includes a runnable example for unimplemented command \"wtui flow session attach\"")
+	if hasRunnableCommandExample(skill, "approach flow session attach") {
+		t.Fatal("skill includes a runnable example for unimplemented command \"approach flow session attach\"")
 	}
-	if strings.Contains(skill, "FLOW_PRESET") && regexp.MustCompile(`(?s)wtui flow phase (?:block|complete|needs-attention).*?--phase-id plan`).MatchString(skill) {
-		t.Fatal("wtui-flow-create should use the created Flow's plan-kind phase ID instead of hardcoded --phase-id plan")
+	if strings.Contains(skill, "FLOW_PRESET") && regexp.MustCompile(`(?s)approach flow phase (?:block|complete|needs-attention).*?--phase-id plan`).MatchString(skill) {
+		t.Fatal("approach-flow-create should use the created Flow's plan-kind phase ID instead of hardcoded --phase-id plan")
 	}
 }
 
-func TestWtuiFlowCreateSkillGuardsPersistenceFailures(t *testing.T) {
+func TestApproachFlowCreateSkillGuardsPersistenceFailures(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
-	createBlock := fencedBashBlockContaining(t, skill, "FLOW_JSON=$(wtui flow create")
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow-create", "SKILL.md"))
+	createBlock := fencedBashBlockContaining(t, skill, "FLOW_JSON=$(approach flow create")
 	importBlock := fencedBashBlockContaining(t, skill, "PLAN_ID=$(printf")
 
 	requireContainsAll(t, "flow creation persistence guards", skill, []string{
-		"if ! FLOW_JSON=$(wtui flow create",
+		"if ! FLOW_JSON=$(approach flow create",
 		"if ! FLOW_ID=$(printf '%s' \"$FLOW_JSON\" | python3",
-		"if ! wtui flow read --flow-id \"$FLOW_ID\"",
-		"case \"${WTUI_REPO_PATH:-}\" in",
-		"absolute WTUI_REPO_PATH",
+		"if ! approach flow read --flow-id \"$FLOW_ID\"",
+		"case \"${APPROACH_REPO_PATH:-}\" in",
+		"absolute APPROACH_REPO_PATH",
 		"exit 1",
 	})
-	assertGuardedFailureBodies(t, createBlock, "if ! FLOW_JSON=$(wtui flow create", 2, []string{
-		"wtui flow create failed",
+	assertGuardedFailureBodies(t, createBlock, "if ! FLOW_JSON=$(approach flow create", 2, []string{
+		"approach flow create failed",
 		"exit 1",
 	})
 	assertGuardedFailureBodies(t, createBlock, "if ! FLOW_ID=$(printf", 1, []string{
 		"flow_id",
 		"exit 1",
 	})
-	assertGuardedFailureBodies(t, createBlock, `if ! wtui flow read --flow-id "$FLOW_ID"`, 1, []string{
-		"wtui flow read failed",
+	assertGuardedFailureBodies(t, createBlock, `if ! approach flow read --flow-id "$FLOW_ID"`, 1, []string{
+		"approach flow read failed",
 		"exit 1",
 	})
 
 	requireContainsAll(t, "plan import persistence guards", skill, []string{
 		"record_plan_import_failure",
-		"if ! PLAN_ID=$(printf '%s' \"${PLAN_MARKDOWN:-}\" | wtui plan save",
-		"if ! wtui flow plan set",
-		"if ! wtui plan read --plan-id \"$PLAN_ID\"",
-		"if ! wtui flow phase complete",
-		"wtui flow phase block failed after plan import failure",
+		"if ! PLAN_ID=$(printf '%s' \"${PLAN_MARKDOWN:-}\" | approach plan save",
+		"if ! approach flow plan set",
+		"if ! approach plan read --plan-id \"$PLAN_ID\"",
+		"if ! approach flow phase complete",
+		"approach flow phase block failed after plan import failure",
 		"exit 1",
 	})
 	for _, guard := range []string{
 		"if ! PLAN_ID=$(printf",
-		"if ! wtui flow plan set",
-		`if ! wtui plan read --plan-id "$PLAN_ID"`,
-		"if ! wtui flow phase complete",
+		"if ! approach flow plan set",
+		`if ! approach plan read --plan-id "$PLAN_ID"`,
+		"if ! approach flow phase complete",
 	} {
 		assertGuardedFailureBodies(t, importBlock, guard, 1, []string{
 			"record_plan_import_failure",
@@ -262,35 +262,35 @@ func TestWtuiFlowCreateSkillGuardsPersistenceFailures(t *testing.T) {
 		t.Fatal("plan import should leave FLOW_PLAN_PHASE_ID empty when no plan-kind phase is ready")
 	}
 
-	readbackIndex := strings.Index(skill, `if ! wtui plan read --plan-id "$PLAN_ID"`)
-	completeIndex := strings.Index(skill, "if ! wtui flow phase complete")
+	readbackIndex := strings.Index(skill, `if ! approach plan read --plan-id "$PLAN_ID"`)
+	completeIndex := strings.Index(skill, "if ! approach flow phase complete")
 	if readbackIndex < 0 || completeIndex < 0 || completeIndex < readbackIndex {
 		t.Fatal("skill should guard plan readback before attempting to complete the Flow plan phase")
 	}
 }
 
-func TestWtuiFlowCreateSkillExamplesAreUnsetSafe(t *testing.T) {
+func TestApproachFlowCreateSkillExamplesAreUnsetSafe(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow-create", "SKILL.md"))
 
 	requireContainsAll(t, "unset-safe shell variables", skill, []string{
 		"${FLOW_TITLE:-}",
 		"${FLOW_INSTRUCTIONS_FILE:-}",
 		"${FLOW_INSTRUCTIONS:-}",
-		"${WTUI_REPO_PATH:-}",
-		"${WTUI_WORKTREE_PATH:-}",
-		"${WTUI_BRANCH:-}",
-		"${WTUI_COMMIT:-}",
+		"${APPROACH_REPO_PATH:-}",
+		"${APPROACH_WORKTREE_PATH:-}",
+		"${APPROACH_BRANCH:-}",
+		"${APPROACH_COMMIT:-}",
 		"${FLOW_ID:-}",
 		"${PLAN_MARKDOWN:-}",
 	})
 }
 
-func TestWtuiFlowCreateSkillMatchesImplementedCLIContract(t *testing.T) {
+func TestApproachFlowCreateSkillMatchesImplementedCLIContract(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
-	flowCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "flow.go"))
-	planCLI := readFile(t, filepath.Join(root, "cmd", "wtui", "plan.go"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow-create", "SKILL.md"))
+	flowCLI := readFile(t, filepath.Join(root, "cmd", "approach", "flow.go"))
+	planCLI := readFile(t, filepath.Join(root, "cmd", "approach", "plan.go"))
 
 	requireContainsAll(t, "flow CLI contract", flowCLI, []string{
 		"runFlowCreate",
@@ -309,16 +309,16 @@ func TestWtuiFlowCreateSkillMatchesImplementedCLIContract(t *testing.T) {
 	assertRunnableExampleFlagsExist(t, skill, planCLI, "plan")
 }
 
-func TestWtuiFlowSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
+func TestApproachFlowSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
 
 	assertSkillKeepsPlanAndFlowStateRootsTogether(t, skill)
 }
 
-func TestWtuiFlowCreateSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
+func TestApproachFlowCreateSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow-create", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow-create", "SKILL.md"))
 
 	assertSkillKeepsPlanAndFlowStateRootsTogether(t, skill)
 }
@@ -326,31 +326,31 @@ func TestWtuiFlowCreateSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T) {
 func assertSkillKeepsPlanAndFlowStateRootsTogether(t *testing.T, skill string) {
 	t.Helper()
 	requireContainsAll(t, "shared artifact root setup", skill, []string{
-		"WTUI_ARTIFACT_ROOT",
-		"WTUI_FLOW_STATE_ROOT",
-		"WTUI_PLAN_STATE_ROOT",
-		"WTUI_SESSION_STATE_ROOT",
+		"APPROACH_ARTIFACT_ROOT",
+		"APPROACH_FLOW_STATE_ROOT",
+		"APPROACH_PLAN_STATE_ROOT",
+		"APPROACH_SESSION_STATE_ROOT",
 		"FLOW_STATE_ARGS",
 		"PLAN_STATE_ARGS",
 	})
 
 	for _, block := range fencedBashBlocks(skill) {
-		if strings.Contains(block, "wtui flow ") && !strings.Contains(block, `"${FLOW_STATE_ARGS[@]}"`) {
+		if strings.Contains(block, "approach flow ") && !strings.Contains(block, `"${FLOW_STATE_ARGS[@]}"`) {
 			t.Fatalf("flow example missing FLOW_STATE_ARGS:\n%s", block)
 		}
-		if strings.Contains(block, "wtui plan ") && !strings.Contains(block, `"${PLAN_STATE_ARGS[@]}"`) {
+		if strings.Contains(block, "approach plan ") && !strings.Contains(block, `"${PLAN_STATE_ARGS[@]}"`) {
 			t.Fatalf("plan example missing PLAN_STATE_ARGS:\n%s", block)
 		}
 	}
 }
 
-func TestWtuiFlowSkillPlanPhaseGuardsPersistenceFailures(t *testing.T) {
+func TestApproachFlowSkillPlanPhaseGuardsPersistenceFailures(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
 
 	requireContainsAll(t, "plan persistence guards", skill, []string{
 		"if ! PLAN_ID=$(",
-		"wtui flow plan set",
+		"approach flow plan set",
 		`--plan-id "$PLAN_ID"`,
 		`--outcome "plan_link_failed"`,
 		`--outcome "plan_save_failed"`,
@@ -360,54 +360,54 @@ func TestWtuiFlowSkillPlanPhaseGuardsPersistenceFailures(t *testing.T) {
 	})
 }
 
-func TestWtuiFlowSkillHandlesMissingPlanID(t *testing.T) {
+func TestApproachFlowSkillHandlesMissingPlanID(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
 
 	requireContainsAll(t, "missing plan id guidance", skill, []string{
-		`if [ -z "$WTUI_PLAN_ID" ]`,
-		`if ! wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}"`,
+		`if [ -z "$APPROACH_PLAN_ID" ]`,
+		`if ! approach plan read --plan-id "$APPROACH_PLAN_ID" "${PLAN_STATE_ARGS[@]}"`,
 		`--status blocked`,
 		`--outcome "blocked"`,
-		`wtui plan read --plan-id "$WTUI_PLAN_ID" "${PLAN_STATE_ARGS[@]}"`,
+		`approach plan read --plan-id "$APPROACH_PLAN_ID" "${PLAN_STATE_ARGS[@]}"`,
 	})
 }
 
-func TestWtuiFlowSkillDocumentsPlanReviewGateOutcomes(t *testing.T) {
+func TestApproachFlowSkillDocumentsPlanReviewGateOutcomes(t *testing.T) {
 	root := repoRoot(t)
-	skill := readFile(t, filepath.Join(root, "agent-skills", "wtui-flow", "SKILL.md"))
+	skill := readFile(t, filepath.Join(root, "agent-skills", "approach-flow", "SKILL.md"))
 
 	requireContainsAll(t, "plan review outcome contract", skill, []string{
 		"approved",
 		"approved_with_concerns",
 		"changes_requested",
 		"blocked",
-		"wtui derives all phase readiness",
-		`wtui flow phase needs-attention --notes "..."`,
-		`wtui flow phase complete --outcome "approved_with_concerns" --notes "..."`,
-		`wtui flow phase block --notes "..."`,
+		"Approach derives all phase readiness",
+		`approach flow phase needs-attention --notes "..."`,
+		`approach flow phase complete --outcome "approved_with_concerns" --notes "..."`,
+		`approach flow phase block --notes "..."`,
 	})
 }
 
-func TestWtuiFlowInstallationDocs(t *testing.T) {
+func TestApproachFlowInstallationDocs(t *testing.T) {
 	root := repoRoot(t)
 	readme := readFile(t, filepath.Join(root, "README.md"))
 	configDocs := readFile(t, filepath.Join(root, "docs", "config.md"))
 
 	requireContainsAll(t, "README installation docs", readme, []string{
-		"agent-skills/wtui-flow/",
-		"agent-skills/wtui-flow-create/",
-		"wtui-flow",
-		"wtui-flow-create",
-		"wtui-plan-persist",
+		"agent-skills/approach-flow/",
+		"agent-skills/approach-flow-create/",
+		"approach-flow",
+		"approach-flow-create",
+		"approach-plan-persist",
 		"symlink",
 	})
 	requireContainsAll(t, "config installation docs", configDocs, []string{
-		"agent-skills/wtui-flow/",
-		"agent-skills/wtui-flow-create/",
-		"wtui-flow",
-		"wtui-flow-create",
-		"wtui-plan-persist",
+		"agent-skills/approach-flow/",
+		"agent-skills/approach-flow-create/",
+		"approach-flow",
+		"approach-flow-create",
+		"approach-plan-persist",
 		"symlink",
 	})
 }
@@ -524,7 +524,7 @@ type runnableCommandFlagUse struct {
 }
 
 func (u runnableCommandFlagUse) Command() string {
-	return "wtui " + strings.Join(append([]string{u.TopCommand}, u.Subcommands...), " ")
+	return "approach " + strings.Join(append([]string{u.TopCommand}, u.Subcommands...), " ")
 }
 
 func runnableCommandFlagUses(markdown, command string) []runnableCommandFlagUse {
@@ -544,7 +544,7 @@ func runnableCommandFlagUses(markdown, command string) []runnableCommandFlagUse 
 				continue
 			}
 
-			if subcommands, ok := runnableWtuiSubcommands(trimmed, command); ok {
+			if subcommands, ok := runnableApproachSubcommands(trimmed, command); ok {
 				activeSubcommands = subcommands
 			} else if !continues {
 				activeSubcommands = nil
@@ -600,13 +600,13 @@ func stripShellQuotedSpans(line string) string {
 	return b.String()
 }
 
-func hasRunnableWtuiCommand(line, command string) bool {
-	_, ok := runnableWtuiSubcommands(line, command)
+func hasRunnableApproachCommand(line, command string) bool {
+	_, ok := runnableApproachSubcommands(line, command)
 	return ok
 }
 
-func runnableWtuiSubcommands(line, command string) ([]string, bool) {
-	pattern := "wtui " + command + " "
+func runnableApproachSubcommands(line, command string) ([]string, bool) {
+	pattern := "approach " + command + " "
 	index := strings.Index(line, pattern)
 	if index < 0 {
 		return nil, false
@@ -627,7 +627,7 @@ func runnableWtuiSubcommands(line, command string) ([]string, bool) {
 	}
 
 	fields := strings.Fields(line[index:])
-	if len(fields) < 3 || fields[0] != "wtui" || fields[1] != command {
+	if len(fields) < 3 || fields[0] != "approach" || fields[1] != command {
 		return nil, false
 	}
 	var subcommands []string

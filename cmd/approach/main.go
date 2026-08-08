@@ -11,15 +11,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/config"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/version"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/version"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func main() {
@@ -124,7 +124,7 @@ func printMainHelp(w io.Writer) {
 	io.WriteString(w, mainHelpText)
 }
 
-const mainHelpText = `Usage: wtui [--version] [command]
+const mainHelpText = `Usage: approach [--version] [command]
 
 Launch the worktree TUI, or use a command to persist agent artifacts.
 
@@ -138,10 +138,10 @@ Flags:
   --help, -h     Print this help and exit.
 
 Examples:
-  wtui
-  wtui plan --help
-  wtui flow --help
-  wtui session-hook --provider codex
+  approach
+  approach plan --help
+  approach flow --help
+  approach session-hook --provider codex
 `
 
 func unknownCommandError(got string, valid []string, usage string) error {
@@ -264,7 +264,7 @@ func runSessionHook(args []string, deps runDeps) error {
 	}
 	root := *stateRoot
 	if root == "" {
-		root = deps.getenv("WTUI_SESSION_STATE_ROOT")
+		root = deps.getenv("APPROACH_SESSION_STATE_ROOT")
 	}
 	if root == "" {
 		root = cfg.Sessions.Root
@@ -274,21 +274,21 @@ func runSessionHook(args []string, deps runDeps) error {
 		CopyRawTranscripts: cfg.Sessions.CopyRawTranscripts,
 		FlowPresets:        cfg.Flow.Presets,
 		Env: map[string]string{
-			"HOME":                    deps.getenv("HOME"),
-			"CODEX_HOME":              deps.getenv("CODEX_HOME"),
-			"CLAUDE_CONFIG_DIR":       deps.getenv("CLAUDE_CONFIG_DIR"),
-			"WTUI_LAUNCH_ID":          deps.getenv("WTUI_LAUNCH_ID"),
-			"WTUI_REPO_PATH":          deps.getenv("WTUI_REPO_PATH"),
-			"WTUI_WORKTREE_PATH":      deps.getenv("WTUI_WORKTREE_PATH"),
-			"WTUI_PLAN_ID":            deps.getenv("WTUI_PLAN_ID"),
-			"WTUI_PLAN_PATH":          deps.getenv("WTUI_PLAN_PATH"),
-			"WTUI_PLAN_STATE_ROOT":    deps.getenv("WTUI_PLAN_STATE_ROOT"),
-			"WTUI_FLOW_ID":            deps.getenv("WTUI_FLOW_ID"),
-			"WTUI_FLOW_PHASE_ID":      deps.getenv("WTUI_FLOW_PHASE_ID"),
-			"WTUI_FLOW_STATE_ROOT":    deps.getenv("WTUI_FLOW_STATE_ROOT"),
-			"WTUI_BRANCH":             deps.getenv("WTUI_BRANCH"),
-			"WTUI_COMMIT":             deps.getenv("WTUI_COMMIT"),
-			"WTUI_SESSION_STATE_ROOT": deps.getenv("WTUI_SESSION_STATE_ROOT"),
+			"HOME":                        deps.getenv("HOME"),
+			"CODEX_HOME":                  deps.getenv("CODEX_HOME"),
+			"CLAUDE_CONFIG_DIR":           deps.getenv("CLAUDE_CONFIG_DIR"),
+			"APPROACH_LAUNCH_ID":          deps.getenv("APPROACH_LAUNCH_ID"),
+			"APPROACH_REPO_PATH":          deps.getenv("APPROACH_REPO_PATH"),
+			"APPROACH_WORKTREE_PATH":      deps.getenv("APPROACH_WORKTREE_PATH"),
+			"APPROACH_PLAN_ID":            deps.getenv("APPROACH_PLAN_ID"),
+			"APPROACH_PLAN_PATH":          deps.getenv("APPROACH_PLAN_PATH"),
+			"APPROACH_PLAN_STATE_ROOT":    deps.getenv("APPROACH_PLAN_STATE_ROOT"),
+			"APPROACH_FLOW_ID":            deps.getenv("APPROACH_FLOW_ID"),
+			"APPROACH_FLOW_PHASE_ID":      deps.getenv("APPROACH_FLOW_PHASE_ID"),
+			"APPROACH_FLOW_STATE_ROOT":    deps.getenv("APPROACH_FLOW_STATE_ROOT"),
+			"APPROACH_BRANCH":             deps.getenv("APPROACH_BRANCH"),
+			"APPROACH_COMMIT":             deps.getenv("APPROACH_COMMIT"),
+			"APPROACH_SESSION_STATE_ROOT": deps.getenv("APPROACH_SESSION_STATE_ROOT"),
 		},
 	})
 	return err
@@ -411,13 +411,13 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 }
 
 func runtimeArtifactRoot(cfg config.Config) string {
-	if envRoot := os.Getenv("WTUI_FLOW_STATE_ROOT"); envRoot != "" {
+	if envRoot := os.Getenv("APPROACH_FLOW_STATE_ROOT"); envRoot != "" {
 		return envRoot
 	}
-	if envRoot := os.Getenv("WTUI_PLAN_STATE_ROOT"); envRoot != "" {
+	if envRoot := os.Getenv("APPROACH_PLAN_STATE_ROOT"); envRoot != "" {
 		return envRoot
 	}
-	if envRoot := os.Getenv("WTUI_SESSION_STATE_ROOT"); envRoot != "" {
+	if envRoot := os.Getenv("APPROACH_SESSION_STATE_ROOT"); envRoot != "" {
 		return envRoot
 	}
 	return cfg.Sessions.Root

@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/model/modal"
+	"github.com/approachcontrol/approach/model/modal"
 )
 
 type sentinelMsg string

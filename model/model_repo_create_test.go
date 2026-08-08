@@ -9,10 +9,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func repoCreateKey(input string) tea.KeyMsg {

@@ -14,13 +14,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/agent"
-	"github.com/brian-bell/wtui/claudestream"
-	"github.com/brian-bell/wtui/embeddedterm"
-	"github.com/brian-bell/wtui/model/modal"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/claudestream"
+	"github.com/approachcontrol/approach/embeddedterm"
+	"github.com/approachcontrol/approach/model/modal"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 const embeddedTerminalTerminatePrompt = "Terminate embedded terminal?"
@@ -35,7 +35,7 @@ var (
 	embeddedPromptPrefillPollInterval = 25 * time.Millisecond
 )
 
-// terminalCommandKey toggles wtui command handling inside embedded terminals.
+// terminalCommandKey toggles approach command handling inside embedded terminals.
 // It must stay off keys interactive agents bind themselves (Claude Code and
 // Codex both use ctrl+g, ctrl+b, ctrl+r, ctrl+t, ...); ctrl+] is the
 // telnet-style escape neither claims.

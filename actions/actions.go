@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/brian-bell/wtui/agent"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/google/shlex"
 )
 
@@ -248,10 +248,10 @@ func RunBootstrapHook(ctx BootstrapContext, hook BootstrapHook) error {
 	cmd := exec.CommandContext(commandCtx, scriptPath)
 	cmd.Dir = ctx.WorktreePath
 	cmd.Env = envWithOverrides(
-		envVar{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
-		envVar{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
-		envVar{key: "WTUI_WORKTREE_REF", value: ctx.Ref},
-		envVar{key: "WTUI_WORKTREE_CREATE_KIND", value: ctx.Kind.String()},
+		envVar{key: "APPROACH_REPO_PATH", value: ctx.RepoPath},
+		envVar{key: "APPROACH_WORKTREE_PATH", value: ctx.WorktreePath},
+		envVar{key: "APPROACH_WORKTREE_REF", value: ctx.Ref},
+		envVar{key: "APPROACH_WORKTREE_CREATE_KIND", value: ctx.Kind.String()},
 	)
 	output := newTailBuffer(4096)
 	cmd.Stdout = output
@@ -492,7 +492,7 @@ func ValidatePullRequestWorktreeInput(repoPath, input string) error {
 	return validatePullRequestRepo(repoPath, pr)
 }
 
-// NormalizePullRequestWorktreeRef returns the stable PR ref value wtui exposes
+// NormalizePullRequestWorktreeRef returns the stable PR ref value approach exposes
 // to post-create integrations.
 func NormalizePullRequestWorktreeRef(input string) (string, error) {
 	pr, err := parsePullRequestInput(input)
@@ -674,7 +674,7 @@ func OpenVSCode(path string) error {
 	return exec.Command("code", path).Run()
 }
 
-// TerminalLaunchSpec describes how wtui should open an external process for a worktree.
+// TerminalLaunchSpec describes how approach should open an external process for a worktree.
 // Interactive commands should be run with Bubble Tea's ExecProcess so the TUI
 // releases the current terminal until the process exits.
 type TerminalLaunchSpec struct {
@@ -691,7 +691,7 @@ type TerminalLaunchSpec struct {
 var ErrEmbeddedTmuxUnavailable = errors.New("tmux is not available for embedded terminal detach")
 
 // EmbeddedTmuxAgentSpec describes a CLI agent launch that runs inside a tmux
-// session while wtui embeds only an attached tmux client.
+// session while approach embeds only an attached tmux client.
 type EmbeddedTmuxAgentSpec struct {
 	SessionName        string
 	ScriptPath         string
@@ -710,7 +710,7 @@ type LaunchOptions struct {
 	TerminalCommand string
 }
 
-// AgentLaunchContext carries metadata wtui knows at launch time so provider
+// AgentLaunchContext carries metadata Approach knows at launch time so provider
 // hooks can associate later session records with the selected repo/worktree.
 type AgentLaunchContext struct {
 	Command           string
@@ -748,7 +748,7 @@ type AgentLaunchContext struct {
 // AgentLaunch builds a supported coding-agent command for ctx and wraps it in a
 // terminal/multiplexer transport so the agent runs in its own
 // window/session—matching the behavior of the `t` shortcut—instead of taking
-// over the wtui TTY. Detached transports leave the wtui TUI usable; only
+// over the approach TTY. Detached transports leave the approach TUI usable; only
 // transports that genuinely need the current TTY are returned as interactive.
 func AgentLaunch(ctx AgentLaunchContext) (TerminalLaunchSpec, error) {
 	return AgentLaunchWithOptions(ctx, LaunchOptions{})
@@ -850,7 +850,7 @@ func sanitizeSessionSuffix(s string) string {
 
 // AgentCommand builds the direct command for launching a supported coding agent
 // in ctx, including provider hook args, resume args, the trailing prompt, the
-// working directory, and the WTUI_* environment overrides. It does not wrap the
+// working directory, and the APPROACH_* environment overrides. It does not wrap the
 // command in a terminal transport; AgentLaunch does that.
 func AgentCommand(ctx AgentLaunchContext) (*exec.Cmd, error) {
 	cmd, _, err := agentCommandSpec(ctx)
@@ -914,7 +914,7 @@ func isolatedTmuxArgs(socketName string) []string {
 func tmuxSocketName(sessionName string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(sessionName))
-	return fmt.Sprintf("wtui-agent-%08x", h.Sum32())
+	return fmt.Sprintf("approach-agent-%08x", h.Sum32())
 }
 
 func tmuxDetachTarget(socketName, sessionName string) string {
@@ -945,11 +945,11 @@ if [ -r "$3" ]; then
 fi
 exit "$tmux_status"
 `)
-	return exec.Command("/bin/sh", "-c", script, "wtui", socketName, sessionName, statusPath)
+	return exec.Command("/bin/sh", "-c", script, "approach", socketName, sessionName, statusPath)
 }
 
 // UsesStreamJSONOutput reports whether an embedded launch emits claude
-// stream-json that wtui must render into readable terminal lines. Headless
+// stream-json that approach must render into readable terminal lines. Headless
 // claude is the only mode that streams stream-json; codex and interactive
 // claude render their own output directly.
 func UsesStreamJSONOutput(ctx AgentLaunchContext) bool {
@@ -1018,22 +1018,22 @@ func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {
 		commit = ctx.Commit
 	}
 	overrides := []envVar{
-		{key: "WTUI_AGENT", value: command},
-		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
-		{key: "WTUI_REPO_PATH", value: ctx.RepoPath},
-		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
-		{key: "WTUI_BRANCH", value: ctx.Branch},
-		{key: "WTUI_COMMIT", value: commit},
-		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "WTUI_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
-		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
-		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
-		{key: "WTUI_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
-		{key: "WTUI_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
-		{key: "WTUI_FLOW_ID", value: ctx.FlowID},
-		{key: "WTUI_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
+		{key: "APPROACH_AGENT", value: command},
+		{key: "APPROACH_LAUNCH_ID", value: ctx.LaunchID},
+		{key: "APPROACH_REPO_PATH", value: ctx.RepoPath},
+		{key: "APPROACH_WORKTREE_PATH", value: ctx.WorktreePath},
+		{key: "APPROACH_BRANCH", value: ctx.Branch},
+		{key: "APPROACH_COMMIT", value: commit},
+		{key: "APPROACH_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "APPROACH_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "APPROACH_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "APPROACH_PLAN_ID", value: ctx.PlanID},
+		{key: "APPROACH_PLAN_PATH", value: ctx.PlanPath},
+		{key: "APPROACH_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		{key: "APPROACH_PLAN_PHASE_TITLE", value: ctx.PlanPhaseTitle},
+		{key: "APPROACH_PLAN_PHASE_STATUS", value: ctx.PlanPhaseStatus},
+		{key: "APPROACH_FLOW_ID", value: ctx.FlowID},
+		{key: "APPROACH_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
 	}
 	cmd.Env = envWithOverrides(overrides...)
 	return cmd, overrides, nil
@@ -1051,7 +1051,7 @@ func codexAppLaunch(ctx AgentLaunchContext, goos string) (TerminalLaunchSpec, er
 		return TerminalLaunchSpec{}, err
 	}
 	cmd := exec.Command("open", launchURL)
-	cmd.Env = envWithoutPrefix("WTUI_")
+	cmd.Env = envWithoutPrefix("APPROACH_")
 	return TerminalLaunchSpec{Cmd: cmd}, nil
 }
 
@@ -1131,16 +1131,16 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	}
 
 	items := []envVar{
-		{key: "WTUI_LAUNCH_ID", value: ctx.LaunchID},
-		{key: "WTUI_WORKTREE_PATH", value: ctx.WorktreePath},
-		{key: "WTUI_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "WTUI_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "WTUI_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
-		{key: "WTUI_PLAN_ID", value: ctx.PlanID},
-		{key: "WTUI_PLAN_PATH", value: ctx.PlanPath},
-		{key: "WTUI_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
-		{key: "WTUI_FLOW_ID", value: ctx.FlowID},
-		{key: "WTUI_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
+		{key: "APPROACH_LAUNCH_ID", value: ctx.LaunchID},
+		{key: "APPROACH_WORKTREE_PATH", value: ctx.WorktreePath},
+		{key: "APPROACH_SESSION_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "APPROACH_PLAN_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "APPROACH_FLOW_STATE_ROOT", value: ctx.SessionStateRoot},
+		{key: "APPROACH_PLAN_ID", value: ctx.PlanID},
+		{key: "APPROACH_PLAN_PATH", value: ctx.PlanPath},
+		{key: "APPROACH_PLAN_PHASE_ID", value: ctx.PlanPhaseID},
+		{key: "APPROACH_FLOW_ID", value: ctx.FlowID},
+		{key: "APPROACH_FLOW_PHASE_ID", value: ctx.FlowPhaseID},
 	}
 
 	var kept []envVar
@@ -1154,8 +1154,8 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("wtui launch metadata:")
-	b.WriteString("\nThese WTUI_* values are launch metadata included in this prompt only.")
+	b.WriteString("approach launch metadata:")
+	b.WriteString("\nThese APPROACH_* values are launch metadata included in this prompt only.")
 	b.WriteString("\nCodex App does not receive them as shell environment variables.")
 	for _, item := range kept {
 		b.WriteString("\n- ")
@@ -1165,9 +1165,9 @@ func codexAppLaunchMetadata(ctx AgentLaunchContext) string {
 	}
 	if ctx.SessionStateRoot != "" {
 		b.WriteString("\nCopyable state-root command examples:")
-		b.WriteString("\n- wtui plan list --json --state-root ")
+		b.WriteString("\n- approach plan list --json --state-root ")
 		b.WriteString(shellQuote(ctx.SessionStateRoot))
-		b.WriteString("\n- wtui flow list --json --state-root ")
+		b.WriteString("\n- approach flow list --json --state-root ")
 		b.WriteString(shellQuote(ctx.SessionStateRoot))
 	}
 	return b.String()
@@ -1247,7 +1247,7 @@ func ResolveWorktreeCommit(path string) string {
 type agentLaunchArgsOptions struct {
 	// embedded is true for an embedded-terminal launch (vs an external one).
 	embedded bool
-	// streamJSON is true when wtui will render the agent's stream-json output;
+	// streamJSON is true when approach will render the agent's stream-json output;
 	// it must equal UsesStreamJSONOutput for the same context so the args and
 	// the renderer stay in lockstep (raw JSON in the panel otherwise).
 	streamJSON bool
@@ -1256,8 +1256,8 @@ type agentLaunchArgsOptions struct {
 func agentLaunchArgs(command, resumeSessionID string, headless bool, model string, reasoningEffort string, opts agentLaunchArgsOptions) []string {
 	switch command {
 	case "codex":
-		hookCommand := wtuiSessionHookCommand("codex")
-		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving wtui session\"}]}]"
+		hookCommand := approachSessionHookCommand("codex")
+		hookConfig := "hooks.Stop=[{hooks=[{type=\"command\", command=" + strconv.Quote(hookCommand) + ", timeout=30, statusMessage=\"Saving approach session\"}]}]"
 		args := []string{"--config", hookConfig}
 		if model != "" && model != agent.ModelDefault {
 			args = append(args, "--model", model)
@@ -1276,7 +1276,7 @@ func agentLaunchArgs(command, resumeSessionID string, headless bool, model strin
 		}
 		return args
 	case "claude":
-		hookCommand := wtuiSessionHookCommand("claude")
+		hookCommand := approachSessionHookCommand("claude")
 		settings := claudeSessionHookSettings(hookCommand)
 		args := []string{"--settings", settings}
 		if model != "" && model != agent.ModelDefault {
@@ -1289,7 +1289,7 @@ func agentLaunchArgs(command, resumeSessionID string, headless bool, model strin
 			args = slices.Insert(args, 0, "--print")
 			// claude --print buffers plain-text output until completion, so an
 			// embedded headless launch would show a blank panel for the whole
-			// run. Stream stream-json (which requires --verbose) so wtui can
+			// run. Stream stream-json (which requires --verbose) so approach can
 			// render readable progress as events arrive;
 			// --include-partial-messages adds token-by-token deltas so text and
 			// tool calls stream in rather than appearing only when each block
@@ -1327,7 +1327,7 @@ func claudeSessionHookSettings(hookCommand string) string {
 	return string(data)
 }
 
-func wtuiSessionHookCommand(provider string) string {
+func approachSessionHookCommand(provider string) string {
 	executable, err := os.Executable()
 	if err != nil {
 		executable = os.Args[0]
@@ -1352,7 +1352,7 @@ func newTerminalCommand(dir string, env []string, argv []string, session string)
 }
 
 func newTerminalCommandWithStatus(dir string, env []string, argv []string, session string) (*terminalCommand, error) {
-	statusFile, err := os.CreateTemp("", "wtui-agent-status-*.txt")
+	statusFile, err := os.CreateTemp("", "approach-agent-status-*.txt")
 	if err != nil {
 		return nil, err
 	}
@@ -1396,7 +1396,7 @@ func writeTerminalCommandScript(dir string, env []string, argv []string, statusP
 		return "", fmt.Errorf("agent command has no argv")
 	}
 
-	file, err := os.CreateTemp("", "wtui-agent-*.sh")
+	file, err := os.CreateTemp("", "approach-agent-*.sh")
 	if err != nil {
 		return "", err
 	}
@@ -1548,7 +1548,7 @@ func terminalLaunchWithOptions(path, goos string, getenv getenvFunc, lookPath lo
 	case getenv("ZELLIJ") != "" && commandExists("zellij", lookPath):
 		if command != nil {
 			// switch-session cannot carry a command, so run the agent in a new
-			// pane of the current Zellij session; wtui keeps running in its pane.
+			// pane of the current Zellij session; approach keeps running in its pane.
 			return TerminalLaunchSpec{
 				Cmd:      exec.Command("zellij", "run", "--cwd", path, "--", "sh", "-c", command.shellCommand()),
 				Detached: true,
@@ -2100,9 +2100,9 @@ tmux switch-client -t "$session"
 // freshly created session.
 func tmuxSwitchCommand(sessionName, path string, command *terminalCommand) *exec.Cmd {
 	if command != nil {
-		return exec.Command("sh", "-c", tmuxSwitchRunScript, "wtui", sessionName, path, command.shellCommand())
+		return exec.Command("sh", "-c", tmuxSwitchRunScript, "approach", sessionName, path, command.shellCommand())
 	}
-	return exec.Command("sh", "-c", tmuxSwitchScript, "wtui", sessionName, path)
+	return exec.Command("sh", "-c", tmuxSwitchScript, "approach", sessionName, path)
 }
 
 // tmuxNewSessionCommand attaches to (creating if needed) the worktree session

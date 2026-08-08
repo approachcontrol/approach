@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/scanner"
+	"github.com/approachcontrol/approach/scanner"
 )
 
 func makeRepo(t *testing.T, path string) {
@@ -329,8 +329,8 @@ func TestScan_GitFileWorktreeDiscovered(t *testing.T) {
 
 func TestScan_ExcludesTopLevelLinkedWorktreeCheckout(t *testing.T) {
 	root := t.TempDir()
-	repoDir := filepath.Join(root, "wtui")
-	worktreeDir := filepath.Join(root, "wtui-bootstrap-hooks")
+	repoDir := filepath.Join(root, "approach")
+	worktreeDir := filepath.Join(root, "approach-bootstrap-hooks")
 
 	makeCommittedGitRepo(t, repoDir)
 	addLinkedWorktree(t, repoDir, worktreeDir, "bootstrap-hooks")
@@ -339,15 +339,15 @@ func TestScan_ExcludesTopLevelLinkedWorktreeCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "wtui", IsBare: false})
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "approach", IsBare: false})
 }
 
 func TestScan_ExcludesLinkedWorktreeCheckoutWithRelativeRoot(t *testing.T) {
 	parent := t.TempDir()
 	rootName := "scan-root"
 	root := filepath.Join(parent, rootName)
-	repoDir := filepath.Join(root, "wtui")
-	worktreeDir := filepath.Join(root, "wtui-bootstrap-hooks")
+	repoDir := filepath.Join(root, "approach")
+	worktreeDir := filepath.Join(root, "approach-bootstrap-hooks")
 
 	makeCommittedGitRepo(t, repoDir)
 	addLinkedWorktree(t, repoDir, worktreeDir, "bootstrap-hooks")
@@ -357,14 +357,14 @@ func TestScan_ExcludesLinkedWorktreeCheckoutWithRelativeRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertOnlyRepo(t, repos, scanner.Repo{Path: filepath.Join(rootName, "wtui"), DisplayName: "wtui", IsBare: false})
+	assertOnlyRepo(t, repos, scanner.Repo{Path: filepath.Join(rootName, "approach"), DisplayName: "approach", IsBare: false})
 }
 
 func TestScan_ExcludesNestedLinkedWorktreeCheckout(t *testing.T) {
 	root := t.TempDir()
 	orgDir := filepath.Join(root, "org")
-	repoDir := filepath.Join(orgDir, "wtui")
-	worktreeDir := filepath.Join(orgDir, "wtui-bootstrap-hooks")
+	repoDir := filepath.Join(orgDir, "approach")
+	worktreeDir := filepath.Join(orgDir, "approach-bootstrap-hooks")
 
 	makeCommittedGitRepo(t, repoDir)
 	addLinkedWorktree(t, repoDir, worktreeDir, "bootstrap-hooks")
@@ -373,7 +373,7 @@ func TestScan_ExcludesNestedLinkedWorktreeCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "org/wtui", IsBare: false})
+	assertOnlyRepo(t, repos, scanner.Repo{Path: repoDir, DisplayName: "org/approach", IsBare: false})
 }
 
 func TestScan_ExcludesDanglingLinkedWorktreeCheckoutAfterRepoDeleted(t *testing.T) {

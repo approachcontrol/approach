@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/config"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 func TestConfigMutationsSerializeAndPreserveConcurrentAssignments(t *testing.T) {
@@ -22,7 +22,7 @@ func TestConfigMutationsSerializeAndPreserveConcurrentAssignments(t *testing.T) 
 		return ""
 	}
 	opts := []config.Option{config.WithGetenv(getenv), config.WithLockTimeout(time.Second)}
-	path := filepath.Join(configHome, "wtui", "config.toml")
+	path := filepath.Join(configHome, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestConfigMutationsSerializeAndPreserveConcurrentAssignments(t *testing.T) 
 
 func TestConfigMutationReportsBoundedLockTimeout(t *testing.T) {
 	configHome := t.TempDir()
-	path := filepath.Join(configHome, "wtui", "config.toml")
+	path := filepath.Join(configHome, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
@@ -153,15 +153,15 @@ kind = " implementation "
 depends_on = ["research"]
 
 [sessions]
-root = "~/state/wtui/sessions"
+root = "~/state/approach/sessions"
 copy_raw_transcripts = false
 
 [bootstrap]
 timeout_seconds = 180
 
 [[bootstrap.hooks]]
-repo_path = "~/wtui"
-script = ".wtui/bootstrap"
+repo_path = "~/approach"
+script = ".approach/bootstrap"
 
 [[bootstrap.hooks]]
 repo_path = "/dev/client-api/"
@@ -242,7 +242,7 @@ timeout_seconds = 300
 	if got := preset.Phases[1].DependsOn; len(got) != 1 || got[0] != "research" {
 		t.Fatalf("expected build to depend on research, got %#v", got)
 	}
-	if cfg.Sessions.Root != filepath.Join(home, "state", "wtui", "sessions") {
+	if cfg.Sessions.Root != filepath.Join(home, "state", "approach", "sessions") {
 		t.Fatalf("expected expanded sessions root, got %q", cfg.Sessions.Root)
 	}
 	if cfg.Sessions.CopyRawTranscripts {
@@ -254,10 +254,10 @@ timeout_seconds = 300
 	if len(cfg.Bootstrap.Hooks) != 2 {
 		t.Fatalf("expected 2 bootstrap hooks, got %d", len(cfg.Bootstrap.Hooks))
 	}
-	if cfg.Bootstrap.Hooks[0].RepoPath != filepath.Join(home, "wtui") {
+	if cfg.Bootstrap.Hooks[0].RepoPath != filepath.Join(home, "approach") {
 		t.Fatalf("expected expanded repo path, got %q", cfg.Bootstrap.Hooks[0].RepoPath)
 	}
-	if cfg.Bootstrap.Hooks[0].Script != ".wtui/bootstrap" {
+	if cfg.Bootstrap.Hooks[0].Script != ".approach/bootstrap" {
 		t.Fatalf("expected relative script preserved, got %q", cfg.Bootstrap.Hooks[0].Script)
 	}
 	if cfg.Bootstrap.Hooks[0].TimeoutSeconds != 0 {
@@ -280,8 +280,8 @@ func TestLoadFrom_DefaultsBootstrapTimeout(t *testing.T) {
 [bootstrap]
 
 [[bootstrap.hooks]]
-repo_path = "/dev/wtui"
-script = ".wtui/bootstrap"
+repo_path = "/dev/approach"
+script = ".approach/bootstrap"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +483,7 @@ func TestLoadFrom_ParsesSessionsCopyRawTranscriptsOptIn(t *testing.T) {
 
 func TestLoadFromRejectsRelativeSessionsRoot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[sessions]\nroot = \".wtui-sessions\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[sessions]\nroot = \".approach-sessions\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -519,22 +519,22 @@ func TestLoadFrom_RejectsInvalidBootstrapHooks(t *testing.T) {
 	}{
 		{
 			name: "missing repo path",
-			body: "[[bootstrap.hooks]]\nscript = \".wtui/bootstrap\"\n",
+			body: "[[bootstrap.hooks]]\nscript = \".approach/bootstrap\"\n",
 			want: "repo_path",
 		},
 		{
 			name: "blank repo path",
-			body: "[[bootstrap.hooks]]\nrepo_path = \"   \"\nscript = \".wtui/bootstrap\"\n",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"   \"\nscript = \".approach/bootstrap\"\n",
 			want: "repo_path",
 		},
 		{
 			name: "missing script",
-			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\n",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/approach\"\n",
 			want: "script",
 		},
 		{
 			name: "blank script",
-			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\nscript = \"   \"\n",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/approach\"\nscript = \"   \"\n",
 			want: "script",
 		},
 		{
@@ -544,7 +544,7 @@ func TestLoadFrom_RejectsInvalidBootstrapHooks(t *testing.T) {
 		},
 		{
 			name: "negative hook timeout",
-			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\nscript = \".wtui/bootstrap\"\ntimeout_seconds = -1\n",
+			body: "[[bootstrap.hooks]]\nrepo_path = \"/dev/approach\"\nscript = \".approach/bootstrap\"\ntimeout_seconds = -1\n",
 			want: "timeout_seconds",
 		},
 	}
@@ -584,7 +584,7 @@ func TestSaveAgentCommand_CreatesMissingConfig(t *testing.T) {
 		t.Fatalf("SaveAgentCommand returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	cfg, err := config.LoadFrom(path)
 	if err != nil {
 		t.Fatalf("LoadFrom returned error: %v", err)
@@ -713,7 +713,7 @@ func TestSaveAgentCommand_WritesCodexApp(t *testing.T) {
 		t.Fatalf("SaveAgentCommand returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -734,7 +734,7 @@ func TestSaveAgentCommand_WritesCodexApp(t *testing.T) {
 func TestSaveAgentCommand_PreservesExistingParsedSettings(t *testing.T) {
 	xdg := t.TempDir()
 	home := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -788,7 +788,7 @@ func TestSaveAgentCommand_PreservesExistingParsedSettings(t *testing.T) {
 
 func TestSaveAgentCommand_UpdatesExistingAgentSection(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -844,7 +844,7 @@ func TestSaveAgentReasoningEffort_CreatesMissingConfig(t *testing.T) {
 		t.Fatalf("SaveAgentReasoningEffort returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -864,7 +864,7 @@ func TestSaveAgentReasoningEffort_CreatesMissingConfig(t *testing.T) {
 
 func TestSaveAgentReasoningEffort_UpdatesExistingAgentSection(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -933,7 +933,7 @@ func TestSaveAgentModel_CreatesMissingConfig(t *testing.T) {
 		t.Fatalf("SaveAgentModel returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -953,7 +953,7 @@ func TestSaveAgentModel_CreatesMissingConfig(t *testing.T) {
 
 func TestSaveAgentModel_UpdatesExistingAgentSection(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1009,7 +1009,7 @@ func TestSaveAgentModel_PersistsEmptyAsDefault(t *testing.T) {
 		t.Fatalf("SaveAgentModel returned error: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(xdg, "wtui", "config.toml"))
+	raw, err := os.ReadFile(filepath.Join(xdg, "approach", "config.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1048,7 +1048,7 @@ func TestSaveDefaultView_CreatesMissingConfig(t *testing.T) {
 		t.Fatalf("SaveDefaultView returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	cfg, err := config.LoadFrom(path)
 	if err != nil {
 		t.Fatalf("LoadFrom returned error: %v", err)
@@ -1060,7 +1060,7 @@ func TestSaveDefaultView_CreatesMissingConfig(t *testing.T) {
 
 func TestSaveDefaultView_PreservesExistingContentAndInsertsUISection(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1101,7 +1101,7 @@ func TestSaveDefaultView_PreservesExistingContentAndInsertsUISection(t *testing.
 
 func TestSaveDefaultView_UpdatesExistingUISection(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1142,7 +1142,7 @@ func TestSaveDefaultView_UpdatesExistingUISection(t *testing.T) {
 
 func TestSaveDefaultView_UpdatesUISectionWithInlineComment(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1183,11 +1183,11 @@ func TestSaveDefaultView_UpdatesUISectionWithInlineComment(t *testing.T) {
 
 func TestSaveDefaultView_InsertsBeforeArrayTable(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	initial := "[ui]\n# no default yet\n\n[[bootstrap.hooks]]\nrepo_path = \"/dev/wtui\"\nscript = \".wtui/bootstrap\"\n"
+	initial := "[ui]\n# no default yet\n\n[[bootstrap.hooks]]\nrepo_path = \"/dev/approach\"\nscript = \".approach/bootstrap\"\n"
 	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1229,7 +1229,7 @@ func TestSaveDefaultView_RejectsInvalidValueWithoutWriting(t *testing.T) {
 	for _, view := range []int{0, -1, 10} {
 		t.Run(fmt.Sprintf("view_%d", view), func(t *testing.T) {
 			xdg := t.TempDir()
-			path := filepath.Join(xdg, "wtui", "config.toml")
+			path := filepath.Join(xdg, "approach", "config.toml")
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -1283,7 +1283,7 @@ func TestSavePromptTemplate_RoundTripsEscapedMultilineTemplates(t *testing.T) {
 		t.Fatalf("SavePromptTemplate returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1304,7 +1304,7 @@ func TestSavePromptTemplate_RoundTripsEscapedMultilineTemplates(t *testing.T) {
 
 func TestSavePromptTemplate_ReplacesExistingMultilineStringAssignment(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1350,7 +1350,7 @@ func TestSavePromptTemplate_ReplacesExistingMultilineStringAssignment(t *testing
 
 func TestSavePromptTemplate_SkipsOtherMultilineStringBodiesBeforeTarget(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1398,7 +1398,7 @@ func TestSavePromptTemplate_SkipsOtherMultilineStringBodiesBeforeTarget(t *testi
 
 func TestResetPromptTemplate_RemovesOnlySelectedAssignment(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1439,7 +1439,7 @@ func TestResetPromptTemplate_RemovesOnlySelectedAssignment(t *testing.T) {
 
 func TestResetPromptTemplate_RemovesExistingMultilineStringAssignment(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1485,7 +1485,7 @@ func TestResetPromptTemplate_RemovesExistingMultilineStringAssignment(t *testing
 
 func TestResetPromptTemplate_SkipsOtherMultilineStringBodiesBeforeTarget(t *testing.T) {
 	xdg := t.TempDir()
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1549,7 +1549,7 @@ func TestResetPromptTemplate_MissingConfigDoesNotCreateFile(t *testing.T) {
 		t.Fatalf("ResetPromptTemplate returned error: %v", err)
 	}
 
-	path := filepath.Join(xdg, "wtui", "config.toml")
+	path := filepath.Join(xdg, "approach", "config.toml")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("reset missing config should not create %s, stat err=%v", path, err)
 	}
@@ -1558,7 +1558,7 @@ func TestResetPromptTemplate_MissingConfigDoesNotCreateFile(t *testing.T) {
 func TestSaveAgentCommand_UpdatesExistingFallbackConfig(t *testing.T) {
 	xdg := t.TempDir()
 	home := t.TempDir()
-	homePath := filepath.Join(home, ".config", "wtui", "config.toml")
+	homePath := filepath.Join(home, ".config", "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(homePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1581,7 +1581,7 @@ func TestSaveAgentCommand_UpdatesExistingFallbackConfig(t *testing.T) {
 		t.Fatalf("SaveAgentCommand returned error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(xdg, "wtui", "config.toml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(xdg, "approach", "config.toml")); !os.IsNotExist(err) {
 		t.Fatalf("expected missing XDG config to stay missing, stat err=%v", err)
 	}
 	cfg, err := config.LoadFrom(homePath)
@@ -1702,7 +1702,7 @@ func TestLoadFrom_RejectsNegativeMaxDepth(t *testing.T) {
 func TestLoad_StopsAtMalformedXDGConfig(t *testing.T) {
 	xdg := t.TempDir()
 	home := t.TempDir()
-	xdgConfig := filepath.Join(xdg, "wtui", "config.toml")
+	xdgConfig := filepath.Join(xdg, "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(xdgConfig), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1710,7 +1710,7 @@ func TestLoad_StopsAtMalformedXDGConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	homeConfig := filepath.Join(home, ".config", "wtui", "config.toml")
+	homeConfig := filepath.Join(home, ".config", "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(homeConfig), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1740,7 +1740,7 @@ func TestLoad_StopsAtMalformedXDGConfig(t *testing.T) {
 func TestLoad_FallsBackToHomeConfigWhenXDGConfigIsMissing(t *testing.T) {
 	xdg := t.TempDir()
 	home := t.TempDir()
-	homeConfig := filepath.Join(home, ".config", "wtui", "config.toml")
+	homeConfig := filepath.Join(home, ".config", "approach", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(homeConfig), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1783,7 +1783,7 @@ func TestDefaultPath_UsesXDGConfigHome(t *testing.T) {
 		t.Fatalf("DefaultPath returned error: %v", err)
 	}
 
-	if path != filepath.Join("/xdg", "wtui", "config.toml") {
+	if path != filepath.Join("/xdg", "approach", "config.toml") {
 		t.Fatalf("unexpected config path %q", path)
 	}
 }
@@ -1799,7 +1799,7 @@ func TestDefaultPath_FallsBackToHomeConfig(t *testing.T) {
 		t.Fatalf("DefaultPath returned error: %v", err)
 	}
 
-	if path != filepath.Join("/home/user", ".config", "wtui", "config.toml") {
+	if path != filepath.Join("/home/user", ".config", "approach", "config.toml") {
 		t.Fatalf("unexpected config path %q", path)
 	}
 }

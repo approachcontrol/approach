@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
 )
 
 func TestRender_PlansModeShowsHeaderAndRows(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   10,
@@ -55,7 +55,7 @@ func TestRender_PlansModeEmptyMessages(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := Render(RenderParams{
-				Repos:             []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+				Repos:             []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 				Selected:          0,
 				Width:             120,
 				Height:            10,
@@ -71,7 +71,7 @@ func TestRender_PlansModeEmptyMessages(t *testing.T) {
 
 func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   14,
@@ -99,7 +99,7 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 
 func TestRender_PlansModeShowsPhaseShortcutWhenPhaseSelected(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   14,
@@ -128,7 +128,7 @@ func TestRender_PlansModeShowsPhaseShortcutWhenPhaseSelected(t *testing.T) {
 
 func TestRender_PlansModeIgnoresStaleSelectedPhaseForShortcut(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
 		Height:   14,
@@ -157,7 +157,7 @@ func TestRender_PlansModeIgnoresStaleSelectedPhaseForShortcut(t *testing.T) {
 
 func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:      []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:   0,
 		Width:      120,
 		Height:     10,
@@ -175,7 +175,7 @@ func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
 
 func TestRender_PlansModeShowsExpandedPhasesForSelectedPlanOnly(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -216,7 +216,7 @@ func TestRender_PlansModeShowsExpandedPhasesForSelectedPlanOnly(t *testing.T) {
 
 func TestRender_PlansModeHighlightsSelectedPhaseRow(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -246,7 +246,7 @@ func TestRender_PlansModeHighlightsSelectedPhaseRow(t *testing.T) {
 
 func TestRender_PlansModeIgnoresStaleSelectedPhaseForHighlight(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -275,7 +275,7 @@ func TestRender_PlansModeIgnoresStaleSelectedPhaseForHighlight(t *testing.T) {
 
 func TestRender_PlansModeKeepsExpandedPhasesWhenRightPaneInactive(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
 		Height:   12,
@@ -300,7 +300,7 @@ func TestRender_PlansModeKeepsExpandedPhasesWhenRightPaneInactive(t *testing.T) 
 
 func TestRender_PlansModeShowsNoPhasesOnlyWhenExpanded(t *testing.T) {
 	params := RenderParams{
-		Repos:    []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    140,
 		Height:   10,
@@ -325,7 +325,7 @@ func TestRender_PlansModeShowsNoPhasesOnlyWhenExpanded(t *testing.T) {
 
 func TestRender_PlanTextOverlayShowsBody(t *testing.T) {
 	view := Render(RenderParams{
-		Repos:       []scanner.Repo{{Path: "/dev/wtui", DisplayName: "wtui"}},
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       120,
 		Height:      10,

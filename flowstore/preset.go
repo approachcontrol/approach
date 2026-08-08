@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 // PhaseSpec is a data-only phase declaration used by Flow phase graph presets.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 func TestEnsureCollectionSecuresRootAndCollection(t *testing.T) {

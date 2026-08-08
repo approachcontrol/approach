@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 const schemaVersion = 1
@@ -363,16 +363,16 @@ func (s *Store) isStaleLaunchUpdate(existing, incoming SessionRecord) bool {
 			return stale
 		}
 	}
-	existingOrder, existingOrdered := wtuiLaunchOrder(existing.LaunchID)
-	incomingOrder, incomingOrdered := wtuiLaunchOrder(incoming.LaunchID)
+	existingOrder, existingOrdered := approachLaunchOrder(existing.LaunchID)
+	incomingOrder, incomingOrdered := approachLaunchOrder(incoming.LaunchID)
 	if existingOrdered && incomingOrdered && existingOrder != incomingOrder {
 		return incomingOrder < existingOrder
 	}
 	return !sortTime(incoming).After(sortTime(existing))
 }
 
-func wtuiLaunchOrder(launchID string) (int64, bool) {
-	value, ok := strings.CutPrefix(launchID, "wtui-")
+func approachLaunchOrder(launchID string) (int64, bool) {
+	value, ok := strings.CutPrefix(launchID, "approach-")
 	if !ok {
 		return 0, false
 	}

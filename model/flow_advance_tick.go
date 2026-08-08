@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 // The advance poll is a session-long 1 Hz loop that fetches the unscoped flow

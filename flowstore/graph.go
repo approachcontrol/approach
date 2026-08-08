@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
+	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
 type phaseGraph struct {

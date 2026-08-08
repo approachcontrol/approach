@@ -6,11 +6,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/agent"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/artifacts"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/ui"
 )
 
 type FlowPhaseLaunchRoute int

@@ -3,9 +3,9 @@ package model
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/model/pane"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model/pane"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func (m Model) activeFlowSurfaceVisible() bool {

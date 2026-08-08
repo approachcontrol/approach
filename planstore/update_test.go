@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func TestStoreReadPlanReturnsMarkdown(t *testing.T) {

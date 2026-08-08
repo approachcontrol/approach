@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/actions"
+	"github.com/approachcontrol/approach/actions"
 )
 
 func TestTmuxBackedTerminalDetachLeavesOwnedSessionRunning(t *testing.T) {
@@ -122,11 +122,11 @@ func TestTmuxBackedTerminalCreateFailureCleansScript(t *testing.T) {
 func tmuxTestSpec() (actions.EmbeddedTmuxAgentSpec, *atomic.Int32) {
 	cleanupCount := &atomic.Int32{}
 	return actions.EmbeddedTmuxAgentSpec{
-		SessionName:        "wtui-test-agent",
-		HasSessionCommand:  exec.Command("tmux", "has-session", "-t", "wtui-test-agent"),
-		NewSessionCommand:  exec.Command("tmux", "new-session", "-d", "-s", "wtui-test-agent"),
-		AttachCommand:      exec.Command("tmux", "attach-session", "-t", "wtui-test-agent"),
-		KillSessionCommand: exec.Command("tmux", "kill-session", "-t", "wtui-test-agent"),
+		SessionName:        "approach-test-agent",
+		HasSessionCommand:  exec.Command("tmux", "has-session", "-t", "approach-test-agent"),
+		NewSessionCommand:  exec.Command("tmux", "new-session", "-d", "-s", "approach-test-agent"),
+		AttachCommand:      exec.Command("tmux", "attach-session", "-t", "approach-test-agent"),
+		KillSessionCommand: exec.Command("tmux", "kill-session", "-t", "approach-test-agent"),
 		Cleanup: func() {
 			cleanupCount.Add(1)
 		},
@@ -186,7 +186,7 @@ func TestTmuxBackedTerminalDetachTarget(t *testing.T) {
 	}
 	defer term.Terminate()
 
-	if got := term.DetachTarget(); got != "wtui-test-agent" {
+	if got := term.DetachTarget(); got != "approach-test-agent" {
 		t.Fatalf("DetachTarget = %q, want session name", got)
 	}
 }
@@ -258,7 +258,7 @@ func TestTmuxBackedTerminalRealTmuxDetachLeavesSessionAlive(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	dir := t.TempDir()
-	sessionName := "wtui-test-detach-" + strings.ReplaceAll(filepath.Base(dir), ".", "-")
+	sessionName := "approach-test-detach-" + strings.ReplaceAll(filepath.Base(dir), ".", "-")
 	scriptPath := filepath.Join(dir, "agent.sh")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
 		t.Fatalf("write script: %v", err)
@@ -296,7 +296,7 @@ func TestTmuxBackedTerminalRealTmuxPropagatesAgentFailure(t *testing.T) {
 		t.Skip("tmux is not installed")
 	}
 	dir := t.TempDir()
-	sessionName := "wtui-test-fail-" + strings.ReplaceAll(filepath.Base(dir), ".", "-")
+	sessionName := "approach-test-fail-" + strings.ReplaceAll(filepath.Base(dir), ".", "-")
 	statusPath := filepath.Join(dir, "status.txt")
 	scriptPath := filepath.Join(dir, "agent.sh")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf '7\\n' > "+shellQuoteForTest(statusPath)+"\nexit 7\n"), 0o700); err != nil {
@@ -312,7 +312,7 @@ func TestTmuxBackedTerminalRealTmuxPropagatesAgentFailure(t *testing.T) {
 		StatusPath:         statusPath,
 		HasSessionCommand:  exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "has-session", "-t", sessionName),
 		NewSessionCommand:  exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "new-session", "-d", "-s", sessionName, "-c", dir, "exec sh "+shellQuoteForTest(scriptPath)),
-		AttachCommand:      exec.Command("/bin/sh", "-c", tmuxAttachStatusScriptForTest, "wtui", sessionName, sessionName, statusPath),
+		AttachCommand:      exec.Command("/bin/sh", "-c", tmuxAttachStatusScriptForTest, "approach", sessionName, sessionName, statusPath),
 		KillSessionCommand: exec.Command("tmux", "-f", "/dev/null", "-L", sessionName, "kill-session", "-t", sessionName),
 		Cleanup: func() {
 			_ = os.Remove(scriptPath)

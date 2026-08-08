@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/internal/artifacts"
-	"github.com/brian-bell/wtui/sessions"
+	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 func TestStoreSavesAndListsSessionsByRepoPath(t *testing.T) {
@@ -678,14 +678,14 @@ func TestNewStoreDefaultsRootFromXDGStateHome(t *testing.T) {
 		t.Fatalf("Upsert() error = %v", err)
 	}
 
-	metaPath := singleSessionFile(t, filepath.Join(stateHome, "wtui", "sessions", "v1"), sessions.ProviderCodex, "meta.json")
+	metaPath := singleSessionFile(t, filepath.Join(stateHome, "approach", "sessions", "v1"), sessions.ProviderCodex, "meta.json")
 	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf("expected default-root metadata at %s: %v", metaPath, err)
 	}
 }
 
 func TestNewStoreRejectsRelativeRoot(t *testing.T) {
-	_, err := sessions.NewStore(sessions.StoreOptions{Root: ".wtui-sessions"})
+	_, err := sessions.NewStore(sessions.StoreOptions{Root: ".approach-sessions"})
 	if err == nil {
 		t.Fatal("NewStore() error = nil, want relative root error")
 	}

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func TestMarkdownPathReturnsPlanMarkdownPath(t *testing.T) {
@@ -59,7 +59,7 @@ func TestMarkdownPathDefaultsEmptyRoot(t *testing.T) {
 		t.Fatalf("MarkdownPath() error = %v", err)
 	}
 
-	want := filepath.Join(stateHome, "wtui", "sessions", "v1", "plans", "plan-1", "plan.md")
+	want := filepath.Join(stateHome, "approach", "sessions", "v1", "plans", "plan-1", "plan.md")
 	if got != want {
 		t.Fatalf("MarkdownPath() = %q, want %q", got, want)
 	}

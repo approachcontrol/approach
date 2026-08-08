@@ -10,20 +10,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/config"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/internal/version"
-	"github.com/brian-bell/wtui/model"
-	"github.com/brian-bell/wtui/planstore"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/config"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/version"
+	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "--version"}, runDeps{
+	err := run([]string{"approach", "--version"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for --version")
 			return config.Config{}, nil
@@ -49,7 +49,7 @@ func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
 
 func TestRun_HelpBypassesConfigAndScan(t *testing.T) {
 	var stdout bytes.Buffer
-	err := run([]string{"wtui", "--help"}, runDeps{
+	err := run([]string{"approach", "--help"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for --help")
 			return config.Config{}, nil
@@ -68,15 +68,15 @@ func TestRun_HelpBypassesConfigAndScan(t *testing.T) {
 		t.Fatalf("run returned error: %v", err)
 	}
 	requireContainsAll(t, stdout.String(), []string{
-		"Usage: wtui [--version] [command]",
-		"wtui plan --help",
-		"wtui flow --help",
-		"wtui session-hook --provider codex",
+		"Usage: approach [--version] [command]",
+		"approach plan --help",
+		"approach flow --help",
+		"approach session-hook --provider codex",
 	})
 }
 
 func TestRun_UnknownCommandSuggestsNearbyCommand(t *testing.T) {
-	err := run([]string{"wtui", "plna"}, runDeps{
+	err := run([]string{"approach", "plna"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown command")
 			return config.Config{}, nil
@@ -96,12 +96,12 @@ func TestRun_UnknownCommandSuggestsNearbyCommand(t *testing.T) {
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "plna"; did you mean "plan"?`,
-		"Usage: wtui [--version] [command]",
+		"Usage: approach [--version] [command]",
 	})
 }
 
 func TestRun_UnknownCommandFarFromValidShowsUsageWithoutSuggestion(t *testing.T) {
-	err := run([]string{"wtui", "definitely-not-close"}, runDeps{
+	err := run([]string{"approach", "definitely-not-close"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			t.Fatal("loadConfig should not run for unknown command")
 			return config.Config{}, nil
@@ -124,7 +124,7 @@ func TestRun_UnknownCommandFarFromValidShowsUsageWithoutSuggestion(t *testing.T)
 	}
 	requireContainsAll(t, err.Error(), []string{
 		`unknown command "definitely-not-close"`,
-		"Usage: wtui [--version] [command]",
+		"Usage: approach [--version] [command]",
 	})
 }
 
@@ -140,7 +140,7 @@ func TestNearestCommandSuggestsOnlyNearbyCommands(t *testing.T) {
 
 func TestRun_LoadsConfigBeforeScanning(t *testing.T) {
 	var got scanner.ScanOptions
-	err := run([]string{"wtui"}, runDeps{
+	err := run([]string{"approach"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{
 				Scan: config.ScanConfig{
@@ -170,7 +170,7 @@ func TestRun_LoadsConfigBeforeScanning(t *testing.T) {
 
 func TestRun_WorktreeRootEnvOverridesConfigRoot(t *testing.T) {
 	var got scanner.ScanOptions
-	err := run([]string{"wtui"}, runDeps{
+	err := run([]string{"approach"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{
 				Scan: config.ScanConfig{Root: "/from/config", MaxDepth: 1},
@@ -205,7 +205,7 @@ func TestRun_PassesRefreshScannerWithResolvedScanOptions(t *testing.T) {
 	var refreshScan scanner.ScanOptions
 	var repoCreateRoot string
 	scans := 0
-	err := run([]string{"wtui"}, runDeps{
+	err := run([]string{"approach"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{
 				Scan: config.ScanConfig{Root: "/from/config", MaxDepth: 1},
@@ -271,7 +271,7 @@ func TestRun_ResolvesRelativeScanRootForScanAndRepoCreation(t *testing.T) {
 	var refreshScan scanner.ScanOptions
 	var repoCreateRoot string
 	scans := 0
-	err = run([]string{"wtui"}, runDeps{
+	err = run([]string{"approach"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Scan: config.ScanConfig{Root: "repos", MaxDepth: 2}}, nil
 		},
@@ -311,7 +311,7 @@ func TestRun_ResolvesRelativeScanRootForScanAndRepoCreation(t *testing.T) {
 
 func TestRun_ConfigErrorStopsBeforeScan(t *testing.T) {
 	scanned := false
-	err := run([]string{"wtui"}, runDeps{
+	err := run([]string{"approach"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{}, errors.New("bad config")
 		},
@@ -332,7 +332,7 @@ func TestRun_ConfigErrorStopsBeforeScan(t *testing.T) {
 
 func TestRun_PassesConfigToProgram(t *testing.T) {
 	var got config.Config
-	err := run([]string{"wtui"}, runDeps{
+	err := run([]string{"approach"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Agent: config.AgentConfig{
 				Command:    "codex",
@@ -361,9 +361,9 @@ func TestRun_PassesConfigToProgram(t *testing.T) {
 
 func TestRuntimeArtifactRootPrecedenceIncludesFlowRoot(t *testing.T) {
 	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
-	t.Setenv("WTUI_SESSION_STATE_ROOT", "/from/session")
-	t.Setenv("WTUI_PLAN_STATE_ROOT", "/from/plan")
-	t.Setenv("WTUI_FLOW_STATE_ROOT", "/from/flow")
+	t.Setenv("APPROACH_SESSION_STATE_ROOT", "/from/session")
+	t.Setenv("APPROACH_PLAN_STATE_ROOT", "/from/plan")
+	t.Setenv("APPROACH_FLOW_STATE_ROOT", "/from/flow")
 
 	if got := runtimeArtifactRoot(cfg); got != "/from/flow" {
 		t.Fatalf("artifact root = %q, want flow root", got)
@@ -372,19 +372,19 @@ func TestRuntimeArtifactRootPrecedenceIncludesFlowRoot(t *testing.T) {
 
 func TestRuntimeArtifactRootFallsBackThroughPlanSessionConfig(t *testing.T) {
 	cfg := config.Config{Sessions: config.SessionsConfig{Root: "/from/config"}}
-	t.Setenv("WTUI_FLOW_STATE_ROOT", "")
-	t.Setenv("WTUI_SESSION_STATE_ROOT", "/from/session")
-	t.Setenv("WTUI_PLAN_STATE_ROOT", "/from/plan")
+	t.Setenv("APPROACH_FLOW_STATE_ROOT", "")
+	t.Setenv("APPROACH_SESSION_STATE_ROOT", "/from/session")
+	t.Setenv("APPROACH_PLAN_STATE_ROOT", "/from/plan")
 	if got := runtimeArtifactRoot(cfg); got != "/from/plan" {
 		t.Fatalf("artifact root = %q, want plan root", got)
 	}
 
-	t.Setenv("WTUI_PLAN_STATE_ROOT", "")
+	t.Setenv("APPROACH_PLAN_STATE_ROOT", "")
 	if got := runtimeArtifactRoot(cfg); got != "/from/session" {
 		t.Fatalf("artifact root = %q, want session root", got)
 	}
 
-	t.Setenv("WTUI_SESSION_STATE_ROOT", "")
+	t.Setenv("APPROACH_SESSION_STATE_ROOT", "")
 	if got := runtimeArtifactRoot(cfg); got != "/from/config" {
 		t.Fatalf("artifact root = %q, want config root", got)
 	}
@@ -484,7 +484,7 @@ func TestModelOptionsFromConfigPassesTerminalCommandToLaunchers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore flows: %v", err)
 	}
-	terminalCommand := putCommandOnPath(t, "wtui-test-terminal")
+	terminalCommand := putCommandOnPath(t, "approach-test-terminal")
 	putCommandOnPath(t, "codex")
 
 	opts := modelOptionsFromConfig(config.Config{
@@ -620,8 +620,8 @@ func intPtr(value int) *int {
 func TestModelOptionsFromConfigTerminalEnvOverridesConfiguredCommand(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("ZELLIJ", "")
-	envTerminal := putCommandOnPath(t, "wtui-env-terminal")
-	configTerminal := putCommandOnPath(t, "wtui-config-terminal")
+	envTerminal := putCommandOnPath(t, "approach-env-terminal")
+	configTerminal := putCommandOnPath(t, "approach-config-terminal")
 	t.Setenv("TERMINAL", envTerminal)
 	root := t.TempDir()
 	sessionStore, err := sessions.NewStore(sessions.StoreOptions{Root: root})
@@ -665,7 +665,7 @@ func TestModelOptionsFromConfigPassesEditorCommandToEditFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore flows: %v", err)
 	}
-	editorCommand := putCommandOnPath(t, "wtui-test-editor")
+	editorCommand := putCommandOnPath(t, "approach-test-editor")
 
 	opts := modelOptionsFromConfig(config.Config{
 		Editor: config.EditorConfig{Command: editorCommand + " --wait"},
@@ -759,7 +759,7 @@ func TestRunSessionHookWritesSessionMetadata(t *testing.T) {
 		"ended_at": "2026-06-06T14:45:00Z"
 	}`)
 
-	err := run([]string{"wtui", "session-hook", "--provider", "claude", "--state-root", root}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "claude", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Sessions: config.SessionsConfig{CopyRawTranscripts: true}}, nil
 		},
@@ -795,21 +795,21 @@ func TestRunSessionHookPersistsPlanEnvironment(t *testing.T) {
 	root := t.TempDir()
 	planPath := filepath.Join(root, "plans", "plan-1", "plan.md")
 
-	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{}, nil
 		},
 		getenv: func(key string) string {
 			switch key {
-			case "WTUI_PLAN_ID":
+			case "APPROACH_PLAN_ID":
 				return "plan-1"
-			case "WTUI_PLAN_PATH":
+			case "APPROACH_PLAN_PATH":
 				return planPath
-			case "WTUI_FLOW_ID":
+			case "APPROACH_FLOW_ID":
 				return "flow-1"
-			case "WTUI_FLOW_PHASE_ID":
+			case "APPROACH_FLOW_PHASE_ID":
 				return "plan"
-			case "WTUI_FLOW_STATE_ROOT":
+			case "APPROACH_FLOW_STATE_ROOT":
 				return root
 			default:
 				return ""
@@ -850,17 +850,17 @@ func TestRunSessionHookAttachesFlowFromPlanStateRoot(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	err = run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", sessionRoot}, runDeps{
+	err = run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", sessionRoot}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{}, nil
 		},
 		getenv: func(key string) string {
 			switch key {
-			case "WTUI_PLAN_STATE_ROOT":
+			case "APPROACH_PLAN_STATE_ROOT":
 				return planRoot
-			case "WTUI_FLOW_ID":
+			case "APPROACH_FLOW_ID":
 				return flow.FlowID
-			case "WTUI_FLOW_PHASE_ID":
+			case "APPROACH_FLOW_PHASE_ID":
 				return "plan"
 			default:
 				return ""
@@ -885,7 +885,7 @@ func TestRunSessionHookAttachesFlowFromPlanStateRoot(t *testing.T) {
 }
 
 func TestRunSessionHookRejectsMalformedJSON(t *testing.T) {
-	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", t.TempDir()}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", t.TempDir()}, runDeps{
 		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
 		stdin:      strings.NewReader(`{"session_id":`),
 	})
@@ -898,7 +898,7 @@ func TestRunSessionHookRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestRunSessionHookRejectsUnsupportedProvider(t *testing.T) {
-	err := run([]string{"wtui", "session-hook", "--provider", "other", "--state-root", t.TempDir()}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "other", "--state-root", t.TempDir()}, runDeps{
 		stdin: strings.NewReader(`{}`),
 	})
 	if err == nil {
@@ -919,7 +919,7 @@ func TestRunSessionHookHonorsCopyRawTranscriptConfig(t *testing.T) {
 	if err := os.WriteFile(transcriptPath, []byte(`{"role":"user","kind":"message","text":"secret"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
-	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Sessions: config.SessionsConfig{CopyRawTranscripts: false}}, nil
 		},
@@ -969,7 +969,7 @@ func TestRunSessionHookRejectsOutOfRootTranscriptBeforeCreatingArtifacts(t *test
 			if err := os.MkdirAll(filepath.Join(providerHome, rootName), 0o700); err != nil {
 				t.Fatalf("create provider root: %v", err)
 			}
-			err := run([]string{"wtui", "session-hook", "--provider", string(provider), "--state-root", stateRoot}, runDeps{
+			err := run([]string{"approach", "session-hook", "--provider", string(provider), "--state-root", stateRoot}, runDeps{
 				loadConfig: func() (config.Config, error) { return config.Config{}, nil },
 				getenv:     getenv,
 				stdin:      strings.NewReader(`{"session_id":"reject-me","transcript_path":` + quoteJSON(outside) + `}`),
@@ -988,12 +988,12 @@ func TestRunSessionHookRejectsOutOfRootTranscriptBeforeCreatingArtifacts(t *test
 func TestRunSessionHookEnvStateRootOverridesConfig(t *testing.T) {
 	configRoot := t.TempDir()
 	envRoot := t.TempDir()
-	err := run([]string{"wtui", "session-hook", "--provider", "codex"}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "codex"}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{Sessions: config.SessionsConfig{Root: configRoot}}, nil
 		},
 		getenv: func(key string) string {
-			if key == "WTUI_SESSION_STATE_ROOT" {
+			if key == "APPROACH_SESSION_STATE_ROOT" {
 				return envRoot
 			}
 			return ""
@@ -1038,7 +1038,7 @@ func TestRunSessionHookPassesFlowPresetsForRecovery(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := run([]string{"wtui", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
+	err := run([]string{"approach", "session-hook", "--provider", "codex", "--state-root", root}, runDeps{
 		loadConfig: func() (config.Config, error) {
 			return config.Config{
 				Flow: config.FlowConfig{
@@ -1048,13 +1048,13 @@ func TestRunSessionHookPassesFlowPresetsForRecovery(t *testing.T) {
 		},
 		getenv: func(key string) string {
 			switch key {
-			case "WTUI_FLOW_STATE_ROOT", "WTUI_SESSION_STATE_ROOT":
+			case "APPROACH_FLOW_STATE_ROOT", "APPROACH_SESSION_STATE_ROOT":
 				return root
-			case "WTUI_FLOW_ID":
+			case "APPROACH_FLOW_ID":
 				return flowID
-			case "WTUI_FLOW_PHASE_ID":
+			case "APPROACH_FLOW_PHASE_ID":
 				return "research"
-			case "WTUI_LAUNCH_ID":
+			case "APPROACH_LAUNCH_ID":
 				return "launch-hook-preset"
 			default:
 				return ""
@@ -1112,18 +1112,18 @@ func TestBootstrapHookResolverMatchesConfiguredRepoPath(t *testing.T) {
 		Bootstrap: config.BootstrapConfig{
 			TimeoutSeconds: 120,
 			Hooks: []config.BootstrapHookConfig{
-				{RepoPath: filepath.Clean("/dev/wtui/"), Script: ".wtui/bootstrap"},
+				{RepoPath: filepath.Clean("/dev/approach/"), Script: ".approach/bootstrap"},
 				{RepoPath: "/dev/client-api", Script: "/bin/bootstrap-client-api", TimeoutSeconds: 300},
 			},
 		},
 	}
 	resolve := bootstrapHookResolver(cfg)
 
-	hook, ok := resolve("/dev/wtui")
+	hook, ok := resolve("/dev/approach")
 	if !ok {
 		t.Fatal("expected hook for configured repo")
 	}
-	if hook != (actions.BootstrapHook{Script: ".wtui/bootstrap", TimeoutSeconds: 120}) {
+	if hook != (actions.BootstrapHook{Script: ".approach/bootstrap", TimeoutSeconds: 120}) {
 		t.Fatalf("unexpected hook: %#v", hook)
 	}
 
@@ -1141,12 +1141,12 @@ func TestBootstrapHookResolverDoesNotMatchDifferentRepoPath(t *testing.T) {
 		Bootstrap: config.BootstrapConfig{
 			TimeoutSeconds: 120,
 			Hooks: []config.BootstrapHookConfig{
-				{RepoPath: "/dev/wtui", Script: ".wtui/bootstrap"},
+				{RepoPath: "/dev/approach", Script: ".approach/bootstrap"},
 			},
 		},
 	})
 
-	if _, ok := resolve("/dev/wtui-other"); ok {
+	if _, ok := resolve("/dev/approach-other"); ok {
 		t.Fatal("expected non-matching repo to have no hook")
 	}
 }

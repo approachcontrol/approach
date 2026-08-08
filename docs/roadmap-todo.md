@@ -1,4 +1,4 @@
-# wtui Roadmap Todo
+# Approach Roadmap Todo
 
 This checklist is derived from `docs/product-roadmap.md`. Use it as the
 operational tracker for checking off roadmap work as it lands.
@@ -9,7 +9,7 @@ Goal: make failures visible and establish the configuration layer future
 features can build on.
 
 - [x] P0 - Git command error surfacing: surface async list/diff fetch failures in the status bar so empty panes are not confused with command failures.
-- [x] P0 - Config file foundation: add `~/.config/wtui/config.toml` and load it early enough to support future scan, editor, terminal, provider, and launch settings.
+- [x] P0 - Config file foundation: add `~/.config/approach/config.toml` and load it early enough to support future scan, editor, terminal, provider, and launch settings.
 - [x] P1 - Empty-state clarity: distinguish "nothing to show" from "command failed" and "repo has no matching filtered results."
 - [x] P1 - Stale async result clarity: keep ignoring outdated async results, but make current command failures obvious when they belong to the selected repo/mode.
 
@@ -27,7 +27,7 @@ clear.
 
 ## Phase 3: Multi-Repo Operations
 
-Goal: make wtui more than a per-repo switcher while preserving safety and
+Goal: make Approach more than a per-repo switcher while preserving safety and
 clarity.
 
 - [x] P1 - Fetch all visible repos: extend the current fetch action across filtered repos with clear progress and failure reporting.
@@ -44,8 +44,8 @@ Goal: add context that helps users decide which worktree needs attention.
 - [ ] P2 - GitHub/GitLab provider config: support PR creation, PR detection, and CI lookup without hardcoding one provider.
 - [ ] P3 - Worktree notes, labels, or tags: help users manage many parallel branches, especially for review or agent-driven work.
 - [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, show worktree-scoped inline sessions in mode 1, page normalized transcripts in mode 6, resume CLI sessions in embedded PTYs from the full sessions view, keep `codex-app` resumes on deep links, and copy raw provider session IDs.
-- [x] P3 - Saved plans (skill-first v1): persist agent plans via the `wtui plan` CLI and the `wtui-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with `less -R` paging, phase expansion, per-phase progress, plan-path copying, plan Markdown editing, and launch instructions for whole-plan or selected-phase agent launch.
-- [x] P3 - Flow records and default Flow UI: persist task-centric Flow records via the `wtui flow` CLI into `<sessions root>/flows/...`; start the TUI in mode 8; create new Flows; launch ready phases; resume attached expanded-phase sessions; browse derived status, phase progress, linked plan metadata, PR metadata, repo-scoped filtering, linked-plan body opening, and recoverable partial-state labels.
+- [x] P3 - Saved plans (skill-first v1): persist agent plans via the `approach plan` CLI and the `approach-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with `less -R` paging, phase expansion, per-phase progress, plan-path copying, plan Markdown editing, and launch instructions for whole-plan or selected-phase agent launch.
+- [x] P3 - Flow records and default Flow UI: persist task-centric Flow records via the `approach flow` CLI into `<sessions root>/flows/...`; start the TUI in mode 8; create new Flows; launch ready phases; resume attached expanded-phase sessions; browse derived status, phase progress, linked plan metadata, PR metadata, repo-scoped filtering, linked-plan body opening, and recoverable partial-state labels.
 - [ ] P3 - Plans follow-ups: optional Claude Code `plan-hook` adapter (`ExitPlanMode` PreToolUse/PostToolUse), automatic phase extraction, and TUI deletion (see plan appendix).
 - [ ] P3 - Flow follow-ups: add transcript shortcuts from expanded phase rows, manual recovery/retry actions for partial Flow states, and richer phase/session status once provider signals are reliable.
 - [ ] P3 - Agent session follow-ups: add open-native-transcript actions and richer status when provider signals are reliable.
@@ -63,7 +63,7 @@ surface is stronger.
 
 ## Phase 6: Configuration and Personal Workflow
 
-Goal: let users adapt wtui without changing source or environment wrappers.
+Goal: let users adapt Approach without changing source or environment wrappers.
 
 - [ ] P1 - Multiple scan roots: support developers who split work across `~/dev`, client folders, and sandbox folders.
 - [ ] P1 - Custom code-open command: support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env instead of hardcoding `code`.

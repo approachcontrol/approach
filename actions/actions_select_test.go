@@ -144,7 +144,7 @@ func TestSelectBrowserCommandReportsUnsupportedOrMissingTools(t *testing.T) {
 }
 
 func TestValidateBrowserURLRequiresAbsoluteHTTPURL(t *testing.T) {
-	tests := []string{"", "   ", "github.com/brian-bell/wtui/pull/123", "ftp://github.com/brian-bell/wtui/pull/123"}
+	tests := []string{"", "   ", "github.com/approachcontrol/approach/pull/123", "ftp://github.com/approachcontrol/approach/pull/123"}
 	for _, input := range tests {
 		t.Run(strconv.Quote(input), func(t *testing.T) {
 			if err := validateBrowserURL(input); err == nil {
@@ -153,7 +153,7 @@ func TestValidateBrowserURLRequiresAbsoluteHTTPURL(t *testing.T) {
 		})
 	}
 
-	if err := validateBrowserURL("https://github.com/brian-bell/wtui/pull/123"); err != nil {
+	if err := validateBrowserURL("https://github.com/approachcontrol/approach/pull/123"); err != nil {
 		t.Fatalf("validateBrowserURL returned error: %v", err)
 	}
 }
@@ -170,7 +170,7 @@ func TestTerminalLaunch_UsesMultiplexerBeforeTerminal(t *testing.T) {
 	if launch.Interactive {
 		t.Fatal("inside-tmux launch should be non-interactive")
 	}
-	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "wtui" || got[5] != "/repo" {
+	if got := launch.Cmd.Args; len(got) != 6 || got[0] != "sh" || got[1] != "-c" || got[3] != "approach" || got[5] != "/repo" {
 		t.Fatalf("unexpected tmux launch args: %#v", got)
 	}
 }
@@ -513,7 +513,7 @@ func TestTerminalLaunch_ReportsMissingTerminalCommand(t *testing.T) {
 
 func TestDetachedTerminalLaunch_UsesTerminalEnvCLI(t *testing.T) {
 	env := fakeGetenv(map[string]string{"TERMINAL": "alacritty"})
-	const target = `env -u TMUX tmux -f /dev/null -L 'wtui-agent' attach-session -t 'agent launch'`
+	const target = `env -u TMUX tmux -f /dev/null -L 'approach-agent' attach-session -t 'agent launch'`
 
 	launch, err := detachedTerminalLaunch(target, "/repo/worktree", "linux", env, fakeLookPath("alacritty"), LaunchOptions{})
 	if err != nil {

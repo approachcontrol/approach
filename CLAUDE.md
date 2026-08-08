@@ -1,4 +1,4 @@
-# Claude Code Entry Point for wtui
+# Claude Code Entry Point for Approach
 
 Intentionally short. Don't add build, architecture, config, or Flow rules here â€” they drift when duplicated. `AGENTS.md` is the authoritative agent guide; this file only routes Claude Code to it and notes Claude-specific tooling.
 
@@ -13,7 +13,7 @@ Intentionally short. Don't add build, architecture, config, or Flow rules here â
 
 ## Claude-Specific Notes
 
-- Flow/plan work runs through the bundled skills: `agent-skills/wtui-flow/SKILL.md`, `agent-skills/wtui-flow-create/SKILL.md`, `agent-skills/wtui-plan-persist/SKILL.md`.
+- Flow/plan work runs through the bundled skills: `agent-skills/approach-flow/SKILL.md`, `agent-skills/approach-flow-create/SKILL.md`, `agent-skills/approach-plan-persist/SKILL.md`.
 
 ## Conflict Rule
 

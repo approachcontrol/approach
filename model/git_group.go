@@ -3,7 +3,7 @@ package model
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/ui"
 )
 
 // topLevelModeForNumberedKey maps the top-level number keys to their views.

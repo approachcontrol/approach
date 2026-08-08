@@ -1,12 +1,12 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
-project_name: wtui
+project_name: approach
 
 builds:
-  - id: wtui
-    main: ./cmd/wtui
-    binary: wtui
+  - id: approach
+    main: ./cmd/approach
+    binary: approach
     env:
       - CGO_ENABLED=0
     goos:
@@ -18,14 +18,14 @@ builds:
     ldflags:
       - >-
         -s -w
-        -X github.com/brian-bell/wtui/internal/version.version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
-        -X github.com/brian-bell/wtui/internal/version.commit={{ .ShortCommit }}
-        -X github.com/brian-bell/wtui/internal/version.date={{ .Date }}
+        -X github.com/approachcontrol/approach/internal/version.version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
+        -X github.com/approachcontrol/approach/internal/version.commit={{ .ShortCommit }}
+        -X github.com/approachcontrol/approach/internal/version.date={{ .Date }}
 
 archives:
-  - id: wtui
+  - id: approach
     ids:
-      - wtui
+      - approach
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -35,15 +35,15 @@ checksum:
   algorithm: sha256
 
 homebrew_casks:
-  - name: wtui
+  - name: approach
     ids:
-      - wtui
+      - approach
     binaries:
-      - wtui
+      - approach
     directory: Casks
-    homepage: "https://github.com/brian-bell/wtui"
+    homepage: "https://github.com/approachcontrol/approach"
     description: "Terminal UI for managing git worktrees across repositories"
     repository:
-      owner: brian-bell
+      owner: approachcontrol
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"

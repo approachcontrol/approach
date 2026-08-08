@@ -1,6 +1,6 @@
 // Package claudestream renders the JSONL event stream emitted by
 // `claude --print --verbose --output-format stream-json --include-partial-messages`
-// into readable terminal lines for the wtui embedded terminal. Claude's print
+// into readable terminal lines for the approach embedded terminal. Claude's print
 // mode offers no human-readable streaming format (text output is buffered until
 // completion), so headless launches stream stream-json and translate each event
 // here.

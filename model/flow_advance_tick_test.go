@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/ui"
 )
 
 func autoAdvanceTestFlow(flowID, repoPath string, autoMode bool, statuses map[string]string) flowstore.FlowRecord {

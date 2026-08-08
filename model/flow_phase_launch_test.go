@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/model"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model"
 )
 
 func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
@@ -17,7 +17,7 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 		Branch:       "flow/implementation",
 		Commit:       "abc123",
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/plans/plan-1/plan.md",
 		Phases:       []flowstore.FlowPhase{phase},
 	}
 	persistedPhase := phase
@@ -40,7 +40,7 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 			}, nil
 		},
 		NewLaunchID:      func() string { return "launch-1" },
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		AgentCommand:     "codex",
 		Model:            "gpt-5.5",
 		ReasoningEffort:  "high",
@@ -84,7 +84,7 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 		ctx.WorktreePath != record.WorktreePath ||
 		ctx.Branch != record.Branch ||
 		ctx.Commit != record.Commit ||
-		ctx.SessionStateRoot != "/state/wtui/sessions/v1" ||
+		ctx.SessionStateRoot != "/state/approach/sessions/v1" ||
 		ctx.PlanID != record.PlanID ||
 		ctx.PlanPath != record.PlanPath ||
 		ctx.FlowID != record.FlowID ||
@@ -123,7 +123,7 @@ func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
 			return flowstore.FlowRecord{FlowID: record.FlowID, Phases: []flowstore.FlowPhase{persistedPhase}}, nil
 		},
 		NewLaunchID:      func() string { return "launch-parked" },
-		SessionStateRoot: "/state/wtui/sessions/v1",
+		SessionStateRoot: "/state/approach/sessions/v1",
 		AgentCommand:     "codex",
 		ReasoningEffort:  "high",
 	}
@@ -158,11 +158,11 @@ func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
 		t.Fatalf("launch result = route %d context %#v", result.Route, ctx)
 	}
 	for _, want := range []string{
-		"Use the wtui-flow skill for this launch.",
+		"Use the approach-flow skill for this launch.",
 		"Write the initial plan later",
 		"Produce a plan only; do not start coding in this phase.",
-		"wtui plan save",
-		"wtui flow plan set",
+		"approach plan save",
+		"approach flow plan set",
 	} {
 		if !strings.Contains(ctx.InitialPrompt, want) {
 			t.Fatalf("prompt missing %q: %q", want, ctx.InitialPrompt)
@@ -177,7 +177,7 @@ func TestFlowPhaseLauncherStandardTemplateDoesNotReadPlanBody(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-implementation",
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/plans/plan-1/plan.md",
 		Phases:       []flowstore.FlowPhase{phase},
 	}
 	readPlanCalled := false
@@ -218,7 +218,7 @@ func TestFlowPhaseLauncherGenericTemplateReadsPlanBody(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-qa",
 		PlanID:       "plan-1",
-		PlanPath:     "/state/wtui/plans/plan-1/plan.md",
+		PlanPath:     "/state/approach/plans/plan-1/plan.md",
 		Phases:       []flowstore.FlowPhase{phase},
 	}
 	readPlanCalled := false

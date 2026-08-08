@@ -23,7 +23,7 @@ func String() string {
 	version, commit, date := resolvedValues()
 
 	return fmt.Sprintf(
-		"wtui %s (%s) built %s",
+		"approach %s (%s) built %s",
 		version,
 		commit,
 		date,

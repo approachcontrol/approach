@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func TestStoreRejectsEmptyTitleAndContent(t *testing.T) {
@@ -136,24 +136,24 @@ func TestStoreGeneratesIDFromTitleAndTimestamp(t *testing.T) {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 
-	id, err := store.Save(planstore.PlanRecord{Title: "Persist Plans in wtui!", Markdown: "b", Status: "draft"})
+	id, err := store.Save(planstore.PlanRecord{Title: "Persist Plans in approach!", Markdown: "b", Status: "draft"})
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	want := "20260606T143015Z-persist-plans-in-wtui"
+	want := "20260606T143015Z-persist-plans-in-approach"
 	if id != want {
 		t.Fatalf("generated id = %q, want %q", id, want)
 	}
 
 	// Same title at the same timestamp collides → suffix -2, then -3.
-	id2, err := store.Save(planstore.PlanRecord{Title: "Persist Plans in wtui!", Markdown: "b", Status: "draft"})
+	id2, err := store.Save(planstore.PlanRecord{Title: "Persist Plans in approach!", Markdown: "b", Status: "draft"})
 	if err != nil {
 		t.Fatalf("second Save() error = %v", err)
 	}
 	if id2 != want+"-2" {
 		t.Fatalf("collision id = %q, want %q", id2, want+"-2")
 	}
-	id3, err := store.Save(planstore.PlanRecord{Title: "Persist Plans in wtui!", Markdown: "b", Status: "draft"})
+	id3, err := store.Save(planstore.PlanRecord{Title: "Persist Plans in approach!", Markdown: "b", Status: "draft"})
 	if err != nil {
 		t.Fatalf("third Save() error = %v", err)
 	}

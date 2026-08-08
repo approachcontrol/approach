@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
-// runPlan handles `wtui plan ...` subcommands. It may load config to resolve the
+// runPlan handles `approach plan ...` subcommands. It may load config to resolve the
 // artifact root but must never scan repositories or start the TUI.
 func runPlan(args []string, deps runDeps) error {
 	if len(args) == 3 && isHelpArg(args[2]) {
@@ -21,7 +21,7 @@ func runPlan(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 3 {
-		return fmt.Errorf("usage: wtui plan <save|list|read|phase> [flags]")
+		return fmt.Errorf("usage: approach plan <save|list|read|phase> [flags]")
 	}
 	switch args[2] {
 	case "save":
@@ -41,9 +41,9 @@ func printPlanHelp(w io.Writer) {
 	io.WriteString(w, planHelpText)
 }
 
-const planHelpText = `Usage: wtui plan <save|list|read|phase> [flags]
+const planHelpText = `Usage: approach plan <save|list|read|phase> [flags]
 
-Persist saved plan artifacts under the wtui agent-artifact root.
+Persist saved plan artifacts under the approach agent-artifact root.
 
 Commands:
   save       Save or update a Markdown plan; prints only the plan id.
@@ -52,27 +52,27 @@ Commands:
   phase set  Create or update a saved-plan phase row.
 
 Examples:
-  printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" --status draft
-  wtui plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
-  wtui plan read --plan-id "$PLAN_ID"
-  wtui plan list --repo-path "$REPO" --json
-  wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+  printf '%s' "$PLAN_MD" | approach plan save --title "Persist plans" --status draft
+  approach plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
+  approach plan read --plan-id "$PLAN_ID"
+  approach plan list --repo-path "$REPO" --json
+  approach plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
 
 Most commands accept:
   --state-root PATH  Override the artifact state root after the leaf command.
 `
 
 // resolvePlanRoot applies the documented precedence:
-// --state-root > WTUI_PLAN_STATE_ROOT > WTUI_SESSION_STATE_ROOT >
+// --state-root > APPROACH_PLAN_STATE_ROOT > APPROACH_SESSION_STATE_ROOT >
 // [sessions].root from config > planstore.DefaultRoot() (resolved by NewStore).
 func resolvePlanRoot(stateRoot string, deps runDeps) (string, error) {
 	if stateRoot != "" {
 		return stateRoot, nil
 	}
-	if root := deps.getenv("WTUI_PLAN_STATE_ROOT"); root != "" {
+	if root := deps.getenv("APPROACH_PLAN_STATE_ROOT"); root != "" {
 		return root, nil
 	}
-	if root := deps.getenv("WTUI_SESSION_STATE_ROOT"); root != "" {
+	if root := deps.getenv("APPROACH_SESSION_STATE_ROOT"); root != "" {
 		return root, nil
 	}
 	cfg, err := deps.loadConfig()
@@ -101,7 +101,7 @@ func runPlanSave(args []string, deps runDeps) error {
 	source := flags.String("source", "", "plan source")
 	provider := flags.String("provider", "", "agent provider")
 	sessionID := flags.String("session-id", "", "provider session id")
-	launchID := flags.String("launch-id", "", "wtui launch id")
+	launchID := flags.String("launch-id", "", "approach launch id")
 	repoPath := flags.String("repo-path", "", "repository path")
 	worktreePath := flags.String("worktree-path", "", "worktree path")
 	branch := flags.String("branch", "", "branch name")
@@ -135,13 +135,13 @@ func runPlanSave(args []string, deps runDeps) error {
 		Markdown:     markdown,
 		Status:       *status,
 		Source:       *source,
-		Provider:     fallbackEnv(*provider, "WTUI_AGENT", deps),
+		Provider:     fallbackEnv(*provider, "APPROACH_AGENT", deps),
 		SessionID:    *sessionID,
-		LaunchID:     fallbackEnv(*launchID, "WTUI_LAUNCH_ID", deps),
-		RepoPath:     fallbackEnv(*repoPath, "WTUI_REPO_PATH", deps),
-		WorktreePath: fallbackEnv(*worktreePath, "WTUI_WORKTREE_PATH", deps),
-		Branch:       fallbackEnv(*branch, "WTUI_BRANCH", deps),
-		Commit:       fallbackEnv(*commit, "WTUI_COMMIT", deps),
+		LaunchID:     fallbackEnv(*launchID, "APPROACH_LAUNCH_ID", deps),
+		RepoPath:     fallbackEnv(*repoPath, "APPROACH_REPO_PATH", deps),
+		WorktreePath: fallbackEnv(*worktreePath, "APPROACH_WORKTREE_PATH", deps),
+		Branch:       fallbackEnv(*branch, "APPROACH_BRANCH", deps),
+		Commit:       fallbackEnv(*commit, "APPROACH_COMMIT", deps),
 	}
 	if shouldResolvePlanGitMetadata(store, record) {
 		resolvePlanGitMetadata(&record, deps)
@@ -155,7 +155,7 @@ func runPlanSave(args []string, deps runDeps) error {
 }
 
 func printPlanSaveHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui plan save [flags]
+	io.WriteString(w, `Usage: approach plan save [flags]
 
 Save or update a Markdown plan. Markdown is read from stdin unless --file is set.
 
@@ -170,13 +170,13 @@ Common flags:
   --state-root PATH  Override the artifact state root.
 
 Examples:
-  printf '%s' "$PLAN_MD" | wtui plan save --title "Persist plans" --status draft
-  wtui plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
+  printf '%s' "$PLAN_MD" | approach plan save --title "Persist plans" --status draft
+  approach plan save --plan-id "$PLAN_ID" --title "Persist plans" --file ./plan.md
 `)
 }
 
 func printPlanListHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui plan list [flags]
+	io.WriteString(w, `Usage: approach plan list [flags]
 
 List saved plans as JSON.
 
@@ -188,12 +188,12 @@ Common flags:
   --state-root PATH  Override the artifact state root.
 
 Example:
-  wtui plan list --repo-path "$REPO" --json
+  approach plan list --repo-path "$REPO" --json
 `)
 }
 
 func printPlanReadHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui plan read [flags]
+	io.WriteString(w, `Usage: approach plan read [flags]
 
 Print a saved plan's Markdown.
 
@@ -204,7 +204,7 @@ Common flags:
   --state-root PATH  Override the artifact state root.
 
 Example:
-  wtui plan read --plan-id "$PLAN_ID"
+  approach plan read --plan-id "$PLAN_ID"
 `)
 }
 
@@ -276,7 +276,7 @@ func runPlanPhase(args []string, deps runDeps) error {
 		return nil
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: wtui plan phase set [flags]")
+		return fmt.Errorf("usage: approach plan phase set [flags]")
 	}
 	if args[0] != "set" {
 		return unknownCommandError(args[0], []string{"set"}, planPhaseHelpText)
@@ -315,16 +315,16 @@ func printPlanPhaseHelp(w io.Writer) {
 	io.WriteString(w, planPhaseHelpText)
 }
 
-const planPhaseHelpText = `Usage: wtui plan phase set [flags]
+const planPhaseHelpText = `Usage: approach plan phase set [flags]
 
 Update a saved-plan phase row.
 
 Example:
-  wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+  approach plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
 `
 
 func printPlanPhaseSetHelp(w io.Writer) {
-	io.WriteString(w, `Usage: wtui plan phase set [flags]
+	io.WriteString(w, `Usage: approach plan phase set [flags]
 
 Create or update a saved-plan phase row.
 
@@ -339,7 +339,7 @@ Common flags:
   --state-root PATH
 
 Example:
-  wtui plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
+  approach plan phase set --plan-id "$PLAN_ID" --phase-id store --title "Store" --status completed --order 1
 `)
 }
 

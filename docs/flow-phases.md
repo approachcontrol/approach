@@ -12,24 +12,24 @@ The code-level source of truth is the `phaseTransitions` table in
 Flow phases keep the persisted seven-status model rather than collapsing to a
 smaller `ready`/`running`/`done`/`blocked` set:
 
-- `pending` and `ready` are derived bookkeeping owned entirely by wtui. They
+- `pending` and `ready` are derived bookkeeping owned entirely by Approach. They
   are what let the TUI identify whether a selected phase row is launchable
   without agents or the UI re-deriving gate rules.
 - `needs_attention` is distinct from `blocked` on purpose: it marks
   non-blocking concerns a human should review, while `blocked` stops the
   pipeline.
 - Agents never see or reason about the derived statuses; they set exactly five
-  statuses and wtui does the rest.
+  statuses and Approach does the rest.
 
-The simplification happened in *ownership*, not in the enum: wtui owns
+The simplification happened in *ownership*, not in the enum: Approach owns
 readiness, agents own honest reporting of their own phase.
 
 ## Statuses and who sets them
 
 | Status | Set by | Meaning |
 | --- | --- | --- |
-| `pending` | wtui (derived) | Predecessor gates are not yet satisfied. |
-| `ready` | wtui (derived) | All predecessor gates satisfied; launchable. |
+| `pending` | Approach (derived) | Predecessor gates are not yet satisfied. |
+| `ready` | Approach (derived) | All predecessor gates satisfied; launchable. |
 | `running` | agent / TUI launch | Work on the phase has started. |
 | `needs_attention` | agent | Non-blocking concern for a human to review. |
 | `completed` | agent | Phase work finished. |
@@ -37,12 +37,12 @@ readiness, agents own honest reporting of their own phase.
 | `skipped` | agent | Phase intentionally bypassed (requires notes). |
 
 Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
-`skipped` through `wtui flow phase set`. The high-level wrappers
-`wtui flow phase complete`, `wtui flow phase block`, and
-`wtui flow phase needs-attention` use the same validation and persistence path
+`skipped` through `approach flow phase set`. The high-level wrappers
+`approach flow phase complete`, `approach flow phase block`, and
+`approach flow phase needs-attention` use the same validation and persistence path
 for the common `completed`, `blocked`, and `needs_attention` outcomes. The
-`wtui flow phase restart` wrapper records `running` with a rerun note.
-`wtui flow phase reset` is a wtui-owned recovery operation for stale running
+`approach flow phase restart` wrapper records `running` with a rerun note.
+`approach flow phase reset` is an Approach-owned recovery operation for stale running
 phases, not an agent-facing transition. These wrappers print JSON with the
 updated phase and next actionable phase state.
 They do not add separate notes requirements; store validation remains the
@@ -69,7 +69,7 @@ Additional rules:
 - `skipped` always requires `--notes`, from any state.
 - Restarting a `needs_attention` or `blocked` phase as `running` requires
   `--notes`; completing one directly is invalid — restart first. The
-  high-level `wtui flow phase restart` wrapper supplies a standard note when
+  high-level `approach flow phase restart` wrapper supplies a standard note when
   `--notes` is omitted.
 - Invalid transitions fail with the allowed next statuses, e.g.
   `invalid phase transition pending -> completed; allowed from pending: skipped`.
@@ -78,9 +78,9 @@ Additional rules:
   launch ID (so the resumed session can re-link) without reopening the phase,
   and a failed resume launch never regresses such a phase to `needs_attention`.
   `codex-app` resume deep links are untracked app navigation because they cannot
-  carry wtui launch metadata. Reopening a finished phase deliberately remains
-  `wtui flow phase restart`.
-- The TUI and `wtui flow phase reset` can recover selected stale `running`
+  carry approach launch metadata. Reopening a finished phase deliberately remains
+  `approach flow phase restart`.
+- The TUI and `approach flow phase reset` can recover selected stale `running`
   phases after confirmation or command invocation. `await-session` means the
   latest launch has no attached session record. `ended-session` means every
   session attached to the latest launch has `status: ended` or a non-zero
@@ -118,11 +118,11 @@ semantic phase `kind`, not by literal phase ID:
   omitted: `complete` uses `passed`, `needs-attention` uses
   `needs_attention`, and `block` uses `blocked`.
 - **PR Creation (`pr_creation`)**: `completed` *and* structured PR metadata recorded via
-  `wtui flow pr set` (provider, positive number, valid URL, head/base
+  `approach flow pr set` (provider, positive number, valid URL, head/base
   branches). Completion alone does not unlock Autoreview; a skipped PR
   Creation never unlocks it.
 - **Plan (`plan`)**: may record optional GitHub issue metadata with
-  `wtui flow issue set` when the task references an issue. Issue metadata is
+  `approach flow issue set` when the task references an issue. Issue metadata is
   informational and does not gate downstream phases.
 - **Implementation children**: every child phase under an implementation-kind
   parent must be
@@ -144,7 +144,7 @@ branches keep their stored state.
 
 The built-in `default` preset is the familiar linear graph: Plan → Plan Review
 → Implementation → Review loop → PR Creation → Autoreview → Merge. Config can
-declare additional named presets under `[flow]`, and `wtui flow create
+declare additional named presets under `[flow]`, and `approach flow create
 --preset NAME` or `[flow].preset` can select them for new Flows. CLI and TUI
 "next phase" surfaces remain display-order based: with fan-out, "next" means
 the first ready launchable branch in `OrderedPhases` order, not a scheduling
@@ -162,18 +162,18 @@ Custom preset validation is strict at config/create time:
 Readiness is best-effort for existing on-disk records. If Kahn's algorithm
 cannot release a node because of a cycle, dangling dependency, duplicate
 normalized ID beyond the first occurrence, or a transitive dependency on one of
-those nodes, wtui leaves that node's stored status untouched. This avoids
+those nodes, Approach leaves that node's stored status untouched. This avoids
 destroying recorded work on a malformed hand-authored record. Index-aware launch
 eligibility prevents stale duplicate rows from being selected for manual or
 AutoMode launches.
 
 Records created from named custom presets persist `preset_name`. If a record is
-later read with missing `depends_on` keys, wtui uses the named preset as a
+later read with missing `depends_on` keys, Approach uses the named preset as a
 recovery hint when the preset is available and its phase IDs still match. The
 non-persisted `GraphRecovery.Status` values are:
 
 - `preset_edges_restored`: missing edges were restored from the named preset.
-- `missing_edges_unresolved`: wtui refused to invent a graph. Re-select or
+- `missing_edges_unresolved`: Approach refused to invent a graph. Re-select or
   recreate the preset, or repair the record manually.
 
 Default-preset records still use legacy linear backfill when `depends_on` is
@@ -211,12 +211,12 @@ When a Flow has a linked saved plan, transitioning a Flow phase to `completed`
 also marks a saved-plan phase with the same normalized phase ID as `completed`.
 Missing saved-plan phases are ignored, and already-completed saved-plan phases
 are left unchanged. If the linked plan cannot be read or updated during that
-transition, wtui marks the Flow phase `needs_attention` with a sync-failure note
+transition, Approach marks the Flow phase `needs_attention` with a sync-failure note
 and returns the persistence error so the agent can report it. Repeating
 `completed` for an already-completed Flow phase preserves that completed state
 even if the linked-plan sync later fails.
 Manual GitHub merge recording is stricter: if syncing the linked plan's Merge
-phase fails while terminal merge metadata is being recorded, wtui restores the
+phase fails while terminal merge metadata is being recorded, Approach restores the
 previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.
@@ -248,7 +248,7 @@ and are display-only; they never change persisted phase status. See
 
 When `await-session` or `ended-session` is recoverable and predecessor gates
 still hold, the selected phase row can be reset with `x` after confirmation or
-with `wtui flow phase reset`. The reset removes the stale latest launch and
+with `approach flow phase reset`. The reset removes the stale latest launch and
 matching latest-launch sessions, persists the phase as `pending`, then lets
 derived readiness promote it to `ready`; if readiness cannot be derived, the
 mutation is rejected and the record is left unchanged. Preserved attached

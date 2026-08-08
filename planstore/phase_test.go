@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brian-bell/wtui/planstore"
+	"github.com/approachcontrol/approach/planstore"
 )
 
 func savePlan(t *testing.T, store *planstore.Store, id string) {

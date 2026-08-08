@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/sessions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 func TestIngestHookResolvesGitMetadataFromCWD(t *testing.T) {
@@ -223,12 +223,12 @@ func TestIngestHookCreatesEndedClaudeRecordFromSessionEnd(t *testing.T) {
 
 	record, err := sessions.IngestHook(sessions.ProviderClaude, bytes.NewReader(payload), sessions.IngestOptions{
 		Env: map[string]string{
-			"WTUI_LAUNCH_ID":          "launch-claude-1",
-			"WTUI_REPO_PATH":          repoPath,
-			"WTUI_WORKTREE_PATH":      cwd,
-			"WTUI_BRANCH":             "feature/sessions",
-			"WTUI_COMMIT":             "abcdef123456",
-			"WTUI_SESSION_STATE_ROOT": root,
+			"APPROACH_LAUNCH_ID":          "launch-claude-1",
+			"APPROACH_REPO_PATH":          repoPath,
+			"APPROACH_WORKTREE_PATH":      cwd,
+			"APPROACH_BRANCH":             "feature/sessions",
+			"APPROACH_COMMIT":             "abcdef123456",
+			"APPROACH_SESSION_STATE_ROOT": root,
 		},
 	})
 	if err != nil {
@@ -280,14 +280,14 @@ func TestIngestHookPersistsFlowMetadataAndAttachesSession(t *testing.T) {
 		"timestamp": "2026-06-06T14:10:00Z"
 	}`)), sessions.IngestOptions{
 		Env: map[string]string{
-			"WTUI_LAUNCH_ID":          "launch-flow-1",
-			"WTUI_REPO_PATH":          repoPath,
-			"WTUI_WORKTREE_PATH":      worktreePath,
-			"WTUI_BRANCH":             "flow/new-flow-launch",
-			"WTUI_SESSION_STATE_ROOT": root,
-			"WTUI_FLOW_STATE_ROOT":    root,
-			"WTUI_FLOW_ID":            flow.FlowID,
-			"WTUI_FLOW_PHASE_ID":      "plan",
+			"APPROACH_LAUNCH_ID":          "launch-flow-1",
+			"APPROACH_REPO_PATH":          repoPath,
+			"APPROACH_WORKTREE_PATH":      worktreePath,
+			"APPROACH_BRANCH":             "flow/new-flow-launch",
+			"APPROACH_SESSION_STATE_ROOT": root,
+			"APPROACH_FLOW_STATE_ROOT":    root,
+			"APPROACH_FLOW_ID":            flow.FlowID,
+			"APPROACH_FLOW_PHASE_ID":      "plan",
 		},
 	})
 	if err != nil {
@@ -341,11 +341,11 @@ func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
 	}
 	envForLaunch := func(launchID string) map[string]string {
 		return map[string]string{
-			"WTUI_LAUNCH_ID":          launchID,
-			"WTUI_SESSION_STATE_ROOT": root,
-			"WTUI_FLOW_STATE_ROOT":    root,
-			"WTUI_FLOW_ID":            flow.FlowID,
-			"WTUI_FLOW_PHASE_ID":      "plan",
+			"APPROACH_LAUNCH_ID":          launchID,
+			"APPROACH_SESSION_STATE_ROOT": root,
+			"APPROACH_FLOW_STATE_ROOT":    root,
+			"APPROACH_FLOW_ID":            flow.FlowID,
+			"APPROACH_FLOW_PHASE_ID":      "plan",
 		}
 	}
 	if _, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
@@ -385,8 +385,8 @@ func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
 
 func TestIngestHookDoesNotRestoreFlowLinkForOrdinarySessionResume(t *testing.T) {
 	root := t.TempDir()
-	trackedLaunchID := "wtui-100-aaaaaaaaaaaa"
-	resumeLaunchID := "wtui-200-bbbbbbbbbbbb"
+	trackedLaunchID := "approach-100-aaaaaaaaaaaa"
+	resumeLaunchID := "approach-200-bbbbbbbbbbbb"
 	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
@@ -412,11 +412,11 @@ func TestIngestHookDoesNotRestoreFlowLinkForOrdinarySessionResume(t *testing.T) 
 		"session_id": "shared-session",
 		"timestamp": "2026-07-15T14:10:00Z"
 	}`)), sessions.IngestOptions{Env: map[string]string{
-		"WTUI_LAUNCH_ID":          trackedLaunchID,
-		"WTUI_SESSION_STATE_ROOT": root,
-		"WTUI_FLOW_STATE_ROOT":    root,
-		"WTUI_FLOW_ID":            flow.FlowID,
-		"WTUI_FLOW_PHASE_ID":      "plan",
+		"APPROACH_LAUNCH_ID":          trackedLaunchID,
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_FLOW_ID":            flow.FlowID,
+		"APPROACH_FLOW_PHASE_ID":      "plan",
 	}}); err != nil {
 		t.Fatalf("tracked IngestHook() error = %v", err)
 	}
@@ -425,8 +425,8 @@ func TestIngestHookDoesNotRestoreFlowLinkForOrdinarySessionResume(t *testing.T) 
 		"session_id": "shared-session",
 		"timestamp": "2026-07-15T14:20:00Z"
 	}`)), sessions.IngestOptions{Env: map[string]string{
-		"WTUI_LAUNCH_ID":          resumeLaunchID,
-		"WTUI_SESSION_STATE_ROOT": root,
+		"APPROACH_LAUNCH_ID":          resumeLaunchID,
+		"APPROACH_SESSION_STATE_ROOT": root,
 	}})
 	if err != nil {
 		t.Fatalf("ordinary resume IngestHook() error = %v", err)
@@ -439,11 +439,11 @@ func TestIngestHookDoesNotRestoreFlowLinkForOrdinarySessionResume(t *testing.T) 
 		"timestamp": "2026-07-15T14:30:00Z",
 		"hook_event_name": "Stop"
 	}`)), sessions.IngestOptions{Env: map[string]string{
-		"WTUI_LAUNCH_ID":          trackedLaunchID,
-		"WTUI_SESSION_STATE_ROOT": root,
-		"WTUI_FLOW_STATE_ROOT":    root,
-		"WTUI_FLOW_ID":            flow.FlowID,
-		"WTUI_FLOW_PHASE_ID":      "plan",
+		"APPROACH_LAUNCH_ID":          trackedLaunchID,
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_FLOW_ID":            flow.FlowID,
+		"APPROACH_FLOW_PHASE_ID":      "plan",
 	}})
 	if err != nil {
 		t.Fatalf("delayed tracked IngestHook() error = %v", err)
@@ -525,8 +525,8 @@ func TestIngestHookPersistsCodexStopSnapshotsInPlace(t *testing.T) {
 		t.Fatalf("write transcript: %v", err)
 	}
 	env := map[string]string{
-		"WTUI_SESSION_STATE_ROOT": root,
-		"WTUI_REPO_PATH":          repoPath,
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_REPO_PATH":          repoPath,
 	}
 
 	first := []byte(`{
@@ -634,9 +634,9 @@ func TestIngestHookBlankSessionIDLeavesFlowPhaseUntouched(t *testing.T) {
 	}`)), sessions.IngestOptions{
 		StateRoot: root,
 		Env: map[string]string{
-			"WTUI_FLOW_STATE_ROOT": root,
-			"WTUI_FLOW_ID":         flow.FlowID,
-			"WTUI_FLOW_PHASE_ID":   "plan",
+			"APPROACH_FLOW_STATE_ROOT": root,
+			"APPROACH_FLOW_ID":         flow.FlowID,
+			"APPROACH_FLOW_PHASE_ID":   "plan",
 		},
 	})
 	if err == nil {

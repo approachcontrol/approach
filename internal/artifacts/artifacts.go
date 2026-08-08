@@ -1,4 +1,4 @@
-// Package artifacts centralizes filesystem mechanics shared by wtui artifact
+// Package artifacts centralizes filesystem mechanics shared by approach artifact
 // stores. Domain stores still own their JSON schema, validation, and listing
 // semantics.
 package artifacts
@@ -37,17 +37,17 @@ type IDOptions struct {
 	MaxAttempts  int
 }
 
-// DefaultRoot returns the shared wtui artifact root used by sessions, plans,
+// DefaultRoot returns the shared approach artifact root used by sessions, plans,
 // and flows.
 func DefaultRoot() (string, error) {
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "wtui", "sessions", "v1"), nil
+		return filepath.Join(stateHome, "approach", "sessions", "v1"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve artifact state root: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "wtui", "sessions", "v1"), nil
+	return filepath.Join(home, ".local", "state", "approach", "sessions", "v1"), nil
 }
 
 // RequireAbsoluteRoot returns the same root when it is absolute.

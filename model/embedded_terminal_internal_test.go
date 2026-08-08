@@ -13,12 +13,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/brian-bell/wtui/actions"
-	"github.com/brian-bell/wtui/flowstore"
-	"github.com/brian-bell/wtui/model/modal"
-	"github.com/brian-bell/wtui/scanner"
-	"github.com/brian-bell/wtui/sessions"
-	"github.com/brian-bell/wtui/ui"
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/model/modal"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
 )
 
 type internalFakeEmbeddedTerminal struct {
@@ -241,14 +241,14 @@ func TestDefaultEmbeddedTerminalStarterUsesTmuxWhenAvailable(t *testing.T) {
 	t.Setenv("TMPDIR", dir)
 	writeInternalFakeExecutable(t, dir, "codex", "#!/bin/sh\n/bin/sleep 30\n")
 	logPath := filepath.Join(dir, "tmux.log")
-	t.Setenv("WTUI_TMUX_LOG", logPath)
+	t.Setenv("APPROACH_TMUX_LOG", logPath)
 	writeInternalFakeExecutable(t, dir, "tmux", `#!/bin/sh
-echo "$@" >> "$WTUI_TMUX_LOG"
+echo "$@" >> "$APPROACH_TMUX_LOG"
 for arg in "$@"; do
   case "$arg" in
     has-session) exit 1 ;;
     new-session)
-      rm -f "$TMPDIR"/wtui-agent-*.sh
+      rm -f "$TMPDIR"/approach-agent-*.sh
       exit 0
       ;;
     attach-session) /bin/sleep 30 ;;
@@ -274,7 +274,7 @@ exit 0
 	if !ok {
 		t.Fatalf("default starter returned %T, want detachable tmux-backed terminal", term)
 	}
-	if target := detachable.DetachTarget(); !strings.Contains(target, "env -u TMUX tmux -f /dev/null -L 'wtui-agent-") || !strings.Contains(target, "attach-session -t") || !strings.Contains(target, "agent-launch-1") {
+	if target := detachable.DetachTarget(); !strings.Contains(target, "env -u TMUX tmux -f /dev/null -L 'approach-agent-") || !strings.Contains(target, "attach-session -t") || !strings.Contains(target, "agent-launch-1") {
 		t.Fatalf("detach target = %q, want reattach command for per-launch agent tmux session", target)
 	}
 	waitInternalFileContains(t, logPath, "attach-session")
@@ -330,8 +330,8 @@ func TestDefaultEmbeddedTerminalStarterRendersHeadlessClaudeStreamJSON(t *testin
 		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello from claude"}]}}'`+"\n")
 	// tmux is available but must NOT be used for headless claude.
 	logPath := filepath.Join(dir, "tmux.log")
-	t.Setenv("WTUI_TMUX_LOG", logPath)
-	writeInternalFakeExecutable(t, dir, "tmux", "#!/bin/sh\necho \"$@\" >> \"$WTUI_TMUX_LOG\"\nexit 0\n")
+	t.Setenv("APPROACH_TMUX_LOG", logPath)
+	writeInternalFakeExecutable(t, dir, "tmux", "#!/bin/sh\necho \"$@\" >> \"$APPROACH_TMUX_LOG\"\nexit 0\n")
 	t.Setenv("PATH", dir)
 
 	term, err := defaultEmbeddedTerminalStarter(actions.AgentLaunchContext{
@@ -982,7 +982,7 @@ func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 }
 
 func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
-	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	var gotTarget, gotCWD string
 	m := Model{
 		mode:                      ui.ModeSessions,
@@ -1021,8 +1021,8 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 	if len(next.embeddedTerminals) != 0 {
 		t.Fatalf("embedded terminals = %#v, want detached terminal dismissed", next.embeddedTerminals)
 	}
-	if gotTarget != "wtui-agent-session" {
-		t.Fatalf("handoff target = %q, want wtui-agent-session", gotTarget)
+	if gotTarget != "approach-agent-session" {
+		t.Fatalf("handoff target = %q, want approach-agent-session", gotTarget)
 	}
 	if gotCWD != "/dev/worktree/subdir" {
 		t.Fatalf("handoff cwd = %q, want /dev/worktree/subdir", gotCWD)
@@ -1030,25 +1030,25 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("detach should return a handoff command")
 	}
-	if !strings.Contains(next.status.Text, "opening terminal: wtui-agent-session") {
+	if !strings.Contains(next.status.Text, "opening terminal: approach-agent-session") {
 		t.Fatalf("status = %q, want opening-terminal detach target", next.status.Text)
 	}
 	msg, ok := cmd().(EmbeddedTerminalDetachHandoffResultMsg)
 	if !ok {
 		t.Fatalf("handoff command message = %#v, want EmbeddedTerminalDetachHandoffResultMsg", msg)
 	}
-	if msg.Target != "wtui-agent-session" || msg.Err != "" {
+	if msg.Target != "approach-agent-session" || msg.Err != "" {
 		t.Fatalf("handoff message = %#v, want successful target", msg)
 	}
 	updated, _ := next.Update(msg)
 	next = updated.(Model)
-	if !strings.Contains(next.status.Text, "Detached embedded terminal and opened terminal: wtui-agent-session") {
+	if !strings.Contains(next.status.Text, "Detached embedded terminal and opened terminal: approach-agent-session") {
 		t.Fatalf("status = %q, want opened-terminal detach target", next.status.Text)
 	}
 }
 
 func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
-	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-flow-agent"}
+	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-flow-agent"}
 	var gotTarget, gotCWD string
 	m := Model{
 		mode:                  ui.ModeFlows,
@@ -1125,8 +1125,8 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 	if activity := next.flowTerminalActivity(); len(activity) != 1 || activity[0].PhaseID != "review" {
 		t.Fatalf("flow terminal activity = %#v, want only remaining Flow terminal", activity)
 	}
-	if gotTarget != "wtui-flow-agent" {
-		t.Fatalf("handoff target = %q, want wtui-flow-agent", gotTarget)
+	if gotTarget != "approach-flow-agent" {
+		t.Fatalf("handoff target = %q, want approach-flow-agent", gotTarget)
 	}
 	if gotCWD != "/dev/worktree" {
 		t.Fatalf("handoff cwd = %q, want /dev/worktree", gotCWD)
@@ -1137,7 +1137,7 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 }
 
 func TestTerminalPrefixDReportsHandoffConstructionFailureAfterDetach(t *testing.T) {
-	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	m := Model{
 		mode:                      ui.ModeSessions,
 		activeEmbeddedTerminalNum: 1,
@@ -1175,7 +1175,7 @@ func TestTerminalPrefixDReportsHandoffConstructionFailureAfterDetach(t *testing.
 }
 
 func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
-	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-agent-session"}
+	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	cleaned := false
 	m := Model{
 		mode:                      ui.ModeSessions,
@@ -1254,7 +1254,7 @@ func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
 }
 
 func TestFlowTerminalInputModeDPassesThrough(t *testing.T) {
-	term := &internalFakeDetachableEmbeddedTerminal{target: "wtui-flow-agent"}
+	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-flow-agent"}
 	m := Model{
 		mode:                  ui.ModeFlows,
 		activePane:            1,
