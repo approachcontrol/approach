@@ -24,7 +24,9 @@ const (
 const (
 	ModelDefault       = "default"
 	ModelGPT55         = "gpt-5.5"
+	ModelGPT56Sol      = "gpt-5.6-sol"
 	ModelClaudeOpus48  = "claude-opus-4-8"
+	ModelClaudeOpus5   = "claude-opus-5"
 	ModelClaudeSonnet5 = "claude-sonnet-5"
 	ModelClaudeFable5  = "claude-fable-5"
 )
@@ -76,9 +78,9 @@ func ReasoningEffortChoices(command string) []string {
 func ModelChoices(command string) []string {
 	switch Normalize(command) {
 	case CommandCodex:
-		return []string{ModelDefault, ModelGPT55}
+		return []string{ModelDefault, ModelGPT55, ModelGPT56Sol}
 	case CommandClaude:
-		return []string{ModelDefault, ModelClaudeOpus48, ModelClaudeSonnet5, ModelClaudeFable5}
+		return []string{ModelDefault, ModelClaudeOpus48, ModelClaudeOpus5, ModelClaudeSonnet5, ModelClaudeFable5}
 	case CommandCodexApp:
 		return []string{ModelDefault}
 	default:

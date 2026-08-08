@@ -677,9 +677,10 @@ for compatibility. The same root is resolved to an absolute path when used as
 the parent directory for left-pane repo creation.
 `[agent].codex_reasoning_effort` and `[agent].claude_reasoning_effort`
 configure provider-specific effort for new CLI agent launches; empty or
-`default` keeps provider defaults. `[agent].codex_model` supports `default` and
-`gpt-5.5`; `[agent].claude_model` supports `default`, `claude-opus-4-8`,
-`claude-sonnet-5`, and `claude-fable-5`. Empty or `default` omits the model
+`default` keeps provider defaults. `[agent].codex_model` supports `default`,
+`gpt-5.5`, and `gpt-5.6-sol`; `[agent].claude_model` supports `default`,
+`claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5`, and `claude-fable-5`.
+Empty or `default` omits the model
 override and keeps provider defaults. `[ui].default_view` accepts `1` through `9`
 and controls the startup view; omitting it keeps the built-in Flows default.
 The config numbers keep their original meanings (`1` worktrees … `9` active

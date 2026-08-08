@@ -81,8 +81,8 @@ func TestModelChoicesAreProviderSpecific(t *testing.T) {
 		command string
 		want    []string
 	}{
-		{agent.CommandCodex, []string{"default", "gpt-5.5"}},
-		{agent.CommandClaude, []string{"default", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5"}},
+		{agent.CommandCodex, []string{"default", "gpt-5.5", "gpt-5.6-sol"}},
+		{agent.CommandClaude, []string{"default", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5"}},
 		{agent.CommandCodexApp, []string{"default"}},
 	}
 
@@ -105,6 +105,15 @@ func TestValidateModelRejectsUnsupportedProviderValues(t *testing.T) {
 	}
 	if err := agent.ValidateModel(agent.CommandClaude, "claude-fable-5"); err != nil {
 		t.Fatalf("expected claude-fable-5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandClaude, "claude-opus-5"); err != nil {
+		t.Fatalf("expected claude-opus-5 model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandCodex, "gpt-5.6-sol"); err != nil {
+		t.Fatalf("expected codex gpt-5.6-sol model to be accepted, got %v", err)
+	}
+	if err := agent.ValidateModel(agent.CommandClaude, "gpt-5.6-sol"); err == nil {
+		t.Fatal("expected claude gpt-5.6-sol model to be rejected")
 	}
 	if err := agent.ValidateModel(agent.CommandCodex, ""); err != nil {
 		t.Fatalf("expected empty codex model to mean default, got %v", err)
