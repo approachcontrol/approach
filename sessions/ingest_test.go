@@ -100,6 +100,7 @@ func TestIngestHookValidatesProviderTranscriptPathsBeforePersistence(t *testing.
 			rejectedCases := []struct {
 				name          string
 				errorContains string
+				payloadRoot   bool
 				path          func(t *testing.T, transcriptRoot string) string
 			}{
 				{
@@ -151,6 +152,19 @@ func TestIngestHookValidatesProviderTranscriptPathsBeforePersistence(t *testing.
 						return symlinkPath
 					},
 				},
+				{
+					name:          "hook supplied root",
+					errorContains: "outside expected",
+					payloadRoot:   true,
+					path: func(t *testing.T, _ string) string {
+						attackerRoot := t.TempDir()
+						outsidePath := filepath.Join(attackerRoot, "payload-root.jsonl")
+						if err := os.WriteFile(outsidePath, []byte("outside payload root\n"), 0o600); err != nil {
+							t.Fatalf("write hook-supplied-root target: %v", err)
+						}
+						return outsidePath
+					},
+				},
 			}
 
 			for _, rejectedCase := range rejectedCases {
@@ -175,7 +189,11 @@ func TestIngestHookValidatesProviderTranscriptPathsBeforePersistence(t *testing.
 					env["APPROACH_FLOW_STATE_ROOT"] = stateRoot
 					env["APPROACH_FLOW_ID"] = flow.FlowID
 					env["APPROACH_FLOW_PHASE_ID"] = "plan"
-					payload := []byte(`{"session_id":` + quoteJSON(sessionID) + `,"transcript_path":` + quoteJSON(transcriptPath) + `}`)
+					payloadRoot := ""
+					if rejectedCase.payloadRoot {
+						payloadRoot = `,"transcript_root":` + quoteJSON(filepath.Dir(transcriptPath))
+					}
+					payload := []byte(`{"session_id":` + quoteJSON(sessionID) + `,"transcript_path":` + quoteJSON(transcriptPath) + payloadRoot + `}`)
 
 					_, err = sessions.IngestHook(providerCase.provider, bytes.NewReader(payload), sessions.IngestOptions{
 						StateRoot:          stateRoot,
@@ -200,6 +218,7 @@ func TestIngestHookValidatesProviderTranscriptPathsBeforePersistence(t *testing.
 							t.Fatalf("rejected transcript published artifact %s: %v", path, statErr)
 						}
 					}
+					assertNoSessionRecords(t, stateRoot)
 
 					read, err := flowStore.Read(flow.FlowID)
 					if err != nil {
