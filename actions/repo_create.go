@@ -133,6 +133,10 @@ func createRepoRemoteOnlyRetry(opts RepoCreateOptions, runner repoCreateRunner, 
 	return result, nil
 }
 
+// validateRepoCreateRootAndName restricts new repo names to a single clean
+// path segment. The "-worktrees" suffix is reserved because Approach keeps
+// worktree checkouts under sibling <repo>-worktrees/ directories and the
+// scanner excludes those from repo discovery.
 func validateRepoCreateRootAndName(root, name string) (string, string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
