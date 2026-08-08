@@ -4,6 +4,10 @@
 // file and a plan.md Markdown body. The artifact root is shared with the
 // sessions store (see the sessions package); moving or cleaning that root also
 // moves or removes saved plans.
+//
+// Agents persist plan changes through the `approach plan` CLI
+// (cmd/approach/plan.go), never by editing store files by hand — hand edits
+// bypass the store's locking, validation, and phase-ID normalization.
 package planstore
 
 import (

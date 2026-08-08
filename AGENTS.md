@@ -1,34 +1,23 @@
 # Agent Entry Point for Approach
 
-Intentionally short. Don't copy build, UI, config, Flow, or storage detail here; it drifts when repeated across entrypoints. Add substance to the linked docs.
+Routing only. Substance lives in the linked docs; anything duplicated here drifts.
+CLAUDE.md is a symlink to this file — edit here.
 
 ## Read First
 
-- Commands, quality gates, dev workflow: `docs/agent-operations.md`
+- Commands, quality gate, dev workflow, safety: `docs/agent-operations.md`
 - Architecture, package map, invariants: `docs/architecture.md`
-- User-facing behavior and key bindings: `README.md`
-- Config, saved plans, Flows, and hooks: `docs/config.md`
+- Overview, install, quick start: `README.md`
+- TUI behavior and key bindings: `docs/tui-guide.md`
+- Agent session hooks and storage: `docs/agent-sessions.md`
+- Config reference: `docs/config.md`
 - Flow phase semantics: `docs/flow-phases.md`
-- Agent Flow recipes: `agent-skills/approach-flow/SKILL.md`, `agent-skills/approach-flow-create/SKILL.md`, `agent-skills/approach-plan-persist/SKILL.md`
+- Flow/plan skill recipes: `agent-skills/approach-flow/SKILL.md`, `agent-skills/approach-flow-create/SKILL.md`, `agent-skills/approach-plan-persist/SKILL.md`
 
-## Ground Rules (know these immediately)
+## Non-negotiables
 
-- Use TDD unless told otherwise or there's a strong reason not to.
-- Pull latest from main before starting, unless given a different base.
-- Never commit or push directly to main; branch first.
-- Persist Flow and plan progress through the `approach flow` / `approach plan` CLIs, never by editing store files by hand.
-- Transcripts may contain secrets — keep them under user state, never in a repo.
-
-## Quality Gate
-
-CI requires all three clean before merge:
-
-```bash
-gofmt -l .          # must print nothing
-make test           # all tests pass
-make build          # builds bin/approach
-```
+Branch first — never commit or push directly to main. Everything else (TDD, quality gate, Flow/plan persistence, transcript safety) is in `docs/agent-operations.md`.
 
 ## Conflict Rule
 
-If this file conflicts with a linked source, trust the linked source and fix this file by removing the duplicate.
+If this file conflicts with a linked doc, trust the linked doc and remove the duplicate here.
