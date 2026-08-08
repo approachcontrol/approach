@@ -78,11 +78,11 @@ func TestTopLevelKeys_NumbersSelectTopLevelViews(t *testing.T) {
 	}
 }
 
-func TestTopLevelKeys_FiveThroughNineAreSilentNoOps(t *testing.T) {
+func TestTopLevelKeys_SixThroughNineAreSilentNoOps(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	before := listRequests(m)
 
-	for _, key := range []rune{'5', '6', '7', '8', '9'} {
+	for _, key := range []rune{'6', '7', '8', '9'} {
 		var cmd tea.Cmd
 		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
 		if m.Mode() != ui.ModeWorktrees {

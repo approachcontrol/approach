@@ -1,8 +1,8 @@
 # Approach
 
-A terminal UI for managing git worktrees across repositories — plus the
-coding-agent sessions, saved plans, and multi-phase Flows that run inside
-them.
+A terminal UI for managing git worktrees across repositories — plus Beads
+issues, coding-agent sessions, saved plans, and multi-phase Flows that run
+inside them.
 
 ![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)
 
@@ -53,10 +53,11 @@ Repos on the left, content on the right. The essentials:
 |-----|--------|
 | `↑`/`↓` or `k`/`j` | Move selection |
 | `enter`/`tab`, `bksp` | Focus the content pane / return to the repo pane |
-| `1`–`4` | Git view, sessions, plans, flows |
+| `1`–`5` | Git view, sessions, plans, flows, Beads Open (`6`–`9` are unbound) |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `ctrl+a` | Toggle Active Flows (all repos) |
-| `/` | Fuzzy filter the active pane |
+| `/` | Fuzzy filter the active pane (the Beads content pane is not filterable in this slice) |
+| `f5` | Rescan repositories and refresh the current view, including Beads Open |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent |
 | `n` | Create a worktree, branch, Flow, or repo (context-dependent) |
@@ -64,9 +65,17 @@ Repos on the left, content on the right. The essentials:
 | `enter` | Page a diff or transcript, or expand phases |
 | `q`/`esc` | Close a dialog or quit |
 
-The full key reference and per-view behavior — git subviews, sessions, plans,
-Flows, embedded terminals, recovery states — is in
+The full key reference and per-view behavior — git subviews, Beads, sessions,
+plans, Flows, embedded terminals, recovery states — is in
 [docs/tui-guide.md](docs/tui-guide.md).
+
+### Beads Open
+
+With the content pane focused, press `5` to list the selected repository's
+open Beads issues. Rows are sorted by priority and then ID and render as
+`<id>  P<n>  <title>`, followed by two spaces and the assignee when present.
+A successful empty query shows `no open beads`; a repository without usable
+Beads support shows `beads not configured`. This view is read-only.
 
 ## Agents, Plans, and Flows
 

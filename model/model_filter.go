@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model/pane"
@@ -74,6 +75,12 @@ func newPlanPane() pane.Pane[planstore.PlanRecord] {
 
 func newFlowPane() pane.Pane[flowstore.FlowRecord] {
 	return pane.New(flowSearchText, flowItemHeight(""))
+}
+
+func newBeadPane() pane.Pane[beadsquery.Bead] {
+	return pane.New(func(bead beadsquery.Bead) string {
+		return strings.Join([]string{bead.ID, bead.Title, bead.Assignee}, " ")
+	}, fixedHeight[beadsquery.Bead])
 }
 
 func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
@@ -196,6 +203,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowPlans()
 	m = m.reflowFlows()
 	m = m.reflowActiveFlows()
+	m = m.reflowBeadsOpen()
 	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}

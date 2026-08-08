@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
@@ -132,6 +133,7 @@ const (
 	ModePlans
 	ModeFlows
 	ModeActiveFlows
+	ModeBeadsOpen
 )
 
 // IsGitMode reports whether mode is one of the five git-oriented subviews
@@ -294,6 +296,10 @@ type RenderParams struct {
 	Flows                        []flowstore.FlowRecord
 	FlowSelected                 int
 	FlowScroll                   int
+	BeadsOpen                    []beadsquery.Bead
+	BeadsOpenSelected            int
+	BeadsOpenScroll              int
+	BeadsOpenAvailable           bool
 	FlowEmbeddedTerminals        []EmbeddedTerminalTab
 	FlowEmbeddedTerminalLines    []string
 	FlowEmbeddedTerminalPrefix   bool
@@ -617,6 +623,7 @@ func renderApplication(p RenderParams) string {
 	sessionSel := p.SessionSelected
 	planSel := p.PlanSelected
 	flowSel := p.FlowSelected
+	beadSel := p.BeadsOpenSelected
 	if p.ActivePane == 0 {
 		branchSel = -1
 		stashSel = -1
@@ -626,6 +633,7 @@ func renderApplication(p RenderParams) string {
 		sessionSel = -1
 		planSel = -1
 		flowSel = -1
+		beadSel = -1
 		selectedPlanPhaseID = ""
 		selectedFlowPhaseID = ""
 	}
@@ -657,6 +665,17 @@ func renderApplication(p RenderParams) string {
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
+	case p.Mode == ModeBeadsOpen && len(p.BeadsOpen) > 0:
+		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, rightContentHeight)
+	case p.Mode == ModeBeadsOpen:
+		message := p.RightEmptyMessage
+		if message == "" {
+			message = "beads not configured"
+			if p.BeadsOpenAvailable {
+				message = "no open beads"
+			}
+		}
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -741,6 +760,7 @@ func renderModeHeader(mode Mode, width int) string {
 		{key: "2", name: "sessions", active: mode == ModeSessions},
 		{key: "3", name: "plans", active: mode == ModePlans},
 		{key: "4", name: "flows", active: mode == ModeFlows},
+		{key: "5", name: "beads", active: mode == ModeBeadsOpen},
 	}
 	activeFlows := modeHeaderItem{key: "^a", name: "active flows", active: mode == ModeActiveFlows}
 	separator := strings.Repeat("─", width)
@@ -1162,7 +1182,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		navigation = append(navigation, shortcutHint{Key: "enter", Label: "pane", Inline: true})
 	}
 	if sp.ActivePane == 1 {
-		if sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
+		if sp.Mode != ModeActiveFlows && sp.Mode != ModeBeadsOpen && !sp.ActiveFlows {
 			navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 		}
 		if IsGitMode(sp.Mode) {
@@ -2021,6 +2041,8 @@ func modeShortcutTitle(mode Mode) string {
 		return "Flows"
 	case ModeActiveFlows:
 		return "Active flows"
+	case ModeBeadsOpen:
+		return "Beads Open"
 	default:
 		return "Items"
 	}
@@ -2318,6 +2340,22 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 		content = append(content, truncateToWidth(line, width))
 	}
 
+	return scrollAndPad(content, scroll, height)
+}
+
+func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, height int) []string {
+	content := make([]string, 0, len(beads))
+	for i, bead := range beads {
+		body := fmt.Sprintf("%s  P%d  %s", bead.ID, bead.Priority, bead.Title)
+		if bead.Assignee != "" {
+			body += "  " + bead.Assignee
+		}
+		line := "   " + body
+		if i == selected {
+			line = renderStyledRow(stashSelStyle.Render(" > "+body), stashSelStyle, width)
+		}
+		content = append(content, truncateToWidth(line, width))
+	}
 	return scrollAndPad(content, scroll, height)
 }
 

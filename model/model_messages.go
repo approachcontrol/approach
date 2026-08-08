@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model/modal"
@@ -282,6 +283,13 @@ type FlowResultMsg struct {
 type ActiveFlowResultMsg struct {
 	Flows       []flowstore.FlowRecord
 	ListRequest uint64
+}
+
+type BeadsOpenResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
 }
 
 type FlowAutoModeSetMsg struct {
@@ -1270,6 +1278,17 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 	m.sessions = m.sessions.SetItems(msg.Sessions)
 	m = m.clampSelectionsAfterFilter()
 	return m
+}
+
+func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
+	var ok bool
+	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeBeadsOpen, msg.ListRequest)
+	if !ok {
+		return m
+	}
+	m.beadsOpen = m.beadsOpen.SetItems(msg.Beads)
+	m.beadsOpenAvailable = msg.Available
+	return m.reflowBeadsOpen()
 }
 
 func (m Model) handleWorktreeSessionResult(msg WorktreeSessionResultMsg) Model {
