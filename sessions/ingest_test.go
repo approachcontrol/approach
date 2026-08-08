@@ -2,6 +2,8 @@ package sessions_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -13,6 +15,205 @@ import (
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/sessions"
 )
+
+func TestIngestHookValidatesProviderTranscriptPathsBeforePersistence(t *testing.T) {
+	providerCases := []struct {
+		name                 string
+		provider             sessions.Provider
+		rawTranscript        []byte
+		normalizedTranscript []byte
+	}{
+		{
+			name:                 "codex",
+			provider:             sessions.ProviderCodex,
+			rawTranscript:        []byte(`{"timestamp":"2026-08-08T20:00:00Z","role":"user","content":"codex transcript"}` + "\n"),
+			normalizedTranscript: []byte(`{"timestamp":"2026-08-08T20:00:00Z","role":"user","kind":"message","text":"codex transcript"}` + "\n"),
+		},
+		{
+			name:                 "claude",
+			provider:             sessions.ProviderClaude,
+			rawTranscript:        []byte(`{"timestamp":"2026-08-08T20:00:00Z","type":"user","message":{"role":"user","content":[{"type":"text","text":"claude transcript"}]}}` + "\n"),
+			normalizedTranscript: []byte(`{"timestamp":"2026-08-08T20:00:00Z","role":"user","kind":"message","text":"claude transcript"}` + "\n"),
+		},
+	}
+
+	for _, providerCase := range providerCases {
+		t.Run(providerCase.name, func(t *testing.T) {
+			t.Run("accepts in-root regular file", func(t *testing.T) {
+				stateRoot := t.TempDir()
+				transcriptRoot, env := providerTranscriptRoot(t, providerCase.provider)
+				transcriptPath := filepath.Join(transcriptRoot, "valid.jsonl")
+				if err := os.WriteFile(transcriptPath, providerCase.rawTranscript, 0o600); err != nil {
+					t.Fatalf("write provider transcript: %v", err)
+				}
+				canonicalPath, err := filepath.EvalSymlinks(transcriptPath)
+				if err != nil {
+					t.Fatalf("canonicalize provider transcript: %v", err)
+				}
+				sessionID := "valid-" + providerCase.name
+				payload := []byte(`{"session_id":` + quoteJSON(sessionID) + `,"transcript_path":` + quoteJSON(transcriptPath) + `}`)
+
+				record, err := sessions.IngestHook(providerCase.provider, bytes.NewReader(payload), sessions.IngestOptions{
+					StateRoot:          stateRoot,
+					CopyRawTranscripts: true,
+					Env:                env,
+				})
+				if err != nil {
+					t.Fatalf("IngestHook() error = %v", err)
+				}
+				if record.TranscriptPath != canonicalPath {
+					t.Fatalf("TranscriptPath = %q, want canonical path %q", record.TranscriptPath, canonicalPath)
+				}
+				store, err := sessions.NewStore(sessions.StoreOptions{Root: stateRoot})
+				if err != nil {
+					t.Fatalf("NewStore() error = %v", err)
+				}
+				records, err := store.List(sessions.SessionFilter{Provider: providerCase.provider})
+				if err != nil {
+					t.Fatalf("List() error = %v", err)
+				}
+				if len(records) != 1 || records[0].TranscriptPath != canonicalPath {
+					t.Fatalf("stored records = %#v, want one record with canonical transcript path %q", records, canonicalPath)
+				}
+
+				artifactDir := sessionArtifactDir(stateRoot, providerCase.provider, sessionID)
+				raw, err := os.ReadFile(filepath.Join(artifactDir, "raw.jsonl"))
+				if err != nil {
+					t.Fatalf("read raw transcript: %v", err)
+				}
+				if !bytes.Equal(raw, providerCase.rawTranscript) {
+					t.Fatalf("raw transcript = %q, want %q", raw, providerCase.rawTranscript)
+				}
+				normalized, err := os.ReadFile(filepath.Join(artifactDir, "transcript.jsonl"))
+				if err != nil {
+					t.Fatalf("read normalized transcript: %v", err)
+				}
+				if !bytes.Equal(normalized, providerCase.normalizedTranscript) {
+					t.Fatalf("normalized transcript = %q, want %q", normalized, providerCase.normalizedTranscript)
+				}
+				assertMode(t, artifactDir, 0o700)
+				for _, name := range []string{"meta.json", "transcript.jsonl", "raw.jsonl"} {
+					assertMode(t, filepath.Join(artifactDir, name), 0o600)
+				}
+			})
+
+			rejectedCases := []struct {
+				name          string
+				errorContains string
+				path          func(t *testing.T, transcriptRoot string) string
+			}{
+				{
+					name:          "relative",
+					errorContains: "must be absolute",
+					path: func(_ *testing.T, _ string) string {
+						return "relative.jsonl"
+					},
+				},
+				{
+					name:          "parent traversal",
+					errorContains: "outside expected",
+					path: func(t *testing.T, transcriptRoot string) string {
+						outsideName := "parent-traversal.jsonl"
+						outsidePath := filepath.Join(filepath.Dir(transcriptRoot), outsideName)
+						if err := os.WriteFile(outsidePath, []byte("outside parent\n"), 0o600); err != nil {
+							t.Fatalf("write parent traversal target: %v", err)
+						}
+						return transcriptRoot + string(filepath.Separator) + ".." + string(filepath.Separator) + outsideName
+					},
+				},
+				{
+					name:          "sibling prefix",
+					errorContains: "outside expected",
+					path: func(t *testing.T, transcriptRoot string) string {
+						siblingRoot := filepath.Join(filepath.Dir(transcriptRoot), filepath.Base(transcriptRoot)+"-sibling")
+						if err := os.MkdirAll(siblingRoot, 0o700); err != nil {
+							t.Fatalf("create sibling transcript root: %v", err)
+						}
+						outsidePath := filepath.Join(siblingRoot, "prefix-collision.jsonl")
+						if err := os.WriteFile(outsidePath, []byte("outside sibling\n"), 0o600); err != nil {
+							t.Fatalf("write sibling-prefix target: %v", err)
+						}
+						return outsidePath
+					},
+				},
+				{
+					name:          "symlink escape",
+					errorContains: "outside expected",
+					path: func(t *testing.T, transcriptRoot string) string {
+						outsidePath := filepath.Join(t.TempDir(), "symlink-target.jsonl")
+						if err := os.WriteFile(outsidePath, []byte("outside symlink\n"), 0o600); err != nil {
+							t.Fatalf("write symlink target: %v", err)
+						}
+						symlinkPath := filepath.Join(transcriptRoot, "escape.jsonl")
+						if err := os.Symlink(outsidePath, symlinkPath); err != nil {
+							t.Fatalf("create transcript symlink: %v", err)
+						}
+						return symlinkPath
+					},
+				},
+			}
+
+			for _, rejectedCase := range rejectedCases {
+				t.Run("rejects "+rejectedCase.name, func(t *testing.T) {
+					stateRoot := t.TempDir()
+					transcriptRoot, env := providerTranscriptRoot(t, providerCase.provider)
+					transcriptPath := rejectedCase.path(t, transcriptRoot)
+					sessionID := "rejected-" + providerCase.name + "-" + strings.ReplaceAll(rejectedCase.name, " ", "-")
+					flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: stateRoot})
+					if err != nil {
+						t.Fatalf("NewStore() error = %v", err)
+					}
+					flow, err := flowStore.Create(flowstore.FlowRecord{
+						FlowID:       "flow-" + sessionID,
+						Title:        "Reject untrusted transcript",
+						Instructions: "Reject before persistence",
+						RepoPath:     filepath.Join(stateRoot, "repo"),
+					})
+					if err != nil {
+						t.Fatalf("Create() error = %v", err)
+					}
+					env["APPROACH_FLOW_STATE_ROOT"] = stateRoot
+					env["APPROACH_FLOW_ID"] = flow.FlowID
+					env["APPROACH_FLOW_PHASE_ID"] = "plan"
+					payload := []byte(`{"session_id":` + quoteJSON(sessionID) + `,"transcript_path":` + quoteJSON(transcriptPath) + `}`)
+
+					_, err = sessions.IngestHook(providerCase.provider, bytes.NewReader(payload), sessions.IngestOptions{
+						StateRoot:          stateRoot,
+						CopyRawTranscripts: true,
+						Env:                env,
+					})
+					if err == nil {
+						t.Fatalf("IngestHook(%q) error = nil, want transcript rejection", transcriptPath)
+					}
+					if !strings.Contains(err.Error(), rejectedCase.errorContains) {
+						t.Fatalf("IngestHook(%q) error = %v, want %q", transcriptPath, err, rejectedCase.errorContains)
+					}
+
+					artifactDir := sessionArtifactDir(stateRoot, providerCase.provider, sessionID)
+					for _, path := range []string{
+						artifactDir,
+						filepath.Join(artifactDir, "meta.json"),
+						filepath.Join(artifactDir, "transcript.jsonl"),
+						filepath.Join(artifactDir, "raw.jsonl"),
+					} {
+						if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+							t.Fatalf("rejected transcript published artifact %s: %v", path, statErr)
+						}
+					}
+
+					read, err := flowStore.Read(flow.FlowID)
+					if err != nil {
+						t.Fatalf("Read() error = %v", err)
+					}
+					phase := flowPhaseByID(t, read, "plan")
+					if len(phase.Sessions) != 0 {
+						t.Fatalf("rejected transcript attached sessions = %#v, want none", phase.Sessions)
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestIngestHookResolvesGitMetadataFromCWD(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -694,6 +895,32 @@ func quoteJSON(value string) string {
 		panic(err)
 	}
 	return string(data)
+}
+
+func providerTranscriptRoot(t *testing.T, provider sessions.Provider) (string, map[string]string) {
+	t.Helper()
+	providerHome := filepath.Join(t.TempDir(), string(provider)+"-home")
+	env := make(map[string]string)
+	var transcriptRoot string
+	switch provider {
+	case sessions.ProviderCodex:
+		env["CODEX_HOME"] = providerHome
+		transcriptRoot = filepath.Join(providerHome, "sessions")
+	case sessions.ProviderClaude:
+		env["CLAUDE_CONFIG_DIR"] = providerHome
+		transcriptRoot = filepath.Join(providerHome, "projects")
+	default:
+		t.Fatalf("unsupported test provider %q", provider)
+	}
+	if err := os.MkdirAll(transcriptRoot, 0o700); err != nil {
+		t.Fatalf("create provider transcript root: %v", err)
+	}
+	return transcriptRoot, env
+}
+
+func sessionArtifactDir(root string, provider sessions.Provider, sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return filepath.Join(root, "sessions", string(provider), hex.EncodeToString(sum[:]))
 }
 
 func flowPhaseByID(t *testing.T, record flowstore.FlowRecord, phaseID string) flowstore.FlowPhase {
