@@ -1,3 +1,9 @@
+// Package sessions stores agent-session metadata and normalized transcripts
+// under the user state directory.
+//
+// Transcripts may contain secrets: they must stay under user state with
+// restrictive permissions (0700 dirs, 0600 files) and must never be written
+// inside a repository.
 package sessions
 
 import (

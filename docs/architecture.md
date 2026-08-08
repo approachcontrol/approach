@@ -1,6 +1,6 @@
 # Architecture
 
-`approach` is a Go Bubble Tea TUI for managing git worktrees across repositories. User-facing behavior, key bindings, and CLI examples are documented in `README.md`; config reference is `docs/config.md`; Flow phase semantics are `docs/flow-phases.md`.
+`approach` is a Go Bubble Tea TUI for managing git worktrees across repositories. User-facing behavior and key bindings are documented in `docs/tui-guide.md` (`README.md` is the short overview); session hooks and storage are `docs/agent-sessions.md`; config reference is `docs/config.md`; Flow phase semantics are `docs/flow-phases.md`.
 
 ## Package Map
 
@@ -27,7 +27,7 @@
 - All store roots must be absolute. `WORKTREE_ROOT` overrides `[scan].root`; `TERMINAL` overrides `[terminal].command` for launches outside tmux/Zellij. `[editor].command` is used for plans-pane Markdown editing and falls back to `EDITOR`; provider/launch config fields are parsed foundation only.
 - Sessions, plans, and Flows share one artifact root (default `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1`); moving or cleaning it moves saved artifacts too. TUI root precedence is `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` > `[sessions].root` > default; CLI subcommands also accept `--state-root` where documented. CLI-launched agents get the resolved root exported; `codex-app` receives prompt-only launch metadata plus copyable `--state-root` command examples.
 - Branch lists hide non-root worktree branches; the root branch stays pinned at the top.
-- Transcripts never live inside repositories — keep them under user state with restrictive permissions (see `docs/agent-operations.md`).
+- Transcripts never live inside repositories — keep them under user state with restrictive permissions (see `docs/agent-sessions.md`).
 - When a Flow is linked to a saved plan, transitioning a Flow phase to `completed` syncs a matching saved-plan phase with the same normalized phase ID to `completed`; missing plan phases are ignored, and sync failures mark the Flow phase `needs_attention`. Repeating `completed` for an already-completed Flow phase preserves that completed state even if the linked-plan sync later fails.
 
 ## Behavioral Notes

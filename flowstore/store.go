@@ -1,4 +1,8 @@
 // Package flowstore persists task-centric Flow records beside the agent-session store.
+//
+// Agents persist Flow changes through the `approach flow` CLI
+// (cmd/approach/flow.go), never by editing meta.json by hand — hand edits
+// bypass the store's locking, validation, and phase-ID normalization.
 package flowstore
 
 import (

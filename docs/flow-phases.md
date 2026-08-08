@@ -244,7 +244,7 @@ states (`recover-worktree`, `await-session`, `ended-session`,
 `session-mismatch`, `missing-session-id`, `missing-pr`) are layered on top, rendered prefixed
 with the phase ID like any phase state (for example `autoreview:missing-pr`),
 and are display-only; they never change persisted phase status. See
-`docs/config.md` for the pane behavior.
+`docs/tui-guide.md` for the pane behavior.
 
 When `await-session` or `ended-session` is recoverable and predecessor gates
 still hold, the selected phase row can be reset with `x` after confirmation or

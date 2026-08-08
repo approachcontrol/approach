@@ -138,13 +138,9 @@ When `max_depth` is omitted or set to `0`, Approach uses the scanner default of 
 Values greater than `2` behave like `2`.
 
 Pressing `n` in the left repo pane creates a new local Git repository directly
-under the resolved scan root. If the form's GitHub checkbox is enabled, Approach
-also runs `gh repo create <name> --public|--private --source <path> --remote origin`;
-`gh` must be installed and authenticated. A GitHub failure after local creation
-keeps the local repository and allows retrying only the GitHub/origin setup.
-Repo names must be one path segment: they cannot be empty, `.`, `..`, start
-with `-`, contain path separators, or end with `-worktrees` (reserved for Approach
-worktree directories).
+under the resolved scan root, optionally creating a GitHub repo and wiring
+`origin`; the creation form and repo-name rules are documented in
+`docs/tui-guide.md`.
 
 ### `[ui]`
 
@@ -243,7 +239,7 @@ value immediately, creating the config file if needed.
 | `claude_reasoning_effort` | string | Optional Claude Code reasoning effort for new launches. Supported values: `default`, `low`, `medium`, `high`, `xhigh`, `max`. Empty or `default` omits the Claude override and keeps provider defaults. |
 | `plan_prompt` | string | Optional template for the editable instructions opened by `i` in the plans pane. Supports `{title}`, `{plan_id}`, `{plan_path}`, `{repo_path}`, and `{worktree_path}`. When a saved-plan phase row is selected, it also supports `{phase_id}`, `{phase_title}`, and `{phase_status}`. Unknown placeholders remain literal. Blank or omitted uses the built-in prompt. |
 
-Press `F2` in normal TUI views to open the prompt-template editor. The editor
+Press `f2` in normal TUI views to open the prompt-template editor. The editor
 can save a custom `[agent].plan_prompt`, reset it to the built-in default, or
 preview the built-in prompt.
 
@@ -264,7 +260,7 @@ appends `After completing this phase goal, mark this Flow phase done with approa
 to both built-in prompts and configured templates unless the template already
 ends with that exact standalone instruction.
 
-The `F2` prompt-template editor also manages these Flow prompt keys. Saving a
+The `f2` prompt-template editor also manages these Flow prompt keys. Saving a
 blank template resets that key by removing the config override.
 
 | Key | Type | Description |
@@ -342,10 +338,9 @@ Agents persist plans explicitly through the `approach plan` subcommands; plans a
 not captured from provider hooks in v1. Each plan is stored as
 `<artifact-root>/plans/<plan-id>/meta.json` plus `plan.md`, with the same
 restrictive permissions (`0700` directories, `0600` files) and atomic writes as
-sessions. They appear in the TUI plans pane (keyboard `3`).
-Use `e` in the plans pane to edit the selected `plan.md` with `[editor].command`
-or `$EDITOR`; missing editor commands are shown in the TUI status bar. The plans
-pane refreshes when the configured editor command exits.
+sessions. They appear in the TUI plans pane (keyboard `3`); pane behavior is
+documented in `docs/tui-guide.md`, and the edit action's editor selection in
+`[editor]` above.
 
 ```bash
 # Save or update (reuse --plan-id) a plan; Markdown comes from --file or stdin.
@@ -381,17 +376,12 @@ start the TUI. Omitted metadata is filled from `APPROACH_AGENT` (provider),
 `APPROACH_LAUNCH_ID`, `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and
 `APPROACH_COMMIT`; for new plans, and for updates that provide a repo or worktree
 location, Approach also resolves best-effort repo, worktree, branch, and commit
-metadata from git. `codex-app` launches do not inherit `APPROACH_*` shell
-environment variables because Approach opens a macOS deep link; Approach uses the repo
-path as the deep-link project path and includes worktree, state-root, plan, and
-flow values as prompt-only launch metadata. That metadata includes copyable
-`approach plan list --json --state-root ...` and
-`approach flow list --json --state-root ...` examples that show where to pass the
-state root for subsequent plan and flow commands. The
-`approach-plan-persist` skill instructs agents on when and how to save plans; its
-canonical source lives in
-`agent-skills/approach-plan-persist/` for symlinking into user-level Codex/Claude
-skill directories.
+metadata from git. `codex-app` launches do not inherit `APPROACH_*` shell environment variables
+because Approach opens a macOS deep link; they receive prompt-only launch
+metadata instead (see `docs/agent-sessions.md`). The `approach-plan-persist`
+skill instructs agents on when and how to save plans; its canonical source
+lives in `agent-skills/approach-plan-persist/` for symlinking into user-level
+Codex/Claude skill directories.
 
 ## Flows
 
@@ -400,74 +390,12 @@ through `approach flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
 flows pane (keyboard `4`), which is the startup default unless `[ui].default_view`
-is set. The pane shows linked plan
-IDs when present; press `n` to create a new Flow. On a Flow row or expanded
-phase row, `enter` expands or collapses read-only phase detail rows; `o` opens
-the linked plan body from the selected Flow. Press `g` to launch the first
-launchable phase for the selected Flow. Press `c` to copy the selected Flow ID,
-and press `y` to copy the selected Flow worktree path, from either a Flow row or
-one of its expanded phase rows. Press `a` to toggle per-Flow auto mode. New Flow
-records start with auto mode on, and the toggle is persisted on each Flow. Flows
-created before this field existed remain manual until auto mode is toggled on.
-Press `m` on an eligible Flow row to mark a recorded GitHub PR as already
-merged; Approach verifies the PR with `gh`, records the existing merge commit and
-timestamp, completes the Merge phase, and does not launch a Merge phase agent.
-When auto mode is on, completed
-CLI phases running in an embedded Flow terminal advance only after the completed
-phase's terminal exits normally and auto-closes; terminal exit also triggers a
-Flow refresh so newly persisted completion state is discovered without waiting
-for unrelated UI activity. Auto mode still skips non-completed outcomes and
-stops before Merge; Merge still requires a manual launch.
-The active flows pane (`ctrl+a`) shows active Flows across all repos and hides
-merged Flow records. Pressing `ctrl+a` again from active flows returns to the
-previous view; number keys and arrows do not leave the pane. Moving focus to the
-left repo pane temporarily filters the visible active rows to the selected repo,
-and returning focus to the middle pane
-restores the global list. It supports the same Flow actions, phase launches,
-attached-session resumes, auto-mode toggles, `c` Flow ID copy, `y` worktree path
-copy, and embedded Flow terminal management as the flows pane.
-Headless mode is on by default:
-selected CLI `codex` and `claude` phase launches run in an embedded terminal
-inside the flows pane. Press `h` to choose the CLI command mode: headless runs
-`codex exec` or `claude --print`, while headless off runs interactive `codex` or
-`claude` in the same embedded Flow terminal. Headless-off Flow launches prefill
-the phase prompt without submitting it, then focus the Flow terminal in input
-mode so you can review or edit it before pressing enter. Headless launches keep
-focus on the Flow list. Creating a new Flow has its own default-on Headless
-checkbox for the initial Plan launch; uncheck it for an interactive initial
-Plan launch. That checkbox does not change the selected-phase `h` setting.
-Press `M` to choose the configured CLI agent's model and `E` to choose its
-reasoning effort for future launches; the
-shortcut pane shows the current values. Manual phase launches, auto-launched
-phases, and new Flow Plan launches all use the configured agent and that
-agent's configured model and effort.
-`codex-app` remains URL/deep-link based, launches externally, and uses
-app-side/default model and reasoning. Press `r` to resume an attached
-provider session from the selected phase row; CLI resumes open in runtime-only
-embedded PTYs in the flows pane, while `codex-app` resumes navigate externally.
-While a Flow terminal is open, `tab` cycles focus through the repo pane, Flow
-list, and Flow terminal. Manually tabbing into Flow terminal focus starts in
-Approach command mode:
-`left`/`right` cycles Flow terminals, `1`-`9` switches by number, `d` detaches to
-tmux when available, `x` closes, `q`/`esc` quits, unknown ordinary keys do not
-pass through to the PTY, and `ctrl+]` sends a literal `ctrl+]`; `i` enters
-terminal input mode. In input mode, keys pass through to the PTY (including
-agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command mode. Embedded
-headless output is rendered as
-readable terminal text rather than raw provider event JSON; `codex exec` streams
-its progress directly, whereas headless `claude --print` runs with
-`--output-format stream-json --include-partial-messages` and Approach translates
-those events (thinking, tool calls and results, the final answer streamed
-token-by-token, and a closing summary) into readable lines so the panel shows
-live progress instead of staying blank until the run completes. Expanded rows
-group child implementation phases directly under Implementation. New launches
-record a launch ID and Flow/plan environment metadata for the agent; CLI
-phase-session resumes also record a fresh launch ID, while `codex-app` resumes
-navigate to the existing app thread without additional launch tracking. With
-destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
-record under the Flow artifact store; it leaves linked plans, sessions,
-transcripts, worktrees, repositories, branches, and checked-out code intact.
-Other phase and progression mutation remains CLI/agent-driven in v1.
+is set. The TUI can create a new Flow, launch the next launchable phase,
+toggle per-Flow auto mode, resume attached phase sessions, record a manual
+GitHub merge, and delete a top-level Flow record in destructive mode; pane
+keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
+Flow terminals are documented in `docs/tui-guide.md`. Other phase and
+progression mutation remains CLI/agent-driven in v1.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
@@ -502,16 +430,9 @@ approach flow pr set --flow-id ID --provider github --number N --url URL \
     --head HEAD_BRANCH --base BASE_BRANCH [--status STATUS] [--state-root PATH]
 ```
 
-When a Flow is linked to a saved plan, transitioning a Flow phase to `completed`
-also marks a matching saved-plan phase with the same normalized phase ID as
-`completed`. Missing saved-plan phases are ignored. If that sync fails, Approach
-marks the Flow phase `needs_attention` and reports the persistence error.
-Repeating `completed` for an already-completed Flow phase preserves that
-completed state even if the linked-plan sync later fails.
-The TUI-owned manual merge shortcut still treats linked-plan sync failure as
-recoverable: the previous PR status is restored, terminal merge metadata is
-cleared, the Merge phase is marked `needs_attention`, and the Flow stays
-visible.
+Transitioning a Flow phase to `completed` also syncs a linked saved-plan phase
+with the same normalized phase ID; the sync and failure semantics are
+documented in `docs/flow-phases.md` (Linked plan sync).
 
 Flow IDs use the same safe single-path-segment shape as plans:
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use
@@ -526,47 +447,18 @@ and `abandoned`. Phase statuses include `pending`, `ready`, `running`,
 transition table, derived-readiness gate rules, and the on-disk compatibility
 story live in [flow-phases.md](flow-phases.md).
 
-The flows pane distinguishes recoverable partial states from ordinary phase
-states. It shows `recover-worktree` when a saved Flow has no branch/worktree
-metadata, `await-session` when a running phase has a launch attempt but no
-attached provider session yet, `ended-session` when the latest attached
-provider session has ended, `session-mismatch` when a phase's attached session
-launch ID does not match the phase launch IDs, `missing-session-id` when an
-attached session lacks a provider session ID, and `missing-pr` on a pending
-Autoreview phase when PR Creation completed without structured PR metadata.
+The flows pane layers recovery labels (`recover-worktree`, `await-session`,
+`ended-session`, `session-mismatch`, `missing-session-id`, `missing-pr`) over
+recoverable partial states; the labels are documented in `docs/tui-guide.md`,
+and the `approach flow phase reset` recovery semantics in `docs/flow-phases.md`.
 
-On a selected `await-session` or `ended-session` phase row, `x` offers a
-confirmed reset back to derived `ready` only when no running or starting
-embedded Flow terminal is attached to that same Flow phase. `approach flow phase
-reset` performs the same persisted recovery from the CLI. The reset removes the
-stale latest launch attempt, removes sessions tied to that launch, persists the
-phase as `pending`, and lets Approach derive `ready`. Any non-ended attached
-session on the merged logical phase and any session mismatch are rejected;
-agents still cannot set `ready` directly.
-
-The Plan Review phase gates Implementation. Plan Review completion must use
-`--outcome approved` or `--outcome approved_with_concerns`; the latter requires
-`--notes`. Use `--status needs_attention --outcome changes_requested --notes
-...` for requested plan revisions, or `--status blocked --outcome blocked
---notes ...` for missing inputs or external blockers. Implementation becomes
-ready only after approved Plan Review outcomes, or after an explicit
-skipped-with-notes Plan Review override.
-
-For common phase outcomes, `approach flow phase complete`, `approach flow phase block`,
-and `approach flow phase needs-attention` wrap the same validation and persistence
-as `phase set`, then print JSON containing the updated phase, the next
-actionable phase state, and allowed statuses for that next action. Notes
-requirements are still enforced by the same store rules as `phase set`. Plan
-Review wrappers fill the unambiguous outcomes when omitted: `complete` uses
-`approved`, `block` uses `blocked`, and `needs-attention` uses
-`changes_requested`. Autoreview wrappers fill `passed`, `blocked`, and
-`needs_attention` for the matching common outcomes. Use
-`approach flow phase restart` to rerun a blocked or needs-attention phase as
-`running`; if `--notes` is omitted, Approach records a standard rerun note. Use
-`approach flow phase reset` only for Approach-owned stale running recovery
-(`await-session` or `ended-session`). Use `phase set` when a phase needs an
-explicit uncommon status or a
-skipped-with-notes override.
+Phase gating, outcome and notes requirements, and the wrapper commands'
+default outcomes are documented in `docs/flow-phases.md`. In short: the
+`complete`/`block`/`needs-attention` wrappers share `phase set`'s validation
+and print JSON with the updated phase and the next actionable phase state,
+`restart` reruns a blocked or needs-attention phase as `running`, `reset` is
+Approach-owned recovery, and `phase set` covers explicit uncommon statuses and
+skipped-with-notes overrides.
 
 Implementation can be split into ordered child phases with
 `approach flow phase add-child`. Child phase IDs are stable and normalized (trimmed
@@ -657,121 +549,15 @@ manually afterward.
 
 ## Agent Session Hooks
 
-Agents launched from Approach with `a`, `N`, Flow `g`, or session
-resume `r` are wired automatically. Approach passes Claude Code or Codex a
-session-end hook that calls the current Approach binary, and it appends the
-environment metadata listed below so the hook can associate the session with
-the selected repo and worktree.
-
-Approach can also ingest hook payloads from manual provider configuration:
-
-```bash
-approach session-hook --provider claude
-approach session-hook --provider codex
-```
-
-For development and tests, pass an explicit state root:
-
-```bash
-approach session-hook --provider codex --state-root /tmp/approach-sessions-test
-```
+Agents launched from Approach are wired with a session-end hook and `APPROACH_*`
+environment metadata automatically. Manual provider hook setup, hook JSON
+examples, the exported metadata, end-event handling, and resume semantics are
+documented in `docs/agent-sessions.md`; embedded-terminal behavior is in
+`docs/tui-guide.md`.
 
 `session-hook` loads the normal Approach config before ingesting the hook payload.
 `--state-root` overrides `[sessions].root`, and `APPROACH_SESSION_STATE_ROOT`
 overrides the configured root when `--state-root` is omitted. The
 `copy_raw_transcripts` setting controls whether provider-native transcript data
-is copied to `raw.jsonl`; it is off by default, and normalized transcript events
-are still written for the sessions view.
-
-Codex may ask you to review and trust the injected hook with `/hooks` before it
-runs it. After trust is recorded for the unchanged hook command, later
-Approach-launched Codex sessions can save normally.
-
-Claude Code hook example:
-
-```json
-{
-  "hooks": {
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "approach session-hook --provider claude"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Codex hook example:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "approach session-hook --provider codex"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-When Approach launches or resumes a CLI agent session, it appends `APPROACH_*`
-environment metadata, including `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
-`APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, `APPROACH_COMMIT`,
-`APPROACH_SESSION_STATE_ROOT`, `APPROACH_PLAN_STATE_ROOT`, `APPROACH_FLOW_STATE_ROOT`, and
-plan or flow IDs, paths, and phase fields when available.
-`codex-app` launches are the exception: Approach opens a macOS deep link, scrubs
-inherited `APPROACH_*` from `open`, and includes prompt-only launch metadata with
-copyable `--state-root` command examples. New `codex-app` threads use the repo
-path for Codex App project identity when available; the selected worktree path
-is still included in the prompt metadata.
-
-Session resume uses the stored provider session ID. Codex resumes with
-`codex ... resume <session-id>` and Claude Code resumes with
-`claude ... --resume <session-id>`, while preserving the same Approach hook and
-metadata environment wiring as fresh launches. In the full sessions view, those
-CLI resumes run inside runtime-only embedded PTYs in the sessions pane. When
-`tmux` is available at launch time, those embedded CLI terminals are backed by a
-per-launch tmux session and `ctrl+] d` detaches Approach's embedded client while the
-agent continues in tmux. Approach then opens a new external terminal running the
-tmux reattach command, using the detach handoff order described in
-`[terminal]`. Platforms without `$TERMINAL`, `[terminal].command`, or the macOS
-Terminal AppleScript fallback report the handoff error after detach; the agent
-continues in the detached tmux session. When `tmux` is unavailable, Approach uses
-the direct embedded PTY path and reports detach unavailable. Fresh Flow `g`
-launches and Flow phase-session resumes run CLI agents inside runtime-only
-embedded PTYs in the flows pane; Flow headless mode chooses
-headless provider commands (`codex exec` / `claude --print`) versus interactive
-provider commands (`codex` / `claude`) inside that embedded terminal. Flow
-phase-session resumes also run inside runtime-only embedded PTYs in the flows
-pane. Other non-Flow agent launches keep using their existing external terminal
-transport, and `codex-app` Flow launches and resumes keep using deep-link
-transport. `ctrl+] x` and quit cleanup terminate embedded terminals and kill
-tmux sessions created by the current embedded launch; detached sessions are no
-longer owned by Approach and are not terminated when Approach exits. The TUI refuses to
-resume a stored session whose provider session ID is blank (it reports this in
-the status line instead), and command construction trims resume session IDs and
-rejects whitespace-only ones, so a resume command never carries a blank `--resume`
-argument.
-
-Hook payloads whose `session_id` is blank or whitespace-only are rejected at
-ingest time: no session record is persisted and no Flow phase attachment is
-made.
-
-For Codex hook payloads with `hook_event_name = "Stop"`, Approach records the
-session as ended. Claude hook ingestion also records ended sessions, using the
-payload end time when present and the current time as a fallback.
-
-Transcripts can contain secrets, credentials, private prompts, and proprietary
-code. Keep the sessions root in user-private storage and avoid committing
-captured transcript files.
+is copied to `raw.jsonl`; it is off by default, and normalized transcript
+events are still written for the sessions view.

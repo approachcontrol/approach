@@ -10,6 +10,11 @@ import (
 
 // ValidateTranscriptPath canonicalizes an existing provider transcript and
 // rejects paths outside that provider's configured transcript root.
+//
+// Hook payloads name arbitrary paths, so canonicalization (symlink
+// resolution plus containment against the provider root — Codex
+// $CODEX_HOME/sessions, Claude $CLAUDE_CONFIG_DIR/projects) is what keeps a
+// crafted payload from making Approach ingest files outside that root.
 func ValidateTranscriptPath(provider Provider, path string, env map[string]string) (string, error) {
 	canonicalPath, _, err := validateTranscriptPath(provider, path, env)
 	return canonicalPath, err

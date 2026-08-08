@@ -1,3 +1,4 @@
+# CI merge gate: `gofmt -l .` must print nothing, `make test` and `make build` must pass.
 BIN_DIR  = bin
 BINARY   = $(BIN_DIR)/approach
 VERSION_PACKAGE = github.com/approachcontrol/approach/internal/version
