@@ -1,4 +1,4 @@
-# approach Roadmap Todo
+# Approach Roadmap Todo
 
 This checklist is derived from `docs/product-roadmap.md`. Use it as the
 operational tracker for checking off roadmap work as it lands.
@@ -27,7 +27,7 @@ clear.
 
 ## Phase 3: Multi-Repo Operations
 
-Goal: make approach more than a per-repo switcher while preserving safety and
+Goal: make Approach more than a per-repo switcher while preserving safety and
 clarity.
 
 - [x] P1 - Fetch all visible repos: extend the current fetch action across filtered repos with clear progress and failure reporting.
@@ -63,7 +63,7 @@ surface is stronger.
 
 ## Phase 6: Configuration and Personal Workflow
 
-Goal: let users adapt approach without changing source or environment wrappers.
+Goal: let users adapt Approach without changing source or environment wrappers.
 
 - [ ] P1 - Multiple scan roots: support developers who split work across `~/dev`, client folders, and sandbox folders.
 - [ ] P1 - Custom code-open command: support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env instead of hardcoding `code`.

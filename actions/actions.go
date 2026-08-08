@@ -710,7 +710,7 @@ type LaunchOptions struct {
 	TerminalCommand string
 }
 
-// AgentLaunchContext carries metadata approach knows at launch time so provider
+// AgentLaunchContext carries metadata Approach knows at launch time so provider
 // hooks can associate later session records with the selected repo/worktree.
 type AgentLaunchContext struct {
 	Command           string

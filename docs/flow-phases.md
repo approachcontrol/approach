@@ -12,24 +12,24 @@ The code-level source of truth is the `phaseTransitions` table in
 Flow phases keep the persisted seven-status model rather than collapsing to a
 smaller `ready`/`running`/`done`/`blocked` set:
 
-- `pending` and `ready` are derived bookkeeping owned entirely by approach. They
+- `pending` and `ready` are derived bookkeeping owned entirely by Approach. They
   are what let the TUI identify whether a selected phase row is launchable
   without agents or the UI re-deriving gate rules.
 - `needs_attention` is distinct from `blocked` on purpose: it marks
   non-blocking concerns a human should review, while `blocked` stops the
   pipeline.
 - Agents never see or reason about the derived statuses; they set exactly five
-  statuses and approach does the rest.
+  statuses and Approach does the rest.
 
-The simplification happened in *ownership*, not in the enum: approach owns
+The simplification happened in *ownership*, not in the enum: Approach owns
 readiness, agents own honest reporting of their own phase.
 
 ## Statuses and who sets them
 
 | Status | Set by | Meaning |
 | --- | --- | --- |
-| `pending` | approach (derived) | Predecessor gates are not yet satisfied. |
-| `ready` | approach (derived) | All predecessor gates satisfied; launchable. |
+| `pending` | Approach (derived) | Predecessor gates are not yet satisfied. |
+| `ready` | Approach (derived) | All predecessor gates satisfied; launchable. |
 | `running` | agent / TUI launch | Work on the phase has started. |
 | `needs_attention` | agent | Non-blocking concern for a human to review. |
 | `completed` | agent | Phase work finished. |
@@ -42,7 +42,7 @@ Agents may set only `running`, `needs_attention`, `completed`, `blocked`, and
 `approach flow phase needs-attention` use the same validation and persistence path
 for the common `completed`, `blocked`, and `needs_attention` outcomes. The
 `approach flow phase restart` wrapper records `running` with a rerun note.
-`approach flow phase reset` is a approach-owned recovery operation for stale running
+`approach flow phase reset` is an Approach-owned recovery operation for stale running
 phases, not an agent-facing transition. These wrappers print JSON with the
 updated phase and next actionable phase state.
 They do not add separate notes requirements; store validation remains the
@@ -162,18 +162,18 @@ Custom preset validation is strict at config/create time:
 Readiness is best-effort for existing on-disk records. If Kahn's algorithm
 cannot release a node because of a cycle, dangling dependency, duplicate
 normalized ID beyond the first occurrence, or a transitive dependency on one of
-those nodes, approach leaves that node's stored status untouched. This avoids
+those nodes, Approach leaves that node's stored status untouched. This avoids
 destroying recorded work on a malformed hand-authored record. Index-aware launch
 eligibility prevents stale duplicate rows from being selected for manual or
 AutoMode launches.
 
 Records created from named custom presets persist `preset_name`. If a record is
-later read with missing `depends_on` keys, approach uses the named preset as a
+later read with missing `depends_on` keys, Approach uses the named preset as a
 recovery hint when the preset is available and its phase IDs still match. The
 non-persisted `GraphRecovery.Status` values are:
 
 - `preset_edges_restored`: missing edges were restored from the named preset.
-- `missing_edges_unresolved`: approach refused to invent a graph. Re-select or
+- `missing_edges_unresolved`: Approach refused to invent a graph. Re-select or
   recreate the preset, or repair the record manually.
 
 Default-preset records still use legacy linear backfill when `depends_on` is
@@ -211,12 +211,12 @@ When a Flow has a linked saved plan, transitioning a Flow phase to `completed`
 also marks a saved-plan phase with the same normalized phase ID as `completed`.
 Missing saved-plan phases are ignored, and already-completed saved-plan phases
 are left unchanged. If the linked plan cannot be read or updated during that
-transition, approach marks the Flow phase `needs_attention` with a sync-failure note
+transition, Approach marks the Flow phase `needs_attention` with a sync-failure note
 and returns the persistence error so the agent can report it. Repeating
 `completed` for an already-completed Flow phase preserves that completed state
 even if the linked-plan sync later fails.
 Manual GitHub merge recording is stricter: if syncing the linked plan's Merge
-phase fails while terminal merge metadata is being recorded, approach restores the
+phase fails while terminal merge metadata is being recorded, Approach restores the
 previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.

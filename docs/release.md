@@ -6,7 +6,7 @@ Release artifacts with checksums, generated release notes, and a Homebrew cask.
 ## Homebrew Tap Setup
 
 Homebrew casks are published to `approachcontrol/homebrew-tap`. Homebrew exposes
-that repository as the short tap name `approachcontrol/tap`, so users install approach
+that repository as the short tap name `approachcontrol/tap`, so users install Approach
 with:
 
 ```bash

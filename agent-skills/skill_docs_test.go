@@ -164,8 +164,8 @@ func TestApproachFlowCreateSkillDocumentsAgentContract(t *testing.T) {
 	requireContainsAll(t, "skill metadata", skill, []string{
 		"name: approach-flow-create",
 		"make a flow from this",
-		"add this as a approach flow",
-		"create a approach flow for this plan",
+		"add this as an Approach flow",
+		"create an Approach flow for this plan",
 	})
 	requireContainsAll(t, "independent flow creation", skill, []string{
 		"does not require `APPROACH_FLOW_ID` or `APPROACH_FLOW_PHASE_ID`",
@@ -382,7 +382,7 @@ func TestApproachFlowSkillDocumentsPlanReviewGateOutcomes(t *testing.T) {
 		"approved_with_concerns",
 		"changes_requested",
 		"blocked",
-		"approach derives all phase readiness",
+		"Approach derives all phase readiness",
 		`approach flow phase needs-attention --notes "..."`,
 		`approach flow phase complete --outcome "approved_with_concerns" --notes "..."`,
 		`approach flow phase block --notes "..."`,

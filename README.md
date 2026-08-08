@@ -1,4 +1,4 @@
-# approach
+# Approach
 
 A terminal UI for managing git worktrees across repositories.
 
@@ -126,7 +126,7 @@ While the Git view is active a second header row lists its subviews with their
 direct letter keys (`w` worktrees, `b` branches, `s` stashes, `h` history, `r`
 reflog); the active entries are bracketed. Entering the Git view lands on the
 last-used subview (worktrees on first entry), and each subview keeps its own
-cursor position and filter across switches. Press `V` to choose which view approach opens on future
+cursor position and filter across switches. Press `V` to choose which view Approach opens on future
 launches; leaving it unset keeps the built-in startup default of Flows. Press
 `enter` or `tab` from the repo pane to focus the content pane. In the content
 pane, `tab` or `bksp` switches focus back to the left repo pane. Press `f2` from normal
@@ -141,18 +141,18 @@ Press `n` in the left repo pane to create a new repository directly under the
 resolved scan root. The form asks for a repo name, whether to create a GitHub
 repo (checked by default), and public/private visibility (public by default).
 Repo names must be one path segment: they cannot be empty, `.`, `..`, start
-with `-`, contain path separators, or end with `-worktrees` (reserved for approach
+with `-`, contain path separators, or end with `-worktrees` (reserved for Approach
 worktree directories).
-approach always creates the local Git repository first. When GitHub creation is
-enabled, approach then runs `gh repo create <name> --public|--private --source <path> --remote origin`;
+Approach always creates the local Git repository first. When GitHub creation is
+enabled, Approach then runs `gh repo create <name> --public|--private --source <path> --remote origin`;
 `gh` must be installed and authenticated. If the GitHub step fails after local
-creation succeeds, approach keeps the local repo and reopens the form so submitting
+creation succeeds, Approach keeps the local repo and reopens the form so submitting
 again retries only the GitHub/origin setup against that existing local path.
 
 ### Git view: worktrees subview (`1`, then `w`)
 
 Shows all worktree checkouts for the selected repo. The main (root) worktree
-always appears first with a blue `[root]` annotation. approach starts in the flows
+always appears first with a blue `[root]` annotation. Approach starts in the flows
 view by default unless `[ui].default_view` is set; worktrees is the default
 subview the first time you enter the Git view.
 
@@ -162,17 +162,17 @@ Each row shows the branch name (or `(detached)` for detached HEAD), status indic
 - `●` red: dirty — shows `N files +X/-Y` (lines added/deleted)
 - `✗` red: stale — worktree directory no longer exists
 
-Press `A` to choose `codex`, `codex-app`, or `claude` from a picker; approach persists the choice to config.
+Press `A` to choose `codex`, `codex-app`, or `claude` from a picker; Approach persists the choice to config.
 In flows view, press `E` to choose the selected CLI agent's reasoning effort
 for future launches.
 Press `a` to launch the selected agent in the current non-stale worktree, or
 `N` to create a worktree and launch the agent there immediately. Press `n` to
 create a worktree without launching an agent. Enter an existing branch, tag, or
-new branch name; approach creates it under a sibling `<repo>-worktrees/` directory
+new branch name; Approach creates it under a sibling `<repo>-worktrees/` directory
 and refreshes the list. Press `P` to create a review worktree from a GitHub PR
-number or URL; approach fetches the PR head into `pr-<number>` and checks it out
+number or URL; Approach fetches the PR head into `pr-<number>` and checks it out
 under the same sibling worktree directory. If a matching `[bootstrap]` hook is
-configured, approach runs it after successful worktree creation; hook failures keep
+configured, Approach runs it after successful worktree creation; hook failures keep
 the worktree, show a status error, and prevent automatic agent launch for `N`.
 Press `f` to `git fetch --prune` and `F` to `git pull --ff-only` for the
 selected worktree. Press `m` on a linked non-stale, unlocked worktree to move it
@@ -238,31 +238,31 @@ exist, the saved-session table is hidden and the pane shows a compact numbered
 terminal header plus the active terminal screen. While the session terminal
 right pane is focused, all keys except `tab` go directly to the active PTY
 (including agent shortcuts like `ctrl+g`); after tabbing to the left pane, repo
-pane keys operate normally. Press `ctrl+]` for approach commands: `ctrl+] 1`-`9`
+pane keys operate normally. Press `ctrl+]` for Approach commands: `ctrl+] 1`-`9`
 switches terminals, `ctrl+] l` opens a saved-session
 picker, `ctrl+] d` detaches a tmux-backed terminal and opens a new external
 terminal attached to that tmux session, `ctrl+] x` dismisses an exited terminal or confirms termination of a
 running one, `ctrl+] q` or `ctrl+] esc` quits with cleanup, and
 `ctrl+] ctrl+]` sends a literal `ctrl+]` to the agent.
 When `tmux` is available at launch time, embedded CLI terminals start inside a
-per-launch tmux session so detach can close approach's embedded client while the
-agent keeps running in tmux. After detach, approach opens the reattach command with
+per-launch tmux session so detach can close Approach's embedded client while the
+agent keeps running in tmux. After detach, Approach opens the reattach command with
 `$TERMINAL`, then `[terminal].command`, then the macOS Terminal AppleScript
 fallback when available. Active tmux/Zellij clients and installed inactive
 tmux/Zellij commands are not used for this handoff. If no external terminal
-transport is available, approach still leaves the agent detached in tmux and reports
-the handoff error. If `tmux` is unavailable, approach keeps the direct embedded PTY
+transport is available, Approach still leaves the agent detached in tmux and reports
+the handoff error. If `tmux` is unavailable, Approach keeps the direct embedded PTY
 behavior and `ctrl+] d` reports that detach is unavailable.
-Quitting approach from anywhere while embedded terminals are still running asks for
+Quitting Approach from anywhere while embedded terminals are still running asks for
 confirmation and terminates them first. Terminate/quit cleanup kills tmux
 sessions created by that embedded launch; detached tmux sessions are no longer
-owned by approach and are not prompted for on quit. Embedded terminals are not
-restored after approach restarts.
+owned by Approach and are not prompted for on quit. Embedded terminals are not
+restored after Approach restarts.
 
 Session data is stored under the user state directory by default:
 `$XDG_STATE_HOME/approach/sessions/v1`, or
 `~/.local/state/approach/sessions/v1` when `XDG_STATE_HOME` is unset. Transcripts
-may contain secrets or private prompts; approach keeps them outside repositories and
+may contain secrets or private prompts; Approach keeps them outside repositories and
 uses restrictive file permissions for created session files. Provider session IDs
 are stored in hashed directory names instead of raw path components.
 Hook transcript paths must resolve to regular files inside the provider-owned
@@ -270,13 +270,13 @@ transcript root. Codex uses `$CODEX_HOME/sessions` (default
 `$HOME/.codex/sessions`); Claude uses `$CLAUDE_CONFIG_DIR/projects` (default
 `$HOME/.claude/projects`). Set those existing provider environment variables
 when the provider itself uses a custom home or config directory. Relative paths,
-paths outside the expected root, and symlink escapes are rejected before approach
+paths outside the expected root, and symlink escapes are rejected before Approach
 creates session artifacts.
-When resuming a session, approach runs the provider resume command from the recorded
+When resuming a session, Approach runs the provider resume command from the recorded
 session `cwd` when present, falling back to the captured worktree path, while
 preserving the stored worktree metadata for subsequent hooks. `codex-app`
 resumes keep using the existing macOS deep-link path rather than an embedded
-terminal. Sessions missing a provider session ID cannot be resumed; approach reports
+terminal. Sessions missing a provider session ID cannot be resumed; Approach reports
 this in the status line instead of starting a fresh provider session. Hook
 payloads without a usable session ID are rejected at capture time, so no
 unusable session records are stored.
@@ -330,10 +330,10 @@ state default. CLI-launched agents get `APPROACH_SESSION_STATE_ROOT`,
 artifact root. Omitted metadata is filled first from `APPROACH_AGENT`,
 `APPROACH_LAUNCH_ID`, `APPROACH_REPO_PATH`,
 `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and `APPROACH_COMMIT`; for new plans, and for
-updates that provide a repo or worktree location, approach also resolves best-effort
+updates that provide a repo or worktree location, Approach also resolves best-effort
 repo, worktree, branch, and start commit metadata from git. `codex-app`
 launches use macOS `open`, so they do not inherit `APPROACH_*` shell environment
-variables; approach uses the repo path as the deep-link project path and includes
+variables; Approach uses the repo path as the deep-link project path and includes
 worktree, state-root, plan, and flow values as prompt-only launch metadata.
 That metadata includes copyable `approach plan list --json --state-root ...` and
 `approach flow list --json --state-root ...` examples that show where to pass the
@@ -361,7 +361,7 @@ Flow. Uncheck it to create a parked Flow with its instructions, worktree,
 branch, and start commit saved; the ready root phase can be launched later from
 the Flow row. On a Flow row, `enter`
 expands or collapses phase detail rows; `o` pages the linked plan body in
-`less -R`, and approach shows a status message when the selected Flow has no linked
+`less -R`, and Approach shows a status message when the selected Flow has no linked
 plan. With
 destructive mode enabled (`D`), `d` deletes only the selected top-level Flow
 record under the Flow artifact store; it does not remove repositories,
@@ -385,13 +385,13 @@ existing app thread without extra launch tracking. Press `a` on a Flow row or
 expanded phase row to toggle per-Flow auto mode, which is on by default for new
 Flows and persisted on that Flow record. Flows created before this field existed
 remain manual until auto mode is toggled on. Press `m` on an eligible Flow row
-when its recorded GitHub PR was merged manually in GitHub; approach verifies the PR
+when its recorded GitHub PR was merged manually in GitHub; Approach verifies the PR
 is merged with `gh`, records the merge commit and timestamp, marks the Merge
 phase completed, and hides the Flow from active lists without launching a Merge
-phase agent. When auto mode is on, approach runs an always-on, all-repos advance
+phase agent. When auto mode is on, Approach runs an always-on, all-repos advance
 poll that detects live completed-phase transitions and drains the Flow by
 launching the first ready non-merge phase in display order. Auto-launched CLI
-phases are always headless and do not change the current view or focus. approach
+phases are always headless and do not change the current view or focus. Approach
 launches at most one phase per Flow at a time: if any phase is running or any
 Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
 A 3 s status message announces auto-launches, `needs_attention`, and
@@ -399,7 +399,7 @@ merge-ready transitions unless another status message is active. Skipped,
 blocked,
 needs-attention, failed-launch, or missing-PR-metadata states do not
 auto-launch. Automation stops before Merge: if Autoreview completes and Merge
-becomes ready, approach keeps auto mode on and requires the existing manual Merge
+becomes ready, Approach keeps auto mode on and requires the existing manual Merge
 launch.
 
 ### Active Flows view (`ctrl+a`)
@@ -439,20 +439,20 @@ model_reasoning_effort=<effort>`; Claude launches use `--model <model>` and
 model and reasoning. Embedded headless output is readable terminal text, not raw
 JSON events: `codex exec` streams its progress
 directly, while `claude --print` is run with `--output-format stream-json
---include-partial-messages` and approach translates those events into readable lines
+--include-partial-messages` and Approach translates those events into readable lines
 (thinking, tool calls and results, the final answer streamed token-by-token, and
 a closing summary) so a Claude phase shows live progress as it works instead of a
 blank terminal. While a Flow terminal is open,
 the Flow list uses a smaller top panel and the terminal uses a bottom panel;
 `tab` cycles focus through the repo pane, Flow list, and Flow terminal. Manually
-tabbing into Flow terminal focus starts in approach command mode: `left`/`right`
+tabbing into Flow terminal focus starts in Approach command mode: `left`/`right`
 cycle Flow terminals, `1`-`9` switches by number, `x` closes, `d` detaches to
 tmux when available and opens the detached session in an external terminal,
 `q`/`esc` quits, unknown ordinary keys do not pass through to the PTY, `ctrl+]`
 sends a literal `ctrl+]`, and `i` enters terminal input mode. In input
 mode, keys pass through to the PTY (including agent shortcuts like `ctrl+g`)
 and `ctrl+]` returns to command mode. When
-Implementation is still gated by Plan Review, approach reports the Plan Review state
+Implementation is still gated by Plan Review, Approach reports the Plan Review state
 and notes instead of launching. When PR Creation is complete but structured PR
 metadata is missing, Autoreview remains pending and the Flow row shows
 `autoreview:missing-pr`.
@@ -473,10 +473,10 @@ When an expanded phase row shows `await-session` or `ended-session`, and no
 running or starting embedded Flow terminal is attached to that same Flow phase,
 the selected phase row exposes `x reset ready`. Confirming the prompt removes
 the newest stale launch attempt, removes ended session records tied to that
-launch, persists the phase as `pending`, and lets approach derive the phase back to
+launch, persists the phase as `pending`, and lets Approach derive the phase back to
 `ready`. `approach flow phase reset` performs the same recovery from the CLI. Live
 or unknown-status attached sessions anywhere on the merged logical phase, and
-session launch mismatches, are rejected. This is approach recovery for an abandoned
+session launch mismatches, are rejected. This is Approach recovery for an abandoned
 launch attempt or ended provider session, not a new agent transition; `ready`
 still cannot be set through `approach flow phase set`.
 
@@ -559,7 +559,7 @@ approach flow merge set --flow-id "$FLOW_ID" \
 
 When a Flow is linked to a saved plan, transitioning a Flow phase to `completed`
 also marks a matching saved-plan phase with the same normalized phase ID as
-`completed`. Missing saved-plan phases are ignored. If that sync fails, approach
+`completed`. Missing saved-plan phases are ignored. If that sync fails, Approach
 marks the Flow phase `needs_attention` and reports the persistence error.
 Repeating `completed` for an already-completed Flow phase preserves that
 completed state even if the linked-plan sync later fails.
@@ -585,7 +585,7 @@ require commits or pushes without embedding phase-restart recipes. All Flow
 phase launch prompts also end with:
 `After completing this phase goal, mark this Flow phase done with approach-flow.`
 Use `approach flow phase restart` to rerun a blocked or needs-attention phase as
-`running`; if notes are omitted, approach records a standard rerun note.
+`running`; if notes are omitted, Approach records a standard rerun note.
 
 For example, after addressing Autoreview findings:
 
@@ -627,7 +627,7 @@ Flow; future phase launches and resumes are tracked normally.
 
 ## Configuration
 
-approach reads an optional TOML config file before scanning repositories:
+Approach reads an optional TOML config file before scanning repositories:
 
 ```text
 $XDG_CONFIG_HOME/approach/config.toml
@@ -689,7 +689,7 @@ keys, where `1` opens the Git view, `2`–`4` open sessions, plans, and flows,
 also seeds the Git view's sticky subview.
 `[agent].plan_prompt` customizes the
 editable instructions shown before launching an agent from the plans pane, while
-`[flow_prompts]` customizes Flow phase launch templates. approach appends
+`[flow_prompts]` customizes Flow phase launch templates. Approach appends
 `After completing this phase goal, mark this Flow phase done with approach-flow.`
 to configured Flow templates unless the template already ends with that exact
 standalone instruction.
@@ -702,24 +702,24 @@ foundation fields for provider, launch, and agent settings.
 |---------|---------|-------------|
 | `WORKTREE_ROOT` | `[scan].root` or `~/dev` | Root directory to scan for git repos and create new repos under; explicit relative paths are preserved for scanned repo identity and resolved from the current working directory for repo creation, depth defaults to 2 and can be reduced with `[scan].max_depth` |
 | `TERMINAL` | unset | Terminal command to use when `t` opens a worktree outside tmux/Zellij |
-| `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by approach |
-| `APPROACH_PLAN_STATE_ROOT` | `APPROACH_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `approach plan`; set automatically for agents launched by approach. In the TUI it relocates the whole artifact root, moving sessions, plans, and flows |
+| `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` or user state default | Session hook storage root; normally set automatically for agents launched by Approach |
+| `APPROACH_PLAN_STATE_ROOT` | `APPROACH_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Saved-plan artifact root for `approach plan`; set automatically for agents launched by Approach. In the TUI it relocates the whole artifact root, moving sessions, plans, and flows |
 | `APPROACH_FLOW_STATE_ROOT` | `APPROACH_PLAN_STATE_ROOT`, `APPROACH_SESSION_STATE_ROOT`, `[sessions].root`, or user state default | Flow artifact root for `approach flow`. In the TUI it has highest precedence for the shared sessions/plans/flows artifact root |
 
 ### Agent session hooks
 
-CLI agents launched from approach with `a`, `N`, Flow `g`, or
-session resume `r` are wired automatically: approach passes Claude Code or Codex a
-session-end hook that calls the current approach binary, and it exports `APPROACH_*`
+CLI agents launched from Approach with `a`, `N`, Flow `g`, or
+session resume `r` are wired automatically: Approach passes Claude Code or Codex a
+session-end hook that calls the current Approach binary, and it exports `APPROACH_*`
 metadata so hook records can be associated with the repo, worktree, branch, and
-launch. `codex-app` opens via macOS deep link instead; approach scrubs inherited
+launch. `codex-app` opens via macOS deep link instead; Approach scrubs inherited
 `APPROACH_*` from `open` and includes prompt-only launch metadata with copyable
 `--state-root` command examples. New `codex-app` threads use the repo path for
-Codex App project identity when approach knows it, while the selected worktree
+Codex App project identity when Approach knows it, while the selected worktree
 remains available in the prompt metadata.
 
-For manual agent sessions that are not launched by approach, configure Claude Code
-or Codex hooks to call approach:
+For manual agent sessions that are not launched by Approach, configure Claude Code
+or Codex hooks to call Approach:
 
 ```bash
 approach session-hook --provider claude
@@ -730,9 +730,9 @@ For local testing, use `--state-root /tmp/approach-sessions-test`.
 
 Codex may ask you to review and trust the injected hook with `/hooks` before it
 runs it. After trust is recorded for the unchanged hook command, later
-approach-launched Codex sessions can save normally.
+Approach-launched Codex sessions can save normally.
 
-`session-hook` loads the normal approach config, so `[sessions].root` and
+`session-hook` loads the normal Approach config, so `[sessions].root` and
 `copy_raw_transcripts` apply to hook ingestion. `--state-root` overrides the
 configured sessions root for one hook invocation. Raw provider transcript copies
 are off by default; set `copy_raw_transcripts = true` to also preserve
@@ -754,4 +754,4 @@ make clean   # Remove bin/
 - Git 2.15+ (worktree support)
 - macOS clipboard: `pbcopy` (included with macOS)
 - Linux clipboard: install one of `wl-copy`, `xclip`, or `xsel`
-- Linux terminal launch: set `TERMINAL` to your terminal emulator; when no tmux/Zellij/`TERMINAL` launch is available, approach falls back to launching `$SHELL` in the worktree directory
+- Linux terminal launch: set `TERMINAL` to your terminal emulator; when no tmux/Zellij/`TERMINAL` launch is available, Approach falls back to launching `$SHELL` in the worktree directory

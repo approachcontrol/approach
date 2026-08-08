@@ -1,13 +1,13 @@
-# approach Product Roadmap
+# Approach Product Roadmap
 
 ## Vision
 
-approach is a multi-repository command center for git worktree workflows. Its job is
+Approach is a multi-repository command center for git worktree workflows. Its job is
 to answer "what is happening across my repos and worktrees?" quickly, then make
 the common next action safe: inspect, open, fetch, pull, create, clean up, or
 hand off to another tool.
 
-The product should stay narrower than a full git client. approach wins by being the
+The product should stay narrower than a full git client. Approach wins by being the
 dashboard and launcher for worktree-heavy development, not by reimplementing
 lazygit.
 
@@ -62,15 +62,15 @@ are already implemented and should be treated as the baseline product:
 
 ## Positioning
 
-| Tool type | Strength | approach distinction |
+| Tool type | Strength | Approach distinction |
 |-----------|----------|------------------|
-| Full git TUIs | Rich commit, staging, rebase, push, and branch workflows | approach stays focused on multi-repo worktree visibility and safe launcher actions |
-| Single-repo worktree tools | Deep lifecycle management inside one repository | approach scans the workspace and puts all repos in one dashboard |
-| CLI worktree helpers | Fast scripted operations | approach makes state visible before mutation and gates destructive actions |
+| Full git TUIs | Rich commit, staging, rebase, push, and branch workflows | Approach stays focused on multi-repo worktree visibility and safe launcher actions |
+| Single-repo worktree tools | Deep lifecycle management inside one repository | Approach scans the workspace and puts all repos in one dashboard |
+| CLI worktree helpers | Fast scripted operations | Approach makes state visible before mutation and gates destructive actions |
 
 The core message is now:
 
-> approach is a terminal dashboard for managing git worktrees across all your repos,
+> Approach is a terminal dashboard for managing git worktrees across all your repos,
 > with safe cleanup, quick creation, and launcher actions for real development
 > sessions.
 
@@ -103,7 +103,7 @@ clear.
 
 ### Phase 3: Multi-Repo Operations
 
-Goal: make approach more than a per-repo switcher while preserving safety and
+Goal: make Approach more than a per-repo switcher while preserving safety and
 clarity.
 
 | Item | Why it matters | Priority |
@@ -141,7 +141,7 @@ surface is stronger.
 
 ### Phase 6: Configuration and Personal Workflow
 
-Goal: let users adapt approach without changing source or environment wrappers.
+Goal: let users adapt Approach without changing source or environment wrappers.
 
 | Item | Why it matters | Priority |
 |------|----------------|----------|
@@ -190,9 +190,9 @@ Useful launch surfaces:
 
 ## Scope Discipline
 
-approach should keep saying no to general git-client work unless it directly serves
+Approach should keep saying no to general git-client work unless it directly serves
 worktree management across repositories. Commit creation, staging, rebasing,
-conflict resolution, and push workflows belong in dedicated git clients. approach
+conflict resolution, and push workflows belong in dedicated git clients. Approach
 should make those workflows easier to reach by opening the right worktree in the
 right terminal, editor, or companion tool.
 
@@ -201,5 +201,5 @@ Good roadmap questions:
 - Does this help users understand worktree state across repos?
 - Does this make common worktree lifecycle actions safer or faster?
 - Does this preserve the read-only default and destructive-mode boundary?
-- Can this be represented clearly in the two-pane dashboard without turning approach
+- Can this be represented clearly in the two-pane dashboard without turning Approach
   into a full git client?

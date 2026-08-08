@@ -1,4 +1,4 @@
-# Claude Code Entry Point for approach
+# Claude Code Entry Point for Approach
 
 Intentionally short. Don't add build, architecture, config, or Flow rules here — they drift when duplicated. `AGENTS.md` is the authoritative agent guide; this file only routes Claude Code to it and notes Claude-specific tooling.
 

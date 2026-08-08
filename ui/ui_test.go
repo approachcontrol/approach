@@ -3600,7 +3600,7 @@ func TestRender_LaunchInstructionsInputDialogWrapsInCompactPanel(t *testing.T) {
 	if strings.Contains(view, longInput) {
 		t.Fatalf("launch instructions should wrap instead of rendering on one line:\n%s", view)
 	}
-	for _, want := range []string{"Implement the saved approach plan", "Read the", "plan file", "then begin"} {
+	for _, want := range []string{"Implement the saved approach plan", "Read the", "plan file", "begin implementation"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wrapped launch instructions missing %q:\n%s", want, view)
 		}

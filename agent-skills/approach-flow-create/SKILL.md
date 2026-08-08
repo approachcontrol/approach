@@ -1,13 +1,13 @@
 ---
 name: approach-flow-create
-description: Create a new persisted approach Flow from an ad hoc planning session or already-written plan, then optionally save and link the plan artifact.
+description: Create a new persisted Approach Flow from an ad hoc planning session or already-written plan, then optionally save and link the plan artifact.
 ---
 
-# Creating approach Flows
+# Creating Approach Flows
 
-Use this skill when the user explicitly asks to turn the current work into a
-approach Flow, with phrasing such as "make a flow from this", "add this as a approach
-flow", or "create a approach flow for this plan".
+Use this skill when the user explicitly asks to turn the current work into an
+Approach Flow, with phrasing such as "make a flow from this", "add this as an Approach
+flow", or "create an Approach flow for this plan".
 
 This skill is for ad hoc sessions. It does not require `APPROACH_FLOW_ID` or
 `APPROACH_FLOW_PHASE_ID`; those belong to the `approach-flow` skill for agents already
@@ -42,7 +42,7 @@ checkout. Required values:
 - `FLOW_TITLE`: short task title.
 - `FLOW_INSTRUCTIONS` or `FLOW_INSTRUCTIONS_FILE`: the task instructions used to
   seed the Flow.
-- `APPROACH_REPO_PATH`: absolute repository path, as approach's scanner lists the repo
+- `APPROACH_REPO_PATH`: absolute repository path, as Approach's scanner lists the repo
   (its **main worktree**, not a linked worktree). Derive it automatically when
   launch metadata does not provide it.
 
@@ -53,10 +53,10 @@ implementation-ready without manual repair. Worktree metadata is not optional
 for normal repo-backed creation.
 
 Derive `APPROACH_REPO_PATH` from the current git checkout when launch metadata does
-not provide it. approach's scanner lists a repository by its main worktree, so a Flow
+not provide it. Approach's scanner lists a repository by its main worktree, so a Flow
 only surfaces under a repo when its `repo_path` equals that main-worktree path.
 Resolve it that way — never a linked worktree path — so Flows created from any
-repo (or from inside one of its worktrees) appear in approach for that repo.
+repo (or from inside one of its worktrees) appear in Approach for that repo.
 
 ```bash
 if [ -z "${APPROACH_REPO_PATH:-}" ]; then
@@ -92,7 +92,7 @@ Skip worktree creation only in two cases:
 ## Create Or Reuse A Worktree
 
 For a normal repo-backed Flow, fetch the base ref and create a dedicated branch
-and worktree before running `approach flow create`. This mirrors approach's own
+and worktree before running `approach flow create`. This mirrors Approach's own
 `flow/<slug>` branch at `<repo>-worktrees/flow-<slug>` convention. If worktree
 creation fails, stop and report the command error instead of creating a partial
 Flow.

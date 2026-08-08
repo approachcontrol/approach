@@ -1,9 +1,9 @@
 ---
 name: approach-flow
-description: Participate in a approach Flow phase by reading the active flow, using approach plan/flow commands for persistence, and reporting any persistence failure instead of silently advancing workflow state.
+description: Participate in an Approach Flow phase by reading the active flow, using approach plan/flow commands for persistence, and reporting any persistence failure instead of silently advancing workflow state.
 ---
 
-# approach Flow
+# Approach Flow
 
 Use this skill whenever both `APPROACH_FLOW_ID` and `APPROACH_FLOW_PHASE_ID` are set.
 The persisted Flow record and the `approach flow` CLI are the source of truth; this
@@ -50,7 +50,7 @@ phase kinds.
 
 Agent-facing phase statuses are `running`, `needs_attention`, `completed`,
 `blocked`, and `skipped`. Report only the status of your own phase honestly;
-approach derives all phase readiness and ordering, so never reason about which
+Approach derives all phase readiness and ordering, so never reason about which
 phase becomes ready next. It is fine to read the `next_phase` field returned by
 the high-level phase action commands; do not infer that state yourself. Agents
 cannot set `ready`. Skipped phases require `--notes`, and restarting a blocked
@@ -60,7 +60,7 @@ omitted. Invalid transitions fail with the allowed next statuses; fix the
 reported state rather than retrying blindly.
 
 For plan-review-kind phases (the default preset phase ID is `plan-review`),
-approach accepts only these review outcomes:
+Approach accepts only these review outcomes:
 `approved`, `approved_with_concerns`, `changes_requested`, and `blocked`.
 `approved_with_concerns`, `changes_requested`, and `blocked` require
 `--notes`.
@@ -87,8 +87,8 @@ Plan Review outcome such as `approved_with_concerns`. For Autoreview, the
 wrappers fill `complete` => `passed`, `needs-attention` =>
 `needs_attention`, and `block` => `blocked`. Use `approach flow phase restart`
 for reruns, and use the lower-level `approach flow phase set` command for
-`skipped` or other explicit status updates. `approach flow phase reset` is a
-approach-owned stale running recovery command for `await-session` or
+`skipped` or other explicit status updates. `approach flow phase reset` is an
+Approach-owned stale running recovery command for `await-session` or
 `ended-session`; do not use it to report normal agent progress.
 
 ## Persistence Failures

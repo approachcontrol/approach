@@ -1,9 +1,9 @@
 ---
 name: approach-plan-persist
-description: Persist agent plans to approach so they show up in the plans pane (mode 7). Use whenever a plan is created, revised, approved, started, completed, blocked, or superseded, and when recording per-phase progress.
+description: Persist agent plans to Approach so they show up in the plans pane (mode 7). Use whenever a plan is created, revised, approved, started, completed, blocked, or superseded, and when recording per-phase progress.
 ---
 
-# Persisting plans to approach
+# Persisting plans to Approach
 
 `approach` stores saved plans next to captured agent sessions, under the shared
 agent-artifact root (`$XDG_STATE_HOME/approach/sessions/v1/plans/...` or
@@ -46,11 +46,11 @@ only when you supply them, and otherwise preserves the stored values plus
 `created_at` and recorded phases. So a body-only revise keeps the existing
 status; pass `--status` whenever the lifecycle changes.
 
-When approach launched a CLI agent it exports `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
+When Approach launched a CLI agent it exports `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
 `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`, and `APPROACH_COMMIT`; the CLI
 fills omitted metadata from those automatically, so you usually only need
 `--title` (and `--plan-id` for edits). `codex-app` launches are different because
-approach opens a macOS deep link and `APPROACH_*` is not inherited. In that case, use the
+Approach opens a macOS deep link and `APPROACH_*` is not inherited. In that case, use the
 metadata block in the launch prompt: pass the listed `--state-root` to `approach plan`
 commands or export the listed vars before running them.
 

@@ -1,4 +1,4 @@
-# Agent Entry Point for approach
+# Agent Entry Point for Approach
 
 Intentionally short. Don't copy build, UI, config, Flow, or storage detail here; it drifts when repeated across entrypoints. Add substance to the linked docs.
 
