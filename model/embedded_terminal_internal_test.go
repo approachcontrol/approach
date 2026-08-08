@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +86,58 @@ func (t *prefillReadyFakeEmbeddedTerminal) Terminate() error           { return 
 func (t *prefillReadyFakeEmbeddedTerminal) Wait(context.Context) error { return nil }
 func (t *prefillReadyFakeEmbeddedTerminal) State() string              { return "running" }
 
+type delayedPrefillFakeEmbeddedTerminal struct {
+	mu               sync.Mutex
+	probeStarted     chan struct{}
+	releaseReady     chan struct{}
+	commandCompleted chan struct{}
+	probeOnce        sync.Once
+	releaseOnce      sync.Once
+	completeOnce     sync.Once
+	visibleHits      int
+	writes           []string
+}
+
+func newDelayedPrefillFakeEmbeddedTerminal() *delayedPrefillFakeEmbeddedTerminal {
+	return &delayedPrefillFakeEmbeddedTerminal{
+		probeStarted:     make(chan struct{}),
+		releaseReady:     make(chan struct{}),
+		commandCompleted: make(chan struct{}),
+	}
+}
+
+func (t *delayedPrefillFakeEmbeddedTerminal) VisibleLines(int, int) []string {
+	t.mu.Lock()
+	t.visibleHits++
+	t.mu.Unlock()
+	t.probeOnce.Do(func() { close(t.probeStarted) })
+	<-t.releaseReady
+	return []string{"Codex ready"}
+}
+
+func (t *delayedPrefillFakeEmbeddedTerminal) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.writes = append(t.writes, string(p))
+	t.mu.Unlock()
+	t.completeOnce.Do(func() { close(t.commandCompleted) })
+	return len(p), nil
+}
+
+func (t *delayedPrefillFakeEmbeddedTerminal) Resize(int, int) error      { return nil }
+func (t *delayedPrefillFakeEmbeddedTerminal) Terminate() error           { return nil }
+func (t *delayedPrefillFakeEmbeddedTerminal) Wait(context.Context) error { return nil }
+func (t *delayedPrefillFakeEmbeddedTerminal) State() string              { return "running" }
+
+func (t *delayedPrefillFakeEmbeddedTerminal) release() {
+	t.releaseOnce.Do(func() { close(t.releaseReady) })
+}
+
+func (t *delayedPrefillFakeEmbeddedTerminal) snapshot() (int, []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.visibleHits, append([]string(nil), t.writes...)
+}
+
 func TestPrefillEmbeddedPromptWaitsForVisibleTerminalOutput(t *testing.T) {
 	originalInterval := embeddedPromptPrefillPollInterval
 	embeddedPromptPrefillPollInterval = 0
@@ -121,18 +174,15 @@ func TestPrefillEmbeddedPromptWaitsForVisibleTerminalOutput(t *testing.T) {
 }
 
 func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *testing.T) {
-	originalInterval := embeddedPromptPrefillPollInterval
-	embeddedPromptPrefillPollInterval = 0
-	t.Cleanup(func() {
-		embeddedPromptPrefillPollInterval = originalInterval
-	})
-
-	term := &prefillReadyFakeEmbeddedTerminal{lines: [][]string{{""}, {"Codex ready"}}}
+	term := newDelayedPrefillFakeEmbeddedTerminal()
+	t.Cleanup(term.release)
+	startCalls := 0
 	m := Model{
 		mode:       ui.ModeFlows,
 		activePane: 1,
 		flowFocus:  flowFocusList,
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			startCalls++
 			return term, nil
 		},
 	}
@@ -144,40 +194,172 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 		InitialPrompt:     "Build it",
 	}
 
-	nextModel, cmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
-	next := nextModel.(Model)
+	type updateResult struct {
+		model tea.Model
+		cmd   tea.Cmd
+	}
+	updateDone := make(chan updateResult, 1)
+	go func() {
+		nextModel, cmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
+		updateDone <- updateResult{model: nextModel, cmd: cmd}
+	}()
+
+	deadlockGuard := time.After(5 * time.Second)
+	var result updateResult
+	select {
+	case result = <-updateDone:
+	case <-term.probeStarted:
+		term.release()
+		select {
+		case <-updateDone:
+		case <-deadlockGuard:
+			t.Fatal("Update did not return after releasing unexpected synchronous readiness probe")
+		}
+		t.Fatal("Update started terminal readiness work before returning its command")
+	case <-deadlockGuard:
+		term.release()
+		t.Fatal("Update did not return before the deadlock guard expired")
+	}
+
+	next := result.model.(Model)
+	cmd := result.cmd
 	if cmd == nil {
 		t.Fatal("interactive Flow launch returned nil command, want asynchronous prefill command")
 	}
-	if term.visibleHits != 0 || len(term.writes) != 0 {
-		t.Fatalf("Update performed prefill work: visible calls=%d writes=%#v", term.visibleHits, term.writes)
+	select {
+	case <-term.probeStarted:
+		t.Fatal("Update started terminal readiness work before its command was invoked")
+	default:
 	}
-	if len(next.embeddedTerminals) != 1 || next.embeddedTerminals[0].ID == 0 {
-		t.Fatalf("pending terminal slots = %#v, want one slot with stable ID", next.embeddedTerminals)
+	visibleHits, writes := term.snapshot()
+	if visibleHits != 0 || len(writes) != 0 {
+		t.Fatalf("Update performed prefill work: visible calls=%d writes=%#v", visibleHits, writes)
 	}
+	if startCalls != 1 {
+		t.Fatalf("terminal starts = %d, want exactly 1", startCalls)
+	}
+	if len(next.embeddedTerminals) != 1 || next.embeddedTerminals[0].ID == 0 || !next.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("pending terminal slots = %#v, want one PrefillPending slot with stable ID", next.embeddedTerminals)
+	}
+	stableID := next.embeddedTerminals[0].ID
 	if next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
 		t.Fatalf("pending terminal stole focus: active=%d focus=%v", next.activeFlowTerminalNum, next.flowFocus)
 	}
 	if number, ok := next.nextEmbeddedTerminalNumber(embeddedTerminalScopeFlow); !ok || number != 2 {
 		t.Fatalf("next Flow terminal number = %d, %v; want reserved slot 1 and next number 2", number, ok)
 	}
-	beforeReadyModel, _ := next.Update(tea.KeyMsg{Type: tea.KeyTab})
-	beforeReady := beforeReadyModel.(Model)
-	beforeReadyModel, _ = beforeReady.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	beforeReady = beforeReadyModel.(Model)
-	if len(term.writes) != 0 || beforeReady.flowFocus == flowFocusTerminal {
-		t.Fatalf("pending terminal accepted focus/input before prefill: writes=%#v focus=%v", term.writes, beforeReady.flowFocus)
+
+	prefillCmd := flowPrefillCommandFromParent(t, cmd)
+	prefillResult := make(chan tea.Msg, 1)
+	go func() {
+		prefillResult <- prefillCmd()
+	}()
+
+	select {
+	case <-term.probeStarted:
+	case <-deadlockGuard:
+		t.Fatal("prefill command did not begin its readiness probe")
+	}
+	select {
+	case msg := <-prefillResult:
+		t.Fatalf("prefill command returned while readiness was withheld: %T", msg)
+	default:
 	}
 
-	msg := commandMessageOfType[embeddedPromptPrefillResultMsg](t, cmd)
+	beforeReadyModel, keyCmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	beforeReady := beforeReadyModel.(Model)
+	_, writes = term.snapshot()
+	if keyCmd != nil || len(writes) != 0 || beforeReady.activePane != 1 || beforeReady.flowFocus != flowFocusList {
+		t.Fatalf("pending terminal accepted focus/input before prefill: cmd=%T writes=%#v pane=%d focus=%v", keyCmd, writes, beforeReady.activePane, beforeReady.flowFocus)
+	}
+
+	term.release()
+	var rawMsg tea.Msg
+	select {
+	case rawMsg = <-prefillResult:
+	case <-deadlockGuard:
+		t.Fatal("prefill command did not return after readiness was released")
+	}
+	select {
+	case <-term.commandCompleted:
+	default:
+		t.Fatal("prefill command returned before completing its terminal write")
+	}
+	msg, ok := rawMsg.(embeddedPromptPrefillResultMsg)
+	if !ok {
+		t.Fatalf("prefill command returned %T, want embeddedPromptPrefillResultMsg", rawMsg)
+	}
+	if msg.ID != stableID || msg.Err != nil {
+		t.Fatalf("prefill result = %#v, want successful result for stable terminal ID %d", msg, stableID)
+	}
+	if next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList || !next.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("prefill command activated terminal before result Update: active=%d focus=%v pending=%v", next.activeFlowTerminalNum, next.flowFocus, next.embeddedTerminals[0].PrefillPending)
+	}
+
 	activatedModel, _ := next.Update(msg)
 	activated := activatedModel.(Model)
 	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
-	if term.visibleHits != 2 || len(term.writes) != 1 || term.writes[0] != wantWrite {
-		t.Fatalf("async prefill calls=%d writes=%#v, want two polls and %q", term.visibleHits, term.writes, wantWrite)
+	visibleHits, writes = term.snapshot()
+	if startCalls != 1 || visibleHits != 1 || len(writes) != 1 || writes[0] != wantWrite {
+		t.Fatalf("async prefill starts=%d calls=%d writes=%#v, want one start, one probe, and %q", startCalls, visibleHits, writes, wantWrite)
 	}
-	if activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
-		t.Fatalf("successful prefill did not activate terminal: active=%d focus=%v", activated.activeFlowTerminalNum, activated.flowFocus)
+	if len(activated.embeddedTerminals) != 1 || activated.embeddedTerminals[0].ID != stableID || activated.embeddedTerminals[0].PrefillPending || activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
+		t.Fatalf("successful prefill did not activate stable terminal: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeFlowTerminalNum, activated.flowFocus)
+	}
+}
+
+func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T) {
+	originalTimeout := embeddedPromptPrefillTimeout
+	originalInterval := embeddedPromptPrefillPollInterval
+	embeddedPromptPrefillTimeout = time.Nanosecond
+	embeddedPromptPrefillPollInterval = 0
+	t.Cleanup(func() {
+		embeddedPromptPrefillTimeout = originalTimeout
+		embeddedPromptPrefillPollInterval = originalInterval
+	})
+
+	term := &prefillReadyFakeEmbeddedTerminal{lines: [][]string{{"", "   "}}}
+	startCalls := 0
+	m := Model{
+		mode:       ui.ModeFlows,
+		activePane: 1,
+		flowFocus:  flowFocusList,
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			startCalls++
+			return term, nil
+		},
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:           "codex",
+		FlowID:            "flow-1",
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		InitialPrompt:     "Build \x1b[31mit\x1b[0m",
+	}
+
+	nextModel, parentCmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
+	next := nextModel.(Model)
+	prefillCmd := flowPrefillCommandFromParent(t, parentCmd)
+	rawMsg := prefillCmd()
+	msg, ok := rawMsg.(embeddedPromptPrefillResultMsg)
+	if !ok {
+		t.Fatalf("prefill command returned %T, want embeddedPromptPrefillResultMsg", rawMsg)
+	}
+	if msg.Err != nil {
+		t.Fatalf("readiness timeout returned launch error: %v", msg.Err)
+	}
+	if startCalls != 1 || len(next.embeddedTerminals) != 1 || !next.embeddedTerminals[0].PrefillPending || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
+		t.Fatalf("timeout prefill activated before result Update: starts=%d slots=%#v active=%d focus=%v", startCalls, next.embeddedTerminals, next.activeFlowTerminalNum, next.flowFocus)
+	}
+	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
+	if term.visibleHits == 0 || len(term.writes) != 1 || term.writes[0] != wantWrite {
+		t.Fatalf("timeout prefill calls=%d writes=%#v, want readiness probes and %q", term.visibleHits, term.writes, wantWrite)
+	}
+
+	activatedModel, _ := next.Update(msg)
+	activated := activatedModel.(Model)
+	if len(activated.embeddedTerminals) != 1 || activated.embeddedTerminals[0].PrefillPending || activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
+		t.Fatalf("successful timeout prefill did not activate terminal on result Update: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeFlowTerminalNum, activated.flowFocus)
 	}
 }
 
@@ -223,6 +405,22 @@ func commandMessageOfType[T any](t *testing.T, cmd tea.Cmd) T {
 	}
 	t.Fatalf("command returned %T, want message %T", msg, zero)
 	return zero
+}
+
+func flowPrefillCommandFromParent(t *testing.T, parentCmd tea.Cmd) tea.Cmd {
+	t.Helper()
+	if parentCmd == nil {
+		t.Fatal("interactive Flow launch returned nil parent command")
+	}
+	raw := parentCmd()
+	batch, ok := raw.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("interactive Flow launch parent command returned %T, want tea.BatchMsg", raw)
+	}
+	if len(batch) != 2 || batch[0] == nil || batch[1] == nil {
+		t.Fatalf("interactive Flow launch batch = %#v, want prefill and repaint commands", batch)
+	}
+	return batch[0]
 }
 
 func internalFlowsModel(records ...flowstore.FlowRecord) Model {
