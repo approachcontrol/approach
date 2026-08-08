@@ -45,6 +45,7 @@ type Model struct {
 	activeFlows               pane.Pane[flowstore.FlowRecord]
 	beadsOpen                 pane.Pane[beadsquery.Bead]
 	beadsOpenAvailable        bool
+	beadsOpenPending          bool
 	expandedPlanID            string
 	expandedFlowID            string
 	expandedActiveFlowID      string
@@ -616,6 +617,7 @@ func (m Model) BeadsOpen() []beadsquery.Bead {
 	return beads
 }
 func (m Model) BeadsOpenAvailable() bool        { return m.beadsOpenAvailable }
+func (m Model) BeadsOpenPending() bool          { return m.beadsOpenPending }
 func (m Model) BeadsOpenSelected() int          { return m.beadsOpen.SelectedIndex() }
 func (m Model) BeadsOpenScroll() int            { return m.beadsOpen.Scroll() }
 func (m Model) PlanSelected() int               { return m.plans.SelectedIndex() }
@@ -884,6 +886,7 @@ func (m Model) View() string {
 		BeadsOpenSelected:            beadsOpenSelected,
 		BeadsOpenScroll:              beadsOpenScroll,
 		BeadsOpenAvailable:           m.beadsOpenAvailable,
+		BeadsOpenPending:             m.beadsOpenPending,
 		FlowEmbeddedTerminals:        m.flowEmbeddedTerminalTabs(),
 		FlowEmbeddedTerminalLines:    m.flowEmbeddedTerminalLines(),
 		FlowEmbeddedTerminalPrefix:   m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
@@ -963,6 +966,9 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 		return "No active flows"
 	}
 	if m.mode == ui.ModeBeadsOpen {
+		if m.beadsOpenPending {
+			return "loading open beads"
+		}
 		if m.beadsOpenAvailable {
 			return "no open beads"
 		}

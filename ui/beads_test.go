@@ -76,6 +76,28 @@ func TestRender_BeadsOpenUnavailableShowsExactBlanketMessage(t *testing.T) {
 	}
 }
 
+func TestRender_BeadsOpenPendingShowsNeutralLoadingMessage(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos:              []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:           0,
+		Width:              80,
+		Height:             12,
+		Mode:               ModeBeadsOpen,
+		BeadsOpen:          []beadsquery.Bead{{ID: "bd-old", Priority: 1, Title: "Old result"}},
+		BeadsOpenAvailable: true,
+		BeadsOpenPending:   true,
+	}))
+
+	if !strings.Contains(view, "loading open beads") {
+		t.Fatalf("pending Beads view missing neutral loading message:\n%s", view)
+	}
+	for _, unwanted := range []string{"bd-old", "no open beads", "beads not configured"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("pending Beads view also showed %q:\n%s", unwanted, view)
+		}
+	}
+}
+
 func TestModeHeader_BeadsOpenShowsActiveTopLevelEntryWithoutSubviewRow(t *testing.T) {
 	lines := strings.Split(renderModeHeader(ModeBeadsOpen, 120), "\n")
 	if len(lines) != 2 {

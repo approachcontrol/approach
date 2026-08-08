@@ -300,6 +300,7 @@ type RenderParams struct {
 	BeadsOpenSelected            int
 	BeadsOpenScroll              int
 	BeadsOpenAvailable           bool
+	BeadsOpenPending             bool
 	FlowEmbeddedTerminals        []EmbeddedTerminalTab
 	FlowEmbeddedTerminalLines    []string
 	FlowEmbeddedTerminalPrefix   bool
@@ -665,14 +666,24 @@ func renderApplication(p RenderParams) string {
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
+	case p.Mode == ModeBeadsOpen && p.BeadsOpenPending:
+		message := p.RightEmptyMessage
+		if message == "" {
+			message = "loading open beads"
+		}
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
 	case p.Mode == ModeBeadsOpen && len(p.BeadsOpen) > 0:
 		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModeBeadsOpen:
 		message := p.RightEmptyMessage
 		if message == "" {
-			message = "beads not configured"
-			if p.BeadsOpenAvailable {
+			switch {
+			case p.BeadsOpenPending:
+				message = "loading open beads"
+			case p.BeadsOpenAvailable:
 				message = "no open beads"
+			default:
+				message = "beads not configured"
 			}
 		}
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)

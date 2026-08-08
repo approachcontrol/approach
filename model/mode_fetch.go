@@ -133,6 +133,12 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 		return listFetchDescriptor{
 			mode: ui.ModeBeadsOpen,
 			pane: "beads open",
+			beforeStart: func(m Model) Model {
+				m.beadsOpen = m.beadsOpen.SetItems(nil).ResetSelection()
+				m.beadsOpenAvailable = false
+				m.beadsOpenPending = true
+				return m.reflowBeadsOpen()
+			},
 			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
 				beads, err := m.listOpenBeads(repoPath)
 				if err != nil {

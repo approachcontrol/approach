@@ -297,8 +297,10 @@ priority (`P0` first) and then ascending ID.
 A successful query with no rows shows exactly `no open beads`. A missing `bd`
 binary, a repository without a Beads database, or any command or JSON parsing
 failure shows exactly `beads not configured`; this slice intentionally does
-not distinguish those causes in the UI. Moving the repo cursor refetches Open
-asynchronously, and `f5` rescans repositories and refetches the selected repo.
+not distinguish those causes in the UI. While the asynchronous result is
+pending, the pane shows `loading open beads`. Moving the repo cursor refetches
+Open asynchronously, and `f5` rescans repositories and refetches the selected
+repo.
 
 Beads is not yet part of horizontal arrow cycling, does not remember a sticky
 subview, and does not expose a content-pane filter or a subview header row.

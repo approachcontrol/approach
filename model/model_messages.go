@@ -1288,6 +1288,7 @@ func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
 	}
 	m.beadsOpen = m.beadsOpen.SetItems(msg.Beads)
 	m.beadsOpenAvailable = msg.Available
+	m.beadsOpenPending = false
 	return m.reflowBeadsOpen()
 }
 

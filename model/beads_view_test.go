@@ -42,6 +42,12 @@ func TestBeadsOpen_KeyFiveStartsDeferredFetchForSelectedRepo(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("ListOpenBeads ran before command execution: %d call(s)", calls)
 	}
+	if !m.BeadsOpenPending() {
+		t.Fatal("BeadsOpenPending() = false before asynchronous result")
+	}
+	if view := m.View(); !strings.Contains(view, "loading open beads") || strings.Contains(view, "beads not configured") {
+		t.Fatalf("pending Beads fetch did not render a neutral loading state:\n%s", view)
+	}
 
 	msg := cmd()
 	if calls != 1 || queriedRepo != "/dev/alpha" {
@@ -99,6 +105,9 @@ func TestBeadsOpen_CurrentSuccessReplacesPaneAndMarksAvailable(t *testing.T) {
 	if !m.BeadsOpenAvailable() {
 		t.Fatal("BeadsOpenAvailable() = false after successful query")
 	}
+	if m.BeadsOpenPending() {
+		t.Fatal("BeadsOpenPending() = true after successful query")
+	}
 }
 
 func TestBeadsOpen_CurrentUnavailableClearsPaneWithoutFetchStatus(t *testing.T) {
@@ -121,6 +130,9 @@ func TestBeadsOpen_CurrentUnavailableClearsPaneWithoutFetchStatus(t *testing.T) 
 	}
 	if m.BeadsOpenAvailable() {
 		t.Fatal("BeadsOpenAvailable() = true after unavailable result")
+	}
+	if m.BeadsOpenPending() {
+		t.Fatal("BeadsOpenPending() = true after unavailable result")
 	}
 	if got := m.TransientError(); got != "" {
 		t.Fatalf("TransientError() = %q, want blanket UI state without fetch error", got)
@@ -153,8 +165,8 @@ func TestBeadsOpen_RepoCursorChangeClearsAvailabilityAndRefetches(t *testing.T) 
 	if request := m.ListRequest(ui.ModeBeadsOpen); request == before {
 		t.Fatalf("Beads request = %d, want advancement from %d", request, before)
 	}
-	if len(m.BeadsOpen()) != 0 || m.BeadsOpenAvailable() {
-		t.Fatalf("repo change kept Beads state: rows=%#v available=%v", m.BeadsOpen(), m.BeadsOpenAvailable())
+	if len(m.BeadsOpen()) != 0 || m.BeadsOpenAvailable() || !m.BeadsOpenPending() {
+		t.Fatalf("repo change Beads state: rows=%#v available=%v pending=%v, want empty pending state", m.BeadsOpen(), m.BeadsOpenAvailable(), m.BeadsOpenPending())
 	}
 	if queriedRepo != "" {
 		t.Fatalf("ListOpenBeads ran before command execution for %q", queriedRepo)
@@ -207,7 +219,7 @@ func TestBeadsOpen_StaleSuccessAndUnavailableResultsAreIgnored(t *testing.T) {
 		{RepoPath: "/dev/bravo", ListRequest: bravoRequest},
 	} {
 		m, _ = update(m, stale)
-		assertCurrentBravoBead(t, m)
+		assertBeadsOpenPending(t, m)
 	}
 }
 
@@ -215,6 +227,13 @@ func assertCurrentBravoBead(t *testing.T, m model.Model) {
 	t.Helper()
 	if got := m.BeadsOpen(); len(got) != 1 || got[0].ID != "bd-bravo" || !m.BeadsOpenAvailable() {
 		t.Fatalf("stale result changed current Beads state: rows=%#v available=%v", got, m.BeadsOpenAvailable())
+	}
+}
+
+func assertBeadsOpenPending(t *testing.T, m model.Model) {
+	t.Helper()
+	if got := m.BeadsOpen(); len(got) != 0 || m.BeadsOpenAvailable() || !m.BeadsOpenPending() {
+		t.Fatalf("stale result changed pending Beads state: rows=%#v available=%v pending=%v", got, m.BeadsOpenAvailable(), m.BeadsOpenPending())
 	}
 }
 
@@ -244,6 +263,12 @@ func TestBeadsOpen_F5RefetchesSelectedRepo(t *testing.T) {
 		},
 	}))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, model.BeadsOpenResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: m.ListRequest(ui.ModeBeadsOpen),
+		Available:   true,
+		Beads:       []beadsquery.Bead{{ID: "bd-old", Priority: 1, Title: "Old result"}},
+	})
 	before := m.ListRequest(ui.ModeBeadsOpen)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
@@ -255,6 +280,12 @@ func TestBeadsOpen_F5RefetchesSelectedRepo(t *testing.T) {
 	}
 	if len(queried) != 0 {
 		t.Fatalf("ListOpenBeads ran before refresh command execution: %v", queried)
+	}
+	if len(m.BeadsOpen()) != 0 || m.BeadsOpenAvailable() || !m.BeadsOpenPending() {
+		t.Fatalf("F5 pending state: rows=%#v available=%v pending=%v, want cleared pending state", m.BeadsOpen(), m.BeadsOpenAvailable(), m.BeadsOpenPending())
+	}
+	if view := m.View(); !strings.Contains(view, "loading open beads") || strings.Contains(view, "bd-old") {
+		t.Fatalf("F5 did not replace stale rows with loading state:\n%s", view)
 	}
 	msgs := runBatchCmd(t, cmd)
 	if len(queried) != 1 || queried[0] != "/dev/alpha" {

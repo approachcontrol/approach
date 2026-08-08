@@ -2696,6 +2696,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
 	m.beadsOpen = m.beadsOpen.SetItems(nil).ResetSelection()
 	m.beadsOpenAvailable = false
+	m.beadsOpenPending = false
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""

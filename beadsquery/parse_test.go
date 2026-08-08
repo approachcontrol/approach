@@ -54,6 +54,33 @@ func TestParseOpenRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestParseOpenRejectsStructurallyInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "null list", input: `null`},
+		{name: "null bead", input: `[null]`},
+		{name: "missing id", input: `[{"priority":1,"title":"Missing ID"}]`},
+		{name: "missing priority", input: `[{"id":"bd-1","title":"Missing priority"}]`},
+		{name: "missing title", input: `[{"id":"bd-1","priority":1}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := beadsquery.ParseOpen(tt.input)
+			if err == nil {
+				t.Fatalf("ParseOpen(%s) error = nil, want structural validation error", tt.input)
+			}
+			if got != nil {
+				t.Fatalf("ParseOpen(%s) = %#v, want no partial data", tt.input, got)
+			}
+		})
+	}
+}
+
 func TestParseOpenTreatsMissingNullAndEmptyAssigneesAsAbsent(t *testing.T) {
 	t.Parallel()
 

@@ -75,7 +75,9 @@ With the content pane focused, press `5` to list the selected repository's
 open Beads issues. Rows are sorted by priority and then ID and render as
 `<id>  P<n>  <title>`, followed by two spaces and the assignee when present.
 A successful empty query shows `no open beads`; a repository without usable
-Beads support shows `beads not configured`. This view is read-only.
+Beads support shows `beads not configured`. While the asynchronous query is
+pending, the pane shows `loading open beads` instead of diagnosing the repo
+prematurely. This view is read-only.
 
 ## Agents, Plans, and Flows
 
