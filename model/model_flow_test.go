@@ -5456,7 +5456,7 @@ func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 	}
 }
 
-func TestModel_RightArrowFromFlowsWrapsToGit(t *testing.T) {
+func TestModel_RightArrowFromFlowsEntersBeads(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -5467,18 +5467,18 @@ func TestModel_RightArrowFromFlowsWrapsToGit(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 	if cmd == nil {
-		t.Fatal("right from flows returned nil command, want worktrees fetch")
+		t.Fatal("right from flows returned nil command, want Beads Open fetch")
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("right from flows mode = %d, want worktrees", m.Mode())
+	if m.Mode() != ui.ModeBeadsOpen {
+		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
 	}
-	assertOnlyListRequestChanged(t, beforeRequests, m, ui.ModeWorktrees)
+	assertOnlyListRequestChanged(t, beforeRequests, m, ui.ModeBeadsOpen)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
-		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
+	if !hasListFetchForMode(msgs, ui.ModeBeadsOpen, m.ListRequest(ui.ModeBeadsOpen)) {
+		t.Fatalf("right from flows command messages = %#v, want Beads Open fetch for request %d", msgs, m.ListRequest(ui.ModeBeadsOpen))
 	}
 }
 
@@ -6044,7 +6044,7 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_RightNavigationMovesFromFlowsToGitUnderGroupedKeys(t *testing.T) {
+func TestModel_RightNavigationMovesFromFlowsToBeadsUnderGroupedKeys(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
@@ -6068,19 +6068,19 @@ func TestModel_RightNavigationMovesFromFlowsToGitUnderGroupedKeys(t *testing.T) 
 	}
 	before := listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("right from flows mode = %d, want worktrees", m.Mode())
+	if m.Mode() != ui.ModeBeadsOpen {
+		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
 	}
 	if m.ActivePane() != 1 {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
-		t.Fatal("right from flows returned nil command, want worktrees fetch")
+		t.Fatal("right from flows returned nil command, want Beads Open fetch")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsOpen)
 	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
-		t.Fatalf("right from flows command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
+	if !hasListFetchForMode(msgs, ui.ModeBeadsOpen, m.ListRequest(ui.ModeBeadsOpen)) {
+		t.Fatalf("right from flows command messages = %#v, want Beads Open fetch for request %d", msgs, m.ListRequest(ui.ModeBeadsOpen))
 	}
 }
 

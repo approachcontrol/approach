@@ -298,15 +298,11 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
-			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
-			m.pendingRepoSelection = ""
-			return m.handleRepoSelectionChanged(true)
+			return m.moveRepoSelection(-1)
 		}
 	case "down", "j":
 		if len(m.filteredRepos()) > 0 {
-			m.repos = m.repos.Move(1, m.repoContentHeight(), ui.LeftPaneWidth-2)
-			m.pendingRepoSelection = ""
-			return m.handleRepoSelectionChanged(true)
+			return m.moveRepoSelection(1)
 		}
 	case "f":
 		return m.startFetchVisibleRepos()
@@ -318,8 +314,20 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) moveRepoSelection(delta int) (tea.Model, tea.Cmd) {
+	previousPath, _ := m.currentRepoPath()
+	m.repos = m.repos.Move(delta, m.repoContentHeight(), ui.LeftPaneWidth-2)
+	m.pendingRepoSelection = ""
+	currentPath, _ := m.currentRepoPath()
+	if sameRepoPath(previousPath, currentPath) {
+		return m, nil
+	}
+	return m.handleRepoSelectionChanged(true)
+}
+
 func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
 	if m.activeFlowSurfaceVisible() {
+		m = m.resetBeadsForRepoChange()
 		m = m.syncActiveFlowsFromCache()
 		return m, nil
 	}
@@ -335,6 +343,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleActiveFlowSurfaceKey(key)
 	}
 	if next, cmd, handled := m.handleGitSubviewKey(key); handled {
+		return next, cmd
+	}
+	if next, cmd, handled := m.handleBeadsSubviewKey(key); handled {
 		return next, cmd
 	}
 	switch key {
@@ -624,6 +635,7 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	previousMode := m.mode
 	m.mode = nextMode
 	m = m.rememberGitSubview()
+	m = m.rememberBeadsSubview()
 	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()
@@ -635,9 +647,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 }
 
 // modeAfterHorizontalNavigation steps the view for a left/right arrow press.
-// Inside the Git view the arrows cycle the five git subviews with wrap and
-// never spill into another top-level view; elsewhere they cycle the four
-// arrow-reachable top-level views with wrap, entering Git at its last-used
+// Inside the Git and Beads views the arrows cycle their five subviews with wrap
+// and never spill into another top-level view; elsewhere they step through the
+// five arrow-reachable top-level views, entering either group at its last-used
 // subview. Active Flows is intentionally outside this cycle.
 func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 	if ui.IsGitMode(m.mode) {
@@ -650,12 +662,25 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 		}
 		return next
 	}
-	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows}
+	if ui.IsBeadsMode(m.mode) {
+		next := m.mode + ui.Mode(direction)
+		if next < ui.ModeBeadsReady {
+			return ui.ModeBeadsClosed
+		}
+		if next > ui.ModeBeadsClosed {
+			return ui.ModeBeadsReady
+		}
+		return next
+	}
+	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows, m.lastBeadsSubview()}
 	for i, stop := range stops {
 		if stop == m.mode {
 			return stops[(i+direction+len(stops))%len(stops)]
 		}
 	}
+	// Only the ungrouped modes reach here, and Active Flows is intercepted
+	// before horizontal navigation runs. A mode missing from stops is
+	// arrow-unreachable by design, so hold the current view.
 	return m.mode
 }
 
@@ -744,6 +769,14 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedFlowID("")
 		}
 		m = m.syncActiveFlowTerminalToSelectedFlow()
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		index, _ := beadSubviewIndex(m.mode)
+		// A pending subview renders its loading message instead of its retained
+		// rows, so cursor keys must not move a selection the user cannot see.
+		if m.beads[index].pending {
+			return m
+		}
+		m.beads[index].pane = m.beads[index].pane.Move(delta, h, w)
 	}
 	return m
 }
@@ -789,6 +822,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.mode == ui.ModeSessions && len(m.filteredSessions()) > 0 {
 		m = m.startViewRequest(FetchSessionTranscript, ui.ModeSessions)
 		return m, m.fetchSessionTranscript()
+	}
+	if ui.IsBeadsMode(m.mode) {
+		if _, ok := m.selectedVisibleBead(); !ok {
+			return m, nil
+		}
+		m = m.startViewRequest(FetchBeadDetail, m.mode)
+		return m, m.fetchBeadDetail()
 	}
 	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
 		if planID := m.selectedPlanID(); planID != "" {
@@ -2734,11 +2774,11 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resetModeCursors zeroes the cursor and scroll positions for the non-git
-// right-pane views without discarding loaded list data. The git subview
-// selections (worktrees, branches, stashes, history, reflog) are intentionally
-// preserved across view switches so users can inspect another view and return
-// to the same selected row; refetches clamp any stale index via SetItems.
+// resetModeCursors zeroes the cursor and scroll positions for the ungrouped
+// right-pane views without discarding loaded list data. Git and Beads subview
+// selections are intentionally preserved across view switches so users can
+// inspect another view and return to the same selected row; refetches clamp any
+// stale index via SetItems.
 func (m Model) resetModeCursors() Model {
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
@@ -2764,11 +2804,31 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 		m.terminalPrefixActive = false
 		return m.invalidateViewRequest()
 	}
+	if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
+		return m.invalidateViewRequest()
+	}
 	return m.resetModeCursors()
 }
 
 func isFlowMode(mode ui.Mode) bool {
 	return mode == ui.ModeFlows || mode == ui.ModeActiveFlows
+}
+
+func (m Model) clearBeadsRepoOwnedState() Model {
+	for i := range m.beads {
+		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
+		m.beads[i].available = false
+		m.beads[i].pending = false
+		m.beads[i].error = ""
+		m.beads[i].total = 0
+		m.beads[i].repoPath = ""
+	}
+	return m
+}
+
+func (m Model) resetBeadsForRepoChange() Model {
+	m = m.invalidateBeadsListRequests()
+	return m.clearBeadsRepoOwnedState()
 }
 
 func (m Model) resetRightPaneCursors() Model {
@@ -2784,6 +2844,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
+	m = m.clearBeadsRepoOwnedState()
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
@@ -2884,9 +2945,19 @@ func (m Model) contentHeightForMode() int {
 		return m.flowContentHeight()
 	case ui.ModeActiveFlows:
 		return m.flowContentHeight()
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		return m.beadsContentHeight()
 	default:
 		return m.rightContentHeight()
 	}
+}
+
+func (m Model) beadsContentHeight() int {
+	height := m.height - ui.BeadsContentOverhead
+	if height <= 0 {
+		return 16
+	}
+	return height
 }
 
 // gitPaneContentHeight is the list height for the branches, history, and

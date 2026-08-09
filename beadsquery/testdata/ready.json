@@ -1,0 +1,21 @@
+[
+  {
+    "id": "bd-10",
+    "title": "Tenth ready bead",
+    "priority": 1,
+    "assignee": null,
+    "status": "open"
+  },
+  {
+    "id": "bd-2",
+    "title": "Second ready bead",
+    "priority": 1,
+    "assignee": "alice"
+  },
+  {
+    "id": "bd-1",
+    "title": "Highest priority ready bead",
+    "priority": 0,
+    "assignee": ""
+  }
+]

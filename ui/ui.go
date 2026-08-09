@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/internal/artifacts"
@@ -132,6 +133,11 @@ const (
 	ModePlans
 	ModeFlows
 	ModeActiveFlows
+	ModeBeadsReady
+	ModeBeadsBlocked
+	ModeBeadsOpen
+	ModeBeadsInProgress
+	ModeBeadsClosed
 )
 
 // IsGitMode reports whether mode is one of the five git-oriented subviews
@@ -139,6 +145,12 @@ const (
 // history, reflog).
 func IsGitMode(mode Mode) bool {
 	return mode >= ModeWorktrees && mode <= ModeReflog
+}
+
+// IsBeadsMode reports whether mode is one of the five Beads subviews grouped
+// under the top-level Beads view.
+func IsBeadsMode(mode Mode) bool {
+	return mode >= ModeBeadsReady && mode <= ModeBeadsClosed
 }
 
 const LeftPaneWidth = 30
@@ -184,6 +196,10 @@ const BranchContentOverhead = 5
 // subview lists: the base right-pane chrome plus the grouped Git header's
 // extra subview row.
 const GitContentOverhead = BranchContentOverhead + 1
+
+// BeadsContentOverhead is the number of rows consumed by chrome around the
+// Beads subview lists, including the grouped Beads header's second row.
+const BeadsContentOverhead = BranchContentOverhead + 1
 
 // WorktreeContentOverhead is the number of rows consumed by chrome around the
 // worktree list. Worktrees is a git subview, so it renders under the two-row
@@ -299,6 +315,14 @@ type RenderParams struct {
 	Flows                        []flowstore.FlowRecord
 	FlowSelected                 int
 	FlowScroll                   int
+	BeadsOpen                    []beadsquery.Bead
+	BeadsOpenSelected            int
+	BeadsOpenScroll              int
+	BeadsOpenAvailable           bool
+	BeadsOpenPending             bool
+	BeadsError                   string
+	BeadsSourceCount             int
+	BeadsClosedTotal             int
 	FlowEmbeddedTerminals        []EmbeddedTerminalTab
 	FlowEmbeddedTerminalLines    []string
 	FlowEmbeddedTerminalPrefix   bool
@@ -613,10 +637,15 @@ func renderApplication(p RenderParams) string {
 
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery, p.RepoPaneCollapsed)
 
-	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
+	modeHeader := renderModeHeaderWithBeads(
+		p.Mode, rightContentWidth, p.BeadsSourceCount, p.BeadsClosedTotal,
+		p.BeadsOpenAvailable, p.BeadsOpenPending,
+	)
 	rightContentHeight := p.Height - BranchContentOverhead
 	if IsGitMode(p.Mode) {
 		rightContentHeight = p.Height - GitContentOverhead
+	} else if IsBeadsMode(p.Mode) {
+		rightContentHeight = p.Height - BeadsContentOverhead
 	}
 	if rightContentHeight < 0 {
 		rightContentHeight = 0
@@ -631,6 +660,7 @@ func renderApplication(p RenderParams) string {
 	sessionSel := p.SessionSelected
 	planSel := p.PlanSelected
 	flowSel := p.FlowSelected
+	beadSel := p.BeadsOpenSelected
 	if p.ActivePane == 0 {
 		branchSel = -1
 		stashSel = -1
@@ -640,6 +670,7 @@ func renderApplication(p RenderParams) string {
 		sessionSel = -1
 		planSel = -1
 		flowSel = -1
+		beadSel = -1
 		selectedPlanPhaseID = ""
 		selectedFlowPhaseID = ""
 	}
@@ -671,6 +702,30 @@ func renderApplication(p RenderParams) string {
 		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
 		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
+	case IsBeadsMode(p.Mode) && p.BeadsOpenPending:
+		message := p.RightEmptyMessage
+		if message == "" {
+			message = "loading " + beadsModeLabel(p.Mode) + " beads"
+		}
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
+	case IsBeadsMode(p.Mode) && p.BeadsError != "":
+		message := "Could not load " + beadsModeLabel(p.Mode) + " beads: " + terminalSafeSingleLine(p.BeadsError)
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
+	case IsBeadsMode(p.Mode) && len(p.BeadsOpen) > 0:
+		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, rightContentHeight)
+	case IsBeadsMode(p.Mode):
+		message := p.RightEmptyMessage
+		if message == "" {
+			switch {
+			case p.BeadsOpenPending:
+				message = "loading " + beadsModeLabel(p.Mode) + " beads"
+			case p.BeadsOpenAvailable:
+				message = "no " + beadsModeLabel(p.Mode) + " beads"
+			default:
+				message = "beads not configured"
+			}
+		}
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
 	}
@@ -747,14 +802,19 @@ type modeHeaderItem struct {
 }
 
 // renderModeHeader produces the view selector shown at the top of the right
-// pane: a single top-level row normally, plus a second git-subview row while
-// a git subview is active.
+// pane: a single top-level row normally, plus a second subview row while Git
+// or Beads is active.
 func renderModeHeader(mode Mode, width int) string {
+	return renderModeHeaderWithBeads(mode, width, 0, 0, false, false)
+}
+
+func renderModeHeaderWithBeads(mode Mode, width, fetched, total int, available, pending bool) string {
 	topLevel := []modeHeaderItem{
 		{key: "1", name: "git", active: IsGitMode(mode)},
 		{key: "2", name: "sessions", active: mode == ModeSessions},
 		{key: "3", name: "plans", active: mode == ModePlans},
 		{key: "4", name: "flows", active: mode == ModeFlows},
+		{key: "5", name: "beads", active: IsBeadsMode(mode)},
 	}
 	activeFlows := modeHeaderItem{key: "^a", name: "active flows", active: mode == ModeActiveFlows}
 	separator := strings.Repeat("─", width)
@@ -768,6 +828,22 @@ func renderModeHeader(mode Mode, width int) string {
 			{key: "r", name: "reflog", active: mode == ModeReflog},
 		}
 		header += "\n" + renderModeHeaderRow(subviews, width)
+	} else if IsBeadsMode(mode) {
+		closedName := "closed"
+		if mode == ModeBeadsClosed && available && !pending {
+			closedName = fmt.Sprintf("closed %d", fetched)
+			if total > fetched {
+				closedName = fmt.Sprintf("closed %d of %d", fetched, total)
+			}
+		}
+		subviews := []modeHeaderItem{
+			{key: "r", name: "ready", active: mode == ModeBeadsReady},
+			{key: "b", name: "blocked", active: mode == ModeBeadsBlocked},
+			{key: "o", name: "open", active: mode == ModeBeadsOpen},
+			{key: "i", name: "in-progress", active: mode == ModeBeadsInProgress},
+			{key: "c", name: closedName, active: mode == ModeBeadsClosed},
+		}
+		header += "\n" + renderModeHeaderRowKeepingActive(subviews, width)
 	}
 	return header + "\n" + separator
 }
@@ -787,6 +863,23 @@ func renderModeHeaderRow(items []modeHeaderItem, width int) string {
 	return ansi.Truncate(" "+strings.Join(parts, " "), width, "")
 }
 
+func renderModeHeaderRowKeepingActive(items []modeHeaderItem, width int) string {
+	row := renderModeHeaderRow(items, width)
+	fullWidth := ansi.StringWidth(" " + strings.Join(renderedModeHeaderItems(items), " "))
+	if fullWidth <= width {
+		return row
+	}
+	return renderModeHeaderRow(activeHeaderItemFirst(items), width)
+}
+
+func renderedModeHeaderItems(items []modeHeaderItem) []string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, renderModeHeaderItem(item))
+	}
+	return parts
+}
+
 func renderModeHeaderRowWithRight(left []modeHeaderItem, right *modeHeaderItem, width int) string {
 	leftLine := renderModeHeaderRow(left, width)
 	if right == nil {
@@ -801,9 +894,23 @@ func renderModeHeaderRowWithRight(left []modeHeaderItem, right *modeHeaderItem, 
 	if leftWidth+rightWidth <= width {
 		return leftLine + strings.Repeat(" ", width-leftWidth-rightWidth) + rightLine
 	}
-	leftLine = ansi.Truncate(leftLine, width-rightWidth, "")
+	leftLine = renderModeHeaderRow(activeHeaderItemFirst(left), width-rightWidth)
 	leftWidth = ansi.StringWidth(leftLine)
 	return leftLine + strings.Repeat(" ", width-leftWidth-rightWidth) + rightLine
+}
+
+func activeHeaderItemFirst(items []modeHeaderItem) []modeHeaderItem {
+	for i, item := range items {
+		if !item.active || i == 0 {
+			continue
+		}
+		prioritized := make([]modeHeaderItem, 0, len(items))
+		prioritized = append(prioritized, item)
+		prioritized = append(prioritized, items[:i]...)
+		prioritized = append(prioritized, items[i+1:]...)
+		return prioritized
+	}
+	return items
 }
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
@@ -1182,6 +1289,8 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		}
 		if IsGitMode(sp.Mode) {
 			navigation = append(navigation, shortcutHint{Key: "w/b/s/h/r", Label: "subview", Inline: true})
+		} else if IsBeadsMode(sp.Mode) {
+			navigation = append(navigation, shortcutHint{Key: "r/b/o/i/c", Label: "subview", Inline: true})
 		}
 	}
 	global := []shortcutHint{
@@ -1649,9 +1758,9 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 }
 
 func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
-	// The git subview hint is rail-only; the space-constrained footer keeps
-	// its established hint set.
-	sections = withoutShortcutKeys(sections, "w/b/s/h/r")
+	// Group subview hints are rail-only; the space-constrained footer keeps its
+	// established hint set.
+	sections = withoutShortcutKeys(sections, "w/b/s/h/r", "r/b/o/i/c")
 	paneKey := paneShortcutKeyForStatus(sp)
 	for _, drop := range [][]string{
 		{},
@@ -2046,9 +2155,36 @@ func modeShortcutTitle(mode Mode) string {
 		return "Flows"
 	case ModeActiveFlows:
 		return "Active flows"
+	case ModeBeadsReady, ModeBeadsBlocked, ModeBeadsOpen, ModeBeadsInProgress, ModeBeadsClosed:
+		return "Beads " + beadsModeTitle(mode)
 	default:
 		return "Items"
 	}
+}
+
+func beadsModeLabel(mode Mode) string {
+	switch mode {
+	case ModeBeadsReady:
+		return "ready"
+	case ModeBeadsBlocked:
+		return "blocked"
+	case ModeBeadsOpen:
+		return "open"
+	case ModeBeadsInProgress:
+		return "in-progress"
+	case ModeBeadsClosed:
+		return "closed"
+	default:
+		return ""
+	}
+}
+
+func beadsModeTitle(mode Mode) string {
+	label := beadsModeLabel(mode)
+	if label == "" {
+		return ""
+	}
+	return strings.ToUpper(label[:1]) + label[1:]
 }
 
 func modeShortcutTitleForStatus(sp statusBarParams) string {
@@ -2373,6 +2509,36 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 	}
 
 	return scrollAndPad(content, scroll, height)
+}
+
+func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, height int) []string {
+	content := make([]string, 0, len(beads))
+	for i, bead := range beads {
+		id := terminalSafeSingleLine(bead.ID)
+		title := terminalSafeSingleLine(bead.Title)
+		assignee := terminalSafeSingleLine(bead.Assignee)
+		body := fmt.Sprintf("%s  P%d  %s", id, bead.Priority, title)
+		if assignee != "" {
+			body += "  " + assignee
+		}
+		line := "   " + body
+		if i == selected {
+			line = renderStyledRow(stashSelStyle.Render(" > "+body), stashSelStyle, width)
+		}
+		content = append(content, truncateToWidth(line, width))
+	}
+	return scrollAndPad(content, scroll, height)
+}
+
+func terminalSafeSingleLine(text string) string {
+	text = ansi.Strip(text)
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width, height int) []string {

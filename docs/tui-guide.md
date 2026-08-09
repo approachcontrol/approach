@@ -23,7 +23,10 @@ Press `f2` from normal TUI views to open the prompt-template editor for the
 focus passes F2 through to the embedded agent.
 
 Empty panes explain why they are empty: no data for the selected repo, no
-fuzzy filter matches, or a load failure with details in the status bar.
+fuzzy filter matches, or a load failure with details in the status bar. Beads
+uses subview-specific quiet empty/loading messages, a calm
+`beads not configured` state, and persistent detailed errors as described
+below.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are
 disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active,
@@ -32,8 +35,10 @@ visual warning.
 
 **Fuzzy filter:** Press `/` in the active pane to type-ahead filter repos or
 right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits
-it. Each right-pane view keeps its own filter: filtering worktrees does not
-filter history, and returning to a view restores that view's previous query.
+it. Each filterable right-pane view keeps its own filter: filtering worktrees
+does not filter history, and returning to a view restores that view's previous
+query. Each Beads subview likewise keeps an independent filter over bead ID,
+title, and assignee; repo filtering remains available from the left pane.
 
 ## Key Reference
 
@@ -45,7 +50,7 @@ filter history, and returning to a view restores that view's previous query.
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Active Flows`) |
+| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Beads — Closed`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -60,23 +65,24 @@ filter history, and returning to a view restores that view's previous query.
 |-----|--------|
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
-| `/` | Fuzzy filter the current item list |
-| `1`/`2`/`3`/`4` | Switch to the Git view / sessions / plans / flows outside Active Flows (`5`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
+| `/` | Fuzzy filter the current item list, including the active Beads subview |
+| `1`/`2`/`3`/`4`/`5` | Switch to the Git view / sessions / plans / flows / Beads outside Active Flows (`6`–`9` are unbound); `1` and `5` return to their group's last-used subview and are no-ops while already inside that group; Beads defaults to Open before first use |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
-| `←`/`→` | Cycle git subviews with wrap inside the Git view (arrows never leave it); cycle Git, sessions, plans, and flows with wrap elsewhere, entering Git at its last-used subview. Active Flows is not in the arrow cycle. |
-| `l` | Alias for `→` in flows view; unbound elsewhere |
+| `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
+| `←`/`→` | Cycle subviews with wrap inside either Git or Beads (arrows never leave a grouped view); elsewhere step through Git, sessions, plans, flows, and Beads, entering either group at its last-used subview. Active Flows is not in the arrow cycle. |
+| `l` | Alias for `→` in flows view, entering the last-used Beads subview; unbound elsewhere |
 | `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
-| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
+| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Active Flows`) |
+| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Beads — Closed`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
@@ -94,7 +100,8 @@ filter history, and returning to a view restores that view's previous query.
 | `i` | Alias for plan implementation launch, or open the linked GitHub issue (flows and active flows views, when issue metadata exists) |
 | `D` | Toggle destructive mode |
 | `ctrl+r` | Restore and focus the full repos pane (outside search or embedded-terminal input focus) |
-| `tab` | Cycle pane focus forward; while the repos pane is collapsed, skip it and alternate only between a Flow list and terminal when present |
+| `f5` | Rescan repositories and refetch the current view, including the active Beads subview |
+| `tab` | Cycle pane focus forward; with a Flow terminal open, cycles repo pane → Flow list → terminal, and while the repos pane is collapsed skips it and alternates between the Flow list and terminal |
 | `bksp` | Restore and focus the full repos pane (outside embedded-terminal input focus) |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -102,14 +109,23 @@ filter history, and returning to a view restores that view's previous query.
 ## View Switching and the Header
 
 The right pane header shows the top-level views: `1` git, `2` sessions, `3`
-plans, and `4` flows on the left, with `^a` active flows pinned to the right.
+plans, `4` flows, and `5` beads on the left, with `^a` active flows pinned to
+the right.
 While the Git view is active a second header row lists its subviews with their
 direct letter keys (`w` worktrees, `b` branches, `s` stashes, `h` history, `r`
 reflog); the active entries are bracketed. Entering the Git view lands on the
 last-used subview (worktrees on first entry), and each subview keeps its own
 cursor position and filter across switches. Press `V` to choose which view
 Approach opens on future launches; leaving it unset keeps the built-in startup
-default of Flows.
+default of Flows. Choosing a Git or Beads subview starts directly in that
+subview and seeds the corresponding group's last-used destination.
+
+While Beads is active, its second header row lists `r` ready, `b` blocked, `o`
+open, `i` in-progress, and `c` closed. The active top-level Beads entry and
+active subview are bracketed. This extra row comes out of the list viewport,
+so it does not increase the pane's outer height. Entering Beads lands on the
+last-used subview (Open before first use), arrows wrap within the five Beads
+subviews, and each subview keeps its own filter, cursor, and scroll position.
 
 ## Repo Pane Actions
 
@@ -287,6 +303,73 @@ Plans share the agent-artifact root with sessions (see
 `docs/agent-sessions.md` for the storage layout); because plans live beside
 sessions, moving or cleaning the sessions root also moves or removes saved
 plans. v1 has no TUI plan deletion.
+
+## Beads View (`5`)
+
+With the content pane focused, press `5` to enter the selected repository's
+read-only Beads group at its last-used subview, defaulting to Open before first
+use. Pressing `5` while already in any Beads subview is a no-op. Press `r` for
+Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
+pressing the already-active letter is also a no-op. `←`/`→` step and wrap
+Ready ↔ Blocked ↔ Open ↔ In-Progress ↔ Closed without leaving the group. From
+Flows, `→` (or `l`) enters Beads at the remembered subview as the fifth
+top-level arrow stop. The five modes keep independent rows, filters,
+cursor/scroll positions, availability, loading state, and request tokens.
+
+The query sources and ordering are:
+
+- Ready: `bd ready --json --limit 0 --readonly`, sorted by priority then natural ID.
+- Blocked: `bd list -s blocked --json --limit 0 --readonly`, sorted by priority then natural ID.
+- Open: `bd list -s open --json --limit 0 --readonly`, sorted by priority then natural ID.
+- In-Progress: `bd list -s in_progress --json --limit 0 --readonly`, sorted by priority then natural ID.
+- Closed: `bd list -s closed --json --limit 100 --sort closed --reverse --readonly`, selecting the newest 100 before the result is parsed and sorted by descending `closed_at`, then natural ID. The full total comes from `bd stats --json --no-activity --readonly` at `summary.closed_issues` (or the v1 `data.summary.closed_issues` envelope).
+
+Ready is `bd`'s dependency-graph computation, not a status derived inside
+Approach. Ready and Open are independent results: an open bead with all
+blockers resolved intentionally appears in both. Rows render as
+`<id>  P<n>  <title>` and append two spaces plus the assignee when present.
+For a settled Closed result, the active header item shows the unfiltered
+accepted row count: plain `closed 0` through `closed 100` when the stats total
+is not larger, or `closed 100 of <total>` when more rows exist. The two queries
+are separate snapshots, so `total <= fetched` deliberately uses the plain
+fetched count. Loading and unavailable results show no count, and a fuzzy
+filter does not change it. Failure of either Closed query discards both rows
+and total and uses the shared unavailable state.
+
+Successful empty queries show exactly `no ready beads`, `no blocked beads`,
+`no open beads`, `no in-progress beads`, or `no closed beads`. Pending queries
+use the corresponding `loading ... beads` message. A missing `bd` binary or a
+repository without a Beads project/database shows exactly
+`beads not configured`. Other command failures and JSON parsing failures show
+a persistent `Could not load <subview> beads: <detail>` error; its detail is
+sanitized to one terminal-safe line and truncated to the pane width.
+
+`/` filters only the active Beads pane by ID, title, and assignee. Subview
+switches and `f5` retain that pane's same-repo rows, query, cursor, and scroll
+internally while the loading UI hides old rows. A loading pane shows only its
+`loading` message and ignores cursor keys, so no selection moves behind it. An
+accepted replacement reapplies the filter and clamps selection and scroll for
+shorter, empty, or zero-match results. An unavailable result retains the query
+but clears that pane's rows and selection. Moving to another repo invalidates
+every Beads request, clears all old-repo rows and cursor/scroll positions,
+retains each subview's query, and starts only the active subview pending for the
+new repo; retention is same-repo only, so this holds even when the repo changes
+while Active Flows is open.
+Per-mode request tokens reject results for an old repo, an older refresh, or a
+subview that is no longer active. Every query is read-only, and `bd -C` plus the
+selected process directory are owned by the query runner.
+
+After the active subview settles, `enter` on its visible selected row
+asynchronously loads the raw human-readable output of
+`bd show <id> --readonly` and pages it through `less -R`. Detail results use the
+same active-view request lifecycle as other read-only detail panes: a repeated
+`enter`, subview or repo transition, or Beads list refresh invalidates the old
+request, and delivery also requires the same bead to remain visibly selected.
+Stale successes do not launch a pager and stale errors do not change status.
+
+Keys `6`–`9` remain unbound; frozen
+`default_view` meanings `1`–`9` are unchanged, and `10`–`14` start directly in
+Ready, Blocked, Open, In-Progress, or Closed.
 
 ## Flows View (`4`)
 

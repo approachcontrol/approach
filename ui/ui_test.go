@@ -4187,6 +4187,8 @@ func TestStatusBar_ArrowViewHintFitsNarrowFooter(t *testing.T) {
 		{name: "worktrees left pane", mode: ModeWorktrees, pane: 0},
 		{name: "branches", mode: ModeBranches, pane: 1, wantArrow: true},
 		{name: "flows", mode: ModeFlows, pane: 1, wantArrow: true},
+		{name: "beads left pane", mode: ModeBeadsOpen, pane: 0},
+		{name: "beads right pane", mode: ModeBeadsOpen, pane: 1, wantArrow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bar := RenderStatusBar(80, tc.mode, OverlayNone, tc.pane, false, false, false)

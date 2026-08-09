@@ -3462,12 +3462,29 @@ func TestModel_ShiftVOpensDefaultViewSelectFromBothPanes(t *testing.T) {
 	} {
 		t.Run(setup.name, func(t *testing.T) {
 			m := setup.fn(model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeFlows}))
+			m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 40})
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
 			if m.Overlay() != ui.OverlaySelect {
 				t.Fatalf("expected select overlay, got %d", m.Overlay())
 			}
 			view := m.View()
-			for _, want := range []string{"Choose default view", "Git — Worktrees", "Git — Branches", "Git — Stashes", "Git — History", "Git — Reflog", "Sessions", "Plans", "Flows", "Active Flows"} {
+			for _, want := range []string{
+				"Choose default view",
+				"Git — Worktrees",
+				"Git — Branches",
+				"Git — Stashes",
+				"Git — History",
+				"Git — Reflog",
+				"Sessions",
+				"Plans",
+				"Flows",
+				"Active Flows",
+				"Beads — Ready",
+				"Beads — Blocked",
+				"Beads — Open",
+				"Beads — In-Progress",
+				"Beads — Closed",
+			} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("expected default view select to contain %q:\n%s", want, view)
 				}
@@ -3527,6 +3544,57 @@ func TestModel_DefaultViewSelectSavesAndUpdatesSessionChoice(t *testing.T) {
 	}
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("selecting default view should not switch current mode, got %v", m.Mode())
+	}
+}
+
+func TestModel_DefaultViewSelectPreselectsAndSavesBeadsDefaults(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		mode  ui.Mode
+		label string
+	}{
+		{name: "ready", mode: ui.ModeBeadsReady, label: "Beads — Ready"},
+		{name: "blocked", mode: ui.ModeBeadsBlocked, label: "Beads — Blocked"},
+		{name: "open", mode: ui.ModeBeadsOpen, label: "Beads — Open"},
+		{name: "in-progress", mode: ui.ModeBeadsInProgress, label: "Beads — In-Progress"},
+		{name: "closed", mode: ui.ModeBeadsClosed, label: "Beads — Closed"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var saved ui.Mode
+			m := model.NewWithOptions(testRepos(), model.Options{
+				StartupMode: tt.mode,
+				SaveDefaultView: func(mode ui.Mode) error {
+					saved = mode
+					return nil
+				},
+			})
+			m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
+			if cmd != nil {
+				t.Fatalf("opening picker returned command %T, want nil", cmd)
+			}
+			if !strings.Contains(m.View(), "> "+tt.label) {
+				t.Fatalf("expected %q default preselected:\n%s", tt.label, m.View())
+			}
+
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			if m.Overlay() != ui.OverlayNone {
+				t.Fatalf("overlay = %v after submit, want none", m.Overlay())
+			}
+			if cmd == nil {
+				t.Fatal("submitting default returned nil save command")
+			}
+			if saved != 0 {
+				t.Fatalf("save callback ran before command execution with mode %v", saved)
+			}
+			m, _ = update(m, cmd())
+			if saved != tt.mode {
+				t.Fatalf("saved default = %v, want %v", saved, tt.mode)
+			}
+			if m.DefaultView() != tt.mode {
+				t.Fatalf("session default = %v, want %v", m.DefaultView(), tt.mode)
+			}
+		})
 	}
 }
 
@@ -3808,32 +3876,42 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 }
 
 func TestModel_ViewChoicesCoverNumberedViews(t *testing.T) {
+	want := []model.ViewChoice{
+		{Number: 1, Mode: ui.ModeWorktrees, Label: "Git — Worktrees"},
+		{Number: 2, Mode: ui.ModeBranches, Label: "Git — Branches"},
+		{Number: 3, Mode: ui.ModeStashes, Label: "Git — Stashes"},
+		{Number: 4, Mode: ui.ModeHistory, Label: "Git — History"},
+		{Number: 5, Mode: ui.ModeReflog, Label: "Git — Reflog"},
+		{Number: 6, Mode: ui.ModeSessions, Label: "Sessions"},
+		{Number: 7, Mode: ui.ModePlans, Label: "Plans"},
+		{Number: 8, Mode: ui.ModeFlows, Label: "Flows"},
+		{Number: 9, Mode: ui.ModeActiveFlows, Label: "Active Flows"},
+		{Number: 10, Mode: ui.ModeBeadsReady, Label: "Beads — Ready"},
+		{Number: 11, Mode: ui.ModeBeadsBlocked, Label: "Beads — Blocked"},
+		{Number: 12, Mode: ui.ModeBeadsOpen, Label: "Beads — Open"},
+		{Number: 13, Mode: ui.ModeBeadsInProgress, Label: "Beads — In-Progress"},
+		{Number: 14, Mode: ui.ModeBeadsClosed, Label: "Beads — Closed"},
+	}
 	choices := model.ViewChoices()
-	if len(choices) != 9 {
-		t.Fatalf("ViewChoices length = %d, want 9", len(choices))
+	if len(choices) != len(want) {
+		t.Fatalf("ViewChoices length = %d, want %d", len(choices), len(want))
 	}
-	for _, choice := range choices {
-		mode, ok := model.ModeForViewNumber(choice.Number)
-		if !ok {
-			t.Fatalf("view number %d missing numbered mode mapping", choice.Number)
+	for i, expected := range want {
+		choice := choices[i]
+		if choice != expected {
+			t.Fatalf("ViewChoices()[%d] = %#v, want %#v", i, choice, expected)
 		}
-		if mode != choice.Mode {
-			t.Fatalf("view number %d maps to %v, choice mode %v", choice.Number, mode, choice.Mode)
+		mode, ok := model.ModeForViewNumber(expected.Number)
+		if !ok || mode != expected.Mode {
+			t.Fatalf("ModeForViewNumber(%d) = %v, %v; want %v, true", expected.Number, mode, ok, expected.Mode)
 		}
-		label := model.ViewChoiceLabel(choice.Mode)
-		if label != choice.Label {
-			t.Fatalf("ViewChoiceLabel(%v) = %q, want %q", choice.Mode, label, choice.Label)
+		number, ok := model.ViewNumber(expected.Mode)
+		if !ok || number != expected.Number {
+			t.Fatalf("ViewNumber(%v) = %d, %v; want %d, true", expected.Mode, number, ok, expected.Number)
 		}
-	}
-	mode, ok := model.ModeForViewNumber(9)
-	if !ok || mode != ui.ModeActiveFlows {
-		t.Fatalf("ModeForViewNumber(9) = %v, %v; want active flows, true", mode, ok)
-	}
-	if number, ok := model.ViewNumber(ui.ModeActiveFlows); !ok || number != 9 {
-		t.Fatalf("ViewNumber(ModeActiveFlows) = %d, %v; want 9, true", number, ok)
-	}
-	if label := model.ViewChoiceLabel(ui.ModeActiveFlows); label != "Active Flows" {
-		t.Fatalf("ViewChoiceLabel(ModeActiveFlows) = %q, want %q", label, "Active Flows")
+		if label := model.ViewChoiceLabel(expected.Mode); label != expected.Label {
+			t.Fatalf("ViewChoiceLabel(%v) = %q, want %q", expected.Mode, label, expected.Label)
+		}
 	}
 }
 

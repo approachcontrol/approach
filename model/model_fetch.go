@@ -109,6 +109,14 @@ func (m Model) invalidateListRequests() Model {
 	return m
 }
 
+func (m Model) invalidateBeadsListRequests() Model {
+	m.listRequestSeq++
+	for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
+		m.listRequests[int(mode)] = m.listRequestSeq
+	}
+	return m
+}
+
 func (m Model) nextWorktreeSessionRequest(repoPath, worktreePath string) (Model, uint64) {
 	m.worktreeSessionRequestSeq++
 	m.activeWorktreeSessionReq = m.worktreeSessionRequestSeq
@@ -606,6 +614,42 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 			WorktreePath: worktreePath,
 			DiffRequest:  diffRequest,
 			Diff:         diff,
+		}
+	}
+}
+
+func (m Model) fetchBeadDetail() tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	bead, ok := m.selectedVisibleBead()
+	if !ok {
+		return nil
+	}
+	mode := m.mode
+	beadID := bead.ID
+	diffRequest := m.activeViewRequest
+	showBead := m.showBead
+	return func() tea.Msg {
+		body, err := showBead(repoPath, beadID)
+		if err != nil {
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        "bead detail",
+				Err:         fmt.Sprintf("failed to load bead detail: %v", err),
+				Kind:        FetchBeadDetail,
+				Mode:        mode,
+				DiffRequest: diffRequest,
+				BeadID:      beadID,
+			}
+		}
+		return BeadDetailResultMsg{
+			RepoPath:    repoPath,
+			Mode:        mode,
+			BeadID:      beadID,
+			DiffRequest: diffRequest,
+			Body:        body,
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model/modal"
@@ -284,6 +285,55 @@ type ActiveFlowResultMsg struct {
 	ListRequest uint64
 }
 
+type BeadsReadyResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+	Error       string
+}
+
+type BeadsBlockedResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+	Error       string
+}
+
+type BeadsOpenResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+	Error       string
+}
+
+type BeadsInProgressResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+	Error       string
+}
+
+type BeadsClosedResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	Total       int
+	ListRequest uint64
+	Available   bool
+	Error       string
+}
+
+type BeadDetailResultMsg struct {
+	RepoPath    string
+	Mode        ui.Mode
+	BeadID      string
+	DiffRequest uint64
+	Body        string
+}
+
 type FlowAutoModeSetMsg struct {
 	RepoPath string
 	FlowID   string
@@ -504,6 +554,7 @@ const (
 	FetchReflogDiff
 	FetchSessionTranscript
 	FetchPlanText
+	FetchBeadDetail
 )
 
 // FetchErrorMsg carries an error encountered while loading data for a pane,
@@ -526,6 +577,7 @@ type FetchErrorMsg struct {
 	Provider     sessions.Provider
 	SessionID    string
 	PlanID       string
+	BeadID       string
 }
 
 // ActionFailedMsg carries an async action error so the failure can be surfaced
@@ -1272,6 +1324,44 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 	return m
 }
 
+func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
+	return m.handleBeadsResult(ui.ModeBeadsOpen, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
+}
+
+func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string) Model {
+	return m.handleBeadsResultWithTotal(mode, repoPath, beads, request, available, errorDetail, 0)
+}
+
+func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) Model {
+	return m.handleBeadsResultWithTotal(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error, msg.Total)
+}
+
+func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) Model {
+	if m.mode != mode {
+		return m
+	}
+	var ok bool
+	m, ok = m.acceptListResult(repoPath, mode, request)
+	if !ok {
+		return m
+	}
+	index, ok := beadSubviewIndex(mode)
+	if !ok {
+		return m
+	}
+	if !available || errorDetail != "" {
+		beads = nil
+		total = 0
+	}
+	m.beads[index].pane = m.beads[index].pane.SetItems(beads)
+	m.beads[index].available = available && errorDetail == ""
+	m.beads[index].pending = false
+	m.beads[index].error = errorDetail
+	m.beads[index].total = total
+	m.beads[index].repoPath = repoPath
+	return m.reflowBeads(mode)
+}
+
 func (m Model) handleWorktreeSessionResult(msg WorktreeSessionResultMsg) Model {
 	if !m.isCurrentWorktreeSessionRequest(msg) {
 		return m
@@ -1566,6 +1656,13 @@ func (m Model) handlePlanReadResult(msg PlanReadResultMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleBeadDetailResult(msg BeadDetailResultMsg) (Model, tea.Cmd) {
+	if m.beadDetailTargetMatches(msg.RepoPath, msg.Mode, msg.BeadID, msg.DiffRequest) {
+		return m.pageBody(msg.Body)
+	}
+	return m, nil
+}
+
 func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) (Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchCommitDiff, ui.ModeHistory, msg.DiffRequest) {
 		if commit, ok := m.selectedCommit(); ok && commit.Hash == msg.Hash {
@@ -1660,9 +1757,20 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 			return false
 		}
 		return m.currentPlanTextTargetMatches(msg.Mode, msg.PlanID)
+	case FetchBeadDetail:
+		return m.beadDetailTargetMatches(msg.RepoPath, msg.Mode, msg.BeadID, msg.DiffRequest)
 	default:
 		return false
 	}
+}
+
+func (m Model) beadDetailTargetMatches(repoPath string, mode ui.Mode, beadID string, request uint64) bool {
+	if !m.isCurrentRepo(repoPath) || m.mode != mode || !ui.IsBeadsMode(mode) ||
+		!m.activeViewMatches(FetchBeadDetail, mode, request) {
+		return false
+	}
+	bead, ok := m.selectedVisibleBead()
+	return ok && bead.ID == beadID
 }
 
 func (m Model) currentPlanTextTargetMatches(mode ui.Mode, planID string) bool {

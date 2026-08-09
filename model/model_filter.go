@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model/pane"
@@ -76,6 +77,47 @@ func newFlowPane() pane.Pane[flowstore.FlowRecord] {
 	return pane.New(flowSearchText, flowItemHeight(""))
 }
 
+func newBeadPane() pane.Pane[beadsquery.Bead] {
+	return pane.New(func(bead beadsquery.Bead) string {
+		return strings.Join([]string{bead.ID, bead.Title, bead.Assignee}, " ")
+	}, fixedHeight[beadsquery.Bead])
+}
+
+func newBeadSubviews() [beadSubviewCount]beadSubviewState {
+	var subviews [beadSubviewCount]beadSubviewState
+	for i := range subviews {
+		subviews[i].pane = newBeadPane()
+	}
+	return subviews
+}
+
+func beadSubviewIndex(mode ui.Mode) (int, bool) {
+	if !ui.IsBeadsMode(mode) {
+		return 0, false
+	}
+	return int(mode - ui.ModeBeadsReady), true
+}
+
+func (m Model) beadSubview(mode ui.Mode) (beadSubviewState, bool) {
+	index, ok := beadSubviewIndex(mode)
+	if !ok {
+		return beadSubviewState{}, false
+	}
+	return m.beads[index], true
+}
+
+func (m Model) activeBeadSubview() (beadSubviewState, bool) {
+	return m.beadSubview(m.mode)
+}
+
+func (m Model) selectedVisibleBead() (beadsquery.Bead, bool) {
+	state, ok := m.activeBeadSubview()
+	if !ok || !state.available || state.pending {
+		return beadsquery.Bead{}, false
+	}
+	return state.pane.Selected()
+}
+
 func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
 	return func(record planstore.PlanRecord, _ int) int {
 		return planVisualHeight(record, expandedPlanID)
@@ -136,6 +178,9 @@ func (m Model) activeItemPaneQuery() string {
 		return m.plans.Query()
 	case ui.ModeFlows:
 		return m.flows.Query()
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		state, _ := m.activeBeadSubview()
+		return state.pane.Query()
 	default:
 		return ""
 	}
@@ -181,6 +226,10 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	case ui.ModeFlows:
 		m.flows = m.flows.SetQuery(query)
 		m = m.setExpandedFlowID("")
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		index, _ := beadSubviewIndex(m.mode)
+		m.beads[index].pane = m.beads[index].pane.SetQuery(query)
+		m = m.reflowBeads(m.mode)
 	}
 	return m
 }
@@ -196,6 +245,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowPlans()
 	m = m.reflowFlows()
 	m = m.reflowActiveFlows()
+	m = m.reflowAllBeads()
 	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}

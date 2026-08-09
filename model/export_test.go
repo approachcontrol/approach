@@ -82,6 +82,10 @@ func WithAutoAdvanceSnapshotForTest(m Model, flows []flowstore.FlowRecord) Model
 	return m
 }
 
+func FetchForModeForTest(m Model) tea.Cmd {
+	return m.fetchForMode()
+}
+
 func FlowPhaseDoneInstructionForTest() string {
 	return flowPhaseDoneInstruction
 }
