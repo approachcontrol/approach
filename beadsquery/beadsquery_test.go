@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/approachcontrol/approach/beadsquery"
@@ -17,32 +18,51 @@ type fakeRunner struct {
 	calls int
 }
 
-func TestQuerierListOpenPreservesRunnerFailureCauses(t *testing.T) {
+func TestQuerierListOpenClassifiesOnlyKnownAbsenceFailures(t *testing.T) {
 	t.Parallel()
 
-	missingDatabase := errors.New("no beads database found")
-	genericFailure := errors.New("bd failed")
+	missingExecutable := &exec.Error{Name: "bd", Err: exec.ErrNotFound}
+	missingProject := errors.New("Error: cannot use -C directory /repo: no beads project found: exit status 1")
+	missingDatabase := errors.New("NO   BEADS\tDATABASE FOUND")
+	genericFailure := errors.New("bd failed: permission denied")
+	outputLimit := errors.New("bd output exceeded 33554432-byte limit")
 	tests := []struct {
-		name string
-		err  error
-		is   error
+		name          string
+		out           string
+		err           error
+		notConfigured bool
+		wantDetail    string
 	}{
-		{name: "missing executable", err: &exec.Error{Name: "bd", Err: exec.ErrNotFound}, is: exec.ErrNotFound},
-		{name: "missing database", err: missingDatabase, is: missingDatabase},
-		{name: "generic nonzero", err: genericFailure, is: genericFailure},
+		{name: "missing executable", err: missingExecutable, notConfigured: true},
+		{name: "missing project wrapped by runner", err: missingProject, notConfigured: true},
+		{name: "missing database normalized", err: missingDatabase, notConfigured: true},
+		{name: "generic nonzero", err: genericFailure, wantDetail: "permission denied"},
+		{name: "output limit", err: outputLimit, wantDetail: "output exceeded"},
+		{name: "garbage output", out: "not-json", wantDetail: "parsing open beads"},
+		{name: "lexical extension", err: errors.New("no beads project foundish"), wantDetail: "foundish"},
+		{name: "incidental mention", err: errors.New("help says no beads database found means setup is incomplete"), wantDetail: "help says"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runner := &fakeRunner{err: tt.err}
+			runner := &fakeRunner{out: tt.out, err: tt.err}
 			got, err := beadsquery.NewQuerier(runner).ListOpen("/repo")
-			if !errors.Is(err, tt.is) {
-				t.Fatalf("ListOpen() error = %v, want cause %v", err, tt.is)
+			if errors.Is(err, beadsquery.ErrNotConfigured) != tt.notConfigured {
+				t.Fatalf("errors.Is(ListOpen() error, ErrNotConfigured) = %v, want %v: %v", errors.Is(err, beadsquery.ErrNotConfigured), tt.notConfigured, err)
 			}
 			if got != nil {
 				t.Fatalf("ListOpen() = %#v, want no partial data", got)
 			}
-			if tt.name == "missing executable" {
+			if tt.err != nil && !errors.Is(err, tt.err) {
+				t.Fatalf("ListOpen() error = %v, want original cause %v", err, tt.err)
+			}
+			if tt.wantDetail != "" && !strings.Contains(err.Error(), tt.wantDetail) {
+				t.Fatalf("ListOpen() error = %q, want detail %q", err, tt.wantDetail)
+			}
+			if tt.err == missingExecutable {
+				if !errors.Is(err, exec.ErrNotFound) {
+					t.Fatalf("ListOpen() error = %v, want exec.ErrNotFound", err)
+				}
 				var execErr *exec.Error
 				if !errors.As(err, &execErr) {
 					t.Fatalf("ListOpen() error = %v, want *exec.Error", err)
@@ -146,29 +166,41 @@ func TestQuerierListClosedUsesUncappedReadonlyCloseTimeQuery(t *testing.T) {
 	}
 }
 
-func TestNewQueriesPreserveRunnerFailureCauses(t *testing.T) {
+func TestEveryQueryUsesSharedAbsenceClassification(t *testing.T) {
 	t.Parallel()
 
-	cause := errors.New("bd failed")
 	queries := []struct {
 		name string
 		run  func(*beadsquery.Querier) ([]beadsquery.Bead, error)
 	}{
 		{name: "ready", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListReady("/repo") }},
 		{name: "blocked", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListBlocked("/repo") }},
+		{name: "open", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListOpen("/repo") }},
 		{name: "in-progress", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListInProgress("/repo") }},
 		{name: "closed", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListClosed("/repo") }},
 	}
 	for _, query := range queries {
-		query := query
 		t.Run(query.name, func(t *testing.T) {
-			runner := &fakeRunner{err: cause}
-			got, err := query.run(beadsquery.NewQuerier(runner))
-			if !errors.Is(err, cause) {
-				t.Fatalf("query error = %v, want wrapped cause %v", err, cause)
-			}
-			if got != nil {
-				t.Fatalf("query result = %#v, want no partial data", got)
+			for _, failure := range []struct {
+				name          string
+				cause         error
+				notConfigured bool
+			}{
+				{name: "absence", cause: errors.New("no beads database found"), notConfigured: true},
+				{name: "configured error", cause: errors.New("bd failed")},
+			} {
+				t.Run(failure.name, func(t *testing.T) {
+					got, err := query.run(beadsquery.NewQuerier(&fakeRunner{err: failure.cause}))
+					if errors.Is(err, beadsquery.ErrNotConfigured) != failure.notConfigured {
+						t.Fatalf("query error classification = %v, want %v: %v", errors.Is(err, beadsquery.ErrNotConfigured), failure.notConfigured, err)
+					}
+					if !errors.Is(err, failure.cause) {
+						t.Fatalf("query error = %v, want wrapped cause %v", err, failure.cause)
+					}
+					if got != nil {
+						t.Fatalf("query result = %#v, want no partial data", got)
+					}
+				})
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -161,31 +162,37 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 			}
 			m.beads[index].available = false
 			m.beads[index].pending = true
+			m.beads[index].error = ""
 			return m.reflowBeads(mode)
 		},
 		load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
 			index, _ := beadSubviewIndex(mode)
 			beads, err := m.listBeads[index](repoPath)
-			return beadsResultMessage(mode, repoPath, request, beads, err == nil), nil
+			return beadsResultMessage(mode, repoPath, request, beads, err), nil
 		},
 	}
 }
 
-func beadsResultMessage(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead, available bool) tea.Msg {
+func beadsResultMessage(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead, err error) tea.Msg {
+	available := err == nil
+	errorDetail := ""
+	if err != nil && !errors.Is(err, beadsquery.ErrNotConfigured) {
+		errorDetail = err.Error()
+	}
 	if !available {
 		beads = nil
 	}
 	switch mode {
 	case ui.ModeBeadsReady:
-		return BeadsReadyResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsReadyResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsBlocked:
-		return BeadsBlockedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsBlockedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsOpen:
-		return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsInProgress:
-		return BeadsInProgressResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsInProgressResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsClosed:
-		return BeadsClosedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsClosedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	default:
 		return nil
 	}

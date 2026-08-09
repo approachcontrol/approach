@@ -315,6 +315,7 @@ type RenderParams struct {
 	BeadsOpenScroll              int
 	BeadsOpenAvailable           bool
 	BeadsOpenPending             bool
+	BeadsError                   string
 	FlowEmbeddedTerminals        []EmbeddedTerminalTab
 	FlowEmbeddedTerminalLines    []string
 	FlowEmbeddedTerminalPrefix   bool
@@ -687,6 +688,9 @@ func renderApplication(p RenderParams) string {
 		if message == "" {
 			message = "loading " + beadsModeLabel(p.Mode) + " beads"
 		}
+		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
+	case IsBeadsMode(p.Mode) && p.BeadsError != "":
+		message := "Could not load " + beadsModeLabel(p.Mode) + " beads: " + terminalSafeSingleLine(p.BeadsError)
 		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
 	case IsBeadsMode(p.Mode) && len(p.BeadsOpen) > 0:
 		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, rightContentHeight)

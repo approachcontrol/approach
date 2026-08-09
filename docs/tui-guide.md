@@ -19,8 +19,9 @@ focus passes F2 through to the embedded agent.
 
 Empty panes explain why they are empty: no data for the selected repo, no
 fuzzy filter matches, or a load failure with details in the status bar. Beads
-uses subview-specific quiet empty/loading messages and the shared
-`beads not configured` state described below.
+uses subview-specific quiet empty/loading messages, a calm
+`beads not configured` state, and persistent detailed errors as described
+below.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are
 disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active,
@@ -321,10 +322,11 @@ blockers resolved intentionally appears in both. Rows render as
 
 Successful empty queries show exactly `no ready beads`, `no blocked beads`,
 `no open beads`, `no in-progress beads`, or `no closed beads`. Pending queries
-use the corresponding `loading ... beads` message. A missing `bd` binary, a
-repository without a Beads database, or any command or JSON parsing failure
-shows exactly `beads not configured`; configured-versus-error classification
-remains deferred.
+use the corresponding `loading ... beads` message. A missing `bd` binary or a
+repository without a Beads project/database shows exactly
+`beads not configured`. Other command failures and JSON parsing failures show
+a persistent `Could not load <subview> beads: <detail>` error; its detail is
+sanitized to one terminal-safe line and truncated to the pane width.
 
 `/` filters only the active Beads pane by ID, title, and assignee. Subview
 switches and `f5` retain that pane's same-repo rows, query, cursor, and scroll
@@ -342,7 +344,7 @@ subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
 
 `enter` still has no Beads detail pager. The later Closed 100-row cap/count,
-configured-versus-error classification, pager, and `default_view` 10–14
+pager, and `default_view` 10–14
 additions remain deferred; keys `6`–`9` and the existing frozen 1–9 startup
 vocabulary are unchanged.
 
