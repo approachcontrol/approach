@@ -285,7 +285,35 @@ type ActiveFlowResultMsg struct {
 	ListRequest uint64
 }
 
+type BeadsReadyResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+}
+
+type BeadsBlockedResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+}
+
 type BeadsOpenResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+}
+
+type BeadsInProgressResultMsg struct {
+	RepoPath    string
+	Beads       []beadsquery.Bead
+	ListRequest uint64
+	Available   bool
+}
+
+type BeadsClosedResultMsg struct {
 	RepoPath    string
 	Beads       []beadsquery.Bead
 	ListRequest uint64
@@ -1281,15 +1309,29 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 }
 
 func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
+	return m.handleBeadsResult(ui.ModeBeadsOpen, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available)
+}
+
+func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool) Model {
+	if m.mode != mode {
+		return m
+	}
 	var ok bool
-	m, ok = m.acceptListResult(msg.RepoPath, ui.ModeBeadsOpen, msg.ListRequest)
+	m, ok = m.acceptListResult(repoPath, mode, request)
 	if !ok {
 		return m
 	}
-	m.beadsOpen = m.beadsOpen.SetItems(msg.Beads)
-	m.beadsOpenAvailable = msg.Available
-	m.beadsOpenPending = false
-	return m.reflowBeadsOpen()
+	index, ok := beadSubviewIndex(mode)
+	if !ok {
+		return m
+	}
+	if !available {
+		beads = nil
+	}
+	m.beads[index].pane = m.beads[index].pane.SetItems(beads)
+	m.beads[index].available = available
+	m.beads[index].pending = false
+	return m.reflowBeads(mode)
 }
 
 func (m Model) handleWorktreeSessionResult(msg WorktreeSessionResultMsg) Model {

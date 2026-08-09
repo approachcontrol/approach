@@ -88,8 +88,8 @@ func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 }
 
 func listRequests(m model.Model) map[ui.Mode]uint64 {
-	requests := make(map[ui.Mode]uint64, int(ui.ModeBeadsOpen))
-	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsOpen; mode++ {
+	requests := make(map[ui.Mode]uint64, int(ui.ModeBeadsClosed))
+	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
 		requests[mode] = m.ListRequest(mode)
 	}
 	return requests

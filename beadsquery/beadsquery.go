@@ -10,6 +10,62 @@ type Bead struct {
 	Assignee string
 }
 
+// ListReady returns the selected repository's dependency-graph-ready beads.
+func ListReady(repoPath string) ([]Bead, error) {
+	return defaultQuery().ListReady(repoPath)
+}
+
+// ListReady returns the selected repository's dependency-graph-ready beads.
+func (q *Querier) ListReady(repoPath string) ([]Bead, error) {
+	out, err := q.runner.Run(repoPath, "ready", "--json", "--limit", "0", "--readonly")
+	if err != nil {
+		return nil, fmt.Errorf("listing ready beads: %w", err)
+	}
+	return ParseReady(out)
+}
+
+// ListBlocked returns the selected repository's blocked beads.
+func ListBlocked(repoPath string) ([]Bead, error) {
+	return defaultQuery().ListBlocked(repoPath)
+}
+
+// ListBlocked returns the selected repository's blocked beads.
+func (q *Querier) ListBlocked(repoPath string) ([]Bead, error) {
+	out, err := q.runner.Run(repoPath, "list", "-s", "blocked", "--json", "--limit", "0", "--readonly")
+	if err != nil {
+		return nil, fmt.Errorf("listing blocked beads: %w", err)
+	}
+	return ParseBlocked(out)
+}
+
+// ListInProgress returns the selected repository's in-progress beads.
+func ListInProgress(repoPath string) ([]Bead, error) {
+	return defaultQuery().ListInProgress(repoPath)
+}
+
+// ListInProgress returns the selected repository's in-progress beads.
+func (q *Querier) ListInProgress(repoPath string) ([]Bead, error) {
+	out, err := q.runner.Run(repoPath, "list", "-s", "in_progress", "--json", "--limit", "0", "--readonly")
+	if err != nil {
+		return nil, fmt.Errorf("listing in-progress beads: %w", err)
+	}
+	return ParseInProgress(out)
+}
+
+// ListClosed returns the selected repository's closed beads newest-first.
+func ListClosed(repoPath string) ([]Bead, error) {
+	return defaultQuery().ListClosed(repoPath)
+}
+
+// ListClosed returns the selected repository's closed beads newest-first.
+func (q *Querier) ListClosed(repoPath string) ([]Bead, error) {
+	out, err := q.runner.Run(repoPath, "list", "-s", "closed", "--json", "--limit", "0", "--sort", "closed", "--reverse", "--readonly")
+	if err != nil {
+		return nil, fmt.Errorf("listing closed beads: %w", err)
+	}
+	return ParseClosed(out)
+}
+
 // ListOpen returns the selected repository's open beads.
 func ListOpen(repoPath string) ([]Bead, error) {
 	return defaultQuery().ListOpen(repoPath)

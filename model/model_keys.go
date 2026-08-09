@@ -72,7 +72,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "/" {
-		if m.activePane == 1 && m.mode == ui.ModeBeadsOpen {
+		if m.activePane == 1 && ui.IsBeadsMode(m.mode) {
 			return m, nil
 		}
 		m = m.setSearchActive(true)
@@ -333,6 +333,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleActiveFlowSurfaceKey(key)
 	}
 	if next, cmd, handled := m.handleGitSubviewKey(key); handled {
+		return next, cmd
+	}
+	if next, cmd, handled := m.handleBeadsSubviewKey(key); handled {
 		return next, cmd
 	}
 	switch key {
@@ -711,8 +714,9 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedFlowID("")
 		}
 		m = m.syncActiveFlowTerminalToSelectedFlow()
-	case ui.ModeBeadsOpen:
-		m.beadsOpen = m.beadsOpen.Move(delta, h, w)
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		index, _ := beadSubviewIndex(m.mode)
+		m.beads[index].pane = m.beads[index].pane.Move(delta, h, w)
 	}
 	return m
 }
@@ -2713,7 +2717,9 @@ func (m Model) resetModeCursors() Model {
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
 	m.activeFlows = m.activeFlows.ResetSelection()
-	m.beadsOpen = m.beadsOpen.ResetSelection()
+	for i := range m.beads {
+		m.beads[i].pane = m.beads[i].pane.ResetSelection()
+	}
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
@@ -2732,6 +2738,9 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 	if isFlowMode(from) && isFlowMode(to) {
 		m.flowFocus = flowFocusList
 		m.terminalPrefixActive = false
+		return m.invalidateViewRequest()
+	}
+	if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
 		return m.invalidateViewRequest()
 	}
 	return m.resetModeCursors()
@@ -2754,9 +2763,11 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
-	m.beadsOpen = m.beadsOpen.SetItems(nil).ResetSelection()
-	m.beadsOpenAvailable = false
-	m.beadsOpenPending = false
+	for i := range m.beads {
+		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
+		m.beads[i].available = false
+		m.beads[i].pending = false
+	}
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
@@ -2857,9 +2868,19 @@ func (m Model) contentHeightForMode() int {
 		return m.flowContentHeight()
 	case ui.ModeActiveFlows:
 		return m.flowContentHeight()
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		return m.beadsContentHeight()
 	default:
 		return m.rightContentHeight()
 	}
+}
+
+func (m Model) beadsContentHeight() int {
+	height := m.height - ui.BeadsContentOverhead
+	if height <= 0 {
+		return 16
+	}
+	return height
 }
 
 // gitPaneContentHeight is the list height for the branches, history, and

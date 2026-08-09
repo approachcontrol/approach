@@ -1,0 +1,15 @@
+[
+  {
+    "id": "bd-20",
+    "title": "Later in-progress bead",
+    "priority": 1,
+    "assignee": "carol",
+    "status": "in_progress"
+  },
+  {
+    "id": "bd-4",
+    "title": "First in-progress bead",
+    "priority": 1,
+    "assignee": null
+  }
+]

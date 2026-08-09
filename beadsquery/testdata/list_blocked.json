@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "data": [
+    {
+      "id": "bd-11",
+      "title": "Lower priority blocker",
+      "priority": 2,
+      "assignee": null,
+      "status": "blocked"
+    },
+    {
+      "id": "bd-3",
+      "title": "Higher priority blocker",
+      "priority": 1,
+      "assignee": "bob"
+    }
+  ]
+}

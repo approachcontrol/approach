@@ -86,3 +86,112 @@ func TestQuerierListOpenUsesRunnerAndReturnsSortedBeads(t *testing.T) {
 		t.Fatalf("ListOpen() = %#v, want %#v", got, want)
 	}
 }
+
+func TestQuerierListReadyUsesDependencyGraphQuery(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{out: `[{"id":"bd-1","priority":1,"title":"Ready"}]`}
+	got, err := beadsquery.NewQuerier(runner).ListReady("/repo")
+	if err != nil {
+		t.Fatalf("ListReady() error = %v", err)
+	}
+	wantArgs := []string{"ready", "--json", "--limit", "0", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+	if len(got) != 1 || got[0].ID != "bd-1" {
+		t.Fatalf("ListReady() = %#v, want ready bead", got)
+	}
+}
+
+func TestQuerierListBlockedUsesUncappedReadonlyStatusQuery(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{out: `[{"id":"bd-1","priority":1,"title":"Blocked"}]`}
+	_, err := beadsquery.NewQuerier(runner).ListBlocked("/repo")
+	if err != nil {
+		t.Fatalf("ListBlocked() error = %v", err)
+	}
+	wantArgs := []string{"list", "-s", "blocked", "--json", "--limit", "0", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+}
+
+func TestQuerierListInProgressUsesUncappedReadonlyStatusQuery(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{out: `[{"id":"bd-1","priority":1,"title":"In progress"}]`}
+	_, err := beadsquery.NewQuerier(runner).ListInProgress("/repo")
+	if err != nil {
+		t.Fatalf("ListInProgress() error = %v", err)
+	}
+	wantArgs := []string{"list", "-s", "in_progress", "--json", "--limit", "0", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+}
+
+func TestQuerierListClosedUsesUncappedReadonlyCloseTimeQuery(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{out: `[{"id":"bd-1","priority":1,"title":"Closed","closed_at":"2026-08-08T20:00:00Z"}]`}
+	_, err := beadsquery.NewQuerier(runner).ListClosed("/repo")
+	if err != nil {
+		t.Fatalf("ListClosed() error = %v", err)
+	}
+	wantArgs := []string{"list", "-s", "closed", "--json", "--limit", "0", "--sort", "closed", "--reverse", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+}
+
+func TestNewQueriesPreserveRunnerFailureCauses(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("bd failed")
+	queries := []struct {
+		name string
+		run  func(*beadsquery.Querier) ([]beadsquery.Bead, error)
+	}{
+		{name: "ready", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListReady("/repo") }},
+		{name: "blocked", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListBlocked("/repo") }},
+		{name: "in-progress", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListInProgress("/repo") }},
+		{name: "closed", run: func(q *beadsquery.Querier) ([]beadsquery.Bead, error) { return q.ListClosed("/repo") }},
+	}
+	for _, query := range queries {
+		query := query
+		t.Run(query.name, func(t *testing.T) {
+			runner := &fakeRunner{err: cause}
+			got, err := query.run(beadsquery.NewQuerier(runner))
+			if !errors.Is(err, cause) {
+				t.Fatalf("query error = %v, want wrapped cause %v", err, cause)
+			}
+			if got != nil {
+				t.Fatalf("query result = %#v, want no partial data", got)
+			}
+		})
+	}
+}
+
+func TestReadyAndOpenReturnTheSameBeadIndependently(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{out: `[{"id":"bd-shared","priority":1,"title":"Shared"}]`}
+	querier := beadsquery.NewQuerier(runner)
+	ready, err := querier.ListReady("/repo")
+	if err != nil {
+		t.Fatalf("ListReady() error = %v", err)
+	}
+	open, err := querier.ListOpen("/repo")
+	if err != nil {
+		t.Fatalf("ListOpen() error = %v", err)
+	}
+	if len(ready) != 1 || len(open) != 1 || ready[0].ID != "bd-shared" || open[0].ID != "bd-shared" {
+		t.Fatalf("ready/open = %#v / %#v, want independent shared bead", ready, open)
+	}
+	ready[0].Title = "changed ready copy"
+	if open[0].Title != "Shared" {
+		t.Fatalf("mutating Ready result changed Open result: %#v", open)
+	}
+}

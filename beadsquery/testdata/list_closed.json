@@ -1,0 +1,29 @@
+[
+  {
+    "id": "bd-10",
+    "title": "Tenth equal-time closed bead",
+    "priority": 1,
+    "assignee": "dana",
+    "status": "closed",
+    "closed_at": "2026-08-08T20:30:00Z"
+  },
+  {
+    "id": "bd-1",
+    "title": "Newest closed bead",
+    "priority": 0,
+    "assignee": null,
+    "closed_at": "2026-08-08T22:45:01.25Z"
+  },
+  {
+    "id": "bd-3",
+    "title": "Oldest closed bead",
+    "priority": 2,
+    "closed_at": "2026-08-07T09:15:00-04:00"
+  },
+  {
+    "id": "bd-2",
+    "title": "Second equal-time closed bead",
+    "priority": 3,
+    "closed_at": "2026-08-08T20:30:00Z"
+  }
+]

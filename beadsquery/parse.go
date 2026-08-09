@@ -6,65 +6,137 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
-type openBeadJSON struct {
+type beadJSON struct {
 	ID       *string `json:"id"`
 	Priority *int    `json:"priority"`
 	Title    *string `json:"title"`
 	Assignee *string `json:"assignee"`
+	ClosedAt *string `json:"closed_at"`
+}
+
+type parsedBead struct {
+	bead     Bead
+	closedAt time.Time
 }
 
 // ParseOpen decodes bd list JSON and returns beads ordered by priority then ID.
 func ParseOpen(text string) ([]Bead, error) {
+	return parsePriorityBeads(text, "open")
+}
+
+// ParseReady decodes bd ready JSON and returns beads ordered by priority then ID.
+func ParseReady(text string) ([]Bead, error) {
+	return parsePriorityBeads(text, "ready")
+}
+
+// ParseBlocked decodes bd blocked-list JSON and returns beads ordered by priority then ID.
+func ParseBlocked(text string) ([]Bead, error) {
+	return parsePriorityBeads(text, "blocked")
+}
+
+// ParseInProgress decodes bd in-progress-list JSON and returns beads ordered by priority then ID.
+func ParseInProgress(text string) ([]Bead, error) {
+	return parsePriorityBeads(text, "in-progress")
+}
+
+// ParseClosed decodes bd closed-list JSON and returns beads ordered by newest
+// close time, then natural ID.
+func ParseClosed(text string) ([]Bead, error) {
+	records, err := parseBeadRecords(text, "closed", true)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if !records[i].closedAt.Equal(records[j].closedAt) {
+			return records[i].closedAt.After(records[j].closedAt)
+		}
+		if order := naturalCompareIDs(records[i].bead.ID, records[j].bead.ID); order != 0 {
+			return order < 0
+		}
+		return records[i].bead.ID < records[j].bead.ID
+	})
+	return beadsFromParsed(records), nil
+}
+
+func parsePriorityBeads(text, kind string) ([]Bead, error) {
+	records, err := parseBeadRecords(text, kind, false)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].bead.Priority != records[j].bead.Priority {
+			return records[i].bead.Priority < records[j].bead.Priority
+		}
+		return naturalCompareIDs(records[i].bead.ID, records[j].bead.ID) < 0
+	})
+	return beadsFromParsed(records), nil
+}
+
+func parseBeadRecords(text, kind string, requireClosedAt bool) ([]parsedBead, error) {
+	prefix := "parsing " + kind + " beads"
 	payload := []byte(text)
 	if strings.HasPrefix(strings.TrimSpace(text), "{") {
 		var envelope struct {
 			Data json.RawMessage `json:"data"`
 		}
 		if err := json.Unmarshal(payload, &envelope); err != nil {
-			return nil, fmt.Errorf("parsing open beads: %w", err)
+			return nil, fmt.Errorf("%s: %w", prefix, err)
 		}
 		if len(envelope.Data) == 0 {
-			return nil, fmt.Errorf("parsing open beads: expected envelope data array")
+			return nil, fmt.Errorf("%s: expected envelope data array", prefix)
 		}
 		payload = envelope.Data
 	}
 
-	var records []*openBeadJSON
+	var records []*beadJSON
 	if err := json.Unmarshal(payload, &records); err != nil {
-		return nil, fmt.Errorf("parsing open beads: %w", err)
+		return nil, fmt.Errorf("%s: %w", prefix, err)
 	}
 	if records == nil {
-		return nil, fmt.Errorf("parsing open beads: expected a JSON array")
+		return nil, fmt.Errorf("%s: expected a JSON array", prefix)
 	}
 
-	beads := make([]Bead, len(records))
+	beads := make([]parsedBead, len(records))
 	for i, record := range records {
 		if record == nil {
-			return nil, fmt.Errorf("parsing open beads: bead %d is null", i)
+			return nil, fmt.Errorf("%s: bead %d is null", prefix, i)
 		}
 		if record.ID == nil || strings.TrimSpace(*record.ID) == "" {
-			return nil, fmt.Errorf("parsing open beads: bead %d has no id", i)
+			return nil, fmt.Errorf("%s: bead %d has no id", prefix, i)
 		}
 		if record.Priority == nil {
-			return nil, fmt.Errorf("parsing open beads: bead %d has no priority", i)
+			return nil, fmt.Errorf("%s: bead %d has no priority", prefix, i)
 		}
 		if record.Title == nil || strings.TrimSpace(*record.Title) == "" {
-			return nil, fmt.Errorf("parsing open beads: bead %d has no title", i)
+			return nil, fmt.Errorf("%s: bead %d has no title", prefix, i)
 		}
-		beads[i] = Bead{ID: *record.ID, Priority: *record.Priority, Title: *record.Title}
+		beads[i].bead = Bead{ID: *record.ID, Priority: *record.Priority, Title: *record.Title}
 		if record.Assignee != nil {
-			beads[i].Assignee = *record.Assignee
+			beads[i].bead.Assignee = *record.Assignee
+		}
+		if requireClosedAt {
+			if record.ClosedAt == nil || strings.TrimSpace(*record.ClosedAt) == "" {
+				return nil, fmt.Errorf("%s: bead %d has no closed_at", prefix, i)
+			}
+			closedAt, err := time.Parse(time.RFC3339, *record.ClosedAt)
+			if err != nil {
+				return nil, fmt.Errorf("%s: bead %d has invalid closed_at: %w", prefix, i, err)
+			}
+			beads[i].closedAt = closedAt
 		}
 	}
-	sort.Slice(beads, func(i, j int) bool {
-		if beads[i].Priority != beads[j].Priority {
-			return beads[i].Priority < beads[j].Priority
-		}
-		return naturalCompareIDs(beads[i].ID, beads[j].ID) < 0
-	})
 	return beads, nil
+}
+
+func beadsFromParsed(records []parsedBead) []Bead {
+	beads := make([]Bead, len(records))
+	for i := range records {
+		beads[i] = records[i].bead
+	}
+	return beads
 }
 
 func naturalCompareIDs(a, b string) int {

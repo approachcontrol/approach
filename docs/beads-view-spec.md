@@ -1,7 +1,11 @@
 # Spec: Beads View
 
-Status: draft, not yet implemented. Companion docs: `architecture.md` (package map,
-invariants), `config.md` (config vocabulary), `README.md` (key bindings).
+Status: forward-looking full-v1 draft, partially implemented. The Open tracer
+and five visible query/header subviews are shipped; sticky re-entry, arrow and
+filter parity, detail paging, error classification, Closed cap/count, and
+`default_view` 10–14 remain deferred. Companion docs: `architecture.md`
+(package map, invariants), `config.md` (config vocabulary), `README.md` (current
+key bindings).
 
 ## Problem Statement
 

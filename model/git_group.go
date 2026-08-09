@@ -81,3 +81,38 @@ func (m Model) handleGitSubviewKey(key string) (Model, tea.Cmd, bool) {
 	next, cmd := m.startFetchMode(target)
 	return next, cmd, true
 }
+
+func beadsSubviewForLetter(key string) (ui.Mode, bool) {
+	switch key {
+	case "r":
+		return ui.ModeBeadsReady, true
+	case "b":
+		return ui.ModeBeadsBlocked, true
+	case "o":
+		return ui.ModeBeadsOpen, true
+	case "i":
+		return ui.ModeBeadsInProgress, true
+	case "c":
+		return ui.ModeBeadsClosed, true
+	default:
+		return 0, false
+	}
+}
+
+func (m Model) handleBeadsSubviewKey(key string) (Model, tea.Cmd, bool) {
+	if !ui.IsBeadsMode(m.mode) {
+		return m, nil, false
+	}
+	target, ok := beadsSubviewForLetter(key)
+	if !ok {
+		return m, nil, false
+	}
+	if m.mode == target {
+		return m, nil, true
+	}
+	previousMode := m.mode
+	m.mode = target
+	m = m.resetModeCursorsForSwitch(previousMode, target)
+	next, cmd := m.startFetchMode(target)
+	return next, cmd, true
+}

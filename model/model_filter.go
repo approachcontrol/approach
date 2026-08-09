@@ -83,6 +83,33 @@ func newBeadPane() pane.Pane[beadsquery.Bead] {
 	}, fixedHeight[beadsquery.Bead])
 }
 
+func newBeadSubviews() [beadSubviewCount]beadSubviewState {
+	var subviews [beadSubviewCount]beadSubviewState
+	for i := range subviews {
+		subviews[i].pane = newBeadPane()
+	}
+	return subviews
+}
+
+func beadSubviewIndex(mode ui.Mode) (int, bool) {
+	if !ui.IsBeadsMode(mode) {
+		return 0, false
+	}
+	return int(mode - ui.ModeBeadsReady), true
+}
+
+func (m Model) beadSubview(mode ui.Mode) (beadSubviewState, bool) {
+	index, ok := beadSubviewIndex(mode)
+	if !ok {
+		return beadSubviewState{}, false
+	}
+	return m.beads[index], true
+}
+
+func (m Model) activeBeadSubview() (beadSubviewState, bool) {
+	return m.beadSubview(m.mode)
+}
+
 func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
 	return func(record planstore.PlanRecord, _ int) int {
 		return planVisualHeight(record, expandedPlanID)
@@ -203,7 +230,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowPlans()
 	m = m.reflowFlows()
 	m = m.reflowActiveFlows()
-	m = m.reflowBeadsOpen()
+	m = m.reflowAllBeads()
 	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}

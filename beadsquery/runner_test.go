@@ -76,12 +76,12 @@ fi
 	}
 	absRepoPath := filepath.Join(root, repoPath)
 
-	out, err := (execRunner{}).Run(repoPath, "list", "-s", "open", "--json")
+	out, err := (execRunner{}).Run(repoPath, "list", "-s", "closed", "--json", "--limit", "0", "--sort", "closed", "--reverse", "--readonly")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	wantArgs := []string{"-C", absRepoPath, "list", "-s", "open", "--json"}
+	wantArgs := []string{"-C", absRepoPath, "list", "-s", "closed", "--json", "--limit", "0", "--sort", "closed", "--reverse", "--readonly"}
 	if len(lines) != len(wantArgs)+1 {
 		t.Fatalf("Run() output lines = %#v, want args plus working directory", lines)
 	}
