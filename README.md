@@ -84,11 +84,15 @@ opens at the remembered subview; arrows never spill out of either grouped view.
 
 Ready comes from `bd ready`; Blocked, Open, In-Progress, and Closed come from
 their respective `bd list -s ...` status queries. Ready, Blocked, Open, and
-In-Progress sort by priority and natural ID. Closed is currently uncapped and
-sorts by descending close time, then natural ID. A Ready bead intentionally
-also appears in Open when its status is open; the subviews are independent and
-do not deduplicate across queries. Rows render as `<id>  P<n>  <title>`, with
-two spaces and the assignee appended when present.
+In-Progress sort by priority and natural ID. Closed fetches the newest 100 with
+`bd list -s closed --json --limit 100 --sort closed --reverse --readonly`, then
+sorts the bounded result by descending close time and natural ID. Its total
+comes from `bd stats --json --no-activity --readonly`. A settled Closed header
+shows the accepted row count plainly through 100, or `<fetched> of <total>`
+when the stats total is larger; filtering the pane does not change that source
+count. A Ready bead intentionally also appears in Open when its status is open;
+the subviews are independent and do not deduplicate across queries. Rows render
+as `<id>  P<n>  <title>`, with two spaces and the assignee appended when present.
 
 Each subview keeps independent rows, a fuzzy `/` filter over ID/title/assignee,
 and cursor/scroll state. Switching subviews and pressing `f5` query
@@ -104,9 +108,7 @@ Successful empty queries show `no ready beads`, `no blocked beads`, `no open
 beads`, `no in-progress beads`, or `no closed beads`. A missing `bd` executable
 or Beads project/database shows the calm `beads not configured` state; other
 command failures and invalid JSON show a persistent `Could not load ...` error
-with sanitized detail. Beads has no detail pager yet. Closed count/capping and
-`default_view` values beyond the existing frozen 1–9 vocabulary remain
-deferred.
+with sanitized detail. Beads has no detail pager yet.
 
 ## Agents, Plans, and Flows
 

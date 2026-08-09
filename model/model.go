@@ -33,6 +33,7 @@ type beadSubviewState struct {
 	available bool
 	pending   bool
 	error     string
+	total     int
 	// repoPath is the repository the loaded rows describe. Retention across a
 	// refetch is same-repo only, so a fetch for a different repository drops
 	// the rows and cursor instead of clamping them onto the new repo's results.
@@ -118,6 +119,7 @@ type Model struct {
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
+	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -229,6 +231,7 @@ type Options struct {
 	ListOpenBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListInProgressBeads      func(repoPath string) ([]beadsquery.Bead, error)
 	ListClosedBeads          func(repoPath string) ([]beadsquery.Bead, error)
+	CountClosedBeads         func(repoPath string) (int, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -341,6 +344,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listClosedBeads := opts.ListClosedBeads
 	if listClosedBeads == nil {
 		listClosedBeads = beadsquery.ListClosed
+	}
+	countClosedBeads := opts.CountClosedBeads
+	if countClosedBeads == nil {
+		countClosedBeads = beadsquery.CountClosed
 	}
 	setFlowPhase := opts.SetFlowPhase
 	if setFlowPhase == nil {
@@ -543,6 +550,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
+		countClosedBeads:         countClosedBeads,
 		createFlow:               createFlowForRepo,
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
@@ -577,6 +585,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if ui.IsGitMode(m.mode) {
 		m.lastGitMode = m.mode
 	}
+	if index, ok := beadSubviewIndex(m.mode); ok {
+		m.lastBeadsMode = m.mode
+		if _, hasRepo := m.currentRepoPath(); hasRepo {
+			m.beads[index].pending = true
+		}
+	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
@@ -595,7 +609,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 }
 
 func startupMode(mode ui.Mode) ui.Mode {
-	if mode >= ui.ModeWorktrees && mode <= ui.ModeActiveFlows {
+	if mode >= ui.ModeWorktrees && mode <= ui.ModeBeadsClosed {
 		return mode
 	}
 	return ui.ModeWorktrees
@@ -879,11 +893,16 @@ func (m Model) View() string {
 	var beadsActive []beadsquery.Bead
 	beadsSelected, beadsScroll := 0, 0
 	beadsAvailable, beadsPending, beadsError := false, false, ""
+	beadsSourceCount, beadsClosedTotal := 0, 0
 	if state, ok := m.activeBeadSubview(); ok {
 		beadsActive, beadsSelected, beadsScroll = state.pane.View()
 		beadsAvailable = state.available
 		beadsPending = state.pending
 		beadsError = state.error
+		beadsSourceCount = state.pane.ItemCount()
+		if m.mode == ui.ModeBeadsClosed {
+			beadsClosedTotal = state.total
+		}
 	}
 	if m.activeFlowSurfaceVisible() {
 		flows, flowSelected, flowScroll = m.activeFlows.View()
@@ -906,6 +925,10 @@ func (m Model) View() string {
 		plans = nil
 		flows = nil
 		beadsActive = nil
+		beadsAvailable = false
+		beadsPending = false
+		beadsSourceCount = 0
+		beadsClosedTotal = 0
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
@@ -979,6 +1002,8 @@ func (m Model) View() string {
 		BeadsOpenAvailable:           beadsAvailable,
 		BeadsOpenPending:             beadsPending,
 		BeadsError:                   beadsError,
+		BeadsSourceCount:             beadsSourceCount,
+		BeadsClosedTotal:             beadsClosedTotal,
 		FlowEmbeddedTerminals:        m.flowEmbeddedTerminalTabs(),
 		FlowEmbeddedTerminalLines:    m.flowEmbeddedTerminalLines(),
 		FlowEmbeddedTerminalPrefix:   m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
@@ -1470,7 +1495,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case BeadsInProgressResultMsg:
 		return m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
 	case BeadsClosedResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
+		return m.handleBeadsClosedResult(msg), nil
 	case FlowAutoModeSetMsg:
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:

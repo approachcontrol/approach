@@ -316,6 +316,8 @@ type RenderParams struct {
 	BeadsOpenAvailable           bool
 	BeadsOpenPending             bool
 	BeadsError                   string
+	BeadsSourceCount             int
+	BeadsClosedTotal             int
 	FlowEmbeddedTerminals        []EmbeddedTerminalTab
 	FlowEmbeddedTerminalLines    []string
 	FlowEmbeddedTerminalPrefix   bool
@@ -621,7 +623,10 @@ func renderApplication(p RenderParams) string {
 
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery)
 
-	modeHeader := renderModeHeader(p.Mode, rightContentWidth)
+	modeHeader := renderModeHeaderWithBeads(
+		p.Mode, rightContentWidth, p.BeadsSourceCount, p.BeadsClosedTotal,
+		p.BeadsOpenAvailable, p.BeadsOpenPending,
+	)
 	rightContentHeight := p.Height - BranchContentOverhead
 	if IsGitMode(p.Mode) {
 		rightContentHeight = p.Height - GitContentOverhead
@@ -786,6 +791,10 @@ type modeHeaderItem struct {
 // pane: a single top-level row normally, plus a second subview row while Git
 // or Beads is active.
 func renderModeHeader(mode Mode, width int) string {
+	return renderModeHeaderWithBeads(mode, width, 0, 0, false, false)
+}
+
+func renderModeHeaderWithBeads(mode Mode, width, fetched, total int, available, pending bool) string {
 	topLevel := []modeHeaderItem{
 		{key: "1", name: "git", active: IsGitMode(mode)},
 		{key: "2", name: "sessions", active: mode == ModeSessions},
@@ -806,12 +815,19 @@ func renderModeHeader(mode Mode, width int) string {
 		}
 		header += "\n" + renderModeHeaderRow(subviews, width)
 	} else if IsBeadsMode(mode) {
+		closedName := "closed"
+		if mode == ModeBeadsClosed && available && !pending {
+			closedName = fmt.Sprintf("closed %d", fetched)
+			if total > fetched {
+				closedName = fmt.Sprintf("closed %d of %d", fetched, total)
+			}
+		}
 		subviews := []modeHeaderItem{
 			{key: "r", name: "ready", active: mode == ModeBeadsReady},
 			{key: "b", name: "blocked", active: mode == ModeBeadsBlocked},
 			{key: "o", name: "open", active: mode == ModeBeadsOpen},
 			{key: "i", name: "in-progress", active: mode == ModeBeadsInProgress},
-			{key: "c", name: "closed", active: mode == ModeBeadsClosed},
+			{key: "c", name: closedName, active: mode == ModeBeadsClosed},
 		}
 		header += "\n" + renderModeHeaderRowKeepingActive(subviews, width)
 	}

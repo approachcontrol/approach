@@ -10,9 +10,9 @@ type ViewChoice struct {
 	Label  string
 }
 
-// viewChoices is the frozen config vocabulary for default_view: the numbers
-// keep their original 1-9 meanings for compatibility even though the keyboard
-// now groups the five git views behind the single top-level key 1. Labels use
+// viewChoices is the frozen config vocabulary for default_view: existing
+// numbers keep their original meanings for compatibility even though the
+// keyboard now groups Git and Beads subviews behind top-level keys. Labels use
 // the grouped form so pickers describe where each number lands.
 var viewChoices = []ViewChoice{
 	{Number: 1, Mode: ui.ModeWorktrees, Label: "Git — Worktrees"},
@@ -24,6 +24,11 @@ var viewChoices = []ViewChoice{
 	{Number: 7, Mode: ui.ModePlans, Label: "Plans"},
 	{Number: 8, Mode: ui.ModeFlows, Label: "Flows"},
 	{Number: 9, Mode: ui.ModeActiveFlows, Label: "Active Flows"},
+	{Number: 10, Mode: ui.ModeBeadsReady, Label: "Beads — Ready"},
+	{Number: 11, Mode: ui.ModeBeadsBlocked, Label: "Beads — Blocked"},
+	{Number: 12, Mode: ui.ModeBeadsOpen, Label: "Beads — Open"},
+	{Number: 13, Mode: ui.ModeBeadsInProgress, Label: "Beads — In-Progress"},
+	{Number: 14, Mode: ui.ModeBeadsClosed, Label: "Beads — Closed"},
 }
 
 func ViewChoices() []ViewChoice {

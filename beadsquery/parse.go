@@ -22,6 +22,31 @@ type parsedBead struct {
 	closedAt time.Time
 }
 
+// ParseClosedCount decodes the aggregate closed issue count from bd stats JSON.
+func ParseClosedCount(text string) (int, error) {
+	var stats struct {
+		Summary *struct {
+			ClosedIssues *int `json:"closed_issues"`
+		} `json:"summary"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(text), &stats); err != nil {
+		return 0, fmt.Errorf("parsing closed bead count: %w", err)
+	}
+	if stats.Summary == nil && len(stats.Data) > 0 {
+		if err := json.Unmarshal(stats.Data, &stats); err != nil {
+			return 0, fmt.Errorf("parsing closed bead count: %w", err)
+		}
+	}
+	if stats.Summary == nil || stats.Summary.ClosedIssues == nil {
+		return 0, fmt.Errorf("parsing closed bead count: missing summary.closed_issues")
+	}
+	if *stats.Summary.ClosedIssues < 0 {
+		return 0, fmt.Errorf("parsing closed bead count: summary.closed_issues is negative")
+	}
+	return *stats.Summary.ClosedIssues, nil
+}
+
 // ParseOpen decodes bd list JSON and returns beads ordered by priority then ID.
 func ParseOpen(text string) ([]Bead, error) {
 	return parsePriorityBeads(text, "open")
