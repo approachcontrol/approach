@@ -23,7 +23,7 @@ func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	if m.activeFlowSurfaceVisible() {
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
-	return m.startFetchMode(m.mode)
+	return m.startFetchMode(m.focusedMode())
 }
 
 func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
@@ -277,7 +277,7 @@ func (m Model) fetchWorktreeSessions(worktreePath string, request uint64) tea.Cm
 }
 
 func (m Model) canFetch() bool {
-	if m.activePane != 1 {
+	if m.activePane == ui.PaneRepos {
 		return false
 	}
 	_, _, ok := m.fetchTargetPath()
@@ -285,11 +285,11 @@ func (m Model) canFetch() bool {
 }
 
 func (m Model) canFetchVisibleRepos() bool {
-	return m.activePane == 0 && len(m.filteredRepos()) > 0
+	return m.activePane == ui.PaneRepos && len(m.filteredRepos()) > 0
 }
 
 func (m Model) canCreateRepo() bool {
-	return m.activePane == 0 && strings.TrimSpace(m.repoCreateRoot) != ""
+	return m.activePane == ui.PaneRepos && strings.TrimSpace(m.repoCreateRoot) != ""
 }
 
 func (m Model) visibleRepoFetchProgressText() string {
@@ -335,7 +335,7 @@ func (m Model) replaceReposPreservingVisibleSelection(repos []scanner.Repo, prev
 }
 
 func (m Model) canPull() bool {
-	if m.activePane != 1 {
+	if m.activePane == ui.PaneRepos {
 		return false
 	}
 	_, _, ok := m.pullTargetPath()
@@ -360,7 +360,7 @@ func (m Model) gitTargetPath(forPull bool) (string, string, bool) {
 		return "", "", false
 	}
 	repoPath := repo.Path
-	switch m.mode {
+	switch m.focusedMode() {
 	case ui.ModeWorktrees:
 		wt, ok := m.selectedWorktree()
 		if !ok {
@@ -453,7 +453,7 @@ func (m Model) createBranchCommand(repoPath, input, startPoint string) tea.Cmd {
 }
 
 func (m Model) selectedBranchStartPoint() string {
-	if m.mode != ui.ModeBranches {
+	if m.focusedMode() != ui.ModeBranches {
 		return ""
 	}
 	row, ok := m.selectedRow()
@@ -664,7 +664,7 @@ func (m Model) fetchBeadDetail() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	mode := m.mode
+	mode := m.focusedMode()
 	beadID := bead.ID
 	diffRequest := m.activeViewRequest
 	showBead := m.showBead

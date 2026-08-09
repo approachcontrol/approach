@@ -50,7 +50,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	terminalInputFocused := m.terminalDockVisible && m.activePane == 1 && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
+	terminalInputFocused := m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
 	if !m.searchActive && key == "ctrl+t" && !terminalInputFocused {
 		m = m.clearAnyStatus()
 		return m.toggleEmbeddedTerminalDock(), nil
@@ -70,7 +70,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleActiveFlowsToggle()
 	}
 
-	if !m.searchActive && m.activePane == 1 && m.mode != ui.ModeActiveFlows && isNumberedModeKey(key) {
+	if !m.searchActive && m.contentListInputEligible() && !m.activeFlowSurfaceVisible() && isNumberedModeKey(key) {
 		next, cmd, handled := m.switchModeFromKey(key)
 		if handled {
 			return next, cmd
@@ -90,11 +90,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		oldRepoPath, _ := m.currentRepoPath()
 		m = m.setActiveSearchQuery("")
 		m = m.setSearchActive(false)
-		if m.activePane == 0 && oldRepoPath != "" {
+		if m.activePane == ui.PaneRepos && oldRepoPath != "" {
 			m = m.selectFilteredRepo(oldRepoPath)
 		}
 		m = m.clampSelectionsAfterFilter()
-		if m.activePane == 0 {
+		if m.activePane == ui.PaneRepos {
 			newRepoPath, ok := m.currentRepoPath()
 			if oldRepoPath != newRepoPath {
 				return m.handleRepoSelectionChanged(ok)
@@ -137,12 +137,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if isPaneBackKey(key) && m.activePane == 1 {
+	if isPaneBackKey(key) && m.contentListInputEligible() {
 		m = m.togglePrimaryPaneFocus()
 		return m, nil
 	}
 
-	if m.activePane == 0 {
+	if m.activePane == ui.PaneRepos {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
@@ -154,7 +154,7 @@ func (m Model) toggleEmbeddedTerminalDock() Model {
 	}
 	if m.terminalDockVisible {
 		m.terminalDockVisible = false
-		if m.activePane == 1 && m.terminalFocus == terminalFocusTerminal {
+		if m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal {
 			m.terminalFocus = terminalFocusList
 			m.terminalPrefixActive = false
 		}
@@ -181,6 +181,10 @@ func (m Model) reflowForTerminalDock() Model {
 
 func isPaneBackKey(key string) bool {
 	return key == "backspace" || key == "ctrl+h"
+}
+
+func (m Model) contentListInputEligible() bool {
+	return m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusList
 }
 
 func isWorktreeCreateInput(view modal.View) bool {
@@ -300,11 +304,11 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.activePane == 0 && oldRepoPath != "" {
+	if m.activePane == ui.PaneRepos && oldRepoPath != "" {
 		m = m.selectFilteredRepo(oldRepoPath)
 	}
 	m = m.clampSelectionsAfterFilter()
-	if m.activePane == 0 {
+	if m.activePane == ui.PaneRepos {
 		newRepoPath, ok := m.currentRepoPath()
 		if oldRepoPath != newRepoPath {
 			return m.handleRepoSelectionChanged(ok)
@@ -327,7 +331,7 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
 		if len(m.filteredRepos()) > 0 {
-			m.activePane = 1
+			m.activePane = m.contentPane
 			m = m.setRepoPaneCollapsed(true)
 			if m.activeFlowSurfaceVisible() {
 				return m.syncActiveFlowsFromCache(), nil
@@ -386,6 +390,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	if next, cmd, handled := m.handleBeadsSubviewKey(key); handled {
 		return next, cmd
 	}
+	mode := m.focusedMode()
 	switch key {
 	case "up", "k":
 		return m.handleCursorUp()
@@ -396,18 +401,18 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "right":
 		return m.handleHorizontalNavigation(1)
 	case "h":
-		if m.mode == ui.ModeFlows {
+		if mode == ui.ModeFlows {
 			return m.handleToggleFlowHeadless()
 		}
 	case "l":
-		if m.mode == ui.ModeFlows {
+		if mode == ui.ModeFlows {
 			return m.handleHorizontalNavigation(1)
 		}
 	case "y":
-		if m.mode == ui.ModePlans {
+		if mode == ui.ModePlans {
 			return m.handleCopyPlanPath()
 		}
-		if m.mode == ui.ModeSessions {
+		if mode == ui.ModeSessions {
 			return m.handleCopySessionID()
 		}
 		if m.flowSurfaceVisible() {
@@ -430,17 +435,17 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 			return m.handleSetModel()
 		}
 	case "i":
-		if m.mode == ui.ModePlans {
+		if mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
 		if m.flowSurfaceVisible() {
 			return m.handleOpenSelectedFlowIssue()
 		}
 	case "x":
-		if m.mode == ui.ModeWorktrees {
+		if mode == ui.ModeWorktrees {
 			return m.handleToggleWorktreeSessions()
 		}
-		if m.mode == ui.ModePlans {
+		if mode == ui.ModePlans {
 			return m.handleTogglePlanPhases()
 		}
 		if m.flowSurfaceVisible() {
@@ -453,17 +458,17 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.handleEnter()
 	case "n":
-		if m.mode == ui.ModeWorktrees {
+		if mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(false)
 		}
-		if m.mode == ui.ModeBranches {
+		if mode == ui.ModeBranches {
 			return m.handleNewBranch()
 		}
-		if m.mode == ui.ModeFlows {
+		if mode == ui.ModeFlows {
 			return m.handleNewFlow()
 		}
 	case "P":
-		if m.mode == ui.ModeWorktrees {
+		if mode == ui.ModeWorktrees {
 			return m.handleNewPullRequestWorktree()
 		}
 	case "p":
@@ -472,32 +477,32 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.handlePrune()
 	case "o":
-		if m.mode == ui.ModeSessions {
+		if mode == ui.ModeSessions {
 			return m.handleEnter()
 		}
-		if m.mode == ui.ModePlans {
+		if mode == ui.ModePlans {
 			return m.handleOpenPlanText()
 		}
 		if m.flowSurfaceVisible() {
 			return m.handleOpenFlowPlanText()
 		}
 	case "e":
-		if m.mode == ui.ModePlans {
+		if mode == ui.ModePlans {
 			return m.handleEditPlan()
 		}
 	case "m":
-		if m.mode == ui.ModeWorktrees {
+		if mode == ui.ModeWorktrees {
 			return m.handleMoveWorktree()
 		}
 		if m.flowSurfaceVisible() {
 			return m.handleMarkFlowManuallyMerged()
 		}
 	case "N":
-		if m.mode == ui.ModeWorktrees {
+		if mode == ui.ModeWorktrees {
 			return m.handleNewWorktree(true)
 		}
 	case "a":
-		if m.mode == ui.ModePlans {
+		if mode == ui.ModePlans {
 			return m.handleImplementPlan()
 		}
 		if m.flowSurfaceVisible() {
@@ -509,7 +514,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "u":
 		return m.handleUnlock()
 	case "f":
-		if m.mode == ui.ModeBeadsReady {
+		if mode == ui.ModeBeadsReady {
 			return m.handleReadyBeadFlowCreate()
 		}
 		return m.handleFetch()
@@ -529,9 +534,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) canCreateReadyBeadFlow() bool {
-	terminalInputFocused := m.terminalDockVisible && m.activePane == 1 && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
+	terminalInputFocused := m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
 	if m.modal.IsOpen() || m.searchActive || terminalInputFocused ||
-		m.activePane != 1 || m.mode != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
+		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
 		return false
 	}
 	if _, ok := m.currentRepoPath(); !ok {
@@ -558,8 +563,8 @@ func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
-	if m.activePane == 0 {
-		m.activePane = 1
+	if m.activePane == ui.PaneRepos {
+		m.activePane = m.contentPane
 		if m.activeFlowSurfaceVisible() {
 			return m.syncActiveFlowsFromCache()
 		}
@@ -570,15 +575,15 @@ func (m Model) togglePrimaryPaneFocus() Model {
 
 func (m Model) focusRepoPane() Model {
 	m = m.setRepoPaneCollapsed(false)
-	m.activePane = 0
+	m.activePane = ui.PaneRepos
 	if m.activeFlowSurfaceVisible() {
 		m = m.clearSelectedFlowPhase()
 		return m.syncActiveFlowsFromCache()
 	}
-	if m.mode == ui.ModePlans {
+	if m.focusedMode() == ui.ModePlans {
 		m = m.clearSelectedPlanPhase()
 	}
-	if m.mode == ui.ModeFlows || m.activeFlowSurfaceVisible() {
+	if m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible() {
 		m = m.clearSelectedFlowPhase()
 	}
 	return m
@@ -615,8 +620,8 @@ func (m Model) cyclePaneFocusForward() Model {
 		return m
 	}
 
-	if m.activePane == 0 {
-		m.activePane = 1
+	if m.activePane == ui.PaneRepos {
+		m.activePane = m.contentPane
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
 		if m.activeFlowSurfaceVisible() {
@@ -634,10 +639,10 @@ func (m Model) cyclePaneFocusForward() Model {
 		return m
 	}
 
-	m.activePane = 0
+	m.activePane = ui.PaneRepos
 	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
-	if m.mode == ui.ModePlans {
+	if m.focusedMode() == ui.ModePlans {
 		m = m.clearSelectedPlanPhase()
 	}
 	if m.flowSurfaceVisible() {
@@ -695,23 +700,18 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	if direction == 0 {
 		return m, nil
 	}
-	if m.activePane == 0 {
+	if !m.contentListInputEligible() {
 		return m, nil
 	}
+	currentMode := m.focusedMode()
 	nextMode := m.modeAfterHorizontalNavigation(direction)
-	if nextMode == m.mode {
+	if nextMode == currentMode {
 		return m, nil
 	}
-	previousMode := m.mode
-	m.mode = nextMode
-	m = m.rememberGitSubview()
-	m = m.rememberBeadsSubview()
-	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
-	if m.mode == ui.ModeFlows {
+	m, _ = m.selectStoredMode(nextMode)
+	m = m.resetModeCursorsForSwitch(currentMode, nextMode)
+	if nextMode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()
-	}
-	if m.mode == ui.ModeActiveFlows {
-		return m.startActiveFlowsFetchWithRefreshTick()
 	}
 	return m.startFetchForMode()
 }
@@ -722,8 +722,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 // five arrow-reachable top-level views, entering either group at its last-used
 // subview. Active Flows is intentionally outside this cycle.
 func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
-	if ui.IsGitMode(m.mode) {
-		next := m.mode + ui.Mode(direction)
+	mode := m.focusedMode()
+	if ui.IsGitMode(mode) {
+		next := mode + ui.Mode(direction)
 		if next < ui.ModeWorktrees {
 			return ui.ModeReflog
 		}
@@ -732,8 +733,8 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 		}
 		return next
 	}
-	if ui.IsBeadsMode(m.mode) {
-		next := m.mode + ui.Mode(direction)
+	if ui.IsBeadsMode(mode) {
+		next := mode + ui.Mode(direction)
 		if next < ui.ModeBeadsReady {
 			return ui.ModeBeadsClosed
 		}
@@ -744,14 +745,14 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 	}
 	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows, m.lastBeadsSubview()}
 	for i, stop := range stops {
-		if stop == m.mode {
+		if stop == mode {
 			return stops[(i+direction+len(stops))%len(stops)]
 		}
 	}
 	// Only the ungrouped modes reach here, and Active Flows is intercepted
 	// before horizontal navigation runs. A mode missing from stops is
 	// arrow-unreachable by design, so hold the current view.
-	return m.mode
+	return mode
 }
 
 // --- Cursor navigation ---
@@ -789,7 +790,8 @@ func (m Model) moveCursor(delta int) Model {
 		return m
 	}
 	h := m.contentHeightForMode()
-	switch m.mode {
+	mode := m.focusedMode()
+	switch mode {
 	case ui.ModeWorktrees:
 		if m.inlineWorktreeSessionPath != "" {
 			m.worktreeSessions = m.worktreeSessions.Move(delta, m.worktreeSessionContentHeight(), w)
@@ -840,7 +842,7 @@ func (m Model) moveCursor(delta int) Model {
 		}
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
-		index, _ := beadSubviewIndex(m.mode)
+		index, _ := beadSubviewIndex(mode)
 		// A pending subview renders its loading message instead of its retained
 		// rows, so cursor keys must not move a selection the user cannot see.
 		if m.beads[index].pending {
@@ -854,7 +856,8 @@ func (m Model) moveCursor(delta int) Model {
 // --- Action handlers ---
 
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
-	if m.mode == ui.ModeWorktrees {
+	mode := m.focusedMode()
+	if mode == ui.ModeWorktrees {
 		if m.inlineWorktreeSessionPath != "" {
 			record, ok := m.selectedWorktreeSession()
 			if !ok {
@@ -873,34 +876,34 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.mode == ui.ModeBranches && m.isSelectedBranchDirtyWorktree() {
+	if mode == ui.ModeBranches && m.isSelectedBranchDirtyWorktree() {
 		m = m.startViewRequest(FetchBranchDiff, ui.ModeBranches)
 		return m, m.fetchBranchDiff()
 	}
-	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 {
+	if mode == ui.ModeStashes && len(m.filteredStashes()) > 0 {
 		m = m.startViewRequest(FetchStashDiff, ui.ModeStashes)
 		return m, m.fetchStashDiff()
 	}
-	if m.mode == ui.ModeHistory && len(m.filteredCommits()) > 0 {
+	if mode == ui.ModeHistory && len(m.filteredCommits()) > 0 {
 		m = m.startViewRequest(FetchCommitDiff, ui.ModeHistory)
 		return m, m.fetchCommitDiff()
 	}
-	if m.mode == ui.ModeReflog && len(m.filteredReflogs()) > 0 {
+	if mode == ui.ModeReflog && len(m.filteredReflogs()) > 0 {
 		m = m.startViewRequest(FetchReflogDiff, ui.ModeReflog)
 		return m, m.fetchReflogDiff()
 	}
-	if m.mode == ui.ModeSessions && len(m.filteredSessions()) > 0 {
+	if mode == ui.ModeSessions && len(m.filteredSessions()) > 0 {
 		m = m.startViewRequest(FetchSessionTranscript, ui.ModeSessions)
 		return m, m.fetchSessionTranscript()
 	}
-	if ui.IsBeadsMode(m.mode) {
+	if ui.IsBeadsMode(mode) {
 		if _, ok := m.selectedVisibleBead(); !ok {
 			return m, nil
 		}
-		m = m.startViewRequest(FetchBeadDetail, m.mode)
+		m = m.startViewRequest(FetchBeadDetail, mode)
 		return m, m.fetchBeadDetail()
 	}
-	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
+	if mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
 		if planID := m.selectedPlanID(); planID != "" {
 			if m.expandedPlanID == planID {
 				m = m.setExpandedPlanID("")
@@ -929,7 +932,7 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModePlans || len(m.filteredPlans()) == 0 {
+	if m.focusedMode() != ui.ModePlans || len(m.filteredPlans()) == 0 {
 		return m, nil
 	}
 	planID := m.selectedPlanID()
@@ -1081,7 +1084,7 @@ func (m Model) markFlowManuallyMergedCmd(repoPath string, record flowstore.FlowR
 }
 
 func (m Model) handleToggleWorktreeSessions() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeWorktrees || len(m.filteredWorktrees()) == 0 {
+	if m.focusedMode() != ui.ModeWorktrees || len(m.filteredWorktrees()) == 0 {
 		return m, nil
 	}
 	repoPath, ok := m.currentRepoPath()
@@ -1101,7 +1104,7 @@ func (m Model) handleToggleWorktreeSessions() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleOpenPlanText() (tea.Model, tea.Cmd) {
-	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
+	if m.focusedMode() == ui.ModePlans && len(m.filteredPlans()) > 0 {
 		m = m.startViewRequest(FetchPlanText, ui.ModePlans)
 		return m, m.fetchPlanText()
 	}
@@ -1126,7 +1129,7 @@ func (m Model) handleOpenFlowPlanText() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleEditPlan() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModePlans || len(m.filteredPlans()) == 0 {
+	if m.focusedMode() != ui.ModePlans || len(m.filteredPlans()) == 0 {
 		return m, nil
 	}
 	repoPath, ok := m.currentRepoPath()
@@ -1160,16 +1163,17 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.mode == ui.ModeHistory || m.mode == ui.ModeReflog {
+	mode := m.focusedMode()
+	if mode == ui.ModeHistory || mode == ui.ModeReflog {
 		return m, nil
 	}
-	if m.mode == ui.ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
+	if mode == ui.ModeStashes && len(m.filteredStashes()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmStashDrop()
 	}
-	if m.mode == ui.ModeBranches && len(m.filteredRepos()) > 0 {
+	if mode == ui.ModeBranches && len(m.filteredRepos()) > 0 {
 		return m.confirmBranchDelete()
 	}
-	if m.mode == ui.ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
+	if mode == ui.ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmWorktreeDelete()
 	}
 	return m, nil
@@ -1714,7 +1718,7 @@ func canMoveWorktree(wt gitquery.Worktree) bool {
 }
 
 func (m Model) canMoveWorktree() bool {
-	if m.activePane != 1 || m.mode != ui.ModeWorktrees {
+	if m.activePane == ui.PaneRepos || m.focusedMode() != ui.ModeWorktrees {
 		return false
 	}
 	wt, ok := m.selectedWorktree()
@@ -1722,7 +1726,7 @@ func (m Model) canMoveWorktree() bool {
 }
 
 func (m Model) handleUnlock() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeWorktrees {
+	if m.focusedMode() != ui.ModeWorktrees {
 		return m, nil
 	}
 	wt, ok := m.selectedWorktree()
@@ -1777,7 +1781,7 @@ func (m Model) openAtPath(action func(string) error) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) canLaunchAgent() bool {
-	if m.activePane != 1 {
+	if m.activePane == ui.PaneRepos {
 		return false
 	}
 	if m.flowSurfaceVisible() {
@@ -1789,11 +1793,12 @@ func (m Model) canLaunchAgent() bool {
 }
 
 func (m Model) canCreateAndLaunchAgent() bool {
-	return m.activePane == 1 && m.mode == ui.ModeWorktrees
+	return m.activePane != ui.PaneRepos && m.focusedMode() == ui.ModeWorktrees
 }
 
 func (m Model) agentTargetPath() (string, bool) {
-	if m.mode == ui.ModeWorktrees {
+	mode := m.focusedMode()
+	if mode == ui.ModeWorktrees {
 		if _, ok := m.currentRepoPath(); !ok {
 			return "", false
 		}
@@ -1802,7 +1807,7 @@ func (m Model) agentTargetPath() (string, bool) {
 		}
 		return "", false
 	}
-	if m.mode == ui.ModeBranches {
+	if mode == ui.ModeBranches {
 		if row, ok := m.selectedRow(); ok && !row.Stale && row.WorktreePath != "" {
 			return row.WorktreePath, true
 		}
@@ -1811,7 +1816,8 @@ func (m Model) agentTargetPath() (string, bool) {
 }
 
 func (m Model) pathForOpenAction() (string, bool) {
-	if m.mode == ui.ModeWorktrees {
+	mode := m.focusedMode()
+	if mode == ui.ModeWorktrees {
 		if _, ok := m.currentRepoPath(); !ok {
 			return "", false
 		}
@@ -1820,14 +1826,14 @@ func (m Model) pathForOpenAction() (string, bool) {
 		}
 		return "", false
 	}
-	if m.mode == ui.ModeHistory {
+	if mode == ui.ModeHistory {
 		repo, ok := m.currentRepo()
 		if !ok || repo.IsBare {
 			return "", false
 		}
 		return repo.Path, true
 	}
-	if m.mode == ui.ModeBranches {
+	if mode == ui.ModeBranches {
 		if row, ok := m.selectedRow(); ok && row.WorktreePath != "" {
 			return row.WorktreePath, true
 		}
@@ -2008,7 +2014,7 @@ func (m Model) resetFlowPhaseCmd(repoPath, flowID, phaseID string) tea.Cmd {
 }
 
 func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeSessions {
+	if m.focusedMode() != ui.ModeSessions {
 		return m, nil
 	}
 	record, ok := m.selectedSession()
@@ -2611,13 +2617,14 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 	repoPath, _ := m.currentRepoPath()
 	branch := ""
 	commit := ""
-	if m.mode == ui.ModeWorktrees {
+	mode := m.focusedMode()
+	if mode == ui.ModeWorktrees {
 		if wt, ok := m.selectedWorktree(); ok {
 			branch = wt.BranchName
 			commit = wt.Commit
 		}
 	}
-	if m.mode == ui.ModeBranches {
+	if mode == ui.ModeBranches {
 		if row, ok := m.selectedRow(); ok {
 			branch = row.Branch.Name
 		}
@@ -2851,7 +2858,7 @@ func (m Model) handlePrune() (tea.Model, tea.Cmd) {
 	if !m.destructive {
 		return m, nil
 	}
-	if m.mode == ui.ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
+	if m.focusedMode() == ui.ModeWorktrees && len(m.filteredWorktrees()) > 0 && len(m.filteredRepos()) > 0 {
 		return m.confirmWorktreePrune()
 	}
 	return m, nil
@@ -3020,7 +3027,7 @@ func (m Model) worktreeSessionContentHeight() int {
 }
 
 func (m Model) contentHeightForMode() int {
-	switch m.mode {
+	switch m.focusedMode() {
 	case ui.ModeWorktrees:
 		return m.worktreeContentHeight()
 	case ui.ModeStashes:

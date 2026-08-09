@@ -45,7 +45,9 @@ type Model struct {
 	repos                     pane.Pane[scanner.Repo]
 	width                     int
 	height                    int
-	mode                      ui.Mode
+	topMode                   ui.Mode
+	bottomMode                ui.Mode
+	contentPane               ui.Pane
 	lastGitMode               ui.Mode
 	lastBeadsMode             ui.Mode
 	rows                      pane.Pane[gitquery.BranchRow]
@@ -92,9 +94,9 @@ type Model struct {
 	activeRepoRefresh         uint64
 	pendingRepoSelection      string
 	listRequests              [listRequestSlots]uint64
-	activePane                int // 0=left (repos), 1=right (content)
+	activePane                ui.Pane
 	repoPaneCollapsed         bool
-	activeFlowsReturnMode     ui.Mode
+	activeFlowSurface         bool
 	destructive               bool
 	status                    statusError
 	statusSeq                 uint64
@@ -530,6 +532,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
 	initialMode := startupMode(opts.StartupMode)
+	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(initialMode)
 	m := Model{
 		repos:                 newRepoPane().SetItems(repos),
 		rows:                  newBranchPane(),
@@ -546,7 +549,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		flowHeadless:          true,
 		terminalDockVisible:   true,
 		flowRefreshTickGen:    1,
-		mode:                  initialMode,
+		topMode:               topMode,
+		bottomMode:            bottomMode,
+		contentPane:           contentPane,
+		activeFlowSurface:     activeFlowSurface,
 		defaultView:           initialMode,
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		codexModel:            agent.NormalizeModel(opts.CodexModel),
@@ -604,11 +610,11 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bootstrapHookForRepo:     bootstrapHookForRepo,
 		runBootstrapHook:         runBootstrapHook,
 	}
-	if ui.IsGitMode(m.mode) {
-		m.lastGitMode = m.mode
+	if ui.IsGitMode(m.topMode) {
+		m.lastGitMode = m.topMode
 	}
-	if index, ok := beadSubviewIndex(m.mode); ok {
-		m.lastBeadsMode = m.mode
+	if index, ok := beadSubviewIndex(m.topMode); ok {
+		m.lastBeadsMode = m.topMode
 		if _, hasRepo := m.currentRepoPath(); hasRepo {
 			m.beads[index].pending = true
 		}
@@ -617,13 +623,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
-	if m.mode == ui.ModeFlows {
+	if initialMode == ui.ModeFlows {
 		if _, ok := m.currentRepoPath(); ok {
 			m.flowRefreshInFlight = m.currentListRequest(ui.ModeFlows)
 			m.flowRefreshInFlightMode = ui.ModeFlows
 		}
 	}
-	if m.mode == ui.ModeActiveFlows {
+	if initialMode == ui.ModeActiveFlows {
 		m.flowRefreshInFlight = m.currentListRequest(ui.ModeActiveFlows)
 		m.flowRefreshInFlightMode = ui.ModeActiveFlows
 	}
@@ -635,6 +641,25 @@ func startupMode(mode ui.Mode) ui.Mode {
 		return mode
 	}
 	return ui.ModeWorktrees
+}
+
+func startupPaneState(mode ui.Mode) (ui.Mode, ui.Mode, ui.Pane, bool) {
+	topMode := ui.ModeWorktrees
+	bottomMode := ui.ModeFlows
+	contentPane := ui.PaneTop
+	if pane, ok := ui.PaneForMode(mode); ok {
+		contentPane = pane
+		if pane == ui.PaneTop {
+			topMode = mode
+		} else {
+			bottomMode = mode
+		}
+		return topMode, bottomMode, contentPane, false
+	}
+	if mode == ui.ModeActiveFlows {
+		return topMode, bottomMode, ui.PaneBottom, true
+	}
+	return topMode, bottomMode, contentPane, false
 }
 
 func batchNonNil(cmds ...tea.Cmd) tea.Cmd {
@@ -661,7 +686,7 @@ func newLaunchID() string {
 func (m Model) Selected() int              { return m.repos.SelectedIndex() }
 func (m Model) Width() int                 { return m.width }
 func (m Model) Height() int                { return m.height }
-func (m Model) Mode() ui.Mode              { return m.mode }
+func (m Model) Mode() ui.Mode              { return m.focusedMode() }
 func (m Model) Rows() []gitquery.BranchRow { rows, _, _ := m.rows.View(); return rows }
 func (m Model) Stashes() []gitquery.Stash  { stashes, _, _ := m.stashes.View(); return stashes }
 func (m Model) BranchSelected() int        { return m.rows.SelectedIndex() }
@@ -717,7 +742,7 @@ func (m Model) WorktreeInputErr() string        { return m.modal.View().InputErr
 func (m Model) BranchScroll() int               { return m.rows.Scroll() }
 func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
 func (m Model) StashScroll() int                { return m.stashes.Scroll() }
-func (m Model) ActivePane() int                 { return m.activePane }
+func (m Model) ActivePane() ui.Pane             { return m.activePane }
 func (m Model) RepoPaneCollapsed() bool         { return m.repoPaneCollapsed }
 func (m Model) Destructive() bool               { return m.destructive }
 func (m Model) TransientError() string          { return m.visibleStatusText() }
@@ -896,13 +921,14 @@ func (m Model) RepoCreateRoot() string { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
 	fetchCmd := m.fetchForMode()
-	if m.mode == ui.ModeFlows && fetchCmd == nil {
+	if m.focusedMode() == ui.ModeFlows && fetchCmd == nil {
 		fetchCmd = m.flowRefreshTickCmd()
 	}
 	return batchNonNil(fetchCmd, autoAdvanceTickCmd())
 }
 
 func (m Model) View() string {
+	mode := m.focusedMode()
 	repos, selected, repoScroll := m.repos.View()
 	worktrees, worktreeSelected, worktreeScroll := m.worktrees.View()
 	worktreeSessions, worktreeSessionSelected, worktreeSessionScroll := m.worktreeSessions.View()
@@ -923,7 +949,7 @@ func (m Model) View() string {
 		beadsPending = state.pending
 		beadsError = state.error
 		beadsSourceCount = state.pane.ItemCount()
-		if m.mode == ui.ModeBeadsClosed {
+		if mode == ui.ModeBeadsClosed {
 			beadsClosedTotal = state.total
 		}
 	}
@@ -960,7 +986,7 @@ func (m Model) View() string {
 		Selected:                     selected,
 		Width:                        m.width,
 		Height:                       m.height,
-		Mode:                         m.mode,
+		Mode:                         mode,
 		ActiveFlows:                  m.activeFlowSurfaceVisible(),
 		Branches:                     rows,
 		Stashes:                      stashes,
@@ -1015,7 +1041,7 @@ func (m Model) View() string {
 		EmbeddedTerminalLines:        m.embeddedTerminalLines(),
 		EmbeddedTerminalPrefix:       m.terminalPrefixActive,
 		EmbeddedTerminalVisible:      m.terminalDockVisible,
-		EmbeddedTerminalFocused:      m.activePane == 1 && m.terminalFocus == terminalFocusTerminal,
+		EmbeddedTerminalFocused:      m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal,
 		Plans:                        plans,
 		PlanSelected:                 planSelected,
 		PlanScroll:                   planScroll,
@@ -1082,6 +1108,7 @@ func (m Model) repoEmptyMessage(filteredRepos int) string {
 }
 
 func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen int) string {
+	mode := m.focusedMode()
 	if filteredRepos == 0 {
 		if m.repos.Query() != "" && m.repos.ItemCount() > 0 {
 			return "No matching repo"
@@ -1092,10 +1119,10 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	// loading rather than a filter or fetch verdict about rows it is replacing.
 	if state, ok := m.activeBeadSubview(); ok {
 		if state.pending {
-			return "loading " + beadsModeName(m.mode) + " beads"
+			return "loading " + beadsModeName(mode) + " beads"
 		}
 		if state.error != "" {
-			return "Could not load " + beadsModeName(m.mode) + " beads: " + state.error
+			return "Could not load " + beadsModeName(mode) + " beads: " + state.error
 		}
 	}
 	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen)
@@ -1103,7 +1130,7 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 		if m.activeFlowSurfaceVisible() {
 			return "No flow results for " + m.activeItemPaneQuery()
 		}
-		return "No " + modeResultName(m.mode) + " results for " + m.activeItemPaneQuery()
+		return "No " + modeResultName(mode) + " results for " + m.activeItemPaneQuery()
 	}
 	if m.status.Source == statusFetch && m.status.FetchKind == FetchList && m.status.Mode == m.activeContentFetchMode() {
 		message := "Could not load " + modeDataName(m.activeContentFetchMode())
@@ -1117,18 +1144,18 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	}
 	if state, ok := m.activeBeadSubview(); ok {
 		if state.available {
-			return "no " + beadsModeName(m.mode) + " beads"
+			return "no " + beadsModeName(mode) + " beads"
 		}
 		return "beads not configured"
 	}
-	return modeEmptyMessage(m.mode)
+	return modeEmptyMessage(mode)
 }
 
 func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen int) (int, int) {
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.ItemCount(), filteredFlows
 	}
-	switch m.mode {
+	switch m.focusedMode() {
 	case ui.ModeWorktrees:
 		return m.worktrees.ItemCount(), filteredWorktrees
 	case ui.ModeBranches:
@@ -1585,7 +1612,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m = m.setStatus(statusOther, msg.Err)
 			return m, nil
 		}
-		if m.mode == ui.ModePlans {
+		if m.focusedMode() == ui.ModePlans {
 			return m.startFetchMode(ui.ModePlans)
 		}
 		return m, nil
@@ -2105,7 +2132,7 @@ func (m Model) reflowExpandedFlow() Model {
 }
 
 func (m Model) moveSelectedPlanPhase(delta int) (Model, bool) {
-	if m.mode != ui.ModePlans || m.expandedPlanID == "" || m.selectedPlanID() != m.expandedPlanID {
+	if m.focusedMode() != ui.ModePlans || m.expandedPlanID == "" || m.selectedPlanID() != m.expandedPlanID {
 		return m, false
 	}
 	record, ok := m.selectedPlan()

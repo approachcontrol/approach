@@ -4010,7 +4010,7 @@ func TestModel_FlowModelPickerOpensFromLeftPane(t *testing.T) {
 		AgentCommand: "codex",
 		StartupMode:  ui.ModeFlows,
 	})
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("test setup active pane = %d, want left pane", m.ActivePane())
 	}
 
@@ -5070,7 +5070,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 
 			m, cmd = update(m, tt.key)
 
-			if m.ActivePane() != 1 {
+			if m.ActivePane() == ui.PaneRepos {
 				t.Fatalf("terminal-owned %s activePane = %d, want right pane", tt.name, m.ActivePane())
 			}
 			if cmd != nil {
@@ -5110,7 +5110,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab from session terminal returned cmd %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from session terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 0 {
@@ -5129,7 +5129,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab back to session terminal returned cmd %T, want nil", cmd)
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("second tab active pane = %d, want right pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 0 {
@@ -5137,7 +5137,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	}
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if cmd != nil || m.ActivePane() != 1 {
+	if cmd != nil || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("third tab should focus terminal command mode: pane=%d cmd=%T", m.ActivePane(), cmd)
 	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
@@ -5171,14 +5171,14 @@ func TestModel_CollapsedSessionTerminalForwardsCtrlRAndNeverTrapsFocus(t *testin
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed session terminal", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("terminal ctrl+r collapsed=%t activePane=%d, want unchanged collapsed terminal", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x12" {
@@ -5186,11 +5186,11 @@ func TestModel_CollapsedSessionTerminalForwardsCtrlRAndNeverTrapsFocus(t *testin
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("terminal tab collapsed=%t activePane=%d, want collapsed list focus", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
+	if m.RepoPaneCollapsed() || m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("list ctrl+r collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 }

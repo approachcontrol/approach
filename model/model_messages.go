@@ -938,8 +938,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	m = m.clearWorktreeCreateRequest(msg.Request)
-	m.mode = ui.ModeWorktrees
-	m = m.rememberGitSubview()
+	m, _ = m.selectStoredMode(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.ResetSelection()
 	m, fetchCmd := m.startFetchMode(ui.ModeWorktrees)
 	if !msg.LaunchAgent {
@@ -960,8 +959,7 @@ func (m Model) handleWorktreeBootstrapFailed(msg WorktreeBootstrapFailedMsg) (te
 	} else {
 		errText = "bootstrap hook failed: " + errText
 	}
-	m.mode = ui.ModeWorktrees
-	m = m.rememberGitSubview()
+	m, _ = m.selectStoredMode(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.ResetSelection()
 	m = m.setStatus(statusGitMutation, errText)
 	return m.startFetchMode(ui.ModeWorktrees)
@@ -1204,8 +1202,7 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
-		m.mode = ui.ModeBranches
-		m = m.rememberGitSubview()
+		m, _ = m.selectStoredMode(ui.ModeBranches)
 		m.rows = m.rows.SetQuery("")
 		m.pendingBranchSelection = msg.Name
 		return m.startFetchMode(ui.ModeBranches)
@@ -1351,7 +1348,7 @@ func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) Model {
 }
 
 func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) Model {
-	if m.mode != mode {
+	if m.focusedMode() != mode {
 		return m
 	}
 	var ok bool
@@ -1426,7 +1423,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if m.mode == ui.ModeFlows && m.terminalFocus != terminalFocusTerminal {
+	if m.focusedMode() == ui.ModeFlows && m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m, nil
@@ -1779,7 +1776,7 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 }
 
 func (m Model) beadDetailTargetMatches(repoPath string, mode ui.Mode, beadID string, request uint64) bool {
-	if !m.isCurrentRepo(repoPath) || m.mode != mode || !ui.IsBeadsMode(mode) ||
+	if !m.isCurrentRepo(repoPath) || m.focusedMode() != mode || !ui.IsBeadsMode(mode) ||
 		!m.activeViewMatches(FetchBeadDetail, mode, request) {
 		return false
 	}
@@ -1825,14 +1822,15 @@ func stashMatchesDiffError(stash gitquery.Stash, msg FetchErrorMsg) bool {
 
 func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
 	var hash string
+	mode := m.focusedMode()
 	switch {
-	case m.mode == ui.ModeHistory:
+	case mode == ui.ModeHistory:
 		commit, ok := m.selectedCommit()
 		if !ok {
 			return m, nil
 		}
 		hash = commit.Hash
-	case m.mode == ui.ModeReflog:
+	case mode == ui.ModeReflog:
 		entry, ok := m.selectedReflog()
 		if !ok {
 			return m, nil
@@ -1850,7 +1848,7 @@ func (m Model) handleCopyHash() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleCopySessionID() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeSessions {
+	if m.focusedMode() != ui.ModeSessions {
 		return m, nil
 	}
 	record, ok := m.selectedSession()
@@ -1947,7 +1945,7 @@ func (m Model) handleOpenSelectedFlowIssue() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleShowSessionSummary() (tea.Model, tea.Cmd) {
-	if m.mode != ui.ModeSessions {
+	if m.focusedMode() != ui.ModeSessions {
 		return m, nil
 	}
 	record, ok := m.selectedSession()

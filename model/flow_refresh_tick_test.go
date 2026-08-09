@@ -170,7 +170,7 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 		{
 			name: "4",
 			setup: func(m Model) Model {
-				m.activePane = 1
+				m.activePane = m.contentPane
 				return m
 			},
 			key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}},
@@ -178,8 +178,10 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 		{
 			name: "ctrl+a fallback",
 			setup: func(m Model) Model {
-				m.activePane = 1
-				m.mode = ui.ModeActiveFlows
+				m.activePane = m.contentPane
+				m.bottomMode = ui.ModeFlows
+				m.contentPane = ui.PaneBottom
+				m.activeFlowSurface = true
 				return m
 			},
 			key: tea.KeyMsg{Type: tea.KeyCtrlA},
@@ -187,8 +189,10 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 		{
 			name: "right-arrow",
 			setup: func(m Model) Model {
-				m.activePane = 1
-				m.mode = ui.ModePlans
+				m.activePane = m.contentPane
+				m.bottomMode = ui.ModePlans
+				m.contentPane = ui.PaneBottom
+				m.activeFlowSurface = false
 				return m
 			},
 			key: tea.KeyMsg{Type: tea.KeyRight},
@@ -207,10 +211,10 @@ func TestModel_FlowRefreshTickScheduledWhenEnteringFlowsModePaths(t *testing.T) 
 			beforeRequest := m.ListRequest(ui.ModeFlows)
 
 			m, cmd := updateFlowRefreshTest(m, tc.key)
-			if m.mode != ui.ModeFlows {
-				t.Fatalf("mode = %d, want flows", m.mode)
+			if m.focusedMode() != ui.ModeFlows {
+				t.Fatalf("mode = %d, want flows", m.focusedMode())
 			}
-			if m.activePane != 1 {
+			if m.activePane == ui.PaneRepos {
 				t.Fatalf("activePane = %d, want right pane", m.activePane)
 			}
 			if m.flowRefreshTickGen != beforeGen+1 {
@@ -295,7 +299,7 @@ func TestModel_ActiveFlowRefreshTickUsesGlobalFetchAndPreservesNormalFlowCache(t
 		},
 	})
 	m, _ = updateFlowRefreshTest(m, flowResultFromCommand(t, m.Init()))
-	m.activePane = 1
+	m.activePane = m.contentPane
 
 	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	m, cmd = updateFlowRefreshTest(m, activeFlowResultFromRefreshCommand(t, cmd))
@@ -416,7 +420,7 @@ func TestModel_FlowRefreshTracksRepoChangeRefetchBeforePendingTick(t *testing.T)
 	})
 	startup := flowResultFromCommand(t, m.Init())
 	m, _ = updateFlowRefreshTest(m, startup)
-	m.activePane = 0
+	m.activePane = ui.PaneRepos
 	before := m.ListRequest(ui.ModeFlows)
 
 	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -454,7 +458,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-" + filter.RepoPath)}, nil
 		},
 	})
-	m.activePane = 1
+	m.activePane = m.contentPane
 	var activeCmd tea.Cmd
 	m, activeCmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if activeCmd == nil {
@@ -464,7 +468,7 @@ func TestModel_ActiveFlowRefreshRepoChangeKeepsInFlightGlobalFetch(t *testing.T)
 	if globalRequest == 0 {
 		t.Fatal("expected global active Flow fetch to be in flight")
 	}
-	m.activePane = 0
+	m.activePane = ui.PaneRepos
 
 	var cmd tea.Cmd
 	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -502,14 +506,16 @@ func TestModel_ActiveFlowEntrySupersedesStaleInFlightFetch(t *testing.T) {
 	if alphaRequest == 0 {
 		t.Fatal("expected startup Flow fetch to be in flight")
 	}
-	m.mode = ui.ModeWorktrees
-	m.activePane = 0
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
+	m.activePane = ui.PaneRepos
 	var cmd tea.Cmd
 	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("expected repo change in worktrees mode to fetch worktrees")
 	}
-	m.activePane = 1
+	m.activePane = m.contentPane
 
 	m, cmd = updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 	if cmd == nil {
@@ -605,7 +611,7 @@ func TestModel_FlowRefreshFastRefetchInvalidatesPendingTick(t *testing.T) {
 				})
 			},
 			prepare: func(m Model) Model {
-				m.activePane = 0
+				m.activePane = ui.PaneRepos
 				return m
 			},
 			trigger: func(m Model) (Model, tea.Cmd) {
@@ -753,7 +759,7 @@ func TestModel_FlowRefreshTickIgnoresStaleGeneration(t *testing.T) {
 
 func TestModel_FlowRefreshTickIgnoresOldLoopAfterReenteringFlows(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{})
-	m.activePane = 1
+	m.activePane = m.contentPane
 
 	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	oldGeneration := m.flowRefreshTickGen
@@ -783,8 +789,10 @@ func TestModel_FlowRefreshTickIgnoredOutsideFlowsMode(t *testing.T) {
 			return nil, nil
 		},
 	})
-	m.activePane = 1
-	m.mode = ui.ModePlans
+	m.activePane = m.contentPane
+	m.bottomMode = ui.ModePlans
+	m.contentPane = ui.PaneBottom
+	m.activeFlowSurface = false
 	before := m.ListRequest(ui.ModeFlows)
 
 	m, cmd := updateFlowRefreshTest(m, flowRefreshTickMsg{Generation: m.flowRefreshTickGen})

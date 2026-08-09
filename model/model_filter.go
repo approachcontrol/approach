@@ -107,7 +107,7 @@ func (m Model) beadSubview(mode ui.Mode) (beadSubviewState, bool) {
 }
 
 func (m Model) activeBeadSubview() (beadSubviewState, bool) {
-	return m.beadSubview(m.mode)
+	return m.beadSubview(m.focusedMode())
 }
 
 func (m Model) selectedVisibleBead() (beadsquery.Bead, bool) {
@@ -151,7 +151,7 @@ func flowVisualHeight(record flowstore.FlowRecord, expandedFlowID string) int {
 }
 
 func (m Model) activeSearchQuery() string {
-	if m.activePane == 0 {
+	if m.activePane == ui.PaneRepos {
 		return m.repos.Query()
 	}
 	return m.activeItemPaneQuery()
@@ -161,7 +161,7 @@ func (m Model) activeItemPaneQuery() string {
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.Query()
 	}
-	switch m.mode {
+	switch m.focusedMode() {
 	case ui.ModeWorktrees:
 		return m.worktrees.Query()
 	case ui.ModeBranches:
@@ -187,7 +187,7 @@ func (m Model) activeItemPaneQuery() string {
 }
 
 func (m Model) setActiveSearchQuery(query string) Model {
-	if m.activePane == 0 {
+	if m.activePane == ui.PaneRepos {
 		m.repos = m.repos.SetQuery(query)
 		return m.reflowRepos()
 	}
@@ -200,7 +200,8 @@ func (m Model) setActiveSearchQuery(query string) Model {
 
 	// The query only applies to the active pane; every other pane keeps its
 	// own filter so switching views restores that view's previous filter.
-	switch m.mode {
+	mode := m.focusedMode()
+	switch mode {
 	case ui.ModeWorktrees:
 		m = m.clearInlineWorktreeSessions()
 		m.worktrees = m.worktrees.SetQuery(query)
@@ -227,9 +228,9 @@ func (m Model) setActiveSearchQuery(query string) Model {
 		m.flows = m.flows.SetQuery(query)
 		m = m.setExpandedFlowID("")
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
-		index, _ := beadSubviewIndex(m.mode)
+		index, _ := beadSubviewIndex(mode)
 		m.beads[index].pane = m.beads[index].pane.SetQuery(query)
-		m = m.reflowBeads(m.mode)
+		m = m.reflowBeads(mode)
 	}
 	return m
 }
@@ -246,7 +247,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowFlows()
 	m = m.reflowActiveFlows()
 	m = m.reflowAllBeads()
-	if m.flowSurfaceVisible() && m.activePane == 1 && m.terminalFocus != terminalFocusTerminal {
+	if m.flowSurfaceVisible() && m.activePane != ui.PaneRepos && m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m

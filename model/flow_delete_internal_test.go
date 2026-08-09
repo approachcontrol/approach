@@ -10,8 +10,10 @@ import (
 
 func TestConfirmFlowDeleteAllowsStalePhaseSelectionOnly(t *testing.T) {
 	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, Options{})
-	m.mode = ui.ModeFlows
-	m.activePane = 1
+	m.bottomMode = ui.ModeFlows
+	m.contentPane = ui.PaneBottom
+	m.activeFlowSurface = false
+	m.activePane = m.contentPane
 	m.destructive = true
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{{
 		FlowID:   "flow-1",

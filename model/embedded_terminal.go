@@ -579,7 +579,7 @@ func (m Model) resizeEmbeddedTerminals() Model {
 }
 
 func (m Model) focusEmbeddedTerminalInput() Model {
-	m.activePane = 1
+	m.activePane = m.contentPane
 	m.terminalFocus = terminalFocusTerminal
 	m.terminalPrefixActive = false
 	if m.terminalDockVisible {
@@ -668,7 +668,7 @@ func (m Model) cycleEmbeddedTerminal(direction int) Model {
 }
 
 func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	if m.terminalDockVisible && m.activePane == 1 && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal() {
+	if m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal() {
 		return m.handleFocusedEmbeddedTerminalKey(msg)
 	}
 	return m, nil, false
@@ -905,7 +905,7 @@ func (m Model) handleTerminateEmbeddedTerminal(msg terminateEmbeddedTerminalMsg)
 func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 	removed := false
 	activeID := m.activeTerminalID()
-	terminalFocused := m.activePane == 1 && m.terminalFocus == terminalFocusTerminal
+	terminalFocused := m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal
 	next := m.embeddedTerminals[:0]
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID != id {

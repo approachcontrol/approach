@@ -18,7 +18,7 @@ func TestRender_BeadsOpenRowsPreserveOrderAndOptionalAssignee(t *testing.T) {
 		Width:      100,
 		Height:     16,
 		Mode:       ModeBeadsOpen,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 		BeadsOpen: []beadsquery.Bead{
 			{ID: "bd-124", Priority: 2, Title: "Document cache"},
 			{ID: "bd-123", Priority: 1, Title: "Fix cache", Assignee: "alice"},
@@ -375,7 +375,7 @@ func TestRender_BeadsOpenShortcutsAdvertiseArrowAndSubviewNavigation(t *testing.
 		Width:      140,
 		Height:     20,
 		Mode:       ModeBeadsOpen,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	})
 	pane := ansi.Strip(shortcutPaneText(view))
 	if !strings.Contains(pane, "Beads Open") {
@@ -395,7 +395,7 @@ func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.
 		Selected:                     0,
 		Height:                       20,
 		Mode:                         ModeBeadsReady,
-		ActivePane:                   1,
+		ActivePane:                   PaneTop,
 		BeadsOpen:                    []beadsquery.Bead{{ID: "bd-1", Title: "One"}},
 		ReadyBeadFlowCreateAvailable: true,
 	}
@@ -416,7 +416,7 @@ func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.
 		name   string
 		mutate func(*RenderParams)
 	}{
-		{name: "left focused", mutate: func(p *RenderParams) { p.ActivePane = 0 }},
+		{name: "left focused", mutate: func(p *RenderParams) { p.ActivePane = PaneRepos }},
 		{name: "loading", mutate: func(p *RenderParams) { p.BeadsOpenPending = true }},
 		{name: "unavailable", mutate: func(p *RenderParams) { p.BeadsOpenAvailable = false }},
 		{name: "empty", mutate: func(p *RenderParams) { p.BeadsOpen = nil }},
@@ -483,7 +483,7 @@ func TestRender_BeadsQuietStatesAreSubviewSpecific(t *testing.T) {
 func TestRender_BeadsGroupedHeaderConsumesOneListRow(t *testing.T) {
 	view := ansi.Strip(Render(RenderParams{
 		Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
-		Width: 90, Height: BeadsContentOverhead + TerminalChipRows + 2, Mode: ModeBeadsOpen, ActivePane: 1,
+		Width: 90, Height: BeadsContentOverhead + TerminalChipRows + 2, Mode: ModeBeadsOpen, ActivePane: PaneTop,
 		BeadsOpen: []beadsquery.Bead{
 			{ID: "bd-0", Title: "Zero"},
 			{ID: "bd-1", Title: "One"},
@@ -516,7 +516,7 @@ func TestRender_AllBeadsShortcutNavigationRespectsPaneFocus(t *testing.T) {
 		t.Run(tt.title+"/right", func(t *testing.T) {
 			view := Render(RenderParams{
 				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
-				Width: 140, Height: 20, Mode: tt.mode, ActivePane: 1,
+				Width: 140, Height: 20, Mode: tt.mode, ActivePane: PaneTop,
 			})
 			pane := ansi.Strip(shortcutPaneText(view))
 			if !strings.Contains(pane, tt.title) || strings.Count(pane, "r/b/o/i/c") != 1 || !strings.Contains(pane, "subview") || strings.Count(pane, "←/→") != 1 || !strings.Contains(pane, "view") {
@@ -526,7 +526,7 @@ func TestRender_AllBeadsShortcutNavigationRespectsPaneFocus(t *testing.T) {
 		t.Run(tt.title+"/left", func(t *testing.T) {
 			view := Render(RenderParams{
 				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
-				Width: 140, Height: 20, Mode: tt.mode, ActivePane: 0,
+				Width: 140, Height: 20, Mode: tt.mode, ActivePane: PaneRepos,
 			})
 			pane := ansi.Strip(shortcutPaneText(view))
 			if strings.Contains(pane, "r/b/o/i/c") || strings.Contains(pane, "←/→") {

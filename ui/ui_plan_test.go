@@ -27,7 +27,7 @@ func TestRender_PlansModeShowsHeaderAndRows(t *testing.T) {
 				{PhaseID: "p2", Title: "CLI", Status: "pending", Order: 2},
 			},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		PlanSelected: 0,
 	})
 
@@ -81,7 +81,7 @@ func TestRender_PlansModeShowsPlanShortcut(t *testing.T) {
 			Title:  "Persist plans",
 			Status: "draft",
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		PlanSelected: 0,
 	})
 	pane := shortcutPaneText(view)
@@ -112,7 +112,7 @@ func TestRender_PlansModeShowsPhaseShortcutWhenPhaseSelected(t *testing.T) {
 				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
 			},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		PlanSelected:        0,
 		ExpandedPlanID:      "plan-1",
 		SelectedPlanPhaseID: "p1",
@@ -141,7 +141,7 @@ func TestRender_PlansModeIgnoresStaleSelectedPhaseForShortcut(t *testing.T) {
 				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
 			},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		PlanSelected:        0,
 		ExpandedPlanID:      "plan-1",
 		SelectedPlanPhaseID: "missing",
@@ -162,7 +162,7 @@ func TestRender_PlansModeOmitsPlanShortcutsWhenNoPlanSelected(t *testing.T) {
 		Width:      120,
 		Height:     10,
 		Mode:       ModePlans,
-		ActivePane: 1,
+		ActivePane: PaneBottom,
 	})
 
 	pane := shortcutPaneText(view)
@@ -199,7 +199,7 @@ func TestRender_PlansModeShowsExpandedPhasesForSelectedPlanOnly(t *testing.T) {
 				},
 			},
 		},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		PlanSelected:   0,
 		ExpandedPlanID: "plan-1",
 	})
@@ -230,7 +230,7 @@ func TestRender_PlansModeHighlightsSelectedPhaseRow(t *testing.T) {
 				{PhaseID: "p2", Title: "CLI", Status: "pending", Order: 2},
 			},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		PlanSelected:        0,
 		ExpandedPlanID:      "plan-1",
 		SelectedPlanPhaseID: "p2",
@@ -259,7 +259,7 @@ func TestRender_PlansModeIgnoresStaleSelectedPhaseForHighlight(t *testing.T) {
 				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
 			},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		PlanSelected:        0,
 		ExpandedPlanID:      "plan-1",
 		SelectedPlanPhaseID: "missing",
@@ -288,7 +288,7 @@ func TestRender_PlansModeKeepsExpandedPhasesWhenRightPaneInactive(t *testing.T) 
 				{PhaseID: "p1", Title: "Store", Status: "completed", Order: 1},
 			},
 		}},
-		ActivePane:     0,
+		ActivePane:     PaneRepos,
 		PlanSelected:   0,
 		ExpandedPlanID: "plan-1",
 	})
@@ -310,7 +310,7 @@ func TestRender_PlansModeShowsNoPhasesOnlyWhenExpanded(t *testing.T) {
 			Title:  "Persist plans",
 			Status: "draft",
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		PlanSelected: 0,
 	}
 
