@@ -2357,9 +2357,12 @@ func renderReflogPane(entries []gitquery.ReflogEntry, selected, scroll, width, h
 func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, height int) []string {
 	content := make([]string, 0, len(beads))
 	for i, bead := range beads {
-		body := fmt.Sprintf("%s  P%d  %s", bead.ID, bead.Priority, bead.Title)
-		if bead.Assignee != "" {
-			body += "  " + bead.Assignee
+		id := terminalSafeSingleLine(bead.ID)
+		title := terminalSafeSingleLine(bead.Title)
+		assignee := terminalSafeSingleLine(bead.Assignee)
+		body := fmt.Sprintf("%s  P%d  %s", id, bead.Priority, title)
+		if assignee != "" {
+			body += "  " + assignee
 		}
 		line := "   " + body
 		if i == selected {
@@ -2368,6 +2371,17 @@ func renderBeadsOpenPane(beads []beadsquery.Bead, selected, scroll, width, heigh
 		content = append(content, truncateToWidth(line, width))
 	}
 	return scrollAndPad(content, scroll, height)
+}
+
+func terminalSafeSingleLine(text string) string {
+	text = ansi.Strip(text)
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width, height int) []string {

@@ -74,7 +74,7 @@ func TestQuerierListOpenUsesRunnerAndReturnsSortedBeads(t *testing.T) {
 	if runner.calls != 1 || runner.dir != "/repo" {
 		t.Fatalf("runner call = (%d, %q), want (1, %q)", runner.calls, runner.dir, "/repo")
 	}
-	wantArgs := []string{"list", "-s", "open", "--json"}
+	wantArgs := []string{"list", "-s", "open", "--json", "--limit", "0"}
 	if !reflect.DeepEqual(runner.args, wantArgs) {
 		t.Fatalf("runner args = %#v, want %#v", runner.args, wantArgs)
 	}

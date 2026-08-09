@@ -136,6 +136,22 @@ func TestRenderBeadsOpenPaneTruncatesLongRowsToWidth(t *testing.T) {
 	}
 }
 
+func TestRenderBeadsOpenPaneSanitizesTrackerText(t *testing.T) {
+	lines := renderBeadsOpenPane([]beadsquery.Bead{{
+		ID:       "bd-\x1b[31m1",
+		Priority: 1,
+		Title:    "first\nsecond\x1b]52;c;dGVzdA==\a",
+		Assignee: "alice\r\nbob\x00",
+	}}, -1, 0, 80, 1)
+
+	if len(lines) != 1 {
+		t.Fatalf("rendered lines = %d, want 1", len(lines))
+	}
+	if got, want := lines[0], "   bd-1  P1  first second  alice bob"; got != want {
+		t.Fatalf("rendered row = %q, want %q", got, want)
+	}
+}
+
 func TestRender_BeadsOpenShortcutsDoNotAdvertiseDeferredArrowNavigation(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},

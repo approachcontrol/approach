@@ -42,6 +42,28 @@ func TestParseOpenEmptyList(t *testing.T) {
 	}
 }
 
+func TestParseOpenAcceptsJSONEnvelope(t *testing.T) {
+	t.Parallel()
+
+	got, err := beadsquery.ParseOpen(`{
+		"schema_version": 1,
+		"data": [
+			{"id":"bd-2","priority":2,"title":"Second"},
+			{"id":"bd-1","priority":1,"title":"First","assignee":"alice"}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("ParseOpen() error = %v", err)
+	}
+	want := []beadsquery.Bead{
+		{ID: "bd-1", Priority: 1, Title: "First", Assignee: "alice"},
+		{ID: "bd-2", Priority: 2, Title: "Second"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseOpen() = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseOpenRejectsMalformedJSON(t *testing.T) {
 	t.Parallel()
 
@@ -62,6 +84,8 @@ func TestParseOpenRejectsStructurallyInvalidJSON(t *testing.T) {
 		input string
 	}{
 		{name: "null list", input: `null`},
+		{name: "missing envelope data", input: `{"schema_version":1}`},
+		{name: "null envelope data", input: `{"schema_version":1,"data":null}`},
 		{name: "null bead", input: `[null]`},
 		{name: "missing id", input: `[{"priority":1,"title":"Missing ID"}]`},
 		{name: "missing priority", input: `[{"id":"bd-1","title":"Missing priority"}]`},

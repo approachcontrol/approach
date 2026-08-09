@@ -17,7 +17,7 @@ func ListOpen(repoPath string) ([]Bead, error) {
 
 // ListOpen returns the selected repository's open beads.
 func (q *Querier) ListOpen(repoPath string) ([]Bead, error) {
-	out, err := q.runner.Run(repoPath, "list", "-s", "open", "--json")
+	out, err := q.runner.Run(repoPath, "list", "-s", "open", "--json", "--limit", "0")
 	if err != nil {
 		return nil, fmt.Errorf("listing open beads: %w", err)
 	}

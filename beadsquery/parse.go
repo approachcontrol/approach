@@ -16,8 +16,22 @@ type openBeadJSON struct {
 
 // ParseOpen decodes bd list JSON and returns beads ordered by priority then ID.
 func ParseOpen(text string) ([]Bead, error) {
+	payload := []byte(text)
+	if strings.HasPrefix(strings.TrimSpace(text), "{") {
+		var envelope struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(payload, &envelope); err != nil {
+			return nil, fmt.Errorf("parsing open beads: %w", err)
+		}
+		if len(envelope.Data) == 0 {
+			return nil, fmt.Errorf("parsing open beads: expected envelope data array")
+		}
+		payload = envelope.Data
+	}
+
 	var records []*openBeadJSON
-	if err := json.Unmarshal([]byte(text), &records); err != nil {
+	if err := json.Unmarshal(payload, &records); err != nil {
 		return nil, fmt.Errorf("parsing open beads: %w", err)
 	}
 	if records == nil {
