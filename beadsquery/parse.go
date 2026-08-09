@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -61,7 +62,58 @@ func ParseOpen(text string) ([]Bead, error) {
 		if beads[i].Priority != beads[j].Priority {
 			return beads[i].Priority < beads[j].Priority
 		}
-		return beads[i].ID < beads[j].ID
+		return naturalCompareIDs(beads[i].ID, beads[j].ID) < 0
 	})
 	return beads, nil
+}
+
+func naturalCompareIDs(a, b string) int {
+	aSegments := splitIDSegments(a)
+	bSegments := splitIDSegments(b)
+	for i := 0; i < len(aSegments) && i < len(bSegments); i++ {
+		if aSegments[i] == bSegments[i] {
+			continue
+		}
+		aNumber, aErr := strconv.Atoi(aSegments[i])
+		bNumber, bErr := strconv.Atoi(bSegments[i])
+		if aErr == nil && bErr == nil {
+			switch {
+			case aNumber < bNumber:
+				return -1
+			case aNumber > bNumber:
+				return 1
+			}
+			continue
+		}
+		if aSegments[i] < bSegments[i] {
+			return -1
+		}
+		return 1
+	}
+	switch {
+	case len(aSegments) < len(bSegments):
+		return -1
+	case len(aSegments) > len(bSegments):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func splitIDSegments(id string) []string {
+	var segments []string
+	start := 0
+	for i, r := range id {
+		if r != '.' && r != '-' {
+			continue
+		}
+		if i > start {
+			segments = append(segments, id[start:i])
+		}
+		start = i + 1
+	}
+	if start < len(id) {
+		segments = append(segments, id[start:])
+	}
+	return segments
 }

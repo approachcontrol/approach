@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,7 @@ func TestExecRunnerIsolatesAmbientDatabaseSelectors(t *testing.T) {
 	binDir := t.TempDir()
 	bdPath := filepath.Join(binDir, "bd")
 	script := `#!/bin/sh
-if [ -n "${BEADS_DIR:-}" ] || [ -n "${BEADS_DB:-}" ] || [ -n "${BD_DB:-}" ]; then
+if [ -n "${BEADS_DIR:-}" ] || [ -n "${BEADS_DB:-}" ] || [ -n "${BD_DB:-}" ] || [ -n "${BEADS_DOLT_SERVER_DATABASE:-}" ]; then
 	printf 'database selector leaked\n' >&2
 	exit 42
 fi
@@ -55,7 +56,8 @@ if [ "${BD_JSON_ENVELOPE:-}" != "1" ]; then
 	printf 'unrelated environment was removed\n' >&2
 	exit 43
 fi
-pwd
+	printf '%s\n' "$@"
+	pwd
 `
 	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -64,6 +66,7 @@ pwd
 	t.Setenv("BEADS_DIR", "/other/.beads")
 	t.Setenv("BEADS_DB", "/other/beads.db")
 	t.Setenv("BD_DB", "/other/legacy.db")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "other_database")
 	t.Setenv("BD_JSON_ENVELOPE", "1")
 	repoPath := t.TempDir()
 
@@ -71,7 +74,15 @@ pwd
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	got := strings.TrimSpace(out)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	wantArgs := []string{"-C", repoPath, "list", "-s", "open", "--json"}
+	if len(lines) != len(wantArgs)+1 {
+		t.Fatalf("Run() output lines = %#v, want args plus working directory", lines)
+	}
+	if gotArgs := lines[:len(wantArgs)]; !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
+	}
+	got := lines[len(lines)-1]
 	gotInfo, gotErr := os.Stat(got)
 	wantInfo, wantErr := os.Stat(repoPath)
 	if gotErr != nil || wantErr != nil || !os.SameFile(gotInfo, wantInfo) {

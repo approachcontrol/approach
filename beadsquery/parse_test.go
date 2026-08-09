@@ -30,6 +30,27 @@ func TestParseOpenSortsByPriorityThenID(t *testing.T) {
 	}
 }
 
+func TestParseOpenSortsCounterIDsNaturally(t *testing.T) {
+	t.Parallel()
+
+	got, err := beadsquery.ParseOpen(`[
+		{"id":"bd-10","priority":1,"title":"Tenth"},
+		{"id":"bd-2","priority":1,"title":"Second"},
+		{"id":"bd-1","priority":1,"title":"First"}
+	]`)
+	if err != nil {
+		t.Fatalf("ParseOpen() error = %v", err)
+	}
+	want := []beadsquery.Bead{
+		{ID: "bd-1", Priority: 1, Title: "First"},
+		{ID: "bd-2", Priority: 1, Title: "Second"},
+		{ID: "bd-10", Priority: 1, Title: "Tenth"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseOpen() = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseOpenEmptyList(t *testing.T) {
 	t.Parallel()
 

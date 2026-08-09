@@ -54,7 +54,10 @@ func defaultQuery() *Querier {
 }
 
 func (r execRunner) Run(dir string, args ...string) (string, error) {
-	cmd := exec.Command("bd", args...)
+	commandArgs := make([]string, 0, len(args)+2)
+	commandArgs = append(commandArgs, "-C", dir)
+	commandArgs = append(commandArgs, args...)
+	cmd := exec.Command("bd", commandArgs...)
 	cmd.Dir = dir
 	cmd.Env = withoutBeadsDatabaseSelectors(os.Environ())
 	limit := r.maxOutputBytes
@@ -103,7 +106,7 @@ func withoutBeadsDatabaseSelectors(env []string) []string {
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
 		switch strings.ToUpper(name) {
-		case "BEADS_DIR", "BEADS_DB", "BD_DB":
+		case "BEADS_DIR", "BEADS_DB", "BD_DB", "BEADS_DOLT_SERVER_DATABASE":
 			continue
 		}
 		filtered = append(filtered, entry)
