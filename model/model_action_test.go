@@ -4914,7 +4914,7 @@ func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3 + ui.TerminalChipRows})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "one", Summary: "one first\none second"},
@@ -5032,8 +5032,8 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 			t.Fatalf("embedded terminal view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Provider") || strings.Contains(view, "Summary") {
-		t.Fatalf("embedded terminal view should hide saved-session table:\n%s", view)
+	if !strings.Contains(view, "Provider") || !strings.Contains(view, "Summary") {
+		t.Fatalf("embedded terminal dock should preserve the saved-session table:\n%s", view)
 	}
 }
 
@@ -5136,6 +5136,14 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 		t.Fatalf("tab back to session terminal should not write to PTY: %#v", fakeTerm.writes)
 	}
 
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil || m.ActivePane() != 1 {
+		t.Fatalf("third tab should focus terminal command mode: pane=%d cmd=%T", m.ActivePane(), cmd)
+	}
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if cmd != nil {
+		t.Fatalf("terminal input command returned cmd %T, want nil", cmd)
+	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	if cmd != nil {
 		t.Fatalf("backspace after returning to session terminal returned cmd %T, want nil", cmd)
@@ -5145,7 +5153,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	}
 }
 
-func TestModel_CollapsedSessionTerminalForwardsCtrlRAndTabRestoresRepoPane(t *testing.T) {
+func TestModel_CollapsedSessionTerminalForwardsCtrlRAndNeverTrapsFocus(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
@@ -5167,6 +5175,8 @@ func TestModel_CollapsedSessionTerminalForwardsCtrlRAndTabRestoresRepoPane(t *te
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed session terminal", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
 		t.Fatalf("terminal ctrl+r collapsed=%t activePane=%d, want unchanged collapsed terminal", m.RepoPaneCollapsed(), m.ActivePane())
@@ -5176,8 +5186,12 @@ func TestModel_CollapsedSessionTerminalForwardsCtrlRAndTabRestoresRepoPane(t *te
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("terminal tab collapsed=%t activePane=%d, want collapsed list focus", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
-		t.Fatalf("terminal tab collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
+		t.Fatalf("list ctrl+r collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 }
 
@@ -5187,13 +5201,13 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	}
 	var term *embeddedterm.Terminal
 	m := model.NewWithOptions(testRepos(), model.Options{
-		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			var err error
 			term, err = embeddedterm.NewManager().Start(context.Background(), embeddedterm.StartRequest{
 				Command: "sh",
 				Args:    []string{"-c", "printf real-pty-output; sleep 1"},
-				Width:   40,
-				Height:  5,
+				Width:   width,
+				Height:  height,
 			})
 			if err != nil {
 				return nil, err
@@ -5307,7 +5321,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	}
 }
 
-func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
+func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{}
 	var started [2]int
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -5324,13 +5338,14 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
-	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, false, false))
-	wantStartHeight := ui.EmbeddedTerminalPTYHeight(14 - ui.BranchContentOverhead)
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(180)
+	_, wantStartOuterHeight := ui.EmbeddedTerminalDockHeights(14-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
+	wantStartHeight := ui.EmbeddedTerminalPTYHeight(wantStartOuterHeight)
 	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
 	if started != wantStartSize {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], wantStartWidth, wantStartHeight)
 	}
-	wantPaddedStartWidth := ui.RightContentWidth(180, 14, false, false) - ui.EmbeddedTerminalFrameColumns - 2*ui.EmbeddedTerminalSidePadding
+	wantPaddedStartWidth := 180 - ui.EmbeddedTerminalFrameColumns - 2*ui.EmbeddedTerminalSidePadding
 	if started[0] != wantPaddedStartWidth {
 		t.Fatalf("embedded terminal start width = %d, want padded width %d", started[0], wantPaddedStartWidth)
 	}
@@ -5340,23 +5355,25 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 12})
-	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 12, false, false))
-	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(12 - ui.BranchContentOverhead)
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(160)
+	_, wantResizeOuterHeight := ui.EmbeddedTerminalDockHeights(12-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
+	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(wantResizeOuterHeight)
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
 		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
 	}
 }
 
-func TestModel_EmbeddedTerminalWidthMatchesRendererWhenShortcutSuppressed(t *testing.T) {
+func TestModel_EmbeddedTerminalWidthIgnoresShortcutAndSearchState(t *testing.T) {
 	t.Run("active search", func(t *testing.T) {
 		m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, 180, 14)
 
 		m = model.SetSearchActiveForTest(m, true)
 		_ = m.View()
+		_, wantOuterHeight := ui.EmbeddedTerminalDockHeights(14-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 		want := [2]int{
-			ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, true, false)),
-			ui.EmbeddedTerminalPTYHeight(14 - ui.BranchContentOverhead),
+			ui.EmbeddedTerminalPTYWidth(180),
+			ui.EmbeddedTerminalPTYHeight(wantOuterHeight),
 		}
 		if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != want {
 			t.Fatalf("visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, want[0], want[1])
@@ -5379,9 +5396,10 @@ func TestModel_EmbeddedTerminalWidthMatchesRendererWhenShortcutSuppressed(t *tes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, started := openEmbeddedSessionForSizingTest(t, tc.width, tc.height)
+			_, wantOuterHeight := ui.EmbeddedTerminalDockHeights(tc.height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 			want := [2]int{
-				ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(tc.width, tc.height, false, false)),
-				ui.EmbeddedTerminalPTYHeight(tc.height - ui.BranchContentOverhead),
+				ui.EmbeddedTerminalPTYWidth(tc.width),
+				ui.EmbeddedTerminalPTYHeight(wantOuterHeight),
 			}
 			if started != want {
 				t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], want[0], want[1])
@@ -5390,27 +5408,25 @@ func TestModel_EmbeddedTerminalWidthMatchesRendererWhenShortcutSuppressed(t *tes
 	}
 }
 
-func TestModel_EmbeddedTerminalResizesWhenRepoPaneCollapsesAndExpands(t *testing.T) {
+func TestModel_EmbeddedTerminalKeepsFullWidthWhenRepoPaneCollapsesAndExpands(t *testing.T) {
 	const width, height = 180, 14
 	m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, width, height)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	baseline := len(fakeTerm.resizes)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	wantCollapsed := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, true)),
-		ui.EmbeddedTerminalPTYHeight(height - ui.BranchContentOverhead),
+	if !m.RepoPaneCollapsed() {
+		t.Fatal("enter on selected repo should collapse the repos pane")
 	}
-	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantCollapsed {
-		t.Fatalf("collapse resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantCollapsed[0], wantCollapsed[1])
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if m.RepoPaneCollapsed() {
+		t.Fatal("ctrl+r should expand the repos pane")
 	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	wantExpanded := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, false)),
-		ui.EmbeddedTerminalPTYHeight(height - ui.BranchContentOverhead),
-	}
-	if len(fakeTerm.resizes) < 2 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantExpanded {
-		t.Fatalf("expand resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantExpanded[0], wantExpanded[1])
+	for _, resize := range fakeTerm.resizes[baseline:] {
+		want := [2]int{ui.EmbeddedTerminalPTYWidth(width), resize[1]}
+		if resize != want {
+			t.Fatalf("collapse/expand resized full-width terminal: %#v", fakeTerm.resizes[baseline:])
+		}
 	}
 }
 
@@ -5432,6 +5448,75 @@ func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Mo
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	return m, fakeTerm, started
+}
+
+func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"alpha-session": {lines: []string{"alpha output"}, state: "running"},
+		"bravo-session": {lines: []string{"bravo output"}, state: "running"},
+	}
+	var started []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			started = append(started, ctx.ResumeSessionID)
+			return terms[ctx.ResumeSessionID], nil
+		},
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.RepoPath != "/dev/bravo" {
+				return nil, nil
+			}
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderClaude,
+				SessionID:    "bravo-session",
+				RepoPath:     "/dev/bravo",
+				WorktreePath: "/dev/bravo-worktrees/docs",
+				Branch:       "docs",
+			}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "alpha-session",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		Branch:       "feature",
+	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Switching the selected repo clears the sessions cache while the dock
+	// and its terminal persist.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if len(m.Sessions()) != 0 {
+		t.Fatalf("repo switch should clear the sessions cache, got %d records", len(m.Sessions()))
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if cmd == nil {
+		t.Fatal("picker with a cold cache should load sessions on demand")
+	}
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected picker overlay after on-demand load, got overlay %d:\n%s", m.Overlay(), m.View())
+	}
+	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
+		t.Fatalf("picker view missing loaded session:\n%s", view)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected picker submit command")
+	}
+	m, _ = update(m, cmd())
+	if want := []string{"alpha-session", "bravo-session"}; !reflect.DeepEqual(started, want) {
+		t.Fatalf("started sessions = %#v, want %#v", started, want)
+	}
+	_ = m
 }
 
 func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
@@ -5608,7 +5693,7 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 			t.Fatalf("renumbered session terminal view missing %q:\n%s", want, view)
 		}
 	}
-	for _, unwanted := range []string{"3 codex", "second output", "feature/two"} {
+	for _, unwanted := range []string{"3 codex", "second output"} {
 		if strings.Contains(view, unwanted) {
 			t.Fatalf("dismissed session terminal should not remain visible with %q:\n%s", unwanted, view)
 		}
@@ -5632,7 +5717,7 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 			t.Fatalf("closing first session terminal should promote former second tab to 1:\n%s", view)
 		}
 	}
-	if strings.Contains(view, "2 codex") || strings.Contains(view, "feature/one") {
+	if strings.Contains(view, "2 codex") {
 		t.Fatalf("session tabs should remain contiguous after closing first tab:\n%s", view)
 	}
 }
@@ -5664,7 +5749,7 @@ func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 }
 
 func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
-	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"running"}, state: "running"}
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"pty-live-output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
@@ -5691,8 +5776,8 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 	if fakeTerm.State() != "terminated" {
 		t.Fatalf("terminal state = %q, want terminated", fakeTerm.State())
 	}
-	if strings.Contains(m.View(), "running") {
-		t.Fatalf("terminated terminal should be dismissed:\n%s", m.View())
+	if view := m.View(); strings.Contains(view, "pty-live-output") || strings.Contains(view, "1 codex") {
+		t.Fatalf("terminated terminal should be dismissed:\n%s", view)
 	}
 }
 

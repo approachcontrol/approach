@@ -150,9 +150,9 @@ type Model struct {
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
 	nextEmbeddedTerminalID    int
-	activeEmbeddedTerminalNum int
-	activeFlowTerminalNum     int
-	flowFocus                 flowFocus
+	activeTerminalNum         int
+	terminalDockVisible       bool
+	terminalFocus             terminalFocus
 	autoAdvanceDrainFlows     map[string]struct{}
 	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen   uint64
@@ -165,7 +165,6 @@ type Model struct {
 	autoAdvanceLaunchedPhases []autoAdvanceLaunchedPhase
 	terminalPrefixActive      bool
 	terminalConfirmID         embeddedTerminalID
-	terminalConfirmScope      embeddedTerminalScope
 	finalizeAgentSession      func(actions.AgentLaunchContext) error
 	sessionStateRoot          string
 	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
@@ -532,6 +531,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		activeFlows:           newFlowPane(),
 		beads:                 newBeadSubviews(),
 		flowHeadless:          true,
+		terminalDockVisible:   true,
 		flowRefreshTickGen:    1,
 		mode:                  initialMode,
 		defaultView:           initialMode,
@@ -1000,6 +1000,8 @@ func (m Model) View() string {
 		EmbeddedTerminals:            m.embeddedTerminalTabs(),
 		EmbeddedTerminalLines:        m.embeddedTerminalLines(),
 		EmbeddedTerminalPrefix:       m.terminalPrefixActive,
+		EmbeddedTerminalVisible:      m.terminalDockVisible,
+		EmbeddedTerminalFocused:      m.activePane == 1 && m.terminalFocus == terminalFocusTerminal,
 		Plans:                        plans,
 		PlanSelected:                 planSelected,
 		PlanScroll:                   planScroll,
@@ -1014,11 +1016,7 @@ func (m Model) View() string {
 		BeadsError:                   beadsError,
 		BeadsSourceCount:             beadsSourceCount,
 		BeadsClosedTotal:             beadsClosedTotal,
-		FlowEmbeddedTerminals:        m.flowEmbeddedTerminalTabs(),
-		FlowEmbeddedTerminalLines:    m.flowEmbeddedTerminalLines(),
-		FlowEmbeddedTerminalPrefix:   m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
 		FlowTerminalActivity:         m.flowTerminalActivity(),
-		FlowTerminalFocused:          m.flowFocus == flowFocusTerminal && m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow),
 		ExpandedPlanID:               m.expandedPlanID,
 		ExpandedFlowID:               m.currentExpandedFlowID(),
 		SelectedPlanPhaseID:          m.selectedPlanPhaseID,
@@ -1377,6 +1375,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m = m.clampSelectionsAfterFilter()
 	case embeddedSessionPickerSelectedMsg:
 		return m.handleEmbeddedSessionPickerSelected(msg)
+	case embeddedSessionPickerLoadedMsg:
+		return m.handleEmbeddedSessionPickerLoaded(msg)
 	case terminateEmbeddedTerminalMsg:
 		return m.handleTerminateEmbeddedTerminal(msg)
 	case quitEmbeddedTerminalsMsg:
@@ -2255,28 +2255,17 @@ func (m Model) isSelectedBranchDirtyWorktree() bool {
 }
 
 func (m Model) reflowStashes() Model {
-	contentHeight := m.height - ui.StashContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 1
-	}
-	m.stashes = m.stashes.Reflow(contentHeight, m.contentWidth())
+	m.stashes = m.stashes.Reflow(m.stashContentHeight(), m.contentWidth())
 	return m
 }
 
 func (m Model) reflowRepos() Model {
-	contentHeight := m.height - ui.RepoContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 1
-	}
-	m.repos = m.repos.Reflow(contentHeight, ui.LeftPaneWidth-2)
+	m.repos = m.repos.Reflow(m.repoContentHeight(), ui.LeftPaneWidth-2)
 	return m
 }
 
 func (m Model) reflowWorktrees() Model {
-	contentHeight := m.height - ui.WorktreeContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 16
-	}
+	contentHeight := m.worktreeContentHeight()
 	m.worktrees = m.worktrees.Reflow(contentHeight, m.contentWidth())
 	m = m.reflowWorktreeSessions()
 	return m
@@ -2288,10 +2277,7 @@ func (m Model) reflowWorktreeSessions() Model {
 }
 
 func (m Model) reflowReflogs() Model {
-	contentHeight := m.height - ui.GitContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 16
-	}
+	contentHeight := m.gitPaneContentHeight()
 	m.reflogs = m.reflogs.Reflow(contentHeight, m.contentWidth())
 	return m
 }
@@ -2324,19 +2310,13 @@ func (m Model) reflowFlows() Model {
 }
 
 func (m Model) reflowCommits() Model {
-	contentHeight := m.height - ui.GitContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 16
-	}
+	contentHeight := m.gitPaneContentHeight()
 	m.commits = m.commits.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
 func (m Model) reflowBranches() Model {
-	contentHeight := m.height - ui.GitContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 16
-	}
+	contentHeight := m.gitPaneContentHeight()
 	m.rows = m.rows.Reflow(contentHeight, m.contentWidth())
 	return m
 }

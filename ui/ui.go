@@ -229,6 +229,16 @@ const FlowContentOverhead = BranchContentOverhead + TableHeaderRows
 
 const flowSplitMinPanelHeight = 4
 
+// TerminalChipRows is the list-space reserved by a collapsed dock chip.
+const TerminalChipRows = 1
+
+type EmbeddedTerminalDockState int
+
+const (
+	EmbeddedTerminalDockCollapsed EmbeddedTerminalDockState = iota
+	EmbeddedTerminalDockExpanded
+)
+
 const (
 	// EmbeddedTerminalFrameColumns is the number of columns consumed by the
 	// embedded terminal pane's left and right border.
@@ -309,6 +319,8 @@ type RenderParams struct {
 	EmbeddedTerminals            []EmbeddedTerminalTab
 	EmbeddedTerminalLines        []string
 	EmbeddedTerminalPrefix       bool
+	EmbeddedTerminalVisible      bool
+	EmbeddedTerminalFocused      bool
 	Plans                        []planstore.PlanRecord
 	PlanSelected                 int
 	PlanScroll                   int
@@ -323,11 +335,7 @@ type RenderParams struct {
 	BeadsError                   string
 	BeadsSourceCount             int
 	BeadsClosedTotal             int
-	FlowEmbeddedTerminals        []EmbeddedTerminalTab
-	FlowEmbeddedTerminalLines    []string
-	FlowEmbeddedTerminalPrefix   bool
 	FlowTerminalActivity         []FlowTerminalActivity
-	FlowTerminalFocused          bool
 	ExpandedPlanID               string
 	ExpandedFlowID               string
 	SelectedPlanPhaseID          string
@@ -362,9 +370,31 @@ type RenderParams struct {
 	NewAgentAvailable            bool
 }
 
-func FlowSplitPanelHeights(height int) (listHeight, terminalHeight int) {
+// EmbeddedTerminalDockRows is the number of full-width rows the top-level
+// terminal dock consumes between the pane row and the status bar: the framed
+// terminal pane when expanded, or the single chip row otherwise. The expanded
+// height is derived from the same partition the dock used when it was nested,
+// so the terminal keeps its familiar size and is mode-independent.
+func EmbeddedTerminalDockRows(height int, state EmbeddedTerminalDockState) int {
+	if state == EmbeddedTerminalDockExpanded {
+		_, terminalHeight := EmbeddedTerminalDockHeights(height-BranchContentOverhead, state)
+		return terminalHeight
+	}
+	// At or below this height the pane row is already at its irreducible
+	// header height in every mode, so reserving the chip row would cost
+	// header rows instead of shrinking the lists.
+	if height <= GitContentOverhead {
+		return 0
+	}
+	return TerminalChipRows
+}
+
+func EmbeddedTerminalDockHeights(height int, state EmbeddedTerminalDockState) (listHeight, terminalHeight int) {
 	if height <= 0 {
 		return 0, 0
+	}
+	if state != EmbeddedTerminalDockExpanded {
+		return height, 0
 	}
 	if height < flowSplitMinPanelHeight*2 {
 		listHeight = height / 2
@@ -501,11 +531,10 @@ func renderApplication(p RenderParams) string {
 	commitSelected := p.Mode == ModeHistory && p.CommitSelected >= 0 && p.CommitSelected < len(p.Commits)
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
 	activeFlows := p.ActiveFlows || p.Mode == ModeActiveFlows
-	embeddedTerminalActive := p.Mode == ModeSessions && !activeFlows && len(p.EmbeddedTerminals) > 0
+	embeddedTerminalActive := len(p.EmbeddedTerminals) > 0
 	flowSurfaceActive := p.Mode == ModeFlows || activeFlows
-	flowEmbeddedTerminalActive := flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0
-	terminalShortcutsActive := embeddedTerminalActive || (flowEmbeddedTerminalActive && p.FlowTerminalFocused)
-	sessionSelected := p.Mode == ModeSessions && !embeddedTerminalActive && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
+	terminalShortcutsActive := embeddedTerminalActive && p.EmbeddedTerminalFocused
+	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := flowSurfaceActive && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
 	flowPlanLinked := false
@@ -524,7 +553,7 @@ func renderApplication(p RenderParams) string {
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
 	flowDeletableSelected := flowSelected && selectedFlowPhaseID == ""
-	if p.FlowTerminalFocused {
+	if p.EmbeddedTerminalFocused {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
@@ -568,7 +597,9 @@ func renderApplication(p RenderParams) string {
 		ReflogSelected:               reflogSelected,
 		SessionSelected:              sessionSelected,
 		EmbeddedTerminalActive:       terminalShortcutsActive,
-		EmbeddedTerminalPrefix:       p.EmbeddedTerminalPrefix || p.FlowEmbeddedTerminalPrefix,
+		EmbeddedTerminalExists:       embeddedTerminalActive,
+		EmbeddedTerminalPrefix:       p.EmbeddedTerminalPrefix,
+		EmbeddedTerminalVisible:      p.EmbeddedTerminalVisible,
 		PlanSelected:                 planSelected,
 		PlanPhaseSelected:            planPhaseSelected,
 		FlowSelected:                 flowSelected,
@@ -601,6 +632,15 @@ func renderApplication(p RenderParams) string {
 		NewAgent:                     p.NewAgentAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
+	dockState := EmbeddedTerminalDockCollapsed
+	if embeddedTerminalActive && p.EmbeddedTerminalVisible {
+		dockState = EmbeddedTerminalDockExpanded
+	}
+	dockRows := EmbeddedTerminalDockRows(p.Height, dockState)
+	paneRowHeight := innerHeight - dockRows
+	if paneRowHeight < 0 {
+		paneRowHeight = 0
+	}
 	activeStatusQuery := hasActiveStatusQuery(status)
 	showShortcutPane := shouldRenderShortcutPaneForViewport(p.Width, p.Height, activeStatusQuery)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
@@ -614,7 +654,7 @@ func renderApplication(p RenderParams) string {
 	rightBorderColor := inactiveBorderColor
 	if p.Destructive {
 		rightBorderColor = destructiveBorderColor
-	} else if p.ActivePane == 1 {
+	} else if p.ActivePane == 1 && !p.EmbeddedTerminalFocused {
 		rightBorderColor = activeBorderColor
 	}
 	if p.ActivePane == 0 && !p.RepoPaneCollapsed {
@@ -622,17 +662,17 @@ func renderApplication(p RenderParams) string {
 	}
 
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
-	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
+	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, paneRowHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
 	if p.RepoPaneCollapsed {
 		leftContentWidth = CollapsedRepoPaneWidth - 2
-		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, innerHeight, !terminalShortcutsActive)
+		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, paneRowHeight, !terminalShortcutsActive)
 	}
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(leftBorderColor).
 		Width(leftContentWidth).
-		Height(innerHeight).
+		Height(paneRowHeight).
 		Render(leftContent)
 
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery, p.RepoPaneCollapsed)
@@ -647,6 +687,7 @@ func renderApplication(p RenderParams) string {
 	} else if IsBeadsMode(p.Mode) {
 		rightContentHeight = p.Height - BeadsContentOverhead
 	}
+	rightContentHeight -= dockRows
 	if rightContentHeight < 0 {
 		rightContentHeight = 0
 	}
@@ -674,45 +715,48 @@ func renderApplication(p RenderParams) string {
 		selectedPlanPhaseID = ""
 		selectedFlowPhaseID = ""
 	}
-	if p.FlowTerminalFocused {
+	if p.EmbeddedTerminalFocused {
 		flowSel = -1
 		selectedFlowPhaseID = ""
 	}
 
 	repoDisplayNames := repoDisplayNamesByPath(p.Repos)
+	listHeight := rightContentHeight
 	var rightLines []string
 	switch {
-	case flowSurfaceActive && len(p.FlowEmbeddedTerminals) > 0:
-		rightLines = renderFlowSplitPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, p.FlowEmbeddedTerminals, p.FlowEmbeddedTerminalLines, p.FlowEmbeddedTerminalPrefix, p.ActivePane == 1 && p.FlowTerminalFocused, activeFlows, repoDisplayNames)
 	case flowSurfaceActive && len(p.Flows) > 0:
-		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, rightContentHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, activeFlows, repoDisplayNames)
+		rightLines = renderFlowPane(p.Flows, flowSel, p.FlowScroll, rightContentWidth, listHeight, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, activeFlows, repoDisplayNames)
+	case flowSurfaceActive:
+		emptyMessage := p.RightEmptyMessage
+		if emptyMessage == "" {
+			emptyMessage = "No flows"
+		}
+		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, emptyMessage)
 	case p.Mode == ModeWorktrees && len(p.Worktrees) > 0:
-		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, rightContentHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
+		rightLines = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, rightContentWidth, listHeight, p.InlineWorktreeSessions, p.WorktreeSessions, p.WorktreeSessionSelected, p.WorktreeSessionScroll)
 	case p.Mode == ModeBranches && len(p.Branches) > 0:
-		rightLines = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, rightContentWidth, rightContentHeight, repoPath)
+		rightLines = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, rightContentWidth, listHeight, repoPath)
 	case p.Mode == ModeStashes && len(p.Stashes) > 0:
-		rightLines = renderStashPane(p.Stashes, stashSel, p.StashScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderStashPane(p.Stashes, stashSel, p.StashScroll, rightContentWidth, listHeight)
 	case p.Mode == ModeHistory && len(p.Commits) > 0:
-		rightLines = renderCommitPane(p.Commits, commitSel, p.CommitScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderCommitPane(p.Commits, commitSel, p.CommitScroll, rightContentWidth, listHeight)
 	case p.Mode == ModeReflog && len(p.Reflogs) > 0:
-		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, rightContentHeight)
-	case p.Mode == ModeSessions && len(p.EmbeddedTerminals) > 0:
-		rightLines = renderEmbeddedTerminalPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, p.ActivePane == 1, rightContentWidth, rightContentHeight)
+		rightLines = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, rightContentWidth, listHeight)
 	case p.Mode == ModeSessions && len(p.Sessions) > 0:
-		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, rightContentWidth, listHeight)
 	case p.Mode == ModePlans && len(p.Plans) > 0:
-		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, rightContentHeight, p.ExpandedPlanID, selectedPlanPhaseID)
+		rightLines = renderPlanPane(p.Plans, planSel, p.PlanScroll, rightContentWidth, listHeight, p.ExpandedPlanID, selectedPlanPhaseID)
 	case IsBeadsMode(p.Mode) && p.BeadsOpenPending:
 		message := p.RightEmptyMessage
 		if message == "" {
 			message = "loading " + beadsModeLabel(p.Mode) + " beads"
 		}
-		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
+		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, message)
 	case IsBeadsMode(p.Mode) && p.BeadsError != "":
 		message := "Could not load " + beadsModeLabel(p.Mode) + " beads: " + terminalSafeSingleLine(p.BeadsError)
-		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
+		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, message)
 	case IsBeadsMode(p.Mode) && len(p.BeadsOpen) > 0:
-		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, rightContentHeight)
+		rightLines = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, rightContentWidth, listHeight)
 	case IsBeadsMode(p.Mode):
 		message := p.RightEmptyMessage
 		if message == "" {
@@ -725,20 +769,24 @@ func renderApplication(p RenderParams) string {
 				message = "beads not configured"
 			}
 		}
-		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, message)
+		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, message)
 	default:
-		rightLines = renderPlaceholderPane(rightContentWidth, rightContentHeight, p.RightEmptyMessage)
+		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, p.RightEmptyMessage)
 	}
 
-	rightContent := modeHeader
-	if len(rightLines) > 0 {
-		rightContent += "\n" + strings.Join(rightLines, "\n")
+	rightContentLines := append(strings.Split(modeHeader, "\n"), rightLines...)
+	if len(rightContentLines) > paneRowHeight {
+		// lipgloss Height is a minimum, not a clip: at degenerate viewport
+		// heights the fixed mode header would otherwise grow the pane row
+		// past the viewport.
+		rightContentLines = rightContentLines[:paneRowHeight]
 	}
+	rightContent := strings.Join(rightContentLines, "\n")
 	rightPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(rightBorderColor).
 		Width(rightContentWidth).
-		Height(innerHeight).
+		Height(paneRowHeight).
 		Render(rightContent)
 
 	panes := []string{leftPane, rightPane}
@@ -748,12 +796,15 @@ func renderApplication(p RenderParams) string {
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(inactiveBorderColor).
 			Width(shortcutContentWidth).
-			Height(innerHeight).
-			Render(renderShortcutPane(status, shortcutContentWidth, innerHeight))
+			Height(paneRowHeight).
+			Render(renderShortcutPane(status, shortcutContentWidth, paneRowHeight))
 		panes = append(panes, shortcutPane)
 	}
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, panes...)
+	if dockLines := renderEmbeddedTerminalDockPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, p.EmbeddedTerminalFocused, p.Width, dockRows, dockState); len(dockLines) > 0 {
+		content += "\n" + strings.Join(dockLines, "\n")
+	}
 
 	return content + "\n" + statusBar
 }
@@ -977,7 +1028,9 @@ type statusBarParams struct {
 	ReflogSelected               bool
 	SessionSelected              bool
 	EmbeddedTerminalActive       bool
+	EmbeddedTerminalExists       bool
 	EmbeddedTerminalPrefix       bool
+	EmbeddedTerminalVisible      bool
 	PlanSelected                 bool
 	PlanPhaseSelected            bool
 	FlowSelected                 bool
@@ -1029,7 +1082,13 @@ func shouldRenderShortcutPane(width, height int, sp statusBarParams) bool {
 }
 
 func shouldRenderShortcutPaneForViewport(width, height int, activeStatusQuery bool) bool {
-	return !activeStatusQuery && shouldRenderShortcutPaneForInnerHeight(width, height-RepoContentOverhead)
+	// The terminal dock chip row is always reserved below the pane row, so it
+	// never counts toward the shortcut rail's usable height. The gate stays
+	// dock-state-agnostic on purpose — it also decides pane widths via
+	// RightContentWidth, which the model calls without dock state — so an
+	// expanded dock clips the rail (with the overflow marker) rather than
+	// hiding it.
+	return !activeStatusQuery && shouldRenderShortcutPaneForInnerHeight(width, height-RepoContentOverhead-TerminalChipRows)
 }
 
 func shouldRenderShortcutPaneForInnerHeight(width, height int) bool {
@@ -1251,23 +1310,19 @@ func padShortcutKey(key string, width int) string {
 
 func shortcutSections(sp statusBarParams) []shortcutSection {
 	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
-	if (sp.Mode == ModeSessions || flowSurfaceActive) && sp.EmbeddedTerminalActive {
+	if sp.EmbeddedTerminalActive {
 		hints := []shortcutHint{{Key: "ctrl+]", Label: "commands"}}
 		if sp.EmbeddedTerminalPrefix {
 			hints = []shortcutHint{
 				{Key: "ctrl+]", Label: "send"},
+				{Key: "i", Label: "input"},
+				{Key: "t", Label: "hide"},
+				{Key: "l", Label: "sessions"},
+				{Key: "left/right", Label: "terminal"},
 				{Key: "d", Label: "detach"},
 				{Key: "x", Label: "close"},
 				{Key: "q/esc", Label: "quit"},
 				{Key: "1-9", Label: "switch"},
-			}
-			if sp.Mode == ModeSessions && !flowSurfaceActive {
-				hints = slices.Insert(hints, 1, shortcutHint{Key: "l", Label: "sessions"})
-			} else {
-				hints = slices.Insert(hints, 1,
-					shortcutHint{Key: "i", Label: "input"},
-					shortcutHint{Key: "left/right", Label: "terminal"},
-				)
 			}
 		}
 		sections := []shortcutSection{{Title: "Terminal", Hints: hints}}
@@ -1302,6 +1357,13 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if sp.RepoPaneCollapsed {
 		global = slices.Insert(global, 0, shortcutHint{Key: "^r", Label: "repos"})
+	}
+	if sp.EmbeddedTerminalExists {
+		label := "show terminal"
+		if sp.EmbeddedTerminalVisible {
+			label = "hide terminal"
+		}
+		global = slices.Insert(global, 1, shortcutHint{Key: "ctrl+t", Label: label})
 	}
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
@@ -1569,7 +1631,7 @@ func flowAgentShortcut(value string) (string, bool) {
 }
 
 func shortcutsMuted(sp statusBarParams) bool {
-	return (sp.Mode == ModeSessions || sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows) && sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
+	return sp.EmbeddedTerminalActive && !sp.EmbeddedTerminalPrefix
 }
 
 func flowReasoningEffortShortcutLabel(value string) string {
@@ -2585,6 +2647,68 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
+// renderEmbeddedTerminalDockPane renders the top-level terminal dock that
+// spans the full application width between the pane row and the status bar:
+// the framed terminal pane when expanded, or the single chip row otherwise.
+func renderEmbeddedTerminalDockPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused bool, width, dockRows int, state EmbeddedTerminalDockState) []string {
+	if dockRows <= 0 || width <= 0 {
+		return nil
+	}
+	if state == EmbeddedTerminalDockExpanded {
+		return renderEmbeddedTerminalPane(tabs, liveLines, prefixActive, focused, width, dockRows)
+	}
+	chip := renderEmbeddedTerminalChip(tabs, width)
+	if pad := width - lipgloss.Width(chip); pad > 0 {
+		chip += strings.Repeat(" ", pad)
+	}
+	return scrollAndPad([]string{chip}, 0, dockRows)
+}
+
+func renderEmbeddedTerminalChip(tabs []EmbeddedTerminalTab, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if len(tabs) == 0 {
+		for _, candidate := range []string{"no terminals running", "no terminals"} {
+			if lipgloss.Width(candidate) <= width {
+				return statusStyle.Render(candidate)
+			}
+		}
+		return truncateToWidth(statusStyle.Render("no terminals"), width)
+	}
+	active := tabs[0]
+	for _, tab := range tabs {
+		if tab.Active {
+			active = tab
+			break
+		}
+	}
+	activeLabel := fmt.Sprintf("%d", active.Number)
+	for _, value := range []string{active.Provider, active.Identity, active.State} {
+		if value = strings.TrimSpace(value); value != "" {
+			activeLabel += " " + value
+		}
+	}
+	countLabel := "terminal"
+	if len(tabs) != 1 {
+		countLabel = "terminals"
+	}
+	candidates := []string{
+		fmt.Sprintf("● %d %s · %s · ctrl+t show", len(tabs), countLabel, activeLabel),
+		fmt.Sprintf("● %d · %s · ctrl+t", len(tabs), activeLabel),
+		fmt.Sprintf("● %d · %s", len(tabs), activeLabel),
+		fmt.Sprintf("● %d · ctrl+t", len(tabs)),
+		fmt.Sprintf("● %d", len(tabs)),
+		"●",
+	}
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= width {
+			return statusStyle.Render(candidate)
+		}
+	}
+	return truncateToWidth(statusStyle.Render("●"), width)
+}
+
 func renderEmbeddedTerminalPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused bool, outerWidth, outerHeight int) []string {
 	if outerHeight <= 0 {
 		return nil
@@ -2847,21 +2971,6 @@ const (
 	flowPRWidth      = 8
 	flowUpdatedWidth = 10
 )
-
-func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused, showRepo bool, repoDisplayNames map[string]string) []string {
-	if height <= 0 {
-		return nil
-	}
-	listHeight, terminalHeight := FlowSplitPanelHeights(height)
-	lines := make([]string, 0, height)
-	if len(records) > 0 {
-		lines = append(lines, renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity, showRepo, repoDisplayNames)...)
-	} else {
-		lines = append(lines, renderPlaceholderPane(width, listHeight, "No flows")...)
-	}
-	lines = append(lines, renderEmbeddedTerminalPane(terminals, terminalLines, prefixActive, terminalFocused, width, terminalHeight)...)
-	return scrollAndPad(lines, 0, height)
-}
 
 func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, showRepo bool, repoDisplayNames map[string]string) []string {
 	if height <= 0 {

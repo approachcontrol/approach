@@ -137,7 +137,7 @@ func TestModel_ViewKeepsSelectedSessionVisibleBelowTableHeader(t *testing.T) {
 
 func TestModel_ViewKeepsExpandedSelectedPlanVisibleBelowTableHeader(t *testing.T) {
 	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8 + ui.TerminalChipRows})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{

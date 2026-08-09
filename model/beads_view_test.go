@@ -1278,7 +1278,7 @@ func TestBeadsOpen_CursorUsesGroupedContentHeightAndScroll(t *testing.T) {
 	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	}))
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -1305,7 +1305,7 @@ func TestBeadsOpen_CursorUsesGroupedContentHeightAndScroll(t *testing.T) {
 
 func TestBeadsSubviews_RestoreIndependentPaneStateAcrossSwitchPaths(t *testing.T) {
 	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	openRows := []beadsquery.Bead{
 		{ID: "open-0", Title: "Open zero"},
@@ -1377,7 +1377,7 @@ func TestBeadsSubviews_SameRepoRefetchRetainsThenRefiltersAndClamps(t *testing.T
 			opts := beadQueryOptions()
 			opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 			m := inRightPane(model.NewWithOptions(testRepos(), opts))
-			m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+			m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 			if tt.mode != ui.ModeBeadsOpen {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
@@ -1518,7 +1518,7 @@ func TestBeadsPendingViewReportsLoadingUnderZeroMatchQuery(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-0", Title: "Alpha"}})
 	m = setBeadsQuery(t, m, "zzz")
@@ -1555,7 +1555,7 @@ func TestBeadsRepoChangeUnderActiveFlowsClearsPaneState(t *testing.T) {
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 	opts.ListFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
 	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	for _, subview := range subviews {
 		if m.Mode() != subview.mode {
@@ -1610,7 +1610,7 @@ func TestBeadsCursorIsInertWhilePending(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{
 		{ID: "bd-0"}, {ID: "bd-1"}, {ID: "bd-2"},

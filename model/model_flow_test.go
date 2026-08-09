@@ -5493,7 +5493,7 @@ func TestModel_ExpandedFlowAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 		{FlowID: "flow-5", RepoPath: "/dev/alpha", Title: "Fifth flow", Status: flowstore.StatusPending},
 		flow,
 	})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12 + ui.TerminalChipRows})
 	for i := 0; i < 5; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
@@ -5517,7 +5517,7 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 		flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
 	)
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10 + ui.TerminalChipRows})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	for i := 0; i < 4; i++ {
@@ -7793,8 +7793,8 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
-	_, terminalOuterHeight := ui.FlowSplitPanelHeights(18 - ui.BranchContentOverhead)
-	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false))
+	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(18-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(140)
 	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
@@ -7808,8 +7808,8 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
-	_, terminalResizeOuterHeight := ui.FlowSplitPanelHeights(20 - ui.BranchContentOverhead)
-	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 20, false, false))
+	_, terminalResizeOuterHeight := ui.EmbeddedTerminalDockHeights(20-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(160)
 	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
@@ -8462,7 +8462,7 @@ func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T
 	}
 }
 
-func TestModel_FlowEmbeddedTerminalResizesWhenSearchTogglesShortcutPane(t *testing.T) {
+func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -8492,11 +8492,11 @@ func TestModel_FlowEmbeddedTerminalResizesWhenSearchTogglesShortcutPane(t *testi
 
 	wantHeight := flowTerminalPTYHeightForViewport(18)
 	wantSearchSize := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, true, false)),
+		ui.EmbeddedTerminalPTYWidth(140),
 		wantHeight,
 	}
 	wantInactiveSize := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false)),
+		ui.EmbeddedTerminalPTYWidth(140),
 		wantHeight,
 	}
 
@@ -8540,7 +8540,7 @@ func requireLatestResize(t *testing.T, fakeTerm *fakeEmbeddedTerminal, want [2]i
 }
 
 func flowTerminalPTYHeightForViewport(height int) int {
-	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
+	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	return ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 }
 
@@ -8577,9 +8577,9 @@ func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
+	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	want := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, false)),
+		ui.EmbeddedTerminalPTYWidth(width),
 		ui.EmbeddedTerminalPTYHeight(terminalOuterHeight),
 	}
 	if started != want {
@@ -9599,7 +9599,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	}
 	m, _ = update(m, cmd())
 	if view := m.View(); !strings.Contains(view, "1 codex implementation running") {
-		t.Fatalf("Flow terminal should start with scope-local tab 1:\n%s", view)
+		t.Fatalf("Flow terminal should start with global tab 1:\n%s", view)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -9607,8 +9607,8 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if view := m.View(); !strings.Contains(view, "1 codex feature/session exited") {
-		t.Fatalf("session terminal should also use scope-local tab 1:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "2 codex feature/session exited") {
+		t.Fatalf("session terminal should use the next global tab number:\n%s", view)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
@@ -9622,7 +9622,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	view := m.View()
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("Flow terminal with matching display number should survive session close, missing %q:\n%s", want, view)
+			t.Fatalf("Flow terminal should survive session close and global renumbering, missing %q:\n%s", want, view)
 		}
 	}
 }

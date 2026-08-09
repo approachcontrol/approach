@@ -178,14 +178,14 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 			},
 		}},
 		FlowSelected: 0,
-		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
 			Provider: "codex",
 			Identity: "implementation",
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{
+		EmbeddedTerminalLines: []string{
 			"terminal line 1",
 			"terminal line 2",
 			"terminal line 3",
@@ -195,7 +195,8 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 			"terminal line 7",
 			"terminal line 8",
 		},
-		ActivePane: 1,
+		EmbeddedTerminalVisible: true,
+		ActivePane:              1,
 	})
 
 	for _, want := range []string{
@@ -230,14 +231,15 @@ func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 			Branch:   "flow/split-repo",
 		}},
 		FlowSelected: 0,
-		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
 			Provider: "codex",
 			Identity: "implementation",
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{"terminal line"},
+		EmbeddedTerminalLines:   []string{"terminal line"},
+		EmbeddedTerminalVisible: true,
 	})
 
 	header := lineContaining(view, "Status")
@@ -271,84 +273,19 @@ func TestRender_FlowsModeSplitTerminalTinyViewportDoesNotPanic(t *testing.T) {
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
 			},
 		}},
-		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
 			Provider: "codex",
 			Identity: "implementation",
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{"terminal output"},
-		ActivePane:                1,
+		EmbeddedTerminalLines:   []string{"terminal output"},
+		EmbeddedTerminalVisible: true,
+		ActivePane:              1,
 	})
 
 	requireLinesWithinWidth(t, strippedLines(view), 120)
-}
-
-func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
-	records := []flowstore.FlowRecord{{
-		FlowID: "flow-1",
-		Title:  "Flow with split terminal",
-		Status: flowstore.StatusInProgress,
-		Branch: "flow/split-terminal",
-		Phases: []flowstore.FlowPhase{
-			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
-		},
-	}}
-	terminalLines := []string{
-		"terminal line 1",
-		"terminal line 2",
-		"terminal line 3",
-		"terminal line 4",
-		"terminal line 5",
-		"terminal line 6",
-	}
-
-	const width = 70
-	const height = 10
-	listHeight, terminalHeight := FlowSplitPanelHeights(height)
-	lines := stripLines(renderFlowSplitPane(records, 0, 0, width, height, "", "", nil, []EmbeddedTerminalTab{{
-		Number:   1,
-		Provider: "codex",
-		Identity: "implementation",
-		State:    "running",
-		Active:   true,
-	}}, terminalLines, false, true, false, nil))
-
-	if listHeight != 4 || terminalHeight != 6 {
-		t.Fatalf("split heights = %d/%d, want 4/6", listHeight, terminalHeight)
-	}
-	if len(lines) != height {
-		t.Fatalf("line count = %d, want %d:\n%s", len(lines), height, strings.Join(lines, "\n"))
-	}
-	requireLinesWithinWidth(t, lines, width)
-	for i := 0; i < listHeight; i++ {
-		if strings.ContainsAny(lines[i], "┌┐└┘│") {
-			t.Fatalf("flow list allocation should not contain terminal frame at line %d: %q", i, lines[i])
-		}
-	}
-	if !strings.Contains(lines[0], "Status") || !strings.Contains(lines[1], "flow/split-terminal") {
-		t.Fatalf("flow list should remain visible above terminal:\n%s", strings.Join(lines, "\n"))
-	}
-	if !strings.Contains(lines[listHeight], "┌") {
-		t.Fatalf("terminal top border should start at index %d:\n%s", listHeight, strings.Join(lines, "\n"))
-	}
-	if !strings.Contains(lines[listHeight+1], "│ 1 codex implementation running") {
-		t.Fatalf("terminal header should be first framed content row:\n%s", strings.Join(lines, "\n"))
-	}
-	if !strings.Contains(lines[listHeight+terminalHeight-1], "└") {
-		t.Fatalf("terminal bottom border should land at index %d:\n%s", listHeight+terminalHeight-1, strings.Join(lines, "\n"))
-	}
-	if strings.Contains(strings.Join(lines, "\n"), "terminal line 1") ||
-		strings.Contains(strings.Join(lines, "\n"), "terminal line 2") ||
-		strings.Contains(strings.Join(lines, "\n"), "terminal line 3") {
-		t.Fatalf("terminal body should show only latest lines after frame/header subtraction:\n%s", strings.Join(lines, "\n"))
-	}
-	for _, want := range []string{"terminal line 4", "terminal line 5", "terminal line 6"} {
-		if !strings.Contains(strings.Join(lines, "\n"), want) {
-			t.Fatalf("terminal body missing latest line %q:\n%s", want, strings.Join(lines, "\n"))
-		}
-	}
 }
 
 func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T) {
@@ -665,7 +602,7 @@ func TestRender_FlowsModeMarksActiveTerminalExpandedPhaseRows(t *testing.T) {
 	}
 }
 
-func TestRender_FlowsModeSplitPaneMarksActiveTerminalRows(t *testing.T) {
+func TestRenderFlowPaneMarksActiveTerminalRows(t *testing.T) {
 	flows := []flowstore.FlowRecord{{
 		FlowID: "flow-1",
 		Title:  "Active split flow",
@@ -675,31 +612,22 @@ func TestRender_FlowsModeSplitPaneMarksActiveTerminalRows(t *testing.T) {
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
 		},
 	}}
-	lines := renderFlowSplitPane(flows, 0, 0, 100, 9, "flow-1", "implementation", []FlowTerminalActivity{
+	lines := renderFlowPane(flows, 0, 0, 100, 9, "flow-1", "implementation", []FlowTerminalActivity{
 		{FlowID: "flow-1", PhaseID: "implementation"},
-	}, []EmbeddedTerminalTab{{
-		Number:   1,
-		Provider: "codex",
-		Identity: "misleading-label",
-		State:    "running",
-		Active:   true,
-	}}, []string{"terminal line"}, false, false, false, nil)
+	}, false, nil)
 	view := strings.Join(lines, "\n")
 
 	flowRow := ansi.Strip(lineContaining(view, "flow/split-active"))
 	phaseRow := lineWithPrefix(view, "   >●")
 	if !strings.HasPrefix(flowRow, " ● in_progress") {
-		t.Fatalf("split active flow row prefix = %q, want active marker:\n%s", flowRow, view)
+		t.Fatalf("active flow row prefix = %q, want active marker:\n%s", flowRow, view)
 	}
 	if !strings.HasPrefix(phaseRow, "   >● running") {
-		t.Fatalf("split selected active phase row prefix = %q, want phase marker:\n%s", phaseRow, view)
-	}
-	if !strings.Contains(view, "misleading-label") || !strings.Contains(view, "terminal line") {
-		t.Fatalf("split terminal content missing:\n%s", view)
+		t.Fatalf("selected active phase row prefix = %q, want phase marker:\n%s", phaseRow, view)
 	}
 	for _, line := range strings.Split(ansi.Strip(view), "\n") {
 		if got := lipgloss.Width(line); got > 100 {
-			t.Fatalf("split pane line width = %d, want <= 100: %q", got, line)
+			t.Fatalf("flow pane line width = %d, want <= 100: %q", got, line)
 		}
 	}
 }
@@ -812,7 +740,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
-		Height:   28,
+		Height:   29,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID:       "flow-1",
@@ -1564,8 +1492,9 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	}
 
 	terminalFocused := destructive
-	terminalFocused.FlowEmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
-	terminalFocused.FlowTerminalFocused = true
+	terminalFocused.EmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
+	terminalFocused.EmbeddedTerminalVisible = true
+	terminalFocused.EmbeddedTerminalFocused = true
 	if pane := shortcutPaneText(Render(terminalFocused)); strings.Contains(pane, "d      delete") {
 		t.Fatalf("focused Flow terminal should not expose delete shortcut:\n%s", pane)
 	}
@@ -1773,13 +1702,13 @@ func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "i      input", "t      hide", "l      sessions", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "l          sessions") || strings.Contains(text, "ctrl+] commands") {
-		t.Fatalf("Flow terminal shortcut pane should not show sessions or muted command hints:\n%s", text)
+	if strings.Contains(text, "ctrl+] commands") {
+		t.Fatalf("Flow terminal shortcut pane should not show muted command hints:\n%s", text)
 	}
 }
 
@@ -1792,13 +1721,10 @@ func TestRender_ActiveFlowsOverSessionsUsesFlowTerminalPrefixShortcuts(t *testin
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "i      input", "t      hide", "l      sessions", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("active Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}
-	}
-	if strings.Contains(text, "l      sessions") {
-		t.Fatalf("active Flow terminal shortcut pane should not show session prefix command:\n%s", text)
 	}
 }
 
@@ -1807,7 +1733,7 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       180,
-		Height:      18,
+		Height:      19,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
 		Flows: []flowstore.FlowRecord{{
@@ -1829,10 +1755,11 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 			State:    "running",
 			Active:   true,
 		}},
-		ActivePane:          1,
-		FlowSelected:        0,
-		FlowNextLaunchReady: true,
-		FlowHeadless:        true,
+		EmbeddedTerminalVisible: false,
+		ActivePane:              1,
+		FlowSelected:            0,
+		FlowNextLaunchReady:     true,
+		FlowHeadless:            true,
 	})
 
 	pane := shortcutPaneText(view)
@@ -2290,7 +2217,7 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    240,
-		Height:   12,
+		Height:   13,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "review-flow",

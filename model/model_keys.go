@@ -50,6 +50,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	terminalInputFocused := m.terminalDockVisible && m.activePane == 1 && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
+	if !m.searchActive && key == "ctrl+t" && !terminalInputFocused {
+		m = m.clearAnyStatus()
+		return m.toggleEmbeddedTerminalDock(), nil
+	}
+
 	if next, cmd, handled := m.handleEmbeddedTerminalKey(msg); handled {
 		return next, cmd
 	}
@@ -140,6 +146,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
+}
+
+func (m Model) toggleEmbeddedTerminalDock() Model {
+	if len(m.embeddedTerminals) == 0 {
+		return m.setStatus(statusOther, "No embedded terminals")
+	}
+	if m.terminalDockVisible {
+		m.terminalDockVisible = false
+		if m.activePane == 1 && m.terminalFocus == terminalFocusTerminal {
+			m.terminalFocus = terminalFocusList
+			m.terminalPrefixActive = false
+		}
+	} else {
+		m.terminalDockVisible = true
+		m = m.resizeEmbeddedTerminals()
+	}
+	return m.reflowForTerminalDock()
+}
+
+func (m Model) reflowForTerminalDock() Model {
+	m = m.reflowRepos()
+	m = m.reflowWorktrees()
+	m = m.reflowBranches()
+	m = m.reflowStashes()
+	m = m.reflowCommits()
+	m = m.reflowReflogs()
+	m = m.reflowSessions()
+	m = m.reflowPlans()
+	m = m.reflowFlows()
+	m = m.reflowAllBeads()
+	return m.reflowActiveFlows()
 }
 
 func isPaneBackKey(key string) bool {
@@ -519,60 +556,60 @@ func (m Model) setRepoPaneCollapsed(collapsed bool) Model {
 		return m
 	}
 	m.repoPaneCollapsed = collapsed
-	m = m.resizeEmbeddedTerminals()
+	// Embedded PTYs span the full app width, so collapse needs no resize.
 	return m.clampSelectionsAfterFilter()
 }
 
 func (m Model) cyclePaneFocusForward() Model {
 	if m.repoPaneCollapsed {
-		if m.mode == ui.ModeSessions && m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
-			return m.focusRepoPane()
-		}
-		if !m.flowSurfaceVisible() || !m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+		// The collapsed repos strip is skipped by ordinary tab cycling:
+		// focus alternates between the content list and the terminal dock
+		// while a terminal is active, so terminal input cannot trap focus,
+		// and stays on the list otherwise.
+		if !m.terminalDockVisible || !m.hasActiveEmbeddedTerminal() {
 			return m
 		}
-		if m.flowFocus != flowFocusTerminal {
-			m.flowFocus = flowFocusTerminal
+		if m.terminalFocus != terminalFocusTerminal {
+			m.terminalFocus = terminalFocusTerminal
 			m.terminalPrefixActive = true
 			return m
 		}
-		m.flowFocus = flowFocusList
+		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		return m.syncActiveFlowTerminalToSelectedFlow()
-	}
-
-	if !m.flowSurfaceVisible() {
-		if m.activePane == 0 {
-			m.activePane = 1
-			return m
-		}
-		m.activePane = 0
-		if m.mode == ui.ModePlans {
-			m = m.clearSelectedPlanPhase()
+		if m.flowSurfaceVisible() {
+			return m.syncActiveFlowTerminalToSelectedFlow()
 		}
 		return m
 	}
 
 	if m.activePane == 0 {
 		m.activePane = 1
-		m.flowFocus = flowFocusList
+		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
 		if m.activeFlowSurfaceVisible() {
 			m = m.syncActiveFlowsFromCache()
 		}
-		return m.syncActiveFlowTerminalToSelectedFlow()
+		if m.flowSurfaceVisible() {
+			return m.syncActiveFlowTerminalToSelectedFlow()
+		}
+		return m
 	}
 
-	if m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeFlow) && m.flowFocus != flowFocusTerminal {
-		m.flowFocus = flowFocusTerminal
+	if m.terminalDockVisible && m.hasActiveEmbeddedTerminal() && m.terminalFocus != terminalFocusTerminal {
+		m.terminalFocus = terminalFocusTerminal
 		m.terminalPrefixActive = true
 		return m
 	}
 
 	m.activePane = 0
-	m.flowFocus = flowFocusList
+	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
-	m = m.clearSelectedFlowPhase()
+	if m.mode == ui.ModePlans {
+		m = m.clearSelectedPlanPhase()
+	}
+	if m.flowSurfaceVisible() {
+		m = m.clearSelectedFlowPhase()
+	}
 	if m.activeFlowSurfaceVisible() {
 		return m.syncActiveFlowsFromCache()
 	}
@@ -2269,14 +2306,11 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 		return m
 	}
 	if ctx.Headless {
-		m.flowFocus = flowFocusList
+		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
 		return m
 	}
-	m.activePane = 1
-	m.flowFocus = flowFocusTerminal
-	m.terminalPrefixActive = false
-	return m
+	return m.focusEmbeddedTerminalInput()
 }
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
@@ -2791,7 +2825,7 @@ func (m Model) resetModeCursors() Model {
 	m.expandedActiveFlowID = ""
 	m.selectedActiveFlowPhaseID = ""
 	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
-	m.flowFocus = flowFocusList
+	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
@@ -2800,14 +2834,17 @@ func (m Model) resetModeCursors() Model {
 
 func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 	if isFlowMode(from) && isFlowMode(to) {
-		m.flowFocus = flowFocusList
+		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		return m.invalidateViewRequest()
+		m = m.invalidateViewRequest()
+	} else if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
+		m = m.invalidateViewRequest()
+	} else {
+		m = m.resetModeCursors()
 	}
-	if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
-		return m.invalidateViewRequest()
-	}
-	return m.resetModeCursors()
+	// Terminal dimensions are mode-independent, so mode switches need no
+	// PTY resize.
+	return m
 }
 
 func isFlowMode(mode ui.Mode) bool {
@@ -2852,7 +2889,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.expandedActiveFlowID = ""
 	m.selectedActiveFlowPhaseID = ""
 	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
-	m.flowFocus = flowFocusList
+	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
@@ -2875,7 +2912,7 @@ func (m Model) repoContentHeight() int {
 	if height <= 0 {
 		return 1
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) rightContentHeight() int {
@@ -2883,42 +2920,19 @@ func (m Model) rightContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) planContentHeight() int {
-	height := m.height - ui.PlanContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
 }
 
 func (m Model) flowContentHeight() int {
-	height := m.height - ui.FlowContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	if m.hasEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
-		listHeight, _ := ui.FlowSplitPanelHeights(m.rightContentHeight())
-		// The split renderer spends TableHeaderRows of the list panel on the
-		// header, so only the remainder holds data rows.
-		if rows := listHeight - ui.TableHeaderRows; rows > 0 {
-			return rows
-		}
-		if listHeight > 0 {
-			return 1
-		}
-	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
 }
 
 func (m Model) sessionContentHeight() int {
-	height := m.height - ui.SessionContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
 }
 
 func (m Model) worktreeSessionContentHeight() int {
@@ -2957,7 +2971,7 @@ func (m Model) beadsContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 // gitPaneContentHeight is the list height for the branches, history, and
@@ -2967,7 +2981,7 @@ func (m Model) gitPaneContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) worktreeContentHeight() int {
@@ -2975,13 +2989,29 @@ func (m Model) worktreeContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) stashContentHeight() int {
-	height := m.height - ui.StashContentOverhead
-	if height <= 0 {
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.StashContentOverhead, 0)
+}
+
+func (m Model) applyEmbeddedTerminalDockContentHeight(outerHeight, headerRows int) int {
+	rows := outerHeight - m.embeddedTerminalDockRows() - headerRows
+	if rows <= 0 {
 		return 1
 	}
-	return height
+	return rows
+}
+
+// embeddedTerminalDockRows is the number of full-width rows the top-level
+// terminal dock consumes below the pane row: the framed terminal pane when
+// expanded, or the always-reserved chip row that shows the terminal summary
+// when collapsed and the empty-state notice when no terminals run.
+func (m Model) embeddedTerminalDockRows() int {
+	state := ui.EmbeddedTerminalDockCollapsed
+	if len(m.embeddedTerminals) > 0 && m.terminalDockVisible {
+		state = ui.EmbeddedTerminalDockExpanded
+	}
+	return ui.EmbeddedTerminalDockRows(m.height, state)
 }
