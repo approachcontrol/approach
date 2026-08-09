@@ -63,7 +63,7 @@ Repos on the left, content on the right. The essentials:
 | `←`/`→` | Wrap within Git or Beads subviews; elsewhere step through Git, sessions, plans, flows, and Beads, after which the arrows stay inside whichever group they entered |
 | `ctrl+a` | Toggle Active Flows (all repos) |
 | `/` | Fuzzy filter the active pane |
-| `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a record-only Flow for the selected Bead |
+| `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
 | `f5` | Rescan repositories and refresh the current view, including the active Beads subview |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent |
@@ -122,21 +122,19 @@ invalidates an older result; delivery also requires the same bead to remain the
 visible selection.
 
 In Ready only, press `f` on a settled visible selection whose Bead has a usable
-ID to create one record-only, Approach-owned Flow in the selected repository.
+ID to create one Approach-owned Flow in the selected repository.
 Its title is `<trimmed bead ID>: <trimmed bead title>` and its instructions are
 ``Use Bead <id> as the durable source of requirements. Read it with `bd show <id>` before planning or implementation.`` The configured Flow preset supplies
-the phase graph, with normal creation defaults, but this shortcut supplies no
-worktree, branch, base ref, commit, plan/link, launch, session, agent, issue, or
-PR metadata. It does not run a bootstrap hook, start a phase, launch an agent,
-or invoke `bd`; the Bead remains untouched.
+the phase graph, and the shortcut prepares the Flow exactly like a Flows-pane
+`n` submission with Plan Now off: it creates the `flow/<slug>` branch and
+worktree from the repository's current HEAD, records the start metadata, and
+runs the bootstrap hook. It does not link a plan or issue, start a phase,
+launch an agent, or invoke `bd`; the Bead remains untouched.
 
-A record-only Flow is not the same as the parked Flow the Flows-pane `n` form
-creates: it has no worktree, so the Flows pane shows it with the
-`missing-worktree` branch label and a `recover-worktree` phase state, and
-launching its first phase with `g` runs the agent in the repository root rather
-than an isolated worktree. No operation currently attaches a worktree to this
-existing record; if isolation is required, create a separate Flow through the
-normal `n` path instead of launching this one.
+The result is the same parked Flow the Flows-pane `n` form creates, so `g` on
+its first phase launches the agent inside the Flow's isolated worktree. If the
+worktree cannot be created, the Flow record is still persisted with its
+launchable phases blocked and the error is shown in the status line.
 
 ## Agents, Plans, and Flows
 
