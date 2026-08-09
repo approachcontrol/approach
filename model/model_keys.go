@@ -363,6 +363,7 @@ func (m Model) moveRepoSelection(delta int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
+	m = m.invalidateReadyBeadFlowCreateRequest()
 	if m.activeFlowSurfaceVisible() {
 		m = m.resetBeadsForRepoChange()
 		m = m.syncActiveFlowsFromCache()
@@ -508,6 +509,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "u":
 		return m.handleUnlock()
 	case "f":
+		if m.mode == ui.ModeBeadsReady {
+			return m.handleReadyBeadFlowCreate()
+		}
 		return m.handleFetch()
 	case "F":
 		return m.handlePull()
@@ -522,6 +526,31 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
+}
+
+func (m Model) canCreateReadyBeadFlow() bool {
+	if m.activePane != 1 || m.mode != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
+		return false
+	}
+	if _, ok := m.currentRepoPath(); !ok {
+		return false
+	}
+	_, ok := m.selectedVisibleBead()
+	return ok
+}
+
+func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
+	if !m.canCreateReadyBeadFlow() {
+		return m, nil
+	}
+	repoPath, _ := m.currentRepoPath()
+	bead, _ := m.selectedVisibleBead()
+	beadID := strings.TrimSpace(bead.ID)
+	title := beadID + ": " + strings.TrimSpace(bead.Title)
+	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
+	var request uint64
+	m, request = m.nextReadyBeadFlowCreateRequest()
+	return m, m.createReadyBeadFlow(repoPath, title, instructions, request)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
@@ -1551,6 +1580,34 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 		title = "Flow"
 	}
 	m = m.setStatus(statusOther, "Created flow: "+title)
+	if m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
+}
+
+func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+		return m, nil
+	}
+	m = m.clearReadyBeadFlowCreateRequest(msg.Request)
+	m = m.setStatus(statusOther, "Created flow: "+strings.TrimSpace(msg.Title))
+	if m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
+}
+
+func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+		return m, nil
+	}
+	m = m.clearReadyBeadFlowCreateRequest(msg.Request)
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "Unable to create flow"
+	}
+	m = m.setStatus(statusOther, errText)
 	if m.flowSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}

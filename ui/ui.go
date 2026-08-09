@@ -332,6 +332,7 @@ type RenderParams struct {
 	BeadsOpenScroll              int
 	BeadsOpenAvailable           bool
 	BeadsOpenPending             bool
+	ReadyBeadFlowCreateAvailable bool
 	BeadsError                   string
 	BeadsSourceCount             int
 	BeadsClosedTotal             int
@@ -630,6 +631,7 @@ func renderApplication(p RenderParams) string {
 		PullAvailable:                p.PullAvailable,
 		AgentAvailable:               p.AgentAvailable,
 		NewAgent:                     p.NewAgentAvailable,
+		ReadyBeadFlowCreateAvailable: p.ReadyBeadFlowCreateAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
 	dockState := EmbeddedTerminalDockCollapsed
@@ -1061,6 +1063,7 @@ type statusBarParams struct {
 	PullAvailable                bool
 	AgentAvailable               bool
 	NewAgent                     bool
+	ReadyBeadFlowCreateAvailable bool
 }
 
 type shortcutHint struct {
@@ -1378,6 +1381,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if sp.ActivePane == 0 && sp.RepoCreateAvailable {
 		actions = append(actions, shortcutHint{Key: "n", Label: "new repo"})
+	}
+	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowCreateAvailable {
+		actions = append(actions, shortcutHint{Key: "f", Label: "new flow"})
 	}
 	if flowSurfaceActive {
 		return flowShortcutSections(sp, actions, navigation, global)

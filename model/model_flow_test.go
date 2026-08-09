@@ -10875,6 +10875,10 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				CodexReasoningEffort:  "xhigh",
 				ClaudeReasoningEffort: "max",
 				SessionStateRoot:      "/state/approach/sessions/v1",
+				CreateFlowRecord: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+					t.Fatal("Plan Now should not call the Ready-Bead record adapter")
+					return flowstore.FlowRecord{}, nil
+				},
 				StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					calls = append(calls, "start-flow")
 					startRequest = req
@@ -11048,6 +11052,10 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	externalCalls := 0
 	listed := false
 	m := model.NewWithOptions(testRepos(), model.Options{
+		CreateFlowRecord: func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			t.Fatal("Plan Now off should not call the Ready-Bead record adapter")
+			return flowstore.FlowRecord{}, nil
+		},
 		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			createRequest = req
 			return model.FlowStartResult{Flow: flowstore.FlowRecord{
@@ -11060,10 +11068,6 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 				Commit:       "abc123",
 				Phases:       []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}},
 			}}, nil
-		},
-		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
-			t.Fatal("Plan Now off should not start the plan phase")
-			return model.FlowStartResult{}, nil
 		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			externalCalls++
