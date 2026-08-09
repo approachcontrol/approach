@@ -11069,6 +11069,10 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 				Phases:       []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}},
 			}}, nil
 		},
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("Plan Now off should not start the plan phase")
+			return model.FlowStartResult{}, nil
+		},
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			externalCalls++
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil

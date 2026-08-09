@@ -480,26 +480,25 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	// storeCreateFlowRecord is the store-backed default for both the Ready-Bead
+	// record seam and the Flow starter. The starter always keeps this private
+	// callback so injecting Options.CreateFlowRecord cannot change the legacy
+	// Flows-pane create/plan paths.
+	storeCreateFlowRecord := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
+	}
 	createFlowRecord := opts.CreateFlowRecord
 	if createFlowRecord == nil {
-		createFlowRecord = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
-		}
+		createFlowRecord = storeCreateFlowRecord
 	}
 	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
 	if createFlowForRepo == nil || startFlowPlan == nil {
-		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
-		}
+		createFlow := storeCreateFlowRecord
 		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
 			if err != nil {

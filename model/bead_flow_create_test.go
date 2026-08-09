@@ -2,6 +2,9 @@ package model_test
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,8 +15,287 @@ import (
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
+	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
+
+// A rescan-driven repo change never routes through handleRepoSelectionChanged,
+// so it must still release the Ready create token instead of stranding `f`.
+func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T) {
+	createCalls := 0
+	var readyRepos []string
+	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+		ScanRepos: func() ([]scanner.Repo, error) {
+			return []scanner.Repo{
+				{Path: "/dev/bravo", DisplayName: "bravo"},
+				{Path: "/dev/charlie", DisplayName: "charlie"},
+			}, nil
+		},
+		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
+			readyRepos = append(readyRepos, repoPath)
+			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlowRecord: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			createCalls++
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, readyCmd())
+
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if createCmd == nil {
+		t.Fatal("Ready f returned nil create command")
+	}
+	stale := createCmd().(model.ReadyBeadFlowCreatedMsg)
+	if createCalls != 1 {
+		t.Fatalf("CreateFlowRecord calls = %d, want 1", createCalls)
+	}
+
+	m, refreshCmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
+	if refreshCmd == nil {
+		t.Fatal("f5 returned nil refresh command")
+	}
+	m, afterRefresh := update(m, repoRefreshResultFromBatch(t, immediateTestCommandMessages(refreshCmd)))
+	if afterRefresh != nil {
+		_ = immediateTestCommandMessages(afterRefresh)
+	}
+	if len(readyRepos) == 0 || readyRepos[len(readyRepos)-1] != "/dev/bravo" {
+		t.Fatalf("rescan did not move the Ready query to the new repo: %#v", readyRepos)
+	}
+
+	m, staleCmd := update(m, stale)
+	if staleCmd != nil || strings.Contains(m.TransientError(), "Created flow") {
+		t.Fatalf("stale completion changed UI: status=%q cmd=%T", m.TransientError(), staleCmd)
+	}
+
+	m = applyBeadsResultFor(t, m, ui.ModeBeadsReady, "/dev/bravo", m.ListRequest(ui.ModeBeadsReady), true,
+		[]beadsquery.Bead{{ID: "bd-2", Title: "Two"}})
+	_, retryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if retryCmd == nil {
+		t.Fatal("rescan-driven repo change stranded Ready Flow creation")
+	}
+}
+
+func TestBeadsReadyCreateFlowRequiresUsableBeadIDAndToleratesEmptyTitle(t *testing.T) {
+	newReadyModel := func(t *testing.T, beads []beadsquery.Bead, create func(flowstore.FlowRecord) (flowstore.FlowRecord, error)) model.Model {
+		t.Helper()
+		m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+			ListReadyBeads:   func(string) ([]beadsquery.Bead, error) { return nil, nil },
+			ListOpenBeads:    func(string) ([]beadsquery.Bead, error) { return nil, nil },
+			CreateFlowRecord: create,
+		}))
+		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		return applyBeadsResult(t, m, ui.ModeBeadsReady, true, beads)
+	}
+
+	for _, tt := range []struct {
+		name string
+		bead beadsquery.Bead
+	}{
+		{name: "empty id", bead: beadsquery.Bead{ID: "", Title: "No identifier"}},
+		{name: "whitespace id", bead: beadsquery.Bead{ID: "   ", Title: "No identifier"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			createCalls := 0
+			m := newReadyModel(t, []beadsquery.Bead{tt.bead}, func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+				createCalls++
+				return record, nil
+			})
+			if strings.Contains(ansi.Strip(m.View()), "new flow") {
+				t.Fatalf("unusable Bead ID advertised the Flow shortcut:\n%s", ansi.Strip(m.View()))
+			}
+			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			if cmd != nil {
+				t.Fatalf("unusable Bead ID returned create command %T", cmd)
+			}
+			if createCalls != 0 {
+				t.Fatalf("CreateFlowRecord calls = %d, want 0", createCalls)
+			}
+		})
+	}
+
+	t.Run("empty title preserves the exact mapping", func(t *testing.T) {
+		var createdInput flowstore.FlowRecord
+		m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "   "}}, func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			createdInput = record
+			record.FlowID = "flow-1"
+			return record, nil
+		})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		if cmd == nil {
+			t.Fatal("titleless Bead returned nil create command")
+		}
+		m, _ = update(m, cmd())
+		if createdInput.Title != "bd-1: " {
+			t.Fatalf("Flow title = %q, want %q", createdInput.Title, "bd-1: ")
+		}
+		if got := m.TransientError(); got != "Created flow: bd-1:" {
+			t.Fatalf("status = %q", got)
+		}
+	})
+}
+
+func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.T) {
+	for _, injected := range []string{"CreateFlowRecord", "CreateFlow", "StartFlowPlan"} {
+		t.Run(injected, func(t *testing.T) {
+			testRoot := t.TempDir()
+			repoPath := filepath.Join(testRoot, "repo")
+			if err := os.MkdirAll(repoPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{
+				{"init", "-b", "main"},
+				{"config", "user.email", "test@example.com"},
+				{"config", "user.name", "Test User"},
+			} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repoPath
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v failed: %v\n%s", args, err, output)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"add", "README.md"}, {"commit", "-m", "fixture"}} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repoPath
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v failed: %v\n%s", args, err, output)
+				}
+			}
+
+			var calls []string
+			opts := model.Options{
+				AgentCommand:     "codex",
+				SessionStateRoot: filepath.Join(testRoot, "state"),
+				ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+					return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+				},
+				ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+			}
+			switch injected {
+			case "CreateFlowRecord":
+				opts.CreateFlowRecord = func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+					calls = append(calls, "record")
+					record.FlowID = "custom-record"
+					return record, nil
+				}
+			case "CreateFlow":
+				opts.CreateFlow = func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					calls = append(calls, "create")
+					return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "custom-create", RepoPath: req.RepoPath, Title: req.Title}}, nil
+				}
+			case "StartFlowPlan":
+				opts.StartFlowPlan = func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+					calls = append(calls, "start")
+					return model.FlowStartResult{
+						Flow:          flowstore.FlowRecord{FlowID: "custom-start", RepoPath: req.RepoPath, Title: req.Title},
+						LaunchSkipped: true,
+					}, nil
+				}
+			}
+			repos := []scanner.Repo{{Path: repoPath, DisplayName: "repo"}}
+
+			ready := inRightPane(model.NewWithOptions(repos, opts))
+			ready, _ = update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+			ready, readyCmd := update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			if readyCmd == nil {
+				t.Fatal("entering Ready returned nil query command")
+			}
+			ready, _ = update(ready, readyCmd())
+			_, recordCmd := update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+			if recordCmd == nil {
+				t.Fatal("Ready f returned nil create command")
+			}
+			if msg := recordCmd(); func() bool {
+				_, ok := msg.(model.ReadyBeadFlowCreatedMsg)
+				return ok
+			}() == false {
+				t.Fatalf("Ready command returned %T, want ReadyBeadFlowCreatedMsg", msg)
+			}
+			wantCalls := ""
+			if injected == "CreateFlowRecord" {
+				wantCalls = "record"
+			}
+			if got := strings.Join(calls, ","); got != wantCalls {
+				t.Fatalf("calls after Ready path = %q, want %q", got, wantCalls)
+			}
+
+			parked := inRightPane(model.NewWithOptions(repos, opts))
+			parked, _ = update(parked, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+			_, parkedCmd := submitNewFlowPromptsWithCreateOptions(t, parked, "Parked "+injected, "Plan later", "main", true, false)
+			if parkedCmd == nil {
+				t.Fatal("Plan Now off returned nil command")
+			}
+			if msg := parkedCmd(); func() bool {
+				_, failed := msg.(model.FlowCreateFailedMsg)
+				return failed
+			}() {
+				t.Fatalf("Plan Now off failed: %#v", msg)
+			}
+			if injected == "CreateFlow" {
+				wantCalls = "create"
+			}
+			if got := strings.Join(calls, ","); got != wantCalls {
+				t.Fatalf("calls after parked path = %q, want %q", got, wantCalls)
+			}
+
+			planned := inRightPane(model.NewWithOptions(repos, opts))
+			planned, _ = update(planned, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+			_, plannedCmd := submitNewFlowPrompts(t, planned, "Planned "+injected, "Plan now", "main")
+			if plannedCmd == nil {
+				t.Fatal("Plan Now returned nil command")
+			}
+			if msg := plannedCmd(); func() bool {
+				_, failed := msg.(model.FlowCreateFailedMsg)
+				return failed
+			}() {
+				t.Fatalf("Plan Now failed: %#v", msg)
+			}
+			if injected == "StartFlowPlan" {
+				wantCalls = "start"
+			}
+			if got := strings.Join(calls, ","); got != wantCalls {
+				t.Fatalf("calls after Plan Now path = %q, want %q", got, wantCalls)
+			}
+		})
+	}
+}
+
+func TestBeadsReadyCreateFlowFailureWithoutDetailReportsFallback(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlowRecord: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			return record, nil
+		},
+	}))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, readyCmd())
+	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	created := createCmd().(model.ReadyBeadFlowCreatedMsg)
+
+	m, _ = update(m, model.ReadyBeadFlowCreateFailedMsg{
+		RepoPath: created.RepoPath,
+		Title:    created.Title,
+		Err:      "   ",
+		Request:  created.Request,
+	})
+	if got := m.TransientError(); got != "Unable to create flow" {
+		t.Fatalf("detail-free failure status = %q, want %q", got, "Unable to create flow")
+	}
+}
 
 func TestBeadsReadyCreateFlowPersistsSelectedVisibleBeadRecordOnly(t *testing.T) {
 	readyCalls := 0
@@ -131,28 +413,42 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			createCalls++
 			return record, nil
 		}
-		assertNoCreate := func(t *testing.T, m model.Model, allowExistingCommand bool) {
+		assertNoCreate := func(t *testing.T, m model.Model) {
 			t.Helper()
 			_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-			if cmd != nil && !allowExistingCommand {
-				t.Fatalf("invalid Ready context returned command %T", cmd)
-			}
 			if cmd != nil {
-				_ = immediateTestCommandMessages(cmd)
+				t.Fatalf("invalid Ready context returned command %T", cmd)
 			}
 			if createCalls != 0 {
 				t.Fatalf("CreateFlowRecord calls = %d, want 0", createCalls)
 			}
 		}
 
+		// Left-pane focus must keep `f` on the repo-fetch binding, not merely
+		// avoid Flow creation.
 		m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, create)
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-		assertNoCreate(t, m, true)
+		_, leftCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		if leftCmd == nil {
+			t.Fatal("left-pane f lost the repo fetch binding")
+		}
+		fetched := false
+		for _, msg := range immediateTestCommandMessages(leftCmd) {
+			if _, ok := msg.(model.VisibleRepoFetchResultMsg); ok {
+				fetched = true
+			}
+		}
+		if !fetched {
+			t.Fatal("left-pane f did not run the visible repo fetch")
+		}
+		if createCalls != 0 {
+			t.Fatalf("CreateFlowRecord calls = %d, want 0", createCalls)
+		}
 
 		for _, subview := range []rune{'b', 'o', 'i', 'c'} {
 			m := newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, create)
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview}})
-			assertNoCreate(t, m, false)
+			assertNoCreate(t, m)
 		}
 
 		m = inRightPane(model.NewWithOptions(testRepos(), model.Options{
@@ -162,12 +458,12 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 		}))
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-		assertNoCreate(t, m, false) // loading
-		assertNoCreate(t, newReadyModel(t, nil, false, create), false)
-		assertNoCreate(t, newReadyModel(t, nil, true, create), false)
+		assertNoCreate(t, m) // loading
+		assertNoCreate(t, newReadyModel(t, nil, false, create))
+		assertNoCreate(t, newReadyModel(t, nil, true, create))
 		m = newReadyModel(t, []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, true, create)
 		m = setBeadsQuery(t, m, "no-match")
-		assertNoCreate(t, m, false)
+		assertNoCreate(t, m)
 	})
 
 	t.Run("duplicate in flight", func(t *testing.T) {
@@ -279,13 +575,13 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 func TestBeadsReadyCreateFlowCompletionRefreshesOnlyVisibleFlowSurface(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
-		key         tea.KeyMsg
+		key         *tea.KeyMsg
 		wantRefresh int
 	}{
-		{name: "beads ready", key: tea.KeyMsg{}, wantRefresh: 0},
-		{name: "selected repo flows", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, wantRefresh: 1},
-		{name: "active flows", key: tea.KeyMsg{Type: tea.KeyCtrlA}, wantRefresh: 1},
-		{name: "other surface", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}, wantRefresh: 0},
+		{name: "beads ready", key: nil, wantRefresh: 0},
+		{name: "selected repo flows", key: &tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, wantRefresh: 1},
+		{name: "active flows", key: &tea.KeyMsg{Type: tea.KeyCtrlA}, wantRefresh: 1},
+		{name: "other surface", key: &tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}, wantRefresh: 0},
 	} {
 		for _, failed := range []bool{false, true} {
 			outcome := "success"
@@ -316,8 +612,8 @@ func TestBeadsReadyCreateFlowCompletionRefreshesOnlyVisibleFlowSurface(t *testin
 				m, _ = update(m, readyCmd())
 				m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 				completion := createCmd()
-				if tt.key.Type != 0 {
-					m, _ = update(m, tt.key)
+				if tt.key != nil {
+					m, _ = update(m, *tt.key)
 				}
 				m, cmd := update(m, completion)
 				_ = immediateTestCommandMessages(cmd)
@@ -411,6 +707,14 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 			return m
 		}},
+		{name: "search active", transform: func(m model.Model) model.Model {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			return m
+		}},
+		{name: "agent picker open", transform: func(m model.Model) model.Model {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			return m
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -420,6 +724,33 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 				t.Fatalf("new flow shortcut visible = %v, want %v:\n%s", got, tt.want, ansi.Strip(m.View()))
 			}
 		})
+	}
+}
+
+func TestBeadsReadyCreateFlowPickerConsumesFWithoutCreating(t *testing.T) {
+	createCalls := 0
+	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			return []beadsquery.Bead{{ID: "bd-1", Title: "One"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlowRecord: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			createCalls++
+			return record, nil
+		},
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, readyCmd())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd != nil {
+		_ = immediateTestCommandMessages(cmd)
+	}
+	if createCalls != 0 {
+		t.Fatalf("CreateFlowRecord calls = %d, want 0", createCalls)
 	}
 }
 

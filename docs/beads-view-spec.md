@@ -36,7 +36,7 @@ repo cursor. Repos without beads show a calm "beads not configured" message;
 configured repos where `bd` fails show a real error. The view is read-only in
 its Beads access and tracker state, with `enter` paging a bead's detail through
 the pager. A settled Ready selection also exposes `f` to create an
-Approach-owned parked Flow record without invoking `bd` or mutating the Bead.
+Approach-owned record-only Flow without invoking `bd` or mutating the Bead.
 
 ## User Stories
 
@@ -69,7 +69,7 @@ Approach-owned parked Flow record without invoking `bd` or mutating the Bead.
 27. As an Approach user, I want the frozen `default_view` vocabulary (1–9) untouched, so that existing configs keep their meaning.
 28. As an Approach user, I want a manual way to refetch beads via the app's existing refresh affordance, so that I can pull in changes an agent made without bouncing the repo cursor.
 29. As an agent operator, I want issue state visible next to Sessions, Plans, and Flows, so that I can see what my agents should pick up next and what they have finished.
-30. As an Approach user, I want `f` on a settled visible Ready selection to create a parked Flow record for that Bead, so that I can carry the durable requirement into the Flow workflow without creating a worktree, launching an agent, or changing the Bead.
+30. As an Approach user, I want `f` on a settled visible Ready selection to create a record-only Flow for that Bead, so that I can carry the durable requirement into the Flow workflow without creating a worktree, launching an agent, or changing the Bead.
 
 ## Implementation Decisions
 
@@ -113,19 +113,28 @@ Approach-owned parked Flow record without invoking `bd` or mutating the Bead.
   stale-result protection, the same pattern as the app's other read-only
   detail views.
 - `f` is a Ready-only record-persistence action. It requires right-pane focus,
-  an available settled filtered selection, a selected repo, and no existing
-  Ready Flow request. It creates a Flow titled
-  `<trimmed bead ID>: <trimmed bead title>` with instructions directing agents
-  to use `bd show <id>` as the durable source of requirements. Creation uses
-  the configured preset but supplies only title, instructions, and repo path:
-  no worktree, branch, base ref, commit, plan/link, launch/session, agent,
+  an available settled filtered selection whose Bead has a non-empty trimmed
+  ID, a selected repo, and no existing Ready Flow request. It creates a Flow
+  titled `<trimmed bead ID>: <trimmed bead title>` with instructions directing
+  agents to use `bd show <id>` as the durable source of requirements. Creation
+  uses the configured preset but supplies only title, instructions, and repo
+  path: no worktree, branch, base ref, commit, plan/link, launch/session, agent,
   issue, or PR metadata. It never invokes the Flow starter, bootstrap hooks,
   agent launchers, or `bd`.
 - Ready Flow persistence has its own monotonically increasing request token.
-  Duplicate keypresses are ignored while it is active, and repo changes
-  invalidate it before either normal or Active-Flows repo reset logic. Accepted
-  success or failure updates status and refreshes exactly the currently visible
-  Flow surface, if any; Beads and other surfaces do not refresh.
+  Duplicate keypresses are ignored while it is active. Cursor-driven repo
+  changes invalidate it at the top of `handleRepoSelectionChanged`, before
+  either the normal or Active-Flows reset branch; rescan-driven repo changes
+  reach it through `resetRightPaneCursors`, which `handleRepoRefreshResult`
+  uses on every selection-changing path. Completion handlers release the token
+  before checking the repo, so no repo-change route can strand the shortcut.
+  Accepted success or failure updates status and refreshes exactly the
+  currently visible Flow surface, if any; Beads and other surfaces do not
+  refresh.
+- The resulting Flow is record-only, not the Flows-pane form's parked Flow: it
+  has no worktree, so existing Flow rendering labels it `missing-worktree` /
+  `recover-worktree`, and phase launch falls back to the repository root. The
+  docs state this explicitly rather than implying an isolated worktree exists.
 - Config: `default_view` gains frozen numbers 10 (ready), 11 (blocked),
   12 (open), 13 (in-progress), 14 (closed), parallel to the git subviews'
   1–5. Numbers 1–9 keep their existing frozen meanings.
