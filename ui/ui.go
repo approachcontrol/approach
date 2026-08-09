@@ -818,9 +818,23 @@ func renderModeHeaderRowWithRight(left []modeHeaderItem, right *modeHeaderItem, 
 	if leftWidth+rightWidth <= width {
 		return leftLine + strings.Repeat(" ", width-leftWidth-rightWidth) + rightLine
 	}
-	leftLine = ansi.Truncate(leftLine, width-rightWidth, "")
+	leftLine = renderModeHeaderRow(activeHeaderItemFirst(left), width-rightWidth)
 	leftWidth = ansi.StringWidth(leftLine)
 	return leftLine + strings.Repeat(" ", width-leftWidth-rightWidth) + rightLine
+}
+
+func activeHeaderItemFirst(items []modeHeaderItem) []modeHeaderItem {
+	for i, item := range items {
+		if !item.active || i == 0 {
+			continue
+		}
+		prioritized := make([]modeHeaderItem, 0, len(items))
+		prioritized = append(prioritized, item)
+		prioritized = append(prioritized, items[:i]...)
+		prioritized = append(prioritized, items[i+1:]...)
+		return prioritized
+	}
+	return items
 }
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).

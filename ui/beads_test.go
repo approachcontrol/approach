@@ -116,6 +116,15 @@ func TestModeHeader_BeadsOpenShowsActiveTopLevelEntryWithoutSubviewRow(t *testin
 	}
 }
 
+func TestModeHeader_BeadsOpenKeepsActiveItemAtNarrowWidth(t *testing.T) {
+	top := ansi.Strip(strings.Split(renderModeHeader(ModeBeadsOpen, 48), "\n")[0])
+	for _, want := range []string{"[5] beads", "^a active flows"} {
+		if !strings.Contains(top, want) {
+			t.Fatalf("narrow Beads header missing %q: %q", want, top)
+		}
+	}
+}
+
 func TestRenderBeadsOpenPaneTruncatesLongRowsToWidth(t *testing.T) {
 	const width = 24
 	lines := renderBeadsOpenPane([]beadsquery.Bead{{
