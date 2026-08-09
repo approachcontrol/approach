@@ -17,6 +17,8 @@ import (
 type getenvFunc func(string) string
 type homeDirFunc func() (string, error)
 
+var acquireConfigFileLock = artifacts.AcquireFileLock
+
 // Config is approach's parsed configuration file.
 type Config struct {
 	Scan        ScanConfig       `toml:"scan"`
@@ -558,7 +560,7 @@ func lockedConfigUpdate(path string, options []Option, createIfMissing bool, pat
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config dir %s: %w", filepath.Dir(path), err)
 	}
-	release, err := artifacts.AcquireFileLock(path+".lock", fmt.Sprintf("config lock %q", path), opts.lockTimeout)
+	release, err := acquireConfigFileLock(path+".lock", fmt.Sprintf("config lock %q", path), opts.lockTimeout)
 	if err != nil {
 		return err
 	}
