@@ -2,9 +2,10 @@
 
 Status: forward-looking full-v1 draft, partially implemented. The Open tracer,
 five visible query/header subviews, sticky group re-entry, arrow navigation, and
-per-subview filter/cursor preservation with refetch clamping, plus
-`default_view` 10–14 startup routing are shipped. Detail paging, error
-classification, and Closed cap/count remain deferred. Companion docs: `architecture.md`
+per-subview filter/cursor preservation with refetch clamping are shipped, as are
+the newest-100 Closed cap with its plain/truncated header count and
+`default_view` 10–14 startup routing. Detail paging and error classification
+remain deferred. Companion docs: `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
 
@@ -86,8 +87,13 @@ v1, with `enter` paging a bead's detail through the pager.
   beads intentionally appear in both Ready and Open. Blocked, in-progress, and
   closed are plain status queries.
 - The Closed query is capped at the newest 100 (a constant in v1). The header
-  shows "100 of `<total>`"; the total comes from a separate cheap count source
-  (e.g. `bd stats` JSON), resolved at implementation time.
+  shows the accepted unfiltered row count plainly when complete and
+  "100 of `<total>`" when truncated. The bounded source is
+  `bd list -s closed --json --limit 100 --sort closed --reverse --readonly`; the
+  separate cheap total source is `bd stats --json --no-activity --readonly`,
+  parsed from `summary.closed_issues` or the v1
+  `data.summary.closed_issues` envelope. A failure from either source discards
+  both rows and count.
 - Configured/not-configured/error classification: missing `bd` binary or a repo
   without a beads database → "beads not configured"; a configured repo where
   `bd` exits nonzero or emits unparseable output → an error state carrying
@@ -150,9 +156,9 @@ v1, with `enter` paging a bead's detail through the pager.
   global binding changes are needed.
 - The Ready ⊂ Open duplication is a deliberate product decision (Open is the
   complete status list), not an implementation accident; don't "fix" it.
-- The closed-total count source (`bd stats` vs an uncapped count query) is the
-  one open implementation detail; whichever is chosen, the capped list query
-  must stay bounded.
+- The Closed list and stats calls are not an atomic snapshot. The header shows
+  `<fetched> of <total>` only when `total > fetched`; otherwise it falls back to
+  the plain fetched count so concurrent closes cannot produce `100 of 99`.
 - If beads later gains statuses beyond the five shown (e.g. deferred), unknown
   statuses should be ignored by parsing rather than failing, mirroring how the
   config layer ignores unknown keys for version compatibility.

@@ -139,10 +139,30 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 	case ui.ModeBeadsInProgress:
 		return beadsListFetchDescriptor(ui.ModeBeadsInProgress, "beads in-progress"), true
 	case ui.ModeBeadsClosed:
-		return beadsListFetchDescriptor(ui.ModeBeadsClosed, "beads closed"), true
+		return beadsClosedFetchDescriptor(), true
 	default:
 		return listFetchDescriptor{}, false
 	}
+}
+
+func beadsClosedFetchDescriptor() listFetchDescriptor {
+	desc := beadsListFetchDescriptor(ui.ModeBeadsClosed, "beads closed")
+	desc.load = func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+		index, _ := beadSubviewIndex(ui.ModeBeadsClosed)
+		beads, err := m.listBeads[index](repoPath)
+		if err != nil {
+			return BeadsClosedResultMsg{RepoPath: repoPath, ListRequest: request}, nil
+		}
+		total, err := m.countClosedBeads(repoPath)
+		if err != nil {
+			return BeadsClosedResultMsg{RepoPath: repoPath, ListRequest: request}, nil
+		}
+		return BeadsClosedResultMsg{
+			RepoPath: repoPath, Beads: beads, Total: total,
+			ListRequest: request, Available: true,
+		}, nil
+	}
+	return desc
 }
 
 func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor {
@@ -161,6 +181,7 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 			}
 			m.beads[index].available = false
 			m.beads[index].pending = true
+			m.beads[index].total = 0
 			return m.reflowBeads(mode)
 		},
 		load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {

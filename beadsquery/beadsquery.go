@@ -2,6 +2,8 @@ package beadsquery
 
 import "fmt"
 
+const closedLimit = 100
+
 // Bead is the display data for one Beads issue.
 type Bead struct {
 	ID       string
@@ -59,11 +61,25 @@ func ListClosed(repoPath string) ([]Bead, error) {
 
 // ListClosed returns the selected repository's closed beads newest-first.
 func (q *Querier) ListClosed(repoPath string) ([]Bead, error) {
-	out, err := q.runner.Run(repoPath, "list", "-s", "closed", "--json", "--limit", "0", "--sort", "closed", "--reverse", "--readonly")
+	out, err := q.runner.Run(repoPath, "list", "-s", "closed", "--json", "--limit", fmt.Sprint(closedLimit), "--sort", "closed", "--reverse", "--readonly")
 	if err != nil {
 		return nil, fmt.Errorf("listing closed beads: %w", err)
 	}
 	return ParseClosed(out)
+}
+
+// CountClosed returns the selected repository's total number of closed beads.
+func CountClosed(repoPath string) (int, error) {
+	return defaultQuery().CountClosed(repoPath)
+}
+
+// CountClosed returns the selected repository's total number of closed beads.
+func (q *Querier) CountClosed(repoPath string) (int, error) {
+	out, err := q.runner.Run(repoPath, "stats", "--json", "--no-activity", "--readonly")
+	if err != nil {
+		return 0, fmt.Errorf("counting closed beads: %w", err)
+	}
+	return ParseClosedCount(out)
 }
 
 // ListOpen returns the selected repository's open beads.
