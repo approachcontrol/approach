@@ -198,7 +198,8 @@ func isNumberedModeKey(key string) bool {
 
 // switchModeFromKey routes the top-level number keys: 1 selects the Git view
 // (landing on its last-used subview), 2-4 select the remaining top-level
-// views, and 5-9 are silent no-ops kept reserved for the future.
+// views, 5 selects Beads Open, and 6-9 are silent no-ops kept reserved for the
+// future.
 func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	if !isNumberedModeKey(key) {
 		return m, nil, false

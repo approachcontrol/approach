@@ -72,6 +72,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "/" {
+		if m.activePane == 1 && m.mode == ui.ModeBeadsOpen {
+			return m, nil
+		}
 		m = m.setSearchActive(true)
 		return m, nil
 	}
@@ -708,6 +711,8 @@ func (m Model) moveCursor(delta int) Model {
 			m = m.setExpandedFlowID("")
 		}
 		m = m.syncActiveFlowTerminalToSelectedFlow()
+	case ui.ModeBeadsOpen:
+		m.beadsOpen = m.beadsOpen.Move(delta, h, w)
 	}
 	return m
 }
@@ -2708,6 +2713,7 @@ func (m Model) resetModeCursors() Model {
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
 	m.activeFlows = m.activeFlows.ResetSelection()
+	m.beadsOpen = m.beadsOpen.ResetSelection()
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
@@ -2748,6 +2754,9 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
+	m.beadsOpen = m.beadsOpen.SetItems(nil).ResetSelection()
+	m.beadsOpenAvailable = false
+	m.beadsOpenPending = false
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""

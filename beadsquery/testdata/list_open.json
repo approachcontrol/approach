@@ -1,0 +1,22 @@
+[
+  {
+    "id": "bd-124",
+    "title": "Document cache",
+    "priority": 2,
+    "assignee": null,
+    "status": "open",
+    "extra_field": "ignored"
+  },
+  {
+    "id": "bd-125",
+    "title": "Polish cache",
+    "priority": 1,
+    "assignee": ""
+  },
+  {
+    "id": "bd-123",
+    "title": "Fix cache",
+    "priority": 1,
+    "assignee": "alice"
+  }
+]

@@ -129,6 +129,24 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 				return FlowResultMsg{RepoPath: repoPath, Flows: records, ListRequest: request}, nil
 			},
 		}, true
+	case ui.ModeBeadsOpen:
+		return listFetchDescriptor{
+			mode: ui.ModeBeadsOpen,
+			pane: "beads open",
+			beforeStart: func(m Model) Model {
+				m.beadsOpen = m.beadsOpen.SetItems(nil).ResetSelection()
+				m.beadsOpenAvailable = false
+				m.beadsOpenPending = true
+				return m.reflowBeadsOpen()
+			},
+			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+				beads, err := m.listOpenBeads(repoPath)
+				if err != nil {
+					return BeadsOpenResultMsg{RepoPath: repoPath, ListRequest: request}, nil
+				}
+				return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: true}, nil
+			},
+		}, true
 	default:
 		return listFetchDescriptor{}, false
 	}
