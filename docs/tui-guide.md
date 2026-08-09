@@ -88,7 +88,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
 | `u` | Unlock a locked worktree (worktrees view) |
-| `f` | Fetch with `--prune` (worktrees and branches views) |
+| `f` | Fetch with `--prune` (worktrees and branches views), or create a record-only Flow for the selected Bead in a settled Ready subview |
 | `F` | Pull with `--ff-only` (worktrees, and branches with a checked-out worktree) |
 | `t` | Open or attach to a tmux/Zellij session for the worktree |
 | `c` | Open VSCode at worktree path outside Flow surfaces, or copy the selected Flow ID in flows and active flows views |
@@ -324,8 +324,10 @@ plans. v1 has no TUI plan deletion.
 ## Beads View (`5`)
 
 With the content pane focused, press `5` to enter the selected repository's
-read-only Beads group at its last-used subview, defaulting to Open before first
-use. Pressing `5` while already in any Beads subview is a no-op. Press `r` for
+Beads group at its last-used subview, defaulting to Open before first use.
+Beads queries and detail reads are read-only, and no action in this group
+mutates tracker state. Pressing `5` while already in any Beads subview is a
+no-op. Press `r` for
 Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
 pressing the already-active letter is also a no-op. `←`/`→` step and wrap
 Ready ↔ Blocked ↔ Open ↔ In-Progress ↔ Closed without leaving the group. From
@@ -375,6 +377,29 @@ while Active Flows is open.
 Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
+
+In Ready only, `f` is available when the content pane is focused, the query is
+settled and available, a filtered visible Bead with a non-empty ID is selected,
+and no Ready Flow creation is already in flight. It asynchronously creates
+exactly one record-only Approach Flow in the selected repo. The record title is
+`<trimmed bead ID>: <trimmed bead title>` and its instructions are
+``Use Bead <id> as the durable source of requirements. Read it with `bd show <id>` before planning or implementation.`` The configured Flow preset seeds the
+phase graph and normal Flow creation defaults still apply, but the shortcut
+supplies no worktree, branch, base ref, commit, plan/link, launch, session,
+agent, issue, or PR metadata. It does not run bootstrap hooks, start a Flow
+phase, launch an agent, or invoke `bd`, so the selected Bead and all other
+tracker state remain untouched. The shortcut is hidden in every context where
+that exact action cannot run; duplicate keypresses are ignored until the
+current persistence request finishes, and any repo change — cursor move or
+rescan — releases the shortcut and discards the pending result.
+
+Because the record carries no worktree or branch, the Flows pane renders it with
+the `missing-worktree` branch label and a `recover-worktree` phase state, and
+`g` on its first phase launches the agent in the repository root instead of an
+isolated worktree. This is a deliberately different artifact from the parked
+Flow produced by a successful `n` form submission, which has a worktree; a
+normal startup failure before worktree creation can still leave a partial Flow
+record without one.
 
 After the active subview settles, `enter` on its visible selected row
 asynchronously loads the raw human-readable output of

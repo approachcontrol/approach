@@ -363,6 +363,7 @@ func (m Model) moveRepoSelection(delta int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
+	m = m.invalidateReadyBeadFlowCreateRequest()
 	if m.activeFlowSurfaceVisible() {
 		m = m.resetBeadsForRepoChange()
 		m = m.syncActiveFlowsFromCache()
@@ -508,6 +509,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "u":
 		return m.handleUnlock()
 	case "f":
+		if m.mode == ui.ModeBeadsReady {
+			return m.handleReadyBeadFlowCreate()
+		}
 		return m.handleFetch()
 	case "F":
 		return m.handlePull()
@@ -522,6 +526,35 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleEmbeddedTerminalQuitPrefix()
 	}
 	return m, nil
+}
+
+func (m Model) canCreateReadyBeadFlow() bool {
+	terminalInputFocused := m.terminalDockVisible && m.activePane == 1 && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
+	if m.modal.IsOpen() || m.searchActive || terminalInputFocused ||
+		m.activePane != 1 || m.mode != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
+		return false
+	}
+	if _, ok := m.currentRepoPath(); !ok {
+		return false
+	}
+	bead, ok := m.selectedVisibleBead()
+	// An empty ID would produce an unrunnable `bd show ` instruction, so the
+	// action is not offered for rows that carry no usable Bead ID.
+	return ok && strings.TrimSpace(bead.ID) != ""
+}
+
+func (m Model) handleReadyBeadFlowCreate() (Model, tea.Cmd) {
+	if !m.canCreateReadyBeadFlow() {
+		return m, nil
+	}
+	repoPath, _ := m.currentRepoPath()
+	bead, _ := m.selectedVisibleBead()
+	beadID := strings.TrimSpace(bead.ID)
+	title := beadID + ": " + strings.TrimSpace(bead.Title)
+	instructions := fmt.Sprintf("Use Bead %s as the durable source of requirements. Read it with `bd show %s` before planning or implementation.", beadID, beadID)
+	var request uint64
+	m, request = m.nextReadyBeadFlowCreateRequest()
+	return m, m.createReadyBeadFlow(repoPath, title, instructions, request)
 }
 
 func (m Model) togglePrimaryPaneFocus() Model {
@@ -1551,6 +1584,46 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 		title = "Flow"
 	}
 	m = m.setStatus(statusOther, "Created flow: "+title)
+	if m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
+}
+
+func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+		return m, nil
+	}
+	// Release the request before the repo check so a repo change that bypassed
+	// invalidation can never strand the shortcut.
+	m = m.clearReadyBeadFlowCreateRequest(msg.Request)
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	title := strings.TrimSpace(msg.Title)
+	if title == "" {
+		title = "Flow"
+	}
+	m = m.setStatus(statusOther, "Created flow: "+title)
+	if m.flowSurfaceVisible() {
+		return m.startFlowSurfaceFetch()
+	}
+	return m, nil
+}
+
+func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentReadyBeadFlowCreateRequest(msg.Request) {
+		return m, nil
+	}
+	m = m.clearReadyBeadFlowCreateRequest(msg.Request)
+	if !m.isCurrentRepo(msg.RepoPath) {
+		return m, nil
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "Unable to create flow"
+	}
+	m = m.setStatus(statusOther, errText)
 	if m.flowSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
@@ -2870,6 +2943,9 @@ func (m Model) resetBeadsForRepoChange() Model {
 
 func (m Model) resetRightPaneCursors() Model {
 	m = m.invalidateListRequests()
+	// Covers the rescan-driven repo changes in handleRepoRefreshResult, which
+	// never route through handleRepoSelectionChanged.
+	m = m.invalidateReadyBeadFlowCreateRequest()
 	m.pendingBranchSelection = ""
 	m.pendingWorktreeSelection = ""
 	m.rows = m.rows.SetItems(nil).ResetSelection()

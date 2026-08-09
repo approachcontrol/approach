@@ -389,6 +389,56 @@ func TestRender_BeadsOpenShortcutsAdvertiseArrowAndSubviewNavigation(t *testing.
 	}
 }
 
+func TestRender_BeadsReadyFlowCreateShortcutUsesAvailabilitySnapshot(t *testing.T) {
+	base := RenderParams{
+		Repos:                        []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:                     0,
+		Height:                       20,
+		Mode:                         ModeBeadsReady,
+		ActivePane:                   1,
+		BeadsOpen:                    []beadsquery.Bead{{ID: "bd-1", Title: "One"}},
+		ReadyBeadFlowCreateAvailable: true,
+	}
+
+	base.Width = 80
+	footerView := ansi.Strip(Render(base))
+	if !strings.Contains(footerView, "f: new flow") {
+		t.Fatalf("Ready footer missing executable Flow shortcut:\n%s", footerView)
+	}
+
+	base.Width = 140
+	pane := ansi.Strip(shortcutPaneText(Render(base)))
+	if !strings.Contains(pane, "f      new flow") {
+		t.Fatalf("Ready shortcut pane missing executable Flow shortcut:\n%s", pane)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		mutate func(*RenderParams)
+	}{
+		{name: "left focused", mutate: func(p *RenderParams) { p.ActivePane = 0 }},
+		{name: "loading", mutate: func(p *RenderParams) { p.BeadsOpenPending = true }},
+		{name: "unavailable", mutate: func(p *RenderParams) { p.BeadsOpenAvailable = false }},
+		{name: "empty", mutate: func(p *RenderParams) { p.BeadsOpen = nil }},
+		{name: "filtered empty", mutate: func(p *RenderParams) { p.BeadsOpen = nil; p.ItemSearch = "no-match" }},
+		{name: "non ready", mutate: func(p *RenderParams) { p.Mode = ModeBeadsBlocked }},
+		{name: "creating"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			params := base
+			params.Width = 140
+			params.ReadyBeadFlowCreateAvailable = false
+			if tt.mutate != nil {
+				tt.mutate(&params)
+			}
+			view := ansi.Strip(Render(params))
+			if strings.Contains(view, "new flow") {
+				t.Fatalf("unavailable Ready action advertised:\n%s", view)
+			}
+		})
+	}
+}
+
 func TestRender_BeadsQuietStatesAreSubviewSpecific(t *testing.T) {
 	for _, tt := range []struct {
 		mode Mode
