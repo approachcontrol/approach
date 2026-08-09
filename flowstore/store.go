@@ -82,10 +82,11 @@ const (
 
 // Store reads and writes flow records under an artifact root.
 type Store struct {
-	root        string
-	now         func() time.Time
-	lockTimeout time.Duration
-	presets     map[string]Preset
+	root                      string
+	now                       func() time.Time
+	lockTimeout               time.Duration
+	beforeLinkedPlanPhaseSync func(planID, phaseID string)
+	presets                   map[string]Preset
 }
 
 // StoreOptions configures a Store.
@@ -668,36 +669,13 @@ func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
 	if err != nil {
 		return fmt.Errorf("sync linked plan phase: %w", err)
 	}
-	plan, err := planStore.ReadMetadata(planID)
-	if err != nil {
-		return fmt.Errorf("sync linked plan phase: %w", err)
+	if s.beforeLinkedPlanPhaseSync != nil {
+		s.beforeLinkedPlanPhaseSync(planID, phase.PhaseID)
 	}
-	planPhase, ok := planPhaseByNormalizedID(plan, phase.PhaseID)
-	if !ok {
-		return nil
-	}
-	if planPhase.Status == "completed" {
-		return nil
-	}
-	if err := planStore.SetPhase(planID, planstore.PlanPhase{
-		PhaseID: planPhase.PhaseID,
-		Title:   planPhase.Title,
-		Status:  "completed",
-		Order:   planPhase.Order,
-	}); err != nil {
+	if err := planStore.SetPhaseStatus(planID, phase.PhaseID, "completed"); err != nil {
 		return fmt.Errorf("sync linked plan phase: %w", err)
 	}
 	return nil
-}
-
-func planPhaseByNormalizedID(record planstore.PlanRecord, phaseID string) (planstore.PlanPhase, bool) {
-	want := artifacts.NormalizePhaseID(phaseID)
-	for _, phase := range record.Phases {
-		if artifacts.NormalizePhaseID(phase.PhaseID) == want {
-			return phase, true
-		}
-	}
-	return planstore.PlanPhase{}, false
 }
 
 // SetPlanLink validates and persists the saved plan artifact linked to a Flow.

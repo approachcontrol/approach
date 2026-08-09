@@ -3,6 +3,7 @@ package planstore_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/planstore"
 )
@@ -123,6 +124,98 @@ func TestSetPhaseCollapsesExistingDuplicateRows(t *testing.T) {
 	}
 	if got.Phases[1].PhaseID != "phase-2" {
 		t.Fatalf("unrelated phase disturbed: %#v", got.Phases[1])
+	}
+}
+
+func TestSetPhaseStatusPreservesFirstMatchingPhaseAndCollapsesDuplicates(t *testing.T) {
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	const body = "# Legacy plan\n\nKeep this body.\n"
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID: "status-only", Title: "T", Markdown: body, Status: "draft",
+		Phases: []planstore.PlanPhase{
+			{PhaseID: "Implementation", Title: "First title", Status: "in_progress", Order: 7},
+			{PhaseID: "unrelated-a", Title: "Unrelated A", Status: "blocked", Order: 2},
+			{PhaseID: " implementation ", Title: "Duplicate title", Status: "pending", Order: 1},
+			{PhaseID: "unrelated-b", Title: "Unrelated B", Status: "skipped", Order: 9},
+		},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := store.SetPhaseStatus("status-only", " IMPLEMENTATION ", "completed"); err != nil {
+		t.Fatalf("SetPhaseStatus() error = %v", err)
+	}
+	got, err := store.ReadMetadata("status-only")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	want := []planstore.PlanPhase{
+		{PhaseID: "Implementation", Title: "First title", Status: "completed", Order: 7},
+		{PhaseID: "unrelated-a", Title: "Unrelated A", Status: "blocked", Order: 2},
+		{PhaseID: "unrelated-b", Title: "Unrelated B", Status: "skipped", Order: 9},
+	}
+	if len(got.Phases) != len(want) {
+		t.Fatalf("phases = %#v, want %#v", got.Phases, want)
+	}
+	for i := range want {
+		if got.Phases[i] != want[i] {
+			t.Fatalf("phase[%d] = %#v, want %#v", i, got.Phases[i], want[i])
+		}
+	}
+	if gotBody, err := store.ReadPlan("status-only"); err != nil || gotBody != body {
+		t.Fatalf("ReadPlan() = %q, %v; want preserved body", gotBody, err)
+	}
+}
+
+func TestSetPhaseStatusMissingPhaseIsNoOpAndMissingPlanIsError(t *testing.T) {
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	savePlan(t, store, "status-no-op")
+
+	if err := store.SetPhaseStatus("status-no-op", "missing", "completed"); err != nil {
+		t.Fatalf("SetPhaseStatus(missing phase) error = %v", err)
+	}
+	if err := store.SetPhaseStatus("missing-plan", "implementation", "completed"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("SetPhaseStatus(missing plan) error = %v, want not found", err)
+	}
+}
+
+func TestSetPhaseStatusAlreadyCompletedIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	updatedAt := time.Date(2026, 8, 8, 14, 0, 0, 0, time.UTC)
+	store, err := planstore.NewStore(planstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Save(planstore.PlanRecord{
+		PlanID:    "already-completed",
+		Title:     "T",
+		Markdown:  "body",
+		Status:    "in_progress",
+		UpdatedAt: updatedAt,
+		Phases: []planstore.PlanPhase{{
+			PhaseID: "implementation",
+			Status:  "completed",
+			Order:   3,
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := store.SetPhaseStatus("already-completed", "implementation", "completed"); err != nil {
+		t.Fatalf("SetPhaseStatus() error = %v", err)
+	}
+	got, err := store.ReadMetadata("already-completed")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if !got.UpdatedAt.Equal(updatedAt) || len(got.Phases) != 1 || got.Phases[0].Title != "" {
+		t.Fatalf("already-completed phase was rewritten: %#v", got)
 	}
 }
 
