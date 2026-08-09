@@ -35,7 +35,7 @@ func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) Model {
 		Status:  flowstore.PhaseBlocked,
 	})
 	record.FlowID = ctx.FlowID
-	m := Model{mode: ui.ModeFlows, activePane: 1}
+	m := modelWithModeForTest(Model{activePane: ui.PaneBottom}, ui.ModeFlows)
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 	m.pendingFlowRepairLaunchIDs = map[string]string{ctx.FlowID: ctx.LaunchID}
 	return m
