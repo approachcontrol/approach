@@ -7,6 +7,11 @@ filter parity, detail paging, error classification, Closed cap/count, and
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
 
+> **Scope:** The Solution, User Stories, and Implementation Decisions below
+> describe the target full-v1 design. For current shipped behavior, use the
+> status above and the linked README/config documentation; any capability named
+> as deferred above remains future work even when it appears below.
+
 ## Problem Statement
 
 Approach users working in repos tracked with beads (the `bd` dependency-aware
