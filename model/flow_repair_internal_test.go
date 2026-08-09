@@ -257,7 +257,7 @@ func TestFlowPhaseResumePersistenceDoesNotOpenAlongsideRepairTerminal(t *testing
 		t.Fatal("occupied resume should persist launch-failure state")
 	}
 	_ = cmd()
-	if failureUpdate.Status != flowstore.PhaseNeedsAttention || !strings.Contains(failureUpdate.Notes, "existing Flow terminal") {
-		t.Fatalf("failure update = %#v, want existing-terminal needs_attention guidance", failureUpdate)
+	if failureUpdate.Status != flowstore.PhaseNeedsAttention || !strings.Contains(failureUpdate.Notes, "repair terminal") {
+		t.Fatalf("failure update = %#v, want repair-terminal needs_attention guidance", failureUpdate)
 	}
 }

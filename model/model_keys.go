@@ -2458,8 +2458,8 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 	if phase, ok := flowPhaseByID(msg.Flow, ctx.FlowPhaseID); ok {
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
-	if m.hasFlowEmbeddedTerminalForFlow(key.FlowID) {
-		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because an existing Flow terminal is open")
+	if m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) {
+		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
