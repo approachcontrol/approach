@@ -3,10 +3,12 @@ package model_test
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2488,6 +2490,272 @@ func TestModel_FlowAutoModeLaunchesImplementationAfterPlanReviewCompletes(t *tes
 		!launchMsg.LaunchContext.FlowLaunchTracked ||
 		!launchMsg.LaunchContext.Embedded {
 		t.Fatalf("launch context = %#v, want embedded implementation launch", launchMsg.LaunchContext)
+	}
+}
+
+func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	previous.Phases[1].LaunchIDs = []string{"launch-source"}
+	current.Phases[1].LaunchIDs = []string{"launch-source"}
+	current.Phases[1].Sessions = []flowstore.Session{{
+		Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
+	}}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			persisted := current
+			for i := range persisted.Phases {
+				if persisted.Phases[i].PhaseID == update.PhaseID {
+					persisted.Phases[i].Status = flowstore.PhaseRunning
+					persisted.Phases[i].LaunchIDs = append(persisted.Phases[i].LaunchIDs, update.LaunchID)
+				}
+			}
+			return persisted, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
+	m = selectFlowPhaseByID(t, m, "plan-review")
+	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
+	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if manualCmd == nil {
+		t.Fatal("manual tracked resume should return a persistence command")
+	}
+
+	_, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
+	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
+	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
+		t.Fatalf("auto launch while manual resume pending = %#v, want headless implementation", launches)
+	}
+	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
+		t.Fatalf("persistence updates = %#v, want only auto successor", updates)
+	}
+	if model.HasRunningFlowEmbeddedTerminalForPhaseForTest(pending, current.FlowID, "plan-review") {
+		t.Fatal("pending persistence registered a source terminal")
+	}
+}
+
+func TestModel_TrackedResumeAndAutoAdvanceRaceStartsEachTerminalOnce(t *testing.T) {
+	mutationOrders := []string{"manual-then-auto", "auto-then-manual"}
+	resultOrders := []string{"manual-then-auto", "auto-then-manual"}
+	for _, mutationOrder := range mutationOrders {
+		for _, resultOrder := range resultOrders {
+			t.Run(mutationOrder+"/"+resultOrder, func(t *testing.T) {
+				root := t.TempDir()
+				store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+				if err != nil {
+					t.Fatalf("NewStore() error = %v", err)
+				}
+				current, err := store.Create(flowstore.FlowRecord{
+					FlowID:       "flow-race",
+					Title:        "Manual resume and auto launch race",
+					Instructions: "exercise both persistence and continuation orderings",
+					RepoPath:     "/dev/alpha",
+					WorktreePath: filepath.Join(root, "worktree"),
+					Branch:       "flow/race",
+					Phases: []flowstore.FlowPhase{
+						{
+							PhaseID:   "plan-review",
+							Title:     "Plan Review",
+							Kind:      flowstore.KindPlanReview,
+							DependsOn: []string{},
+							Status:    flowstore.PhaseCompleted,
+							Outcome:   flowstore.OutcomeApproved,
+							Order:     1,
+							LaunchIDs: []string{"launch-source"},
+							Sessions: []flowstore.Session{{
+								Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
+							}},
+						},
+						{
+							PhaseID:   "implementation",
+							Title:     "Implementation",
+							Kind:      flowstore.KindImplementation,
+							DependsOn: []string{"plan-review"},
+							Status:    flowstore.PhaseReady,
+							Order:     2,
+						},
+					},
+				})
+				if err != nil {
+					t.Fatalf("Create() error = %v", err)
+				}
+				previous := current
+				previous.Phases = slices.Clone(current.Phases)
+				previous.Phases[0].Status = flowstore.PhaseRunning
+				previous.Phases[1].Status = flowstore.PhasePending
+
+				var terminalStarts []actions.AgentLaunchContext
+				m := model.NewWithOptions(testRepos(), model.Options{
+					AgentCommand:         "codex",
+					SessionStateRoot:     root,
+					AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
+					StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+						terminalStarts = append(terminalStarts, ctx)
+						return &fakeEmbeddedTerminal{state: "running"}, nil
+					},
+				})
+				m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
+				m = selectFlowPhaseByID(t, m, "plan-review")
+				m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
+				pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				if manualCmd == nil {
+					t.Fatal("manual resume should return a persistence command")
+				}
+				scheduled, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
+				if autoCmd == nil {
+					t.Fatal("pending manual persistence should not suppress auto scheduling")
+				}
+
+				var manualResult tea.Msg
+				var autoResult model.FlowEmbeddedLaunchRequestedMsg
+				runManualMutation := func() { manualResult = manualCmd() }
+				runAutoMutation := func() {
+					launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
+					if len(launches) != 1 {
+						t.Fatalf("auto mutation returned launches %#v, want 1", launches)
+					}
+					autoResult = launches[0]
+				}
+				if mutationOrder == "manual-then-auto" {
+					runManualMutation()
+					runAutoMutation()
+				} else {
+					runAutoMutation()
+					runManualMutation()
+				}
+
+				deliverManualResult := func() { scheduled, _ = update(scheduled, manualResult) }
+				deliverAutoResult := func() { scheduled, _ = update(scheduled, autoResult) }
+				if resultOrder == "manual-then-auto" {
+					deliverManualResult()
+					deliverAutoResult()
+				} else {
+					deliverAutoResult()
+					deliverManualResult()
+				}
+
+				if len(terminalStarts) != 2 {
+					t.Fatalf("terminal starts = %#v, want exactly 2", terminalStarts)
+				}
+				var manualLaunch, autoLaunch actions.AgentLaunchContext
+				for _, started := range terminalStarts {
+					switch started.FlowPhaseID {
+					case "plan-review":
+						manualLaunch = started
+					case "implementation":
+						autoLaunch = started
+					}
+				}
+				if manualLaunch.LaunchID == "" || manualLaunch.ResumeSessionID != "codex-source" || manualLaunch.Headless {
+					t.Fatalf("manual terminal = %#v", manualLaunch)
+				}
+				if autoLaunch.LaunchID == "" || !autoLaunch.Headless || autoLaunch.ResumeSessionID != "" || autoLaunch.LaunchID == manualLaunch.LaunchID {
+					t.Fatalf("auto terminal = %#v, manual = %#v", autoLaunch, manualLaunch)
+				}
+				persisted, err := store.Read(current.FlowID)
+				if err != nil {
+					t.Fatalf("Read() error = %v", err)
+				}
+				phaseByID := func(phaseID string) flowstore.FlowPhase {
+					for _, phase := range persisted.Phases {
+						if phase.PhaseID == phaseID {
+							return phase
+						}
+					}
+					t.Fatalf("persisted Flow missing phase %q: %#v", phaseID, persisted.Phases)
+					return flowstore.FlowPhase{}
+				}
+				source := phaseByID("plan-review")
+				successor := phaseByID("implementation")
+				if len(source.LaunchIDs) != 2 || source.LaunchIDs[1] != manualLaunch.LaunchID {
+					t.Fatalf("source launch ids = %#v, want one resume", source.LaunchIDs)
+				}
+				if successor.Status != flowstore.PhaseRunning || len(successor.LaunchIDs) != 1 || successor.LaunchIDs[0] != autoLaunch.LaunchID {
+					t.Fatalf("successor = %#v, want one running auto launch", successor)
+				}
+
+				statusBeforeReplay := scheduled.TransientError()
+				scheduled, replayCmd := update(scheduled, manualResult)
+				if replayCmd != nil || len(terminalStarts) != 2 || scheduled.TransientError() != statusBeforeReplay {
+					t.Fatalf("manual result replay changed state: cmd=%T terminals=%#v status=%q", replayCmd, terminalStarts, scheduled.TransientError())
+				}
+			})
+		}
+	}
+}
+
+func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testing.T) {
+	previous := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	current := autoFlowWithPhaseStatuses(map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	previous.Phases[1].LaunchIDs = []string{"launch-source"}
+	current.Phases[1].LaunchIDs = []string{"launch-source"}
+	current.Phases[1].Sessions = []flowstore.Session{{
+		Provider: "codex", SessionID: "codex-source", LaunchID: "launch-source", Status: "ended",
+	}}
+	var updates []flowstore.PhaseLaunchUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			persisted := current
+			for i := range persisted.Phases {
+				if persisted.Phases[i].PhaseID == update.PhaseID {
+					persisted.Phases[i].LaunchIDs = append(persisted.Phases[i].LaunchIDs, update.LaunchID)
+					if !update.Resume {
+						persisted.Phases[i].Status = flowstore.PhaseRunning
+					}
+				}
+			}
+			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{current})
+	m = selectFlowPhaseByID(t, m, "plan-review")
+	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
+	pending, manualCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	manualResult := manualCmd()
+	resumed, _ := update(pending, manualResult)
+	if !model.HasRunningFlowEmbeddedTerminalForPhaseForTest(resumed, current.FlowID, "plan-review") {
+		t.Fatal("manual persistence success did not register the resumed source terminal")
+	}
+	if len(updates) != 1 || !updates[0].Resume {
+		t.Fatalf("updates after manual resume = %#v", updates)
+	}
+
+	deferred, autoCmd := model.AutoAdvanceLaunchCommandForTest(resumed, []flowstore.FlowRecord{current})
+	if autoCmd != nil || len(updates) != 1 {
+		t.Fatalf("auto poll while resumed terminal runs: cmd=%T updates=%#v", autoCmd, updates)
+	}
+	deferred = model.ClearFlowEmbeddedTerminalsForTest(deferred)
+	_, autoCmd = model.AutoAdvanceLaunchCommandForTest(deferred, []flowstore.FlowRecord{current})
+	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
+	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
+		t.Fatalf("auto launch after resumed terminal exits = %#v", launches)
+	}
+	if len(updates) != 2 || !updates[1].AutoLaunch || updates[1].PhaseID != "implementation" {
+		t.Fatalf("updates after terminal exit = %#v", updates)
 	}
 }
 
@@ -5965,6 +6233,413 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	}
 }
 
+func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		FlowID:       "flow-resume-lock",
+		Title:        "Resume while locked",
+		Instructions: "prove resume persistence stays outside Update",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: filepath.Join(root, "worktree"),
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "review-loop",
+			Title:     "Review loop",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{{
+				Provider:  "codex",
+				SessionID: "codex-session",
+				LaunchID:  "launch-old",
+				Status:    "ended",
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	enteredPersistence := make(chan flowstore.PhaseLaunchUpdate, 1)
+	terminalStarts := make(chan actions.AgentLaunchContext, 2)
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SessionStateRoot: root,
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			enteredPersistence <- update
+			return store.AddPhaseLaunchID(update)
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			terminalStarts <- ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+	m = selectFlowPhaseByID(t, m, "review-loop")
+
+	lockPath := filepath.Join(root, "flows", ".locks", record.FlowID+".lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open flow lock: %v", err)
+	}
+	lockHeld := true
+	var updateDone <-chan struct{}
+	var persistenceDone <-chan tea.Msg
+	t.Cleanup(func() {
+		if lockHeld {
+			_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		}
+		_ = lockFile.Close()
+		if updateDone != nil {
+			select {
+			case <-updateDone:
+			case <-time.After(10 * time.Second):
+			}
+		}
+		if persistenceDone != nil {
+			select {
+			case <-persistenceDone:
+			case <-time.After(10 * time.Second):
+			}
+		}
+	})
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("flock flow lock: %v", err)
+	}
+
+	type updateResult struct {
+		model model.Model
+		cmd   tea.Cmd
+	}
+	updateResults := make(chan updateResult, 1)
+	updateFinished := make(chan struct{})
+	updateDone = updateFinished
+	go func() {
+		defer close(updateFinished)
+		next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		updateResults <- updateResult{model: next, cmd: cmd}
+	}()
+
+	var result updateResult
+	select {
+	case call := <-enteredPersistence:
+		t.Fatalf("AddPhaseLaunchID entered before Update returned: %#v", call)
+	case result = <-updateResults:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Update did not return while the Flow lock was held")
+	}
+	if result.cmd == nil {
+		t.Fatal("resume Update returned nil persistence command")
+	}
+	select {
+	case call := <-enteredPersistence:
+		t.Fatalf("AddPhaseLaunchID entered before the returned command ran: %#v", call)
+	default:
+	}
+	before, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() before persistence error = %v", err)
+	}
+	if got := before.Phases[0].LaunchIDs; !slices.Equal(got, []string{"launch-old"}) {
+		t.Fatalf("launch ids before command = %#v, want unchanged", got)
+	}
+	if len(terminalStarts) != 0 {
+		t.Fatal("terminal started before resume persistence")
+	}
+
+	persistenceResults := make(chan tea.Msg, 1)
+	persistenceDone = persistenceResults
+	go func() { persistenceResults <- result.cmd() }()
+	var launchUpdate flowstore.PhaseLaunchUpdate
+	select {
+	case launchUpdate = <-enteredPersistence:
+	case <-time.After(3 * time.Second):
+		t.Fatal("returned command did not enter AddPhaseLaunchID")
+	}
+	whileLocked, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() while locked error = %v", err)
+	}
+	if got := whileLocked.Phases[0].LaunchIDs; !slices.Equal(got, []string{"launch-old"}) {
+		t.Fatalf("launch ids while command waits = %#v, want unchanged", got)
+	}
+	select {
+	case msg := <-persistenceResults:
+		t.Fatalf("persistence command returned while lock was held: %#v", msg)
+	default:
+	}
+	if len(terminalStarts) != 0 {
+		t.Fatal("terminal started while resume persistence waited for the lock")
+	}
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("unlock flow lock: %v", err)
+	}
+	lockHeld = false
+	var persisted tea.Msg
+	select {
+	case persisted = <-persistenceResults:
+		persistenceDone = nil
+	case <-time.After(10 * time.Second):
+		t.Fatal("resume persistence did not finish after releasing the lock")
+	}
+	result.model, _ = update(result.model, persisted)
+	if len(terminalStarts) != 1 {
+		t.Fatalf("terminal starts after persistence = %d, want 1", len(terminalStarts))
+	}
+	started := <-terminalStarts
+	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
+		t.Fatalf("started launch id = %q, persistence update = %#v", started.LaunchID, launchUpdate)
+	}
+	updated, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() after persistence error = %v", err)
+	}
+	if got := updated.Phases[0].LaunchIDs; len(got) != 2 || got[0] != "launch-old" || got[1] != started.LaunchID {
+		t.Fatalf("launch ids after persistence = %#v, want one new resume id", got)
+	}
+}
+
+func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceCompletes(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/resume-single-shot",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "Review-Loop",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-session", LaunchID: "launch-old", Status: "ended",
+			}},
+		}},
+	}
+	var launchUpdates []flowstore.PhaseLaunchUpdate
+	var terminalStarts []actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdates = append(launchUpdates, update)
+			persisted := record
+			persisted.Phases[0].LaunchIDs = append(slices.Clone(record.Phases[0].LaunchIDs), update.LaunchID)
+			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			terminalStarts = append(terminalStarts, ctx)
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+	m = selectFlowPhaseByID(t, m, "Review-Loop")
+
+	pending, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if firstCmd == nil {
+		t.Fatal("first resume should return a persistence command")
+	}
+	pendingAfterDuplicate, duplicateCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if duplicateCmd != nil {
+		t.Fatal("second resume for the same pending target should not enqueue a command")
+	}
+	if len(launchUpdates) != 0 || len(terminalStarts) != 0 {
+		t.Fatalf("work ran before persistence command: updates=%#v terminals=%#v", launchUpdates, terminalStarts)
+	}
+
+	persisted := firstCmd()
+	if len(launchUpdates) != 1 || launchUpdates[0].PhaseID != "Review-Loop" || launchUpdates[0].LaunchID == "" {
+		t.Fatalf("launch updates = %#v, want one normalized-target request identity", launchUpdates)
+	}
+	started, _ := update(pendingAfterDuplicate, persisted)
+	if len(terminalStarts) != 1 || terminalStarts[0].LaunchID != launchUpdates[0].LaunchID {
+		t.Fatalf("terminal starts = %#v, want one matching persisted resume", terminalStarts)
+	}
+
+	statusBeforeReplay := started.TransientError()
+	replayed, replayCmd := update(started, persisted)
+	if replayCmd != nil || len(terminalStarts) != 1 || replayed.TransientError() != statusBeforeReplay {
+		t.Fatalf("replayed success changed state: cmd=%T terminals=%#v status=%q", replayCmd, terminalStarts, replayed.TransientError())
+	}
+	replayed, _ = update(replayed, tea.KeyMsg{Type: tea.KeyTab})
+	_, runningTerminalCmd := update(replayed, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if runningTerminalCmd != nil || len(launchUpdates) != 1 || len(terminalStarts) != 1 {
+		t.Fatalf("resume with a running target terminal enqueued work: cmd=%T updates=%#v terminals=%#v", runningTerminalCmd, launchUpdates, terminalStarts)
+	}
+
+	_, retainedPendingCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if retainedPendingCmd != nil {
+		t.Fatal("clearing a derived model mutated the retained model's pending request")
+	}
+}
+
+func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/resume-retry",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-session", LaunchID: "launch-old", Status: "ended",
+			}},
+		}},
+	}
+	addCalls := 0
+	var terminalStarts []actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			addCalls++
+			if addCalls == 2 {
+				return flowstore.FlowRecord{}, errors.New("state root locked")
+			}
+			persisted := record
+			persisted.Phases[0].LaunchIDs = append(slices.Clone(record.Phases[0].LaunchIDs), update.LaunchID)
+			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			terminalStarts = append(terminalStarts, ctx)
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	firstPending, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	oldSuccess := firstCmd()
+	firstStarted, _ := update(firstPending, oldSuccess)
+	if len(terminalStarts) != 1 {
+		t.Fatalf("terminal starts after first success = %#v, want 1", terminalStarts)
+	}
+	firstStarted, _ = update(firstStarted, tea.KeyMsg{Type: tea.KeyTab})
+	firstStarted = model.ClearFlowEmbeddedTerminalsForTest(firstStarted)
+
+	secondPending, secondCmd := update(firstStarted, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	oldFailure := secondCmd()
+	afterFailure, refreshCmd := update(secondPending, oldFailure)
+	if refreshCmd == nil || !strings.Contains(afterFailure.TransientError(), "failed to mark flow phase resume: state root locked") {
+		t.Fatalf("persistence failure = cmd %T status %q", refreshCmd, afterFailure.TransientError())
+	}
+	retryPending, retryCmd := update(afterFailure, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if retryCmd == nil {
+		t.Fatal("persistence failure should admit a retry")
+	}
+	statusBeforeStaleResults := retryPending.TransientError()
+
+	afterOldSuccess, staleSuccessCmd := update(retryPending, oldSuccess)
+	if staleSuccessCmd != nil || len(terminalStarts) != 1 || afterOldSuccess.TransientError() != statusBeforeStaleResults {
+		t.Fatalf("old success disturbed retry: cmd=%T terminals=%#v status=%q", staleSuccessCmd, terminalStarts, afterOldSuccess.TransientError())
+	}
+	afterOldFailure, staleFailureCmd := update(afterOldSuccess, oldFailure)
+	if staleFailureCmd != nil || len(terminalStarts) != 1 || afterOldFailure.TransientError() != statusBeforeStaleResults {
+		t.Fatalf("old failure disturbed retry: cmd=%T terminals=%#v status=%q", staleFailureCmd, terminalStarts, afterOldFailure.TransientError())
+	}
+
+	retrySuccess := retryCmd()
+	completed, _ := update(afterOldFailure, retrySuccess)
+	if addCalls != 3 || len(terminalStarts) != 2 || terminalStarts[0].LaunchID == terminalStarts[1].LaunchID {
+		t.Fatalf("retry completion: add calls=%d terminals=%#v", addCalls, terminalStarts)
+	}
+	statusBeforeReplay := completed.TransientError()
+	completed, replayFailureCmd := update(completed, oldFailure)
+	if replayFailureCmd != nil || completed.TransientError() != statusBeforeReplay || len(terminalStarts) != 2 {
+		t.Fatalf("consumed failure replay changed state: cmd=%T status=%q terminals=%#v", replayFailureCmd, completed.TransientError(), terminalStarts)
+	}
+}
+
+func TestModel_TrackedFlowPhaseResumesForIndependentTargetsCompleteOutOfOrder(t *testing.T) {
+	flowA := flowstore.FlowRecord{
+		FlowID:       "flow-a",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/resume-a",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "Review-Loop",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-a-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-a", LaunchID: "launch-a-old", Status: "ended",
+			}},
+		}},
+	}
+	flowB := flowstore.FlowRecord{
+		FlowID:       "flow-b",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/resume-b",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "review-loop",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-b-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-b", LaunchID: "launch-b-old", Status: "ended",
+			}},
+		}},
+	}
+	flows := map[string]flowstore.FlowRecord{flowA.FlowID: flowA, flowB.FlowID: flowB}
+	var launchUpdates []flowstore.PhaseLaunchUpdate
+	var terminalStarts []actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			launchUpdates = append(launchUpdates, update)
+			persisted := flows[update.FlowID]
+			persisted.Phases[0].LaunchIDs = append(slices.Clone(persisted.Phases[0].LaunchIDs), update.LaunchID)
+			return persisted, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			terminalStarts = append(terminalStarts, ctx)
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowA, flowB})
+	m = selectFlowPhaseByID(t, m, "Review-Loop")
+	pendingA, cmdA := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmdA == nil {
+		t.Fatal("target A should return a persistence command")
+	}
+
+	selectTargetB := func(source model.Model) model.Model {
+		next, _ := update(source, tea.KeyMsg{Type: tea.KeyEnter})
+		if next.ExpandedFlowID() != "" {
+			t.Fatalf("enter on selected target A did not collapse it: expanded=%q", next.ExpandedFlowID())
+		}
+		next, _ = update(next, tea.KeyMsg{Type: tea.KeyDown})
+		if next.FlowSelected() != 1 {
+			t.Fatalf("selected Flow index = %d, want target B", next.FlowSelected())
+		}
+		return selectFlowPhaseByID(t, next, "review-loop")
+	}
+	pendingAB, cmdB := update(selectTargetB(pendingA), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmdB == nil {
+		t.Fatal("independent target B should remain admissible while target A is pending")
+	}
+	_, retainedBCommand := update(selectTargetB(pendingA), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if retainedBCommand == nil {
+		t.Fatal("adding target B to a derived model mutated the retained A-only model")
+	}
+
+	msgA := cmdA()
+	msgB := cmdB()
+	if len(launchUpdates) != 2 || launchUpdates[0].FlowID != "flow-a" || launchUpdates[1].FlowID != "flow-b" {
+		t.Fatalf("launch updates = %#v, want independent A then B persistence", launchUpdates)
+	}
+	afterB, _ := update(pendingAB, msgB)
+	if len(terminalStarts) != 1 || terminalStarts[0].FlowID != "flow-b" {
+		t.Fatalf("terminal starts after B result = %#v", terminalStarts)
+	}
+	afterA, _ := update(afterB, msgA)
+	if len(terminalStarts) != 2 || terminalStarts[1].FlowID != "flow-a" {
+		t.Fatalf("terminal starts after out-of-order A result = %#v", terminalStarts)
+	}
+	statusBeforeReplay := afterA.TransientError()
+	afterReplay, replayCmd := update(afterA, msgB)
+	if replayCmd != nil || len(terminalStarts) != 2 || afterReplay.TransientError() != statusBeforeReplay {
+		t.Fatalf("replayed B result changed state: cmd=%T terminals=%#v status=%q", replayCmd, terminalStarts, afterReplay.TransientError())
+	}
+}
+
 func TestModel_RKeyOnSelectedFlowPhasePersistenceFailureDoesNotStartTerminal(t *testing.T) {
 	persisted := false
 	started := false
@@ -6062,6 +6737,60 @@ func TestModel_RKeyOnSelectedFlowPhaseUsesCodexAppPreferenceForCodexSession(t *t
 	}
 	if launched.Command != "codex-app" || launched.ResumeSessionID != "codex-new" {
 		t.Fatalf("unexpected Flow phase codex-app resume context: %#v", launched)
+	}
+}
+
+func TestModel_CodexAppFlowResumeBypassesPendingTrackedCLIResume(t *testing.T) {
+	var launched actions.AgentLaunchContext
+	persistCalls := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			persistCalls++
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/flow-resume-codex-app-pending",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Status:    flowstore.PhaseCompleted,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-session", LaunchID: "launch-old", Status: "ended",
+			}},
+		}},
+	}})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	pending, trackedCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if trackedCmd == nil || persistCalls != 0 {
+		t.Fatalf("tracked CLI request setup: cmd=%T persistence calls=%d", trackedCmd, persistCalls)
+	}
+	pending, _ = update(pending, model.AgentSetMsg{Command: "codex-app"})
+	appModel, appCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if appCmd == nil {
+		t.Fatal("codex-app navigation should not be suppressed by pending tracked CLI persistence")
+	}
+	if launched.Command != "codex-app" || launched.ResumeSessionID != "codex-session" ||
+		launched.LaunchID != "" || launched.FlowID != "" || launched.FlowPhaseID != "" ||
+		launched.FlowLaunchTracked || launched.Embedded {
+		t.Fatalf("codex-app resume context = %#v, want untracked app navigation", launched)
+	}
+	if persistCalls != 0 {
+		t.Fatalf("codex-app resume called tracked persistence %d times", persistCalls)
+	}
+	appModel, _ = update(appModel, model.AgentSetMsg{Command: "codex"})
+	_, duplicateTrackedCmd := update(appModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if duplicateTrackedCmd != nil {
+		t.Fatal("codex-app navigation cleared the independently pending tracked CLI request")
 	}
 }
 
