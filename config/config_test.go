@@ -367,8 +367,8 @@ func TestLoadFrom_DefaultViewAbsentIsUnset(t *testing.T) {
 	}
 }
 
-func TestLoadFrom_AcceptsDefaultViewOneThroughNine(t *testing.T) {
-	for view := 1; view <= 9; view++ {
+func TestLoadFrom_AcceptsDefaultViewOneThroughFourteen(t *testing.T) {
+	for view := 1; view <= 14; view++ {
 		t.Run(fmt.Sprintf("view_%d", view), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
 			if err := os.WriteFile(path, []byte(fmt.Sprintf("[ui]\ndefault_view = %d\n", view)), 0o644); err != nil {
@@ -392,9 +392,9 @@ func TestLoadFrom_RejectsInvalidDefaultView(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "zero", body: "[ui]\ndefault_view = 0\n", want: "ui.default_view must be between 1 and 9"},
-		{name: "negative", body: "[ui]\ndefault_view = -1\n", want: "ui.default_view must be between 1 and 9"},
-		{name: "too high", body: "[ui]\ndefault_view = 10\n", want: "ui.default_view must be between 1 and 9"},
+		{name: "zero", body: "[ui]\ndefault_view = 0\n", want: "ui.default_view must be between 1 and 14"},
+		{name: "negative", body: "[ui]\ndefault_view = -1\n", want: "ui.default_view must be between 1 and 14"},
+		{name: "too high", body: "[ui]\ndefault_view = 15\n", want: "ui.default_view must be between 1 and 14"},
 		{name: "string", body: "[ui]\ndefault_view = \"8\"\n", want: "toml"},
 		{name: "float", body: "[ui]\ndefault_view = 8.0\n", want: "toml"},
 	}
@@ -1177,7 +1177,7 @@ func TestSaveDefaultView_InsertsBeforeArrayTable(t *testing.T) {
 }
 
 func TestSaveDefaultView_RejectsInvalidValueWithoutWriting(t *testing.T) {
-	for _, view := range []int{0, -1, 10} {
+	for _, view := range []int{0, -1, 15} {
 		t.Run(fmt.Sprintf("view_%d", view), func(t *testing.T) {
 			xdg := t.TempDir()
 			path := filepath.Join(xdg, "approach", "config.toml")

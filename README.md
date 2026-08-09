@@ -107,9 +107,8 @@ replacing the active pane.
 Successful empty queries show `no ready beads`, `no blocked beads`, `no open
 beads`, `no in-progress beads`, or `no closed beads`; any unavailable or failed
 query still shows the shared `beads not configured` state in this slice. Beads
-has no detail pager yet. Configured-versus-error classification and
-`default_view` values beyond the existing frozen 1–9 vocabulary remain
-deferred.
+has no detail pager yet. Configured-versus-error classification and the detail
+pager remain deferred.
 
 ## Agents, Plans, and Flows
 

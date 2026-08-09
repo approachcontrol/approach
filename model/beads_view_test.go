@@ -898,23 +898,139 @@ func TestTopLevelArrowFromFlowsEntersRememberedBeadsSubview(t *testing.T) {
 	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsClosed)
 }
 
-func TestBeadsOpen_DoesNotExtendFrozenStartupVocabulary(t *testing.T) {
-	if got := len(model.ViewChoices()); got != 9 {
-		t.Fatalf("ViewChoices length = %d, want frozen 9", got)
+func TestBeadsStartupFetchesOnlyConfiguredSubview(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		mode ui.Mode
+	}{
+		{name: "ready", mode: ui.ModeBeadsReady},
+		{name: "blocked", mode: ui.ModeBeadsBlocked},
+		{name: "open", mode: ui.ModeBeadsOpen},
+		{name: "in-progress", mode: ui.ModeBeadsInProgress},
+		{name: "closed", mode: ui.ModeBeadsClosed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			query := func(name string) func(string) ([]beadsquery.Bead, error) {
+				return func(repoPath string) ([]beadsquery.Bead, error) {
+					calls = append(calls, name+":"+repoPath)
+					return []beadsquery.Bead{{ID: "bd-" + name}}, nil
+				}
+			}
+			m := model.NewWithOptions(testRepos(), model.Options{
+				StartupMode:         tt.mode,
+				ListReadyBeads:      query("ready"),
+				ListBlockedBeads:    query("blocked"),
+				ListOpenBeads:       query("open"),
+				ListInProgressBeads: query("in-progress"),
+				ListClosedBeads:     query("closed"),
+				CountClosedBeads: func(repoPath string) (int, error) {
+					calls = append(calls, "closed-count:"+repoPath)
+					return 1, nil
+				},
+			})
+			if m.Mode() != tt.mode {
+				t.Fatalf("startup mode = %v, want %v", m.Mode(), tt.mode)
+			}
+			if !m.BeadsPending(tt.mode) {
+				t.Fatalf("configured mode %v is not pending before its startup result", tt.mode)
+			}
+			view := m.View()
+			if want := "loading " + tt.name + " beads"; !strings.Contains(view, want) {
+				t.Fatalf("startup view does not show %q before the result:\n%s", want, view)
+			}
+			if strings.Contains(view, "beads not configured") {
+				t.Fatalf("startup view reports Beads unavailable while the query is pending:\n%s", view)
+			}
+
+			cmd := m.Init()
+			if cmd == nil {
+				t.Fatal("Init returned nil command")
+			}
+			batch, ok := cmd().(tea.BatchMsg)
+			if !ok || len(batch) < 1 {
+				t.Fatalf("Init command = %T with %d entries, want fetch batch", batch, len(batch))
+			}
+			if len(calls) != 0 {
+				t.Fatalf("Beads query ran before fetch command execution: %v", calls)
+			}
+			msg := batch[0]()
+			wantCalls := []string{tt.name + ":/dev/alpha"}
+			if tt.mode == ui.ModeBeadsClosed {
+				wantCalls = append(wantCalls, "closed-count:/dev/alpha")
+			}
+			if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
+				t.Fatalf("startup query calls = %v, want %v", calls, wantCalls)
+			}
+			if got := beadsResultMode(msg); got != tt.mode {
+				t.Fatalf("startup fetch result mode = %v for %T, want %v", got, msg, tt.mode)
+			}
+
+			m, _ = update(m, msg)
+			for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
+				beads := m.Beads(mode)
+				if mode == tt.mode {
+					if len(beads) != 1 || beads[0].ID != "bd-"+tt.name || !m.BeadsAvailable(mode) || m.BeadsPending(mode) {
+						t.Fatalf("configured mode %v state = %#v available=%v pending=%v", mode, beads, m.BeadsAvailable(mode), m.BeadsPending(mode))
+					}
+					continue
+				}
+				if len(beads) != 0 || m.BeadsAvailable(mode) {
+					t.Fatalf("non-configured mode %v state = %#v available=%v, want untouched", mode, beads, m.BeadsAvailable(mode))
+				}
+			}
+		})
 	}
-	for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
-		if _, ok := model.ViewNumber(mode); ok {
-			t.Fatalf("ViewNumber(%v) unexpectedly extended frozen vocabulary", mode)
-		}
+}
+
+func TestBeadsStartupWithoutRepoDoesNotRemainPendingOrQuery(t *testing.T) {
+	calls := 0
+	m := model.NewWithOptions(nil, model.Options{
+		StartupMode: ui.ModeBeadsReady,
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			calls++
+			return nil, nil
+		},
+	})
+	if m.Mode() != ui.ModeBeadsReady {
+		t.Fatalf("startup mode = %v, want Ready", m.Mode())
 	}
-	if _, ok := model.ModeForViewNumber(10); ok {
-		t.Fatal("ModeForViewNumber(10) unexpectedly enabled deferred Beads startup")
+	if m.BeadsPending(ui.ModeBeadsReady) {
+		t.Fatal("Ready is pending even though no repository is available to query")
 	}
-	for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
-		m := model.NewWithOptions(testRepos(), model.Options{StartupMode: mode})
-		if m.Mode() != ui.ModeWorktrees {
-			t.Fatalf("StartupMode %v produced mode %v, want existing fallback ModeWorktrees", mode, m.Mode())
-		}
+	if cmd := model.FetchForModeForTest(m); cmd != nil {
+		t.Fatalf("Beads startup without a repository returned fetch command %T", cmd)
+	}
+	if calls != 0 {
+		t.Fatalf("Ready query calls = %d, want 0 without a repository", calls)
+	}
+}
+
+func TestBeadsStartupDefaultSeedsStickySubview(t *testing.T) {
+	for _, mode := range []ui.Mode{
+		ui.ModeBeadsReady,
+		ui.ModeBeadsBlocked,
+		ui.ModeBeadsOpen,
+		ui.ModeBeadsInProgress,
+		ui.ModeBeadsClosed,
+	} {
+		t.Run(model.ViewChoiceLabel(mode), func(t *testing.T) {
+			opts := beadQueryOptions()
+			opts.StartupMode = mode
+			m := inRightPane(model.NewWithOptions(testRepos(), opts))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			before := listRequests(m)
+
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+
+			if m.Mode() != mode {
+				t.Fatalf("Beads re-entry mode = %v, want configured %v", m.Mode(), mode)
+			}
+			if cmd == nil {
+				t.Fatal("Beads re-entry returned nil fetch command")
+			}
+			assertOnlyListRequestChanged(t, before, m, mode)
+		})
 	}
 }
 

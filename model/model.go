@@ -584,6 +584,12 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if ui.IsGitMode(m.mode) {
 		m.lastGitMode = m.mode
 	}
+	if index, ok := beadSubviewIndex(m.mode); ok {
+		m.lastBeadsMode = m.mode
+		if _, hasRepo := m.currentRepoPath(); hasRepo {
+			m.beads[index].pending = true
+		}
+	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
@@ -602,7 +608,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 }
 
 func startupMode(mode ui.Mode) ui.Mode {
-	if mode >= ui.ModeWorktrees && mode <= ui.ModeActiveFlows {
+	if mode >= ui.ModeWorktrees && mode <= ui.ModeBeadsClosed {
 		return mode
 	}
 	return ui.ModeWorktrees

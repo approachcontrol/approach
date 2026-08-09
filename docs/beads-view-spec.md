@@ -2,9 +2,10 @@
 
 Status: forward-looking full-v1 draft, partially implemented. The Open tracer,
 five visible query/header subviews, sticky group re-entry, arrow navigation, and
-per-subview filter/cursor preservation with refetch clamping are shipped, as is
-the newest-100 Closed cap with its plain/truncated header count. Detail paging,
-error classification, and `default_view` 10–14 remain deferred. Companion docs: `architecture.md`
+per-subview filter/cursor preservation with refetch clamping are shipped, as are
+the newest-100 Closed cap with its plain/truncated header count and
+`default_view` 10–14 startup routing. Detail paging and error classification
+remain deferred. Companion docs: `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
 

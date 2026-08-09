@@ -44,7 +44,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Active Flows`) |
+| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Beads — Closed`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
@@ -75,7 +75,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Active Flows`) |
+| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Beads — Closed`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
@@ -109,7 +109,8 @@ reflog); the active entries are bracketed. Entering the Git view lands on the
 last-used subview (worktrees on first entry), and each subview keeps its own
 cursor position and filter across switches. Press `V` to choose which view
 Approach opens on future launches; leaving it unset keeps the built-in startup
-default of Flows.
+default of Flows. Choosing a Git or Beads subview starts directly in that
+subview and seeds the corresponding group's last-used destination.
 
 While Beads is active, its second header row lists `r` ready, `b` blocked, `o`
 open, `i` in-progress, and `c` closed. The active top-level Beads entry and
@@ -348,9 +349,10 @@ Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
 
-`enter` still has no Beads detail pager. Configured-versus-error classification,
-pager, and `default_view` 10–14 additions remain deferred; keys `6`–`9` and the
-existing frozen 1–9 startup vocabulary are unchanged.
+`enter` still has no Beads detail pager. Configured-versus-error classification
+and the pager remain deferred. Keys `6`–`9` remain unbound; frozen
+`default_view` meanings `1`–`9` are unchanged, and `10`–`14` start directly in
+Ready, Blocked, Open, In-Progress, or Closed.
 
 ## Flows View (`4`)
 
