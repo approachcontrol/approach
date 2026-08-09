@@ -465,8 +465,10 @@ type PlanLaunchRequestedMsg struct {
 }
 
 type FlowEmbeddedLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
+	LaunchContext       actions.AgentLaunchContext
+	Request             uint64
+	RepairRecord        flowstore.FlowRecord
+	RepairValidationErr string
 }
 
 type flowPhaseResumePersistedMsg struct {

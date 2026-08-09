@@ -30,10 +30,13 @@ go install github.com/approachcontrol/approach/cmd/approach@latest
 ```bash
 git clone https://github.com/approachcontrol/approach.git
 cd approach
+git config core.hooksPath .beads/hooks
 make build
 ```
 
-The binary is built to `bin/approach`.
+The per-clone `core.hooksPath` setting activates the repository's tracked Beads
+hooks; they skip their Beads step when `bd` is unavailable. The binary is built
+to `bin/approach`.
 
 ## Usage
 

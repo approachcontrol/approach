@@ -455,6 +455,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleLaunchNextFlowPhase()
 		}
+	case "R":
+		if m.flowSurfaceVisible() {
+			return m.handleRepairSelectedFlow()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -664,6 +668,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleToggleFlowHeadless()
 	case "g":
 		return m.handleLaunchNextFlowPhase()
+	case "R":
+		return m.handleRepairSelectedFlow()
 	case "enter":
 		return m.handleFlowEnter()
 	case "o":
@@ -2355,9 +2361,37 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 	return m.runAgentLaunchWithContext(ctx, launch)
 }
 
+func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
+	var repairRecord *flowstore.FlowRecord
+	if msg.LaunchContext.FlowRepair && msg.RepairValidationErr == "" && strings.TrimSpace(msg.RepairRecord.FlowID) != "" {
+		repairRecord = &msg.RepairRecord
+	}
+	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr)
+}
+
 func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "")
+}
+
+func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string) (Model, tea.Cmd) {
 	ctx.Embedded = true
-	ctx.FlowLaunchTracked = true
+	if ctx.FlowRepair {
+		var current bool
+		m, current = m.consumePendingFlowRepairLaunch(ctx, repairRecord, validationErr)
+		if !current {
+			return m, nil
+		}
+		if repairRecord != nil {
+			ctx = refreshFlowRepairLaunchContext(ctx, *repairRecord)
+		}
+		ctx.FlowPhaseID = ""
+		ctx.FlowLaunchTracked = false
+	} else {
+		ctx.FlowLaunchTracked = true
+		if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
+			return m.startFlowLaunchFailure(ctx, "Flow phase launch canceled because a repair terminal is already open for this Flow")
+		}
+	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
 	if err != nil || !opened {
@@ -2394,7 +2428,9 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
+	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasPendingFlowRepairLaunch(key.FlowID) ||
+		m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) ||
+		m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
 		return m, nil
 	}
 	ctx.FlowID = key.FlowID
@@ -2430,6 +2466,9 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 	// persisted status.
 	if phase, ok := flowPhaseByID(msg.Flow, ctx.FlowPhaseID); ok {
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
+	}
+	if m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) {
+		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
@@ -2483,6 +2522,19 @@ func (m Model) matchingPendingFlowPhaseResume(ctx actions.AgentLaunchContext) (f
 	}
 	launchID := strings.TrimSpace(ctx.LaunchID)
 	return key, launchID != "" && m.pendingFlowPhaseResumes[key] == launchID
+}
+
+func (m Model) hasPendingFlowPhaseResumeForFlow(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
+	for key, launchID := range m.pendingFlowPhaseResumes {
+		if key.FlowID == flowID && strings.TrimSpace(launchID) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) withPendingFlowPhaseResume(key flowPhaseResumeKey, launchID string) Model {

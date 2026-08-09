@@ -159,6 +159,10 @@ type Model struct {
 	terminalDockVisible       bool
 	terminalFocus             terminalFocus
 	autoAdvanceDrainFlows     map[string]struct{}
+
+	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
+	pendingFlowRepairLaunchIDs    map[string]string
+
 	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen   uint64
 	flowRefreshTickGen        uint64
@@ -1071,6 +1075,7 @@ func (m Model) View() string {
 		FlowReasoningEffort:          m.flowReasoningEffortLabel(),
 		DefaultViewLabel:             ViewChoiceLabel(m.defaultView),
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
+		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
 		FlowPhaseResumableSelected:   m.selectedFlowPhaseResumable(),
@@ -1428,7 +1433,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		if msg.Err != nil {
-			m = m.dismissEmbeddedTerminal(msg.ID)
+			m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
 			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)
@@ -1660,7 +1665,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
-		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)

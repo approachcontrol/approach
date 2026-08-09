@@ -78,6 +78,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
+| `R` | Launch an embedded repair agent for a genuinely stalled selected Flow in flows or Active Flows view |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
 | `N` | Create a new worktree and launch the selected coding agent |
@@ -248,7 +249,8 @@ working directory are covered in `docs/agent-sessions.md`.
 
 ## Embedded Terminals
 
-Resuming a CLI `codex` or `claude` session or launching a CLI Flow phase opens
+Resuming a CLI `codex` or `claude` session, launching a CLI Flow phase, or
+repairing a stalled Flow opens
 a runtime-only terminal in one shared full-width dock — a top-level pane below
 the repo, content, and shortcut panes, directly above the status bar.
 The dock persists while switching among Git, sessions, plans, flows, and
@@ -438,6 +440,11 @@ On a Flow row or an expanded phase row:
   phase order. This uses the selected Flow, so a highlighted pending phase row
   can still launch an earlier ready sibling; nothing is persisted when no
   phase is launchable.
+- `R` repairs a genuinely stalled nonterminal Flow from either its top-level
+  row or an expanded phase row. The shortcut is shown only when no phase can
+  be launched manually, no healthy phase session is running, no Flow terminal
+  slot is occupied, and the Flow is not completed, merged, abandoned, or at a
+  ready/manual Merge boundary.
 - `i` opens the linked GitHub issue and `p` opens the linked PR in the
   browser, when that metadata exists.
 - `c` copies the selected Flow ID; `y` copies the selected Flow worktree path.
@@ -460,6 +467,36 @@ On a Flow row or an expanded phase row:
 Expanded phase rows group child implementation phases directly under
 Implementation.
 
+### Repair
+
+`R repair` launches a diagnostic agent only for persisted states that cannot
+otherwise proceed: blocked or needs-attention phases, stale or inconsistent
+running-session metadata, missing structured PR metadata, or a gated graph
+with no launchable phase. Ready work, healthy active sessions, every derived
+terminal Flow status, and manual Merge boundaries are intentionally not repair
+targets. A matched non-ended provider session counts as healthy active work
+even if its phase already says blocked or needs-attention. Any retained Flow terminal slot — including exited-before-auto-close,
+failed, terminated, starting, or prompt-prefill state — blocks repair until it
+is dismissed or detached. A pending repair launch also reserves the Flow, so
+repeated `R` input or a replayed/stale launch message cannot start a second
+repair agent; Approach fresh-reads the persisted Flow and rechecks eligibility
+before allocating the terminal.
+
+Repair is an embedded CLI operation and accepts only `codex` or `claude`.
+`codex-app`, an unset agent, or another configured command produces guidance
+instead of opening an external app or changing Flow state. The launch reuses
+the selected provider's current model and reasoning effort plus the manual
+`h` headless setting. Interactive repairs prefill their recovery prompt and
+focus terminal input; headless repairs submit it and keep list focus.
+
+A repair session carries the Flow ID, linked-plan/worktree metadata, and the
+shared artifact root, but deliberately has no Flow phase ID and is not a phase
+launch attempt. Hooks may retain it as a Flow-scoped session for
+discoverability, but it cannot attach to phase history, create a
+`session-mismatch`, or finalize/regress a phase. Its prompt directs the agent
+to inspect and mutate the record through structured `approach flow` commands,
+never by editing artifact JSON, and never to launch the next phase itself.
+
 ### Auto mode
 
 When auto mode is on, Approach runs an always-on, all-repos advance poll that
@@ -473,6 +510,18 @@ merge-ready transitions unless another status message is active. Skipped,
 blocked, needs-attention, failed-launch, or missing-PR-metadata states do not
 auto-launch. Automation stops before Merge: if Autoreview completes and Merge
 becomes ready, Approach keeps auto mode on and requires the manual Merge launch.
+A repair terminal that exits cleanly and is then auto-closed or dismissed arms
+a one-shot, generation-fenced auto drain. The first successful all-Flows poll
+that began after that exit may launch the newly ready non-merge successor,
+including after metadata-only repair or a running-to-ready reset. Stale,
+pre-exit, and failed polls retain the handoff marker; auto mode off, failed or
+terminated repair, detach, and Merge-only readiness clear or bypass it without
+launching. While a repair terminal is retained, ordinary completion edges for
+that Flow are held. A non-clean removal keeps suppressing repair-caused edges
+until a later state first exposes work that auto mode could otherwise launch,
+so failure, termination, or a detached agent's delayed mutation cannot leak a
+successor launch. A later clean repair retry replaces the earlier suppressing
+outcome and receives its normal one-shot handoff.
 
 ### Headless mode, model, and effort
 
@@ -508,7 +557,8 @@ command set described in [Embedded Terminals](#embedded-terminals). Selecting
 a Flow or phase still synchronizes the active dock terminal to its attached
 Flow terminal when one exists. Flow scope remains lifecycle metadata for
 launch tracking, auto-mode gating, and recovery; it no longer creates a
-separate terminal surface or command path.
+separate terminal surface or command path. Repair tabs use the explicit
+`repair` identity and retain only Flow-level scope, never a phase attachment.
 
 ### Recovery labels
 
@@ -549,7 +599,7 @@ TUI view to open it, and press `ctrl+a` again to return to the previous view;
 number keys and arrows do not leave Active Flows. This view hides merged Flow
 records; moving focus to the left repo pane temporarily filters the visible
 active rows to the selected repo, and returning focus to the middle pane
-restores the global list. Normal Flow actions — phase launches,
+restores the global list. Normal Flow actions — phase launches, repairs,
 attached-session resumes, auto-mode toggles, `i` issue and `p` PR opening,
 `c`/`y` copies, and embedded Flow terminals in the shared dock — work from the
 visible active Flow rows and their expanded phase rows.
