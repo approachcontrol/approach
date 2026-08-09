@@ -261,3 +261,48 @@ func TestFlowPhaseResumePersistenceDoesNotOpenAlongsideRepairTerminal(t *testing
 		t.Fatalf("failure update = %#v, want repair-terminal needs_attention guidance", failureUpdate)
 	}
 }
+
+func TestQueuedAutoLaunchDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
+	const flowID = "flow-1"
+	starts := 0
+	var failureUpdate flowstore.PhaseUpdate
+	m := Model{
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Scope:      embeddedTerminalScopeFlow,
+			FlowID:     flowID,
+			FlowRepair: true,
+			Terminal:   internalFakeEmbeddedTerminal{state: "running"},
+		}},
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			starts++
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+		setFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			failureUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:           "codex",
+		LaunchID:          "auto-launch",
+		FlowID:            flowID,
+		FlowPhaseID:       "implementation",
+		FlowPhaseKind:     flowstore.KindImplementation,
+		FlowLaunchTracked: true,
+		FlowAutoLaunch:    true,
+		Embedded:          true,
+		Headless:          true,
+	}
+
+	next, cmd := m.launchFlowEmbeddedWithContext(ctx)
+	if starts != 0 || len(next.embeddedTerminals) != 1 {
+		t.Fatalf("auto launch opened alongside repair: starts=%d terminals=%d", starts, len(next.embeddedTerminals))
+	}
+	if cmd == nil {
+		t.Fatal("occupied auto launch should persist launch-failure state")
+	}
+	_ = cmd()
+	if failureUpdate.Status != flowstore.PhaseNeedsAttention || !strings.Contains(failureUpdate.Notes, "repair terminal") {
+		t.Fatalf("failure update = %#v, want repair-terminal needs_attention guidance", failureUpdate)
+	}
+}

@@ -2382,6 +2382,9 @@ func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchCon
 		ctx.FlowLaunchTracked = false
 	} else {
 		ctx.FlowLaunchTracked = true
+		if m.hasFlowRepairEmbeddedTerminalForFlow(ctx.FlowID) {
+			return m.startFlowLaunchFailure(ctx, "Flow phase launch canceled because a repair terminal is already open for this Flow")
+		}
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)

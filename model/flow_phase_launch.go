@@ -571,6 +571,9 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
+	if m.hasPendingFlowRepairLaunch(record.FlowID) {
+		return true
+	}
 	for _, phase := range record.Phases {
 		if phase.Status == flowstore.PhaseRunning {
 			return true

@@ -799,6 +799,32 @@ func TestAutoModeDrainDisarmsWhenSchedulingLaunch(t *testing.T) {
 	}
 }
 
+func TestPendingFlowRepairReservationKeepsAutoAdvanceDrainQueued(t *testing.T) {
+	current := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	updates := 0
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates++
+			return current, nil
+		},
+	})
+	m.autoAdvanceDrainFlows = map[string]struct{}{current.FlowID: {}}
+	m.pendingFlowRepairLaunchIDs = map[string]string{current.FlowID: "repair-launch"}
+
+	m, cmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	if cmd != nil || updates != 0 {
+		t.Fatalf("pending repair queued auto launch: cmd=%T updates=%d", cmd, updates)
+	}
+	if _, ok := m.autoAdvanceDrainFlows[current.FlowID]; !ok {
+		t.Fatalf("pending repair disarmed auto drain: %#v", m.autoAdvanceDrainFlows)
+	}
+}
+
 func collectMsgsFromCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	t.Helper()
 	if cmd == nil {
