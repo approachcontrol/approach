@@ -135,6 +135,7 @@ func TestIsolatedBeadsEnvironmentRemovesTargetOverrides(t *testing.T) {
 		"BEADS_PROXIED_SERVER_CONFIG=/other/proxied.json",
 		"BEADS_PROXIED_SERVER_ROOT_PATH=/other/proxied",
 		"BEADS_SHARED_SERVER_DIR=/other/shared",
+		"BD_OTEL_STDOUT=true",
 		"BEADS_FUTURE_TARGET_OVERRIDE=/other/future",
 	}
 	env := append(targetOverrides,

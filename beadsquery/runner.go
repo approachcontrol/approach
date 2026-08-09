@@ -123,7 +123,6 @@ func isolatedBeadsEnvironment(env []string) ([]string, error) {
 				"BD_DISABLE_METRICS",
 				"BD_OTEL_LOGS_URL",
 				"BD_OTEL_METRICS_URL",
-				"BD_OTEL_STDOUT",
 				"BEADS_CREDENTIALS_FILE",
 				"BEADS_DOLT_PASSWORD",
 				"BEADS_DOLT_SERVER_TLS",
