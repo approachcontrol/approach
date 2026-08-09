@@ -3,6 +3,9 @@ dolt/
 embeddeddolt/
 proxieddb/
 
+issues.jsonl
+interactions.jsonl
+
 # Runtime files
 bd.sock
 bd.sock.startlock
