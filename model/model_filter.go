@@ -110,6 +110,14 @@ func (m Model) activeBeadSubview() (beadSubviewState, bool) {
 	return m.beadSubview(m.mode)
 }
 
+func (m Model) selectedVisibleBead() (beadsquery.Bead, bool) {
+	state, ok := m.activeBeadSubview()
+	if !ok || !state.available || state.pending {
+		return beadsquery.Bead{}, false
+	}
+	return state.pane.Selected()
+}
+
 func planItemHeight(expandedPlanID string) pane.ItemHeight[planstore.PlanRecord] {
 	return func(record planstore.PlanRecord, _ int) int {
 		return planVisualHeight(record, expandedPlanID)

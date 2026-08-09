@@ -119,6 +119,7 @@ type Model struct {
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
+	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
@@ -231,6 +232,7 @@ type Options struct {
 	ListOpenBeads            func(repoPath string) ([]beadsquery.Bead, error)
 	ListInProgressBeads      func(repoPath string) ([]beadsquery.Bead, error)
 	ListClosedBeads          func(repoPath string) ([]beadsquery.Bead, error)
+	ShowBead                 func(repoPath, beadID string) (string, error)
 	CountClosedBeads         func(repoPath string) (int, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
@@ -344,6 +346,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	listClosedBeads := opts.ListClosedBeads
 	if listClosedBeads == nil {
 		listClosedBeads = beadsquery.ListClosed
+	}
+	showBead := opts.ShowBead
+	if showBead == nil {
+		showBead = beadsquery.Show
 	}
 	countClosedBeads := opts.CountClosedBeads
 	if countClosedBeads == nil {
@@ -550,6 +556,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
+		showBead:                 showBead,
 		countClosedBeads:         countClosedBeads,
 		createFlow:               createFlowForRepo,
 		startFlowPlan:            startFlowPlan,
@@ -1496,6 +1503,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
 	case BeadsClosedResultMsg:
 		return m.handleBeadsClosedResult(msg), nil
+	case BeadDetailResultMsg:
+		return m.handleBeadDetailResult(msg)
 	case FlowAutoModeSetMsg:
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:

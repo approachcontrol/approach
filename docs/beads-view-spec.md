@@ -5,15 +5,14 @@ five visible query/header subviews, sticky group re-entry, arrow navigation, and
 per-subview filter/cursor preservation with refetch clamping, plus
 configured/not-configured/error classification are shipped, as are the
 newest-100 Closed cap with its plain/truncated header count and `default_view`
-10–14 startup routing. Detail paging remains deferred. Companion docs:
+10–14 startup routing and read-only detail paging. Companion docs:
 `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
 
 > **Scope:** The Solution, User Stories, and Implementation Decisions below
 > describe the target full-v1 design. For current shipped behavior, use the
-> status above and the linked README/config documentation; any capability named
-> as deferred above remains future work even when it appears below.
+> status above and the linked README/config documentation.
 
 ## Problem Statement
 
@@ -80,9 +79,10 @@ v1, with `enter` paging a bead's detail through the pager.
   reuses the grouped-selector mechanics (top-level row plus letter row), with
   the extra row's height taken out of the list height as the git panes do.
 - Data access is a new beads query package shaped like the git query package: a
-  small `Runner` seam that executes `bd` with `--json`, wrapped by a querier;
-  parsing is pure functions over captured JSON. Nothing outside this package
-  invokes `bd`.
+  small `Runner` seam wrapped by a querier. List queries execute `bd` with
+  `--json` and use pure parsers over captured JSON; detail returns the raw
+  human-readable output of `bd show <id> --readonly`. Nothing outside this
+  package invokes `bd`.
 - Ready comes from `bd ready` — the dependency-graph readiness computation stays
   in `bd`, never reimplemented. Open is literally `bd list -s open`, so ready
   beads intentionally appear in both Ready and Open. Blocked, in-progress, and
@@ -105,7 +105,7 @@ v1, with `enter` paging a bead's detail through the pager.
 - Fetches are asynchronous with the existing request-token stale-result
   protection; fetch triggers are group entry and repo-cursor change, plus the
   app's existing manual refresh affordance. No polling.
-- `enter` on a bead pages `bd show <id>` output through the pager with
+- `enter` on a bead pages `bd show <id> --readonly` output through the pager with
   stale-result protection, the same pattern as the app's other read-only
   detail views.
 - Config: `default_view` gains frozen numbers 10 (ready), 11 (blocked),

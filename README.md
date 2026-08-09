@@ -64,7 +64,7 @@ Repos on the left, content on the right. The essentials:
 | `a` | Launch the configured coding agent |
 | `n` | Create a worktree, branch, Flow, or repo (context-dependent) |
 | `N` | Create a worktree and launch the agent in it |
-| `enter` | Page a diff or transcript, or expand phases |
+| `enter` | Page a diff, transcript, or selected bead detail, or expand phases |
 | `q`/`esc` | Close a dialog or quit |
 
 The full key reference and per-view behavior — git subviews, Beads, sessions,
@@ -108,7 +108,12 @@ Successful empty queries show `no ready beads`, `no blocked beads`, `no open
 beads`, `no in-progress beads`, or `no closed beads`. A missing `bd` executable
 or Beads project/database shows the calm `beads not configured` state; other
 command failures and invalid JSON show a persistent `Could not load ...` error
-with sanitized detail. Beads has no detail pager yet.
+with sanitized detail. Press
+`enter` on a visible selected bead after its subview settles to asynchronously
+page the raw human-readable output of `bd show <id> --readonly` through
+`less -R`. A newer detail request, subview or repo change, or Beads refresh
+invalidates an older result; delivery also requires the same bead to remain the
+visible selection.
 
 ## Agents, Plans, and Flows
 

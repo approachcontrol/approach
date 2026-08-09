@@ -787,6 +787,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		m = m.startViewRequest(FetchSessionTranscript, ui.ModeSessions)
 		return m, m.fetchSessionTranscript()
 	}
+	if ui.IsBeadsMode(m.mode) {
+		if _, ok := m.selectedVisibleBead(); !ok {
+			return m, nil
+		}
+		m = m.startViewRequest(FetchBeadDetail, m.mode)
+		return m, m.fetchBeadDetail()
+	}
 	if m.mode == ui.ModePlans && len(m.filteredPlans()) > 0 {
 		if planID := m.selectedPlanID(); planID != "" {
 			if m.expandedPlanID == planID {
