@@ -130,15 +130,27 @@ func TestWithoutBeadsDatabaseSelectorsRemovesTargetOverrides(t *testing.T) {
 		"BEADS_DOLT_SHARED_SERVER=1",
 		"BEADS_MYSQL_URL=mysql://other",
 		"BEADS_POSTGRES_URL=postgres://other",
+		"BEADS_PROXIED_SERVER_CONFIG=/other/proxied.json",
+		"BEADS_PROXIED_SERVER_ROOT_PATH=/other/proxied",
 		"BEADS_SHARED_SERVER_DIR=/other/shared",
+		"BEADS_FUTURE_TARGET_OVERRIDE=/other/future",
 	}
 	env := append(targetOverrides,
 		"BD_JSON_ENVELOPE=1",
+		"BD_DISABLE_METRICS=1",
 		"BEADS_DOLT_PASSWORD=secret",
+		"BEADS_DOLT_SERVER_TLS=1",
+		"BEADS_DOLT_SERVER_USER=reader",
 	)
 
 	got := withoutBeadsDatabaseSelectors(env)
-	want := []string{"BD_JSON_ENVELOPE=1", "BEADS_DOLT_PASSWORD=secret"}
+	want := []string{
+		"BD_JSON_ENVELOPE=1",
+		"BD_DISABLE_METRICS=1",
+		"BEADS_DOLT_PASSWORD=secret",
+		"BEADS_DOLT_SERVER_TLS=1",
+		"BEADS_DOLT_SERVER_USER=reader",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("withoutBeadsDatabaseSelectors() = %#v, want %#v", got, want)
 	}

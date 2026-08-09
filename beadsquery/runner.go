@@ -112,24 +112,22 @@ func withoutBeadsDatabaseSelectors(env []string) []string {
 	filtered := make([]string, 0, len(env))
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
-		switch strings.ToUpper(name) {
-		case "BEADS_DIR",
-			"BEADS_DB",
-			"BD_DB",
-			"BEADS_CENTRAL_CONFIG",
-			"BEADS_DOLT_DATA_DIR",
-			"BEADS_DOLT_PORT",
-			"BEADS_DOLT_PROXIED_SERVER",
-			"BEADS_DOLT_SERVER_DATABASE",
-			"BEADS_DOLT_SERVER_HOST",
-			"BEADS_DOLT_SERVER_MODE",
-			"BEADS_DOLT_SERVER_PORT",
-			"BEADS_DOLT_SERVER_SOCKET",
-			"BEADS_DOLT_SHARED_SERVER",
-			"BEADS_MYSQL_URL",
-			"BEADS_POSTGRES_URL",
-			"BEADS_SHARED_SERVER_DIR":
-			continue
+		name = strings.ToUpper(name)
+		if strings.HasPrefix(name, "BEADS_") || strings.HasPrefix(name, "BD_") {
+			switch name {
+			case "BD_JSON_ENVELOPE",
+				"BD_DISABLE_EVENT_FLUSH",
+				"BD_DISABLE_METRICS",
+				"BD_OTEL_LOGS_URL",
+				"BD_OTEL_METRICS_URL",
+				"BD_OTEL_STDOUT",
+				"BEADS_DOLT_PASSWORD",
+				"BEADS_DOLT_SERVER_TLS",
+				"BEADS_DOLT_SERVER_USER":
+				// These control output, telemetry, or authentication, not target selection.
+			default:
+				continue
+			}
 		}
 		filtered = append(filtered, entry)
 	}
