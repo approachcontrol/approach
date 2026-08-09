@@ -99,7 +99,7 @@ v1, with `enter` paging a bead's detail through the pager.
 - Fetches are asynchronous with the existing request-token stale-result
   protection; fetch triggers are group entry and repo-cursor change, plus the
   app's existing manual refresh affordance. No polling.
-- `enter` on a bead pages `bd show <id>` output through the pager with
+- `enter` on a bead pages `bd show <id> --readonly` output through the pager with
   stale-result protection, the same pattern as the app's other read-only
   detail views.
 - Config: `default_view` gains frozen numbers 10 (ready), 11 (blocked),
