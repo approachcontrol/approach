@@ -576,6 +576,9 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if ui.IsGitMode(m.mode) {
 		m.lastGitMode = m.mode
 	}
+	if ui.IsBeadsMode(m.mode) {
+		m.lastBeadsMode = m.mode
+	}
 	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
@@ -594,7 +597,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 }
 
 func startupMode(mode ui.Mode) ui.Mode {
-	if mode >= ui.ModeWorktrees && mode <= ui.ModeActiveFlows {
+	if mode >= ui.ModeWorktrees && mode <= ui.ModeBeadsClosed {
 		return mode
 	}
 	return ui.ModeWorktrees

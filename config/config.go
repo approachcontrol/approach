@@ -269,8 +269,8 @@ func defaultConfig() Config {
 }
 
 func validateDefaultView(view int) error {
-	if view < 1 || view > 9 {
-		return fmt.Errorf("ui.default_view must be between 1 and 9")
+	if view < 1 || view > 14 {
+		return fmt.Errorf("ui.default_view must be between 1 and 14")
 	}
 	return nil
 }
