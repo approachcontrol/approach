@@ -6515,8 +6515,13 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	}
 	firstStarted, _ = update(firstStarted, tea.KeyMsg{Type: tea.KeyTab})
 	firstStarted = model.ClearFlowEmbeddedTerminalsForTest(firstStarted)
+	firstStarted, _ = update(firstStarted, tea.KeyMsg{Type: tea.KeyTab})
+	firstStarted = selectFlowPhaseByID(t, firstStarted, "implementation")
 
 	secondPending, secondCmd := update(firstStarted, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if secondCmd == nil {
+		t.Fatal("second resume should return a persistence command")
+	}
 	oldFailure := secondCmd()
 	afterFailure, refreshCmd := update(secondPending, oldFailure)
 	if refreshCmd == nil || !strings.Contains(afterFailure.TransientError(), "failed to mark flow phase resume: state root locked") {
