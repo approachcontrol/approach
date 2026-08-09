@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -183,16 +184,10 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		return m.setStatus(statusOther, fmt.Sprintf("Flow repair does not support agent %q; press A to choose codex or claude", command)), nil
 	}
 
-	repoPath := strings.TrimSpace(record.RepoPath)
-	if repoPath == "" {
-		repoPath, _ = m.currentRepoPath()
-	}
-	worktreePath := strings.TrimSpace(record.WorktreePath)
-	if worktreePath == "" {
-		worktreePath = repoPath
-	}
-	if worktreePath == "" {
-		return m.setStatus(statusOther, "Cannot determine launch path for this Flow repair"), nil
+	currentRepoPath, _ := m.currentRepoPath()
+	repoPath, worktreePath, pathOK := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, currentRepoPath)
+	if !pathOK {
+		return m.setStatus(statusOther, "Cannot find a usable worktree or repository directory for this Flow repair"), nil
 	}
 	planPath := strings.TrimSpace(record.PlanPath)
 	if record.PlanID != "" && planPath == "" {
@@ -344,13 +339,10 @@ func (m Model) consumePendingFlowRepairLaunch(ctx actions.AgentLaunchContext, au
 }
 
 func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flowstore.FlowRecord) actions.AgentLaunchContext {
-	repoPath := strings.TrimSpace(record.RepoPath)
-	if repoPath == "" {
+	repoPath, worktreePath, ok := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, ctx.WorktreePath, ctx.RepoPath)
+	if !ok {
 		repoPath = ctx.RepoPath
-	}
-	worktreePath := strings.TrimSpace(record.WorktreePath)
-	if worktreePath == "" {
-		worktreePath = repoPath
+		worktreePath = ctx.WorktreePath
 	}
 	planPath := strings.TrimSpace(record.PlanPath)
 	if planPath == "" && record.PlanID == ctx.PlanID {
@@ -365,6 +357,35 @@ func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flows
 	ctx.PlanPath = planPath
 	ctx.InitialPrompt = flowRepairPrompt(record, obstruction)
 	return ctx
+}
+
+func flowRepairLaunchPaths(repoPath, worktreePath string, fallbacks ...string) (string, string, bool) {
+	repoPath = strings.TrimSpace(repoPath)
+	worktreePath = strings.TrimSpace(worktreePath)
+	if flowRepairDirectoryUsable(worktreePath) {
+		return repoPath, worktreePath, true
+	}
+	candidates := append([]string{repoPath}, fallbacks...)
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if !flowRepairDirectoryUsable(candidate) {
+			continue
+		}
+		if !flowRepairDirectoryUsable(repoPath) {
+			repoPath = candidate
+		}
+		return repoPath, candidate, true
+	}
+	return repoPath, worktreePath, false
+}
+
+func flowRepairDirectoryUsable(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func flowRepairPrompt(record flowstore.FlowRecord, obstruction flowRepairObstruction) string {

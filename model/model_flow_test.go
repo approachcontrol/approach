@@ -4471,8 +4471,8 @@ func repairableFlowForShortcut() flowstore.FlowRecord {
 	return flowstore.FlowRecord{
 		FlowID:       "flow-repair",
 		Title:        "Repair shortcut",
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/flow-repair",
+		RepoPath:     os.TempDir(),
+		WorktreePath: os.TempDir(),
 		Branch:       "flow/repair",
 		Commit:       "abc123",
 		PlanID:       "plan-1",
@@ -4560,6 +4560,41 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 				t.Fatalf("repair recorded %d phase launch updates, want zero", launchUpdates)
 			}
 		})
+	}
+}
+
+func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T) {
+	repoPath := t.TempDir()
+	record := repairableFlowForShortcut()
+	record.RepoPath = repoPath
+	record.WorktreePath = filepath.Join(repoPath, "deleted-before-repair")
+	persisted := record
+	persisted.RepoPath = filepath.Join(repoPath, "deleted-repo-before-validation")
+	persisted.WorktreePath = filepath.Join(repoPath, "deleted-before-validation")
+	var started actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{persisted}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if cmd == nil {
+		t.Fatal("repair with a usable repo fallback should prepare a launch")
+	}
+	launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	if launch.LaunchContext.WorktreePath != repoPath {
+		t.Fatalf("initial repair worktree = %q, want repo fallback %q", launch.LaunchContext.WorktreePath, repoPath)
+	}
+	m, _ = update(m, launch)
+	if started.RepoPath != repoPath || started.WorktreePath != repoPath {
+		t.Fatalf("refreshed repair paths = repo %q worktree %q, want context fallback %q", started.RepoPath, started.WorktreePath, repoPath)
 	}
 }
 
@@ -6814,10 +6849,11 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 }
 
 func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testing.T) {
+	launchPath := t.TempDir()
 	record := flowstore.FlowRecord{
 		FlowID:       "flow-1",
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/repair-resume-race",
+		RepoPath:     launchPath,
+		WorktreePath: launchPath,
 		Status:       flowstore.StatusInProgress,
 		Phases: []flowstore.FlowPhase{{
 			PhaseID:   "implementation",
