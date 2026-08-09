@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -98,6 +99,120 @@ func TestRender_BeadsOpenPendingShowsNeutralLoadingMessage(t *testing.T) {
 	}
 }
 
+func TestRender_BeadsErrorsTakePrecedenceOverRowsAndQuietStates(t *testing.T) {
+	for _, tt := range []struct {
+		mode Mode
+		name string
+	}{
+		{mode: ModeBeadsReady, name: "ready"},
+		{mode: ModeBeadsBlocked, name: "blocked"},
+		{mode: ModeBeadsOpen, name: "open"},
+		{mode: ModeBeadsInProgress, name: "in-progress"},
+		{mode: ModeBeadsClosed, name: "closed"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos:              []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+				Selected:           0,
+				Width:              150,
+				Height:             12,
+				Mode:               tt.mode,
+				BeadsOpen:          []beadsquery.Bead{{ID: "bd-retained", Title: "Retained"}},
+				BeadsOpenAvailable: true,
+				BeadsError:         "listing query: invalid character 'x' in JSON",
+			}))
+
+			want := "Could not load " + tt.name + " beads: listing query: invalid character 'x' in JSON"
+			if !strings.Contains(view, want) {
+				t.Fatalf("error view missing %q:\n%s", want, view)
+			}
+			for _, unwanted := range []string{"bd-retained", "no " + tt.name + " beads", "beads not configured"} {
+				if strings.Contains(view, unwanted) {
+					t.Fatalf("error view also rendered %q:\n%s", unwanted, view)
+				}
+			}
+		})
+	}
+}
+
+func TestRender_BeadsPendingTakesPrecedenceOverError(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos:              []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:           0,
+		Width:              100,
+		Height:             12,
+		Mode:               ModeBeadsOpen,
+		BeadsOpen:          []beadsquery.Bead{{ID: "bd-retained", Title: "Retained"}},
+		BeadsOpenAvailable: true,
+		BeadsOpenPending:   true,
+		BeadsError:         "old failure",
+	}))
+
+	if !strings.Contains(view, "loading open beads") {
+		t.Fatalf("pending/error view missing loading state:\n%s", view)
+	}
+	for _, unwanted := range []string{"Could not load", "old failure", "bd-retained", "no open beads", "beads not configured"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("pending/error view also rendered %q:\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestRender_BeadsCommandErrorShowsUsefulDetail(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      150,
+		Height:     12,
+		Mode:       ModeBeadsOpen,
+		BeadsError: "listing open beads: Error: corrupt database: exit status 1",
+	}))
+	want := "Could not load open beads: listing open beads: Error: corrupt database: exit status 1"
+	if !strings.Contains(view, want) {
+		t.Fatalf("command error view missing %q:\n%s", want, view)
+	}
+}
+
+func TestRender_BeadsErrorSanitizesControlsAndBoundsOneDetailLine(t *testing.T) {
+	const width = 82
+	hostile := "\x1b[31mbad JSON\x1b[0m\x1b]52;c;dGVzdA==\a\nsecond\rthird\x00\x01 " + strings.Repeat("overlong-", 30)
+	raw := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      width,
+		Height:     12,
+		Mode:       ModeBeadsOpen,
+		BeadsError: hostile,
+	})
+	view := ansi.Strip(raw)
+
+	detailLines := 0
+	for _, line := range strings.Split(view, "\n") {
+		if ansi.StringWidth(line) > width {
+			t.Fatalf("rendered line width = %d, want <= %d: %q", ansi.StringWidth(line), width, line)
+		}
+		if strings.Contains(line, "Could not load open beads:") {
+			detailLines++
+			if !strings.Contains(line, "bad JSON second third") {
+				t.Fatalf("error line lost sanitized detail: %q", line)
+			}
+		}
+	}
+	if detailLines != 1 {
+		t.Fatalf("error detail lines = %d, want exactly one:\n%s", detailLines, view)
+	}
+	for _, r := range view {
+		if r != '\n' && (r < ' ' || r == '\u007f') {
+			t.Fatalf("rendered view retained control rune %U: %q", r, view)
+		}
+	}
+	for _, unwanted := range []string{"[31m", "]52;", "beads not configured", "no open beads", "overlong-overlong-overlong"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("sanitized error view retained %q:\n%s", unwanted, view)
+		}
+	}
+}
+
 func TestModeHeader_BeadsShowsGroupedFiveSubviewRow(t *testing.T) {
 	lines := strings.Split(renderModeHeader(ModeBeadsOpen, 120), "\n")
 	if len(lines) != 3 {
@@ -157,9 +272,63 @@ func TestModeHeader_BeadsOpenKeepsActiveItemAtNarrowWidth(t *testing.T) {
 }
 
 func TestModeHeader_BeadsKeepsActiveSubviewAtConstrainedWidth(t *testing.T) {
-	lines := strings.Split(renderModeHeader(ModeBeadsClosed, 32), "\n")
-	if got := ansi.Strip(lines[1]); !strings.Contains(got, "[c] closed") {
+	lines := strings.Split(renderModeHeaderWithBeads(ModeBeadsClosed, 32, 100, 1432, true, false), "\n")
+	if got := ansi.Strip(lines[1]); !strings.Contains(got, "[c] closed 100 of 1432") {
 		t.Fatalf("constrained Beads subview row lost active item: %q", got)
+	}
+}
+
+func TestRender_BeadsClosedHeaderShowsAcceptedSourceCountAndTruncation(t *testing.T) {
+	tests := []struct {
+		name    string
+		fetched int
+		total   int
+		want    string
+	}{
+		{name: "truncated", fetched: 100, total: 1432, want: "[c] closed 100 of 1432"},
+		{name: "exact cap", fetched: 100, total: 100, want: "[c] closed 100"},
+		{name: "under cap", fetched: 42, total: 42, want: "[c] closed 42"},
+		{name: "zero", fetched: 0, total: 0, want: "[c] closed 0"},
+		{name: "count race below fetched", fetched: 100, total: 99, want: "[c] closed 100"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 180, Height: 12, Mode: ModeBeadsClosed,
+				BeadsOpenAvailable: true, BeadsSourceCount: tt.fetched, BeadsClosedTotal: tt.total,
+			}))
+			if !strings.Contains(view, tt.want) {
+				t.Fatalf("Closed header missing %q:\n%s", tt.want, view)
+			}
+			if tt.total <= tt.fetched && strings.Contains(view, fmt.Sprintf("%d of %d", tt.fetched, tt.total)) {
+				t.Fatalf("Closed header showed a false truncation marker:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestRender_BeadsClosedHeaderSuppressesCountWhileLoadingOrUnavailable(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		available bool
+		pending   bool
+	}{
+		{name: "loading", pending: true},
+		{name: "unavailable"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 180, Height: 12, Mode: ModeBeadsClosed,
+				BeadsOpenAvailable: tt.available, BeadsOpenPending: tt.pending,
+				BeadsSourceCount: 100, BeadsClosedTotal: 1432,
+			}))
+			if !strings.Contains(view, "[c] closed") || strings.Contains(view, "closed 100") {
+				t.Fatalf("%s Closed header exposed a count:\n%s", tt.name, view)
+			}
+		})
 	}
 }
 

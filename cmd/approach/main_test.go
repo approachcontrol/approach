@@ -427,6 +427,11 @@ func TestModelOptionsFromConfigMapsDefaultView(t *testing.T) {
 		{name: "view 1", view: intPtr(1), want: ui.ModeWorktrees},
 		{name: "view 8", view: intPtr(8), want: ui.ModeFlows},
 		{name: "view 9", view: intPtr(9), want: ui.ModeActiveFlows},
+		{name: "view 10", view: intPtr(10), want: ui.ModeBeadsReady},
+		{name: "view 11", view: intPtr(11), want: ui.ModeBeadsBlocked},
+		{name: "view 12", view: intPtr(12), want: ui.ModeBeadsOpen},
+		{name: "view 13", view: intPtr(13), want: ui.ModeBeadsInProgress},
+		{name: "view 14", view: intPtr(14), want: ui.ModeBeadsClosed},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sessionStore, planStore, flowStore := testArtifactStores(t)

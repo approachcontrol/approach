@@ -2783,6 +2783,8 @@ func (m Model) clearBeadsRepoOwnedState() Model {
 		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
 		m.beads[i].available = false
 		m.beads[i].pending = false
+		m.beads[i].error = ""
+		m.beads[i].total = 0
 		m.beads[i].repoPath = ""
 	}
 	return m

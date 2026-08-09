@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -139,10 +140,30 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 	case ui.ModeBeadsInProgress:
 		return beadsListFetchDescriptor(ui.ModeBeadsInProgress, "beads in-progress"), true
 	case ui.ModeBeadsClosed:
-		return beadsListFetchDescriptor(ui.ModeBeadsClosed, "beads closed"), true
+		return beadsClosedFetchDescriptor(), true
 	default:
 		return listFetchDescriptor{}, false
 	}
+}
+
+func beadsClosedFetchDescriptor() listFetchDescriptor {
+	desc := beadsListFetchDescriptor(ui.ModeBeadsClosed, "beads closed")
+	desc.load = func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+		index, _ := beadSubviewIndex(ui.ModeBeadsClosed)
+		beads, err := m.listBeads[index](repoPath)
+		if err != nil {
+			return beadsResultMessage(ui.ModeBeadsClosed, repoPath, request, nil, err), nil
+		}
+		total, err := m.countClosedBeads(repoPath)
+		if err != nil {
+			return beadsResultMessage(ui.ModeBeadsClosed, repoPath, request, nil, err), nil
+		}
+		return BeadsClosedResultMsg{
+			RepoPath: repoPath, Beads: beads, Total: total,
+			ListRequest: request, Available: true,
+		}, nil
+	}
+	return desc
 }
 
 func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor {
@@ -164,31 +185,38 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 			}
 			m.beads[index].available = false
 			m.beads[index].pending = true
+			m.beads[index].error = ""
+			m.beads[index].total = 0
 			return m.reflowBeads(mode)
 		},
 		load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
 			index, _ := beadSubviewIndex(mode)
 			beads, err := m.listBeads[index](repoPath)
-			return beadsResultMessage(mode, repoPath, request, beads, err == nil), nil
+			return beadsResultMessage(mode, repoPath, request, beads, err), nil
 		},
 	}
 }
 
-func beadsResultMessage(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead, available bool) tea.Msg {
+func beadsResultMessage(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead, err error) tea.Msg {
+	available := err == nil
+	errorDetail := ""
+	if err != nil && !errors.Is(err, beadsquery.ErrNotConfigured) {
+		errorDetail = err.Error()
+	}
 	if !available {
 		beads = nil
 	}
 	switch mode {
 	case ui.ModeBeadsReady:
-		return BeadsReadyResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsReadyResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsBlocked:
-		return BeadsBlockedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsBlockedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsOpen:
-		return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsInProgress:
-		return BeadsInProgressResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsInProgressResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	case ui.ModeBeadsClosed:
-		return BeadsClosedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+		return BeadsClosedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available, Error: errorDetail}
 	default:
 		return nil
 	}
