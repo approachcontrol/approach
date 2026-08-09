@@ -9,13 +9,14 @@ session hooks and storage in `docs/agent-sessions.md`.
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
 on a selected repo to collapse the repos pane to a narrow strip and give its
-width to the content pane; `ctrl+r` or `bksp` restores and focuses the full
-repos pane. Press `tab` from the repos pane to focus content without collapsing
-it. While collapsed, ordinary `tab` focus cycling skips the repos strip. With a
-Flow embedded terminal open, `tab` alternates between the Flow list and
-terminal; from a focused sessions terminal, `tab` restores and focuses the
-repos pane so terminal input cannot trap focus. The active pane is highlighted
-with a blue border.
+width to the content pane. When global key handling is active, `ctrl+r` or
+`bksp` restores and focuses the full repos pane. Press `tab` from the repos pane
+to focus content without collapsing it. While collapsed, ordinary `tab` focus
+cycling skips the repos strip. With a Flow embedded terminal open, `tab`
+alternates between the Flow list and terminal; from a focused sessions
+terminal, `tab` restores and focuses the repos pane so terminal input cannot
+trap focus. While either embedded terminal owns input, `ctrl+r` and `bksp` are
+passed to the agent. The active pane is highlighted with a blue border.
 
 Press `f2` from normal TUI views to open the prompt-template editor for the
 `[agent].plan_prompt` and `[flow_prompts]` templates; Flow terminal input
@@ -94,7 +95,7 @@ filter history, and returning to a view restores that view's previous query.
 | `D` | Toggle destructive mode |
 | `ctrl+r` | Restore and focus the full repos pane (outside search or embedded-terminal input focus) |
 | `tab` | Cycle pane focus forward; while the repos pane is collapsed, skip it and alternate only between a Flow list and terminal when present |
-| `bksp` | Restore and focus the full repos pane |
+| `bksp` | Restore and focus the full repos pane (outside embedded-terminal input focus) |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
