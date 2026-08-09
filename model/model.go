@@ -32,6 +32,7 @@ type beadSubviewState struct {
 	pane      pane.Pane[beadsquery.Bead]
 	available bool
 	pending   bool
+	error     string
 	total     int
 	// repoPath is the repository the loaded rows describe. Retention across a
 	// refetch is same-repo only, so a fetch for a different repository drops
@@ -686,6 +687,13 @@ func (m Model) BeadsPending(mode ui.Mode) bool {
 	state, ok := m.beadSubview(mode)
 	return ok && state.pending
 }
+func (m Model) BeadsError(mode ui.Mode) string {
+	state, ok := m.beadSubview(mode)
+	if !ok {
+		return ""
+	}
+	return state.error
+}
 func (m Model) BeadsSelected(mode ui.Mode) int {
 	state, ok := m.beadSubview(mode)
 	if !ok {
@@ -884,12 +892,13 @@ func (m Model) View() string {
 	flows, flowSelected, flowScroll := m.flows.View()
 	var beadsActive []beadsquery.Bead
 	beadsSelected, beadsScroll := 0, 0
-	beadsAvailable, beadsPending := false, false
+	beadsAvailable, beadsPending, beadsError := false, false, ""
 	beadsSourceCount, beadsClosedTotal := 0, 0
 	if state, ok := m.activeBeadSubview(); ok {
 		beadsActive, beadsSelected, beadsScroll = state.pane.View()
 		beadsAvailable = state.available
 		beadsPending = state.pending
+		beadsError = state.error
 		beadsSourceCount = state.pane.ItemCount()
 		if m.mode == ui.ModeBeadsClosed {
 			beadsClosedTotal = state.total
@@ -992,6 +1001,7 @@ func (m Model) View() string {
 		BeadsOpenScroll:              beadsScroll,
 		BeadsOpenAvailable:           beadsAvailable,
 		BeadsOpenPending:             beadsPending,
+		BeadsError:                   beadsError,
 		BeadsSourceCount:             beadsSourceCount,
 		BeadsClosedTotal:             beadsClosedTotal,
 		FlowEmbeddedTerminals:        m.flowEmbeddedTerminalTabs(),
@@ -1057,8 +1067,13 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	}
 	// A pending Beads query hides its retained rows, so the pane reports
 	// loading rather than a filter or fetch verdict about rows it is replacing.
-	if state, ok := m.activeBeadSubview(); ok && state.pending {
-		return "loading " + beadsModeName(m.mode) + " beads"
+	if state, ok := m.activeBeadSubview(); ok {
+		if state.pending {
+			return "loading " + beadsModeName(m.mode) + " beads"
+		}
+		if state.error != "" {
+			return "Could not load " + beadsModeName(m.mode) + " beads: " + state.error
+		}
 	}
 	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {
@@ -1078,9 +1093,6 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 		return "No active flows"
 	}
 	if state, ok := m.activeBeadSubview(); ok {
-		if state.pending {
-			return "loading " + beadsModeName(m.mode) + " beads"
-		}
 		if state.available {
 			return "no " + beadsModeName(m.mode) + " beads"
 		}
@@ -1475,13 +1487,13 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeActiveFlows, msg.ListRequest)
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
 	case BeadsReadyResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsReady, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
+		return m.handleBeadsResult(ui.ModeBeadsReady, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
 	case BeadsBlockedResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsBlocked, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
+		return m.handleBeadsResult(ui.ModeBeadsBlocked, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
 	case BeadsOpenResultMsg:
 		return m.handleBeadsOpenResult(msg), nil
 	case BeadsInProgressResultMsg:
-		return m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
+		return m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error), nil
 	case BeadsClosedResultMsg:
 		return m.handleBeadsClosedResult(msg), nil
 	case FlowAutoModeSetMsg:

@@ -290,6 +290,7 @@ type BeadsReadyResultMsg struct {
 	Beads       []beadsquery.Bead
 	ListRequest uint64
 	Available   bool
+	Error       string
 }
 
 type BeadsBlockedResultMsg struct {
@@ -297,6 +298,7 @@ type BeadsBlockedResultMsg struct {
 	Beads       []beadsquery.Bead
 	ListRequest uint64
 	Available   bool
+	Error       string
 }
 
 type BeadsOpenResultMsg struct {
@@ -304,6 +306,7 @@ type BeadsOpenResultMsg struct {
 	Beads       []beadsquery.Bead
 	ListRequest uint64
 	Available   bool
+	Error       string
 }
 
 type BeadsInProgressResultMsg struct {
@@ -311,6 +314,7 @@ type BeadsInProgressResultMsg struct {
 	Beads       []beadsquery.Bead
 	ListRequest uint64
 	Available   bool
+	Error       string
 }
 
 type BeadsClosedResultMsg struct {
@@ -319,6 +323,7 @@ type BeadsClosedResultMsg struct {
 	Total       int
 	ListRequest uint64
 	Available   bool
+	Error       string
 }
 
 type FlowAutoModeSetMsg struct {
@@ -1310,18 +1315,18 @@ func (m Model) handleSessionResult(msg SessionResultMsg) Model {
 }
 
 func (m Model) handleBeadsOpenResult(msg BeadsOpenResultMsg) Model {
-	return m.handleBeadsResult(ui.ModeBeadsOpen, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available)
+	return m.handleBeadsResult(ui.ModeBeadsOpen, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error)
 }
 
-func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool) Model {
-	return m.handleBeadsResultWithTotal(mode, repoPath, beads, request, available, 0)
+func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string) Model {
+	return m.handleBeadsResultWithTotal(mode, repoPath, beads, request, available, errorDetail, 0)
 }
 
 func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) Model {
-	return m.handleBeadsResultWithTotal(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Total)
+	return m.handleBeadsResultWithTotal(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available, msg.Error, msg.Total)
 }
 
-func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, total int) Model {
+func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) Model {
 	if m.mode != mode {
 		return m
 	}
@@ -1334,13 +1339,14 @@ func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads [
 	if !ok {
 		return m
 	}
-	if !available {
+	if !available || errorDetail != "" {
 		beads = nil
 		total = 0
 	}
 	m.beads[index].pane = m.beads[index].pane.SetItems(beads)
-	m.beads[index].available = available
+	m.beads[index].available = available && errorDetail == ""
 	m.beads[index].pending = false
+	m.beads[index].error = errorDetail
 	m.beads[index].total = total
 	m.beads[index].repoPath = repoPath
 	return m.reflowBeads(mode)
