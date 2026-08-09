@@ -68,14 +68,20 @@ fi
 	t.Setenv("BD_DB", "/other/legacy.db")
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "other_database")
 	t.Setenv("BD_JSON_ENVELOPE", "1")
-	repoPath := t.TempDir()
+	root := t.TempDir()
+	t.Chdir(root)
+	repoPath := filepath.Join("repos", "project")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	absRepoPath := filepath.Join(root, repoPath)
 
 	out, err := (execRunner{}).Run(repoPath, "list", "-s", "open", "--json")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	wantArgs := []string{"-C", repoPath, "list", "-s", "open", "--json"}
+	wantArgs := []string{"-C", absRepoPath, "list", "-s", "open", "--json"}
 	if len(lines) != len(wantArgs)+1 {
 		t.Fatalf("Run() output lines = %#v, want args plus working directory", lines)
 	}
@@ -84,9 +90,9 @@ fi
 	}
 	got := lines[len(lines)-1]
 	gotInfo, gotErr := os.Stat(got)
-	wantInfo, wantErr := os.Stat(repoPath)
+	wantInfo, wantErr := os.Stat(absRepoPath)
 	if gotErr != nil || wantErr != nil || !os.SameFile(gotInfo, wantInfo) {
-		t.Fatalf("Run() directory = %q, want same directory as %q", got, repoPath)
+		t.Fatalf("Run() directory = %q, want same directory as %q", got, absRepoPath)
 	}
 }
 

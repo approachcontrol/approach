@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -54,13 +55,17 @@ func defaultQuery() *Querier {
 }
 
 func (r execRunner) Run(dir string, args ...string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolving bd directory: %w", err)
+	}
 	commandArgs := make([]string, 0, len(args)+2)
 	// bd resolves -C before its user-level db fallback, setting BEADS_DIR to
 	// the repo's effective (redirect-aware) Beads directory.
-	commandArgs = append(commandArgs, "-C", dir)
+	commandArgs = append(commandArgs, "-C", absDir)
 	commandArgs = append(commandArgs, args...)
 	cmd := exec.Command("bd", commandArgs...)
-	cmd.Dir = dir
+	cmd.Dir = absDir
 	cmd.Env = withoutBeadsDatabaseSelectors(os.Environ())
 	limit := r.maxOutputBytes
 	if limit <= 0 {
@@ -70,7 +75,7 @@ func (r execRunner) Run(dir string, args ...string) (string, error) {
 	stderr := cappedBuffer{limit: defaultBDErrorLimit}
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
