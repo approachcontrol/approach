@@ -328,12 +328,15 @@ remains deferred.
 
 `/` filters only the active Beads pane by ID, title, and assignee. Subview
 switches and `f5` retain that pane's same-repo rows, query, cursor, and scroll
-internally while the loading UI hides old rows. An accepted replacement
-reapplies the filter and clamps selection and scroll for shorter, empty, or
-zero-match results. An unavailable result retains the query but clears that
-pane's rows and selection. Moving to another repo invalidates every Beads
-request, clears all old-repo rows and cursor/scroll positions, retains each
-subview's query, and starts only the active subview pending for the new repo.
+internally while the loading UI hides old rows. A loading pane shows only its
+`loading` message and ignores cursor keys, so no selection moves behind it. An
+accepted replacement reapplies the filter and clamps selection and scroll for
+shorter, empty, or zero-match results. An unavailable result retains the query
+but clears that pane's rows and selection. Moving to another repo invalidates
+every Beads request, clears all old-repo rows and cursor/scroll positions,
+retains each subview's query, and starts only the active subview pending for the
+new repo; retention is same-repo only, so this holds even when the repo changes
+while Active Flows is open.
 Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.

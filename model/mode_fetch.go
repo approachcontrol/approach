@@ -151,6 +151,14 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 		pane: paneName,
 		beforeStart: func(m Model) Model {
 			index, _ := beadSubviewIndex(mode)
+			// Rows and cursor are retained across a same-repo refetch so the
+			// accepted replacement can refilter and clamp them. Rows belonging
+			// to another repository are dropped instead; the query is view
+			// state and survives either way.
+			if repoPath, _ := m.currentRepoPath(); repoPath != m.beads[index].repoPath {
+				m.beads[index].pane = m.beads[index].pane.SetItems(nil).ResetSelection()
+				m.beads[index].repoPath = ""
+			}
 			m.beads[index].available = false
 			m.beads[index].pending = true
 			return m.reflowBeads(mode)

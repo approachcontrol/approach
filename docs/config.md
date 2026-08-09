@@ -154,7 +154,8 @@ Press `V` in Approach to choose and persist this value from a picker. The picker
 changes future launches only; use the keyboard keys `1`–`5`, `ctrl+a`, the
 scoped Git or Beads subview letters, or arrows within either group and among
 the top-level Git, sessions, plans, flows, and Beads stops to switch the current
-view.
+view. Arrows that enter Git or Beads then stay inside that group, so leaving it
+needs a number key or `ctrl+a`.
 
 ### `[editor]`
 

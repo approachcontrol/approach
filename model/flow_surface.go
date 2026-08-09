@@ -235,6 +235,7 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 		m.activeFlowsReturnMode = previousMode
 		m.mode = ui.ModeActiveFlows
 		m = m.rememberGitSubview()
+		m = m.rememberBeadsSubview()
 		m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
@@ -247,6 +248,7 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	m.mode = returnMode
 	m.activeFlowsReturnMode = 0
 	m = m.rememberGitSubview()
+	m = m.rememberBeadsSubview()
 	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()

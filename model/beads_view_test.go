@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/beadsquery"
+	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
@@ -976,6 +977,190 @@ func TestBeadsUnavailableResultClearsOnlyCurrentPaneAndRetainsQuery(t *testing.T
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	if got := m.ItemSearch(); got != "open" {
 		t.Fatalf("inactive Open query = %q after return, want open", got)
+	}
+}
+
+// A pending query hides the retained rows, so the pane must report loading even
+// when the retained rows no longer match the subview's filter. Otherwise a
+// refetch answers "no results" about rows it is in the middle of replacing.
+func TestBeadsPendingViewReportsLoadingUnderZeroMatchQuery(t *testing.T) {
+	opts := beadQueryOptions()
+	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
+	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-0", Title: "Alpha"}})
+	m = setBeadsQuery(t, m, "zzz")
+	if view := m.View(); !strings.Contains(view, "No bead results for zzz") {
+		t.Fatalf("settled zero-match view did not report the filter verdict:\n%s", view)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+	if !m.BeadsPending(ui.ModeBeadsOpen) {
+		t.Fatal("f5 did not leave Open pending")
+	}
+	view := m.View()
+	if !strings.Contains(view, "loading open beads") || strings.Contains(view, "No bead results") {
+		t.Fatalf("pending zero-match view did not report loading:\n%s", view)
+	}
+}
+
+// Changing repositories while Active Flows overlays the content pane still
+// switches which repository Beads describes, so no Beads pane may keep the old
+// repository's rows or cursor once the surface is dismissed.
+func TestBeadsRepoChangeUnderActiveFlowsClearsPaneState(t *testing.T) {
+	subviews := []struct {
+		key   rune
+		mode  ui.Mode
+		query string
+	}{
+		{key: 'o', mode: ui.ModeBeadsOpen, query: "open"},
+		{key: 'r', mode: ui.ModeBeadsReady, query: "ready"},
+		{key: 'b', mode: ui.ModeBeadsBlocked, query: "blocked"},
+		{key: 'i', mode: ui.ModeBeadsInProgress, query: "progress"},
+		{key: 'c', mode: ui.ModeBeadsClosed, query: "closed"},
+	}
+	opts := beadQueryOptions()
+	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
+	opts.ListFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
+	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	for _, subview := range subviews {
+		if m.Mode() != subview.mode {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
+		}
+		m = applyBeadsResult(t, m, subview.mode, true, []beadsquery.Bead{
+			{ID: subview.query + "-0", Title: subview.query},
+			{ID: subview.query + "-1", Title: subview.query},
+			{ID: subview.query + "-2", Title: subview.query},
+			{ID: subview.query + "-3", Title: subview.query},
+		})
+		m = setBeadsQuery(t, m, subview.query)
+		for range 3 {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+		}
+	}
+
+	before := listRequests(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	for _, subview := range subviews {
+		if m.ListRequest(subview.mode) == before[subview.mode] {
+			t.Fatalf("Active Flows repo change did not invalidate %v request", subview.mode)
+		}
+		if len(m.Beads(subview.mode)) != 0 || m.BeadsAvailable(subview.mode) || m.BeadsPending(subview.mode) ||
+			m.BeadsSelected(subview.mode) != 0 || m.BeadsScroll(subview.mode) != 0 {
+			t.Fatalf("Active Flows repo change left state in %v: rows=%#v available=%v pending=%v selected=%d scroll=%d",
+				subview.mode, m.Beads(subview.mode), m.BeadsAvailable(subview.mode), m.BeadsPending(subview.mode),
+				m.BeadsSelected(subview.mode), m.BeadsScroll(subview.mode))
+		}
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+	if m.Mode() != ui.ModeBeadsClosed {
+		t.Fatalf("active flows toggle returned to mode %v, want remembered Beads Closed", m.Mode())
+	}
+	for i := len(subviews) - 1; i >= 0; i-- {
+		subview := subviews[i]
+		if m.Mode() != subview.mode {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
+		}
+		assertBeadsPaneState(t, m, subview.mode, subview.query, 0, 0, 0)
+	}
+}
+
+// While a subview is pending its rows are hidden behind the loading message, so
+// cursor keys must not silently move a selection the user cannot see.
+func TestBeadsCursorIsInertWhilePending(t *testing.T) {
+	opts := beadQueryOptions()
+	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
+	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 2})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{
+		{ID: "bd-0"}, {ID: "bd-1"}, {ID: "bd-2"},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	wantSelected, wantScroll := m.BeadsSelected(ui.ModeBeadsOpen), m.BeadsScroll(ui.ModeBeadsOpen)
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyDown, tea.KeyUp} {
+		m, _ = update(m, tea.KeyMsg{Type: key})
+	}
+	if got, gotScroll := m.BeadsSelected(ui.ModeBeadsOpen), m.BeadsScroll(ui.ModeBeadsOpen); got != wantSelected || gotScroll != wantScroll {
+		t.Fatalf("cursor moved behind the loading placeholder: selected %d scroll %d, want %d/%d", got, gotScroll, wantSelected, wantScroll)
+	}
+
+	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{
+		{ID: "bd-0"}, {ID: "bd-1"}, {ID: "bd-2"},
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.BeadsSelected(ui.ModeBeadsOpen); got != wantSelected+1 {
+		t.Fatalf("cursor stayed inert after the result landed: selected %d, want %d", got, wantSelected+1)
+	}
+}
+
+// Arrow switching is one of the ways a subview becomes the remembered one, so
+// key 5 must re-enter a subview that was only ever reached by arrow.
+func TestBeadsArrowSwitchIsRememberedForKeyFiveReentry(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // Open -> In-progress.
+	if m.Mode() != ui.ModeBeadsInProgress {
+		t.Fatalf("arrow mode = %v, want Beads In-progress", m.Mode())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	before := listRequests(m)
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	if m.Mode() != ui.ModeBeadsInProgress || cmd == nil {
+		t.Fatalf("key 5 re-entry = mode %v cmd %T, want arrow-remembered In-progress fetch", m.Mode(), cmd)
+	}
+	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsInProgress)
+}
+
+// The remembered subview is view state, not repo-owned data, so a repo change
+// must not send Beads back to Open.
+func TestBeadsRememberedSubviewSurvivesRepoChange(t *testing.T) {
+	opts := beadQueryOptions()
+	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
+	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	if m.Mode() != ui.ModeBeadsClosed {
+		t.Fatalf("key 5 after repo change = %v, want remembered Beads Closed", m.Mode())
+	}
+}
+
+// esc is the primary way a filter is undone, and it must restore the subview's
+// full row set rather than only leaving search-edit mode.
+func TestBeadsFilterClearsWithEsc(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 3})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{
+		{ID: "bd-needle", Title: "Needle"},
+		{ID: "bd-other", Title: "Other"},
+	})
+	m = setBeadsQuery(t, m, "needle")
+	if got := m.Beads(ui.ModeBeadsOpen); len(got) != 1 || got[0].ID != "bd-needle" {
+		t.Fatalf("filtered Open rows = %#v, want the needle row", got)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.SearchActive() || m.ItemSearch() != "" {
+		t.Fatalf("esc left filter state: active %v query %q", m.SearchActive(), m.ItemSearch())
+	}
+	if got := m.Beads(ui.ModeBeadsOpen); len(got) != 2 {
+		t.Fatalf("esc did not restore the unfiltered Open rows: %#v", got)
 	}
 }
 

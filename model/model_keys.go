@@ -293,15 +293,11 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
-			m.repos = m.repos.Move(-1, m.repoContentHeight(), ui.LeftPaneWidth-2)
-			m.pendingRepoSelection = ""
-			return m.handleRepoSelectionChanged(true)
+			return m.moveRepoSelection(-1)
 		}
 	case "down", "j":
 		if len(m.filteredRepos()) > 0 {
-			m.repos = m.repos.Move(1, m.repoContentHeight(), ui.LeftPaneWidth-2)
-			m.pendingRepoSelection = ""
-			return m.handleRepoSelectionChanged(true)
+			return m.moveRepoSelection(1)
 		}
 	case "f":
 		return m.startFetchVisibleRepos()
@@ -313,8 +309,20 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) moveRepoSelection(delta int) (tea.Model, tea.Cmd) {
+	previousPath, _ := m.currentRepoPath()
+	m.repos = m.repos.Move(delta, m.repoContentHeight(), ui.LeftPaneWidth-2)
+	m.pendingRepoSelection = ""
+	currentPath, _ := m.currentRepoPath()
+	if sameRepoPath(previousPath, currentPath) {
+		return m, nil
+	}
+	return m.handleRepoSelectionChanged(true)
+}
+
 func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
 	if m.activeFlowSurfaceVisible() {
+		m = m.resetBeadsForRepoChange()
 		m = m.syncActiveFlowsFromCache()
 		return m, nil
 	}
@@ -634,6 +642,9 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 			return stops[(i+direction+len(stops))%len(stops)]
 		}
 	}
+	// Only the ungrouped modes reach here, and Active Flows is intercepted
+	// before horizontal navigation runs. A mode missing from stops is
+	// arrow-unreachable by design, so hold the current view.
 	return m.mode
 }
 
@@ -724,6 +735,11 @@ func (m Model) moveCursor(delta int) Model {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		index, _ := beadSubviewIndex(m.mode)
+		// A pending subview renders its loading message instead of its retained
+		// rows, so cursor keys must not move a selection the user cannot see.
+		if m.beads[index].pending {
+			return m
+		}
 		m.beads[index].pane = m.beads[index].pane.Move(delta, h, w)
 	}
 	return m
@@ -2755,6 +2771,21 @@ func isFlowMode(mode ui.Mode) bool {
 	return mode == ui.ModeFlows || mode == ui.ModeActiveFlows
 }
 
+func (m Model) clearBeadsRepoOwnedState() Model {
+	for i := range m.beads {
+		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
+		m.beads[i].available = false
+		m.beads[i].pending = false
+		m.beads[i].repoPath = ""
+	}
+	return m
+}
+
+func (m Model) resetBeadsForRepoChange() Model {
+	m = m.invalidateBeadsListRequests()
+	return m.clearBeadsRepoOwnedState()
+}
+
 func (m Model) resetRightPaneCursors() Model {
 	m = m.invalidateListRequests()
 	m.pendingBranchSelection = ""
@@ -2768,11 +2799,7 @@ func (m Model) resetRightPaneCursors() Model {
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
 	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
-	for i := range m.beads {
-		m.beads[i].pane = m.beads[i].pane.SetItems(nil).ResetSelection()
-		m.beads[i].available = false
-		m.beads[i].pending = false
-	}
+	m = m.clearBeadsRepoOwnedState()
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""

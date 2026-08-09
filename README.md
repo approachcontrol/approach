@@ -56,7 +56,7 @@ Repos on the left, content on the right. The essentials:
 | `1`–`5` | Git view, sessions, plans, flows, Beads group at its last-used subview (Open on first entry); `6`–`9` are unbound |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |
-| `←`/`→` | Wrap within Git or Beads subviews; elsewhere step through Git, sessions, plans, flows, and Beads |
+| `←`/`→` | Wrap within Git or Beads subviews; elsewhere step through Git, sessions, plans, flows, and Beads, after which the arrows stay inside whichever group they entered |
 | `ctrl+a` | Toggle Active Flows (all repos) |
 | `/` | Fuzzy filter the active pane |
 | `f5` | Rescan repositories and refresh the current view, including the active Beads subview |

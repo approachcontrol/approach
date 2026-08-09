@@ -32,6 +32,10 @@ type beadSubviewState struct {
 	pane      pane.Pane[beadsquery.Bead]
 	available bool
 	pending   bool
+	// repoPath is the repository the loaded rows describe. Retention across a
+	// refetch is same-repo only, so a fetch for a different repository drops
+	// the rows and cursor instead of clamping them onto the new repo's results.
+	repoPath string
 }
 
 // Model is the bubbletea application model.
@@ -1025,6 +1029,11 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 			return "No matching repo"
 		}
 		return "No selected repo"
+	}
+	// A pending Beads query hides its retained rows, so the pane reports
+	// loading rather than a filter or fetch verdict about rows it is replacing.
+	if state, ok := m.activeBeadSubview(); ok && state.pending {
+		return "loading " + beadsModeName(m.mode) + " beads"
 	}
 	sourceCount, filteredCount := m.activeItemCounts(filteredWorktrees, filteredBranches, filteredStashes, filteredCommits, filteredReflogs, filteredSessions, filteredPlans, filteredFlows, filteredBeadsOpen)
 	if m.activeItemPaneQuery() != "" && sourceCount > 0 && filteredCount == 0 {

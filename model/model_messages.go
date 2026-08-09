@@ -1331,6 +1331,7 @@ func (m Model) handleBeadsResult(mode ui.Mode, repoPath string, beads []beadsque
 	m.beads[index].pane = m.beads[index].pane.SetItems(beads)
 	m.beads[index].available = available
 	m.beads[index].pending = false
+	m.beads[index].repoPath = repoPath
 	return m.reflowBeads(mode)
 }
 
