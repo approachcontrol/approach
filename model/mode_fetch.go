@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/planstore"
@@ -129,26 +130,57 @@ func listFetchDescriptorForMode(mode ui.Mode) (listFetchDescriptor, bool) {
 				return FlowResultMsg{RepoPath: repoPath, Flows: records, ListRequest: request}, nil
 			},
 		}, true
+	case ui.ModeBeadsReady:
+		return beadsListFetchDescriptor(ui.ModeBeadsReady, "beads ready"), true
+	case ui.ModeBeadsBlocked:
+		return beadsListFetchDescriptor(ui.ModeBeadsBlocked, "beads blocked"), true
 	case ui.ModeBeadsOpen:
-		return listFetchDescriptor{
-			mode: ui.ModeBeadsOpen,
-			pane: "beads open",
-			beforeStart: func(m Model) Model {
-				m.beadsOpen = m.beadsOpen.SetItems(nil).ResetSelection()
-				m.beadsOpenAvailable = false
-				m.beadsOpenPending = true
-				return m.reflowBeadsOpen()
-			},
-			load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
-				beads, err := m.listOpenBeads(repoPath)
-				if err != nil {
-					return BeadsOpenResultMsg{RepoPath: repoPath, ListRequest: request}, nil
-				}
-				return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: true}, nil
-			},
-		}, true
+		return beadsListFetchDescriptor(ui.ModeBeadsOpen, "beads open"), true
+	case ui.ModeBeadsInProgress:
+		return beadsListFetchDescriptor(ui.ModeBeadsInProgress, "beads in-progress"), true
+	case ui.ModeBeadsClosed:
+		return beadsListFetchDescriptor(ui.ModeBeadsClosed, "beads closed"), true
 	default:
 		return listFetchDescriptor{}, false
+	}
+}
+
+func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor {
+	return listFetchDescriptor{
+		mode: mode,
+		pane: paneName,
+		beforeStart: func(m Model) Model {
+			index, _ := beadSubviewIndex(mode)
+			m.beads[index].pane = m.beads[index].pane.SetItems(nil).ResetSelection()
+			m.beads[index].available = false
+			m.beads[index].pending = true
+			return m.reflowBeads(mode)
+		},
+		load: func(m Model, repoPath string, request uint64) (tea.Msg, error) {
+			index, _ := beadSubviewIndex(mode)
+			beads, err := m.listBeads[index](repoPath)
+			return beadsResultMessage(mode, repoPath, request, beads, err == nil), nil
+		},
+	}
+}
+
+func beadsResultMessage(mode ui.Mode, repoPath string, request uint64, beads []beadsquery.Bead, available bool) tea.Msg {
+	if !available {
+		beads = nil
+	}
+	switch mode {
+	case ui.ModeBeadsReady:
+		return BeadsReadyResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+	case ui.ModeBeadsBlocked:
+		return BeadsBlockedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+	case ui.ModeBeadsOpen:
+		return BeadsOpenResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+	case ui.ModeBeadsInProgress:
+		return BeadsInProgressResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+	case ui.ModeBeadsClosed:
+		return BeadsClosedResultMsg{RepoPath: repoPath, Beads: beads, ListRequest: request, Available: available}
+	default:
+		return nil
 	}
 }
 

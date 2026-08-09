@@ -23,7 +23,16 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-const listRequestSlots = int(ui.ModeBeadsOpen) + 1
+const (
+	listRequestSlots = int(ui.ModeBeadsClosed) + 1
+	beadSubviewCount = int(ui.ModeBeadsClosed-ui.ModeBeadsReady) + 1
+)
+
+type beadSubviewState struct {
+	pane      pane.Pane[beadsquery.Bead]
+	available bool
+	pending   bool
+}
 
 // Model is the bubbletea application model.
 type Model struct {
@@ -43,9 +52,7 @@ type Model struct {
 	flows                     pane.Pane[flowstore.FlowRecord]
 	activeFlowRecords         []flowstore.FlowRecord
 	activeFlows               pane.Pane[flowstore.FlowRecord]
-	beadsOpen                 pane.Pane[beadsquery.Bead]
-	beadsOpenAvailable        bool
-	beadsOpenPending          bool
+	beads                     [beadSubviewCount]beadSubviewState
 	expandedPlanID            string
 	expandedFlowID            string
 	expandedActiveFlowID      string
@@ -104,7 +111,7 @@ type Model struct {
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
-	listOpenBeads             func(string) ([]beadsquery.Bead, error)
+	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -211,7 +218,11 @@ type Options struct {
 	ReadTranscript           func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	ListPlans                func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	ListFlows                func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
+	ListReadyBeads           func(repoPath string) ([]beadsquery.Bead, error)
+	ListBlockedBeads         func(repoPath string) ([]beadsquery.Bead, error)
 	ListOpenBeads            func(repoPath string) ([]beadsquery.Bead, error)
+	ListInProgressBeads      func(repoPath string) ([]beadsquery.Bead, error)
+	ListClosedBeads          func(repoPath string) ([]beadsquery.Bead, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -305,9 +316,25 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if listFlows == nil {
 		listFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
 	}
+	listReadyBeads := opts.ListReadyBeads
+	if listReadyBeads == nil {
+		listReadyBeads = beadsquery.ListReady
+	}
+	listBlockedBeads := opts.ListBlockedBeads
+	if listBlockedBeads == nil {
+		listBlockedBeads = beadsquery.ListBlocked
+	}
 	listOpenBeads := opts.ListOpenBeads
 	if listOpenBeads == nil {
 		listOpenBeads = beadsquery.ListOpen
+	}
+	listInProgressBeads := opts.ListInProgressBeads
+	if listInProgressBeads == nil {
+		listInProgressBeads = beadsquery.ListInProgress
+	}
+	listClosedBeads := opts.ListClosedBeads
+	if listClosedBeads == nil {
+		listClosedBeads = beadsquery.ListClosed
 	}
 	setFlowPhase := opts.SetFlowPhase
 	if setFlowPhase == nil {
@@ -472,38 +499,44 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	initialMode := startupMode(opts.StartupMode)
 	m := Model{
-		repos:                    newRepoPane().SetItems(repos),
-		rows:                     newBranchPane(),
-		stashes:                  newStashPane(),
-		worktrees:                newWorktreePane(),
-		worktreeSessions:         newSessionPane(),
-		commits:                  newCommitPane(),
-		reflogs:                  newReflogPane(),
-		sessions:                 newSessionPane(),
-		plans:                    newPlanPane(),
-		flows:                    newFlowPane(),
-		activeFlows:              newFlowPane(),
-		beadsOpen:                newBeadPane(),
-		flowHeadless:             true,
-		flowRefreshTickGen:       1,
-		mode:                     initialMode,
-		defaultView:              initialMode,
-		agentCommand:             agent.Normalize(opts.AgentCommand),
-		codexModel:               agent.NormalizeModel(opts.CodexModel),
-		claudeModel:              agent.NormalizeModel(opts.ClaudeModel),
-		codexReasoningEffort:     agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
-		claudeReasoningEffort:    agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
-		planPromptTemplate:       opts.PlanPromptTemplate,
-		flowPromptTemplates:      opts.FlowPromptTemplates,
-		repoCreateRoot:           opts.RepoCreateRoot,
-		scanRepos:                opts.ScanRepos,
-		createRepo:               createRepo,
-		fetchRepo:                fetchRepo,
-		listSessions:             listSessions,
-		readTranscript:           readTranscript,
-		listPlans:                listPlans,
-		listFlows:                listFlows,
-		listOpenBeads:            listOpenBeads,
+		repos:                 newRepoPane().SetItems(repos),
+		rows:                  newBranchPane(),
+		stashes:               newStashPane(),
+		worktrees:             newWorktreePane(),
+		worktreeSessions:      newSessionPane(),
+		commits:               newCommitPane(),
+		reflogs:               newReflogPane(),
+		sessions:              newSessionPane(),
+		plans:                 newPlanPane(),
+		flows:                 newFlowPane(),
+		activeFlows:           newFlowPane(),
+		beads:                 newBeadSubviews(),
+		flowHeadless:          true,
+		flowRefreshTickGen:    1,
+		mode:                  initialMode,
+		defaultView:           initialMode,
+		agentCommand:          agent.Normalize(opts.AgentCommand),
+		codexModel:            agent.NormalizeModel(opts.CodexModel),
+		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
+		codexReasoningEffort:  agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
+		claudeReasoningEffort: agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
+		planPromptTemplate:    opts.PlanPromptTemplate,
+		flowPromptTemplates:   opts.FlowPromptTemplates,
+		repoCreateRoot:        opts.RepoCreateRoot,
+		scanRepos:             opts.ScanRepos,
+		createRepo:            createRepo,
+		fetchRepo:             fetchRepo,
+		listSessions:          listSessions,
+		readTranscript:        readTranscript,
+		listPlans:             listPlans,
+		listFlows:             listFlows,
+		listBeads: [beadSubviewCount]func(string) ([]beadsquery.Bead, error){
+			listReadyBeads,
+			listBlockedBeads,
+			listOpenBeads,
+			listInProgressBeads,
+			listClosedBeads,
+		},
 		createFlow:               createFlowForRepo,
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
@@ -538,7 +571,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if ui.IsGitMode(m.mode) {
 		m.lastGitMode = m.mode
 	}
-	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsOpen; mode++ {
+	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
@@ -618,48 +651,79 @@ func (m Model) Flows() []flowstore.FlowRecord {
 	flows, _, _ := m.flows.View()
 	return flows
 }
-func (m Model) BeadsOpen() []beadsquery.Bead {
-	beads, _, _ := m.beadsOpen.View()
+func (m Model) Beads(mode ui.Mode) []beadsquery.Bead {
+	state, ok := m.beadSubview(mode)
+	if !ok {
+		return nil
+	}
+	beads, _, _ := state.pane.View()
 	return beads
 }
-func (m Model) BeadsOpenAvailable() bool        { return m.beadsOpenAvailable }
-func (m Model) BeadsOpenPending() bool          { return m.beadsOpenPending }
-func (m Model) BeadsOpenSelected() int          { return m.beadsOpen.SelectedIndex() }
-func (m Model) BeadsOpenScroll() int            { return m.beadsOpen.Scroll() }
-func (m Model) PlanSelected() int               { return m.plans.SelectedIndex() }
-func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
-func (m Model) FlowSelected() int               { return m.flows.SelectedIndex() }
-func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
-func (m Model) ExpandedPlanID() string          { return m.expandedPlanID }
-func (m Model) ExpandedFlowID() string          { return m.expandedFlowID }
-func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
-func (m Model) SelectedFlowPhaseID() string     { return m.selectedFlowPhaseID }
-func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
-func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
-func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
-func (m Model) OverlayDiff() string             { return m.modal.View().Diff }
-func (m Model) OverlayText() string             { return m.modal.View().Text }
-func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
-func (m Model) FormView() ui.FormView           { return uiFormView(m.modal.View().Form) }
-func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
-func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
-func (m Model) WorktreeInput() string           { return m.modal.View().Input }
-func (m Model) InputMode() modal.InputMode      { return m.modal.View().InputMode }
-func (m Model) InputCursor() int                { return m.modal.View().InputCursor }
-func (m Model) WorktreeInputErr() string        { return m.modal.View().InputErr }
-func (m Model) BranchScroll() int               { return m.rows.Scroll() }
-func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
-func (m Model) StashScroll() int                { return m.stashes.Scroll() }
-func (m Model) ActivePane() int                 { return m.activePane }
-func (m Model) Destructive() bool               { return m.destructive }
-func (m Model) TransientError() string          { return m.visibleStatusText() }
-func (m Model) TransientErrorFadeStep() int     { return m.visibleStatusFadeStep() }
-func (m Model) SearchActive() bool              { return m.searchActive }
-func (m Model) RepoSearch() string              { return m.repos.Query() }
-func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
-func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
-func (m Model) AgentCommand() string            { return m.agentCommand }
-func (m Model) DefaultView() ui.Mode            { return m.defaultView }
+func (m Model) BeadsAvailable(mode ui.Mode) bool {
+	state, ok := m.beadSubview(mode)
+	return ok && state.available
+}
+func (m Model) BeadsPending(mode ui.Mode) bool {
+	state, ok := m.beadSubview(mode)
+	return ok && state.pending
+}
+func (m Model) BeadsSelected(mode ui.Mode) int {
+	state, ok := m.beadSubview(mode)
+	if !ok {
+		return 0
+	}
+	return state.pane.SelectedIndex()
+}
+func (m Model) BeadsScroll(mode ui.Mode) int {
+	state, ok := m.beadSubview(mode)
+	if !ok {
+		return 0
+	}
+	return state.pane.Scroll()
+}
+func (m Model) BeadsReady() []beadsquery.Bead      { return m.Beads(ui.ModeBeadsReady) }
+func (m Model) BeadsBlocked() []beadsquery.Bead    { return m.Beads(ui.ModeBeadsBlocked) }
+func (m Model) BeadsOpen() []beadsquery.Bead       { return m.Beads(ui.ModeBeadsOpen) }
+func (m Model) BeadsInProgress() []beadsquery.Bead { return m.Beads(ui.ModeBeadsInProgress) }
+func (m Model) BeadsClosed() []beadsquery.Bead     { return m.Beads(ui.ModeBeadsClosed) }
+func (m Model) BeadsOpenAvailable() bool           { return m.BeadsAvailable(ui.ModeBeadsOpen) }
+func (m Model) BeadsOpenPending() bool             { return m.BeadsPending(ui.ModeBeadsOpen) }
+func (m Model) BeadsOpenSelected() int             { return m.BeadsSelected(ui.ModeBeadsOpen) }
+func (m Model) BeadsOpenScroll() int               { return m.BeadsScroll(ui.ModeBeadsOpen) }
+func (m Model) PlanSelected() int                  { return m.plans.SelectedIndex() }
+func (m Model) PlanScroll() int                    { return m.plans.Scroll() }
+func (m Model) FlowSelected() int                  { return m.flows.SelectedIndex() }
+func (m Model) FlowScroll() int                    { return m.flows.Scroll() }
+func (m Model) ExpandedPlanID() string             { return m.expandedPlanID }
+func (m Model) ExpandedFlowID() string             { return m.expandedFlowID }
+func (m Model) SelectedPlanPhaseID() string        { return m.selectedPlanPhaseID }
+func (m Model) SelectedFlowPhaseID() string        { return m.selectedFlowPhaseID }
+func (m Model) ReflogSelected() int                { return m.reflogs.SelectedIndex() }
+func (m Model) ReflogScroll() int                  { return m.reflogs.Scroll() }
+func (m Model) Overlay() ui.OverlayState           { return m.overlayState() }
+func (m Model) OverlayDiff() string                { return m.modal.View().Diff }
+func (m Model) OverlayText() string                { return m.modal.View().Text }
+func (m Model) OverlayScroll() int                 { return m.modal.View().Scroll }
+func (m Model) FormView() ui.FormView              { return uiFormView(m.modal.View().Form) }
+func (m Model) ConfirmPrompt() string              { return m.modal.View().Prompt }
+func (m Model) ConfirmForce() bool                 { return m.modal.View().Force }
+func (m Model) WorktreeInput() string              { return m.modal.View().Input }
+func (m Model) InputMode() modal.InputMode         { return m.modal.View().InputMode }
+func (m Model) InputCursor() int                   { return m.modal.View().InputCursor }
+func (m Model) WorktreeInputErr() string           { return m.modal.View().InputErr }
+func (m Model) BranchScroll() int                  { return m.rows.Scroll() }
+func (m Model) RepoScroll() int                    { return m.repos.Scroll() }
+func (m Model) StashScroll() int                   { return m.stashes.Scroll() }
+func (m Model) ActivePane() int                    { return m.activePane }
+func (m Model) Destructive() bool                  { return m.destructive }
+func (m Model) TransientError() string             { return m.visibleStatusText() }
+func (m Model) TransientErrorFadeStep() int        { return m.visibleStatusFadeStep() }
+func (m Model) SearchActive() bool                 { return m.searchActive }
+func (m Model) RepoSearch() string                 { return m.repos.Query() }
+func (m Model) ItemSearch() string                 { return m.activeItemPaneQuery() }
+func (m Model) ListRequest(mode ui.Mode) uint64    { return m.currentListRequest(mode) }
+func (m Model) AgentCommand() string               { return m.agentCommand }
+func (m Model) DefaultView() ui.Mode               { return m.defaultView }
 func (m Model) ReasoningEffortFor(command string) string {
 	switch agent.Normalize(command) {
 	case agent.CommandCodex:
@@ -799,7 +863,14 @@ func (m Model) View() string {
 	sessions, sessionSelected, sessionScroll := m.sessions.View()
 	plans, planSelected, planScroll := m.plans.View()
 	flows, flowSelected, flowScroll := m.flows.View()
-	beadsOpen, beadsOpenSelected, beadsOpenScroll := m.beadsOpen.View()
+	var beadsActive []beadsquery.Bead
+	beadsSelected, beadsScroll := 0, 0
+	beadsAvailable, beadsPending := false, false
+	if state, ok := m.activeBeadSubview(); ok {
+		beadsActive, beadsSelected, beadsScroll = state.pane.View()
+		beadsAvailable = state.available
+		beadsPending = state.pending
+	}
 	if m.activeFlowSurfaceVisible() {
 		flows, flowSelected, flowScroll = m.activeFlows.View()
 	}
@@ -810,7 +881,7 @@ func (m Model) View() string {
 	_, flowIssueTargetSelected := m.selectedFlowIssue()
 	_, flowPRTargetSelected := m.selectedFlowPR()
 	repoEmptyMessage := m.repoEmptyMessage(len(repos))
-	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows), len(beadsOpen))
+	rightEmptyMessage := m.rightEmptyMessage(len(repos), len(worktrees), len(rows), len(stashes), len(commits), len(reflogs), len(sessions), len(plans), len(flows), len(beadsActive))
 	if len(repos) == 0 {
 		worktrees = nil
 		rows = nil
@@ -820,7 +891,7 @@ func (m Model) View() string {
 		sessions = nil
 		plans = nil
 		flows = nil
-		beadsOpen = nil
+		beadsActive = nil
 	}
 	modalView := m.modal.View()
 	return ui.Render(ui.RenderParams{
@@ -888,11 +959,11 @@ func (m Model) View() string {
 		Flows:                        flows,
 		FlowSelected:                 flowSelected,
 		FlowScroll:                   flowScroll,
-		BeadsOpen:                    beadsOpen,
-		BeadsOpenSelected:            beadsOpenSelected,
-		BeadsOpenScroll:              beadsOpenScroll,
-		BeadsOpenAvailable:           m.beadsOpenAvailable,
-		BeadsOpenPending:             m.beadsOpenPending,
+		BeadsOpen:                    beadsActive,
+		BeadsOpenSelected:            beadsSelected,
+		BeadsOpenScroll:              beadsScroll,
+		BeadsOpenAvailable:           beadsAvailable,
+		BeadsOpenPending:             beadsPending,
 		FlowEmbeddedTerminals:        m.flowEmbeddedTerminalTabs(),
 		FlowEmbeddedTerminalLines:    m.flowEmbeddedTerminalLines(),
 		FlowEmbeddedTerminalPrefix:   m.terminalPrefixActive && m.flowFocus == flowFocusTerminal,
@@ -971,12 +1042,12 @@ func (m Model) rightEmptyMessage(filteredRepos, filteredWorktrees, filteredBranc
 	if m.activeFlowSurfaceVisible() {
 		return "No active flows"
 	}
-	if m.mode == ui.ModeBeadsOpen {
-		if m.beadsOpenPending {
-			return "loading open beads"
+	if state, ok := m.activeBeadSubview(); ok {
+		if state.pending {
+			return "loading " + beadsModeName(m.mode) + " beads"
 		}
-		if m.beadsOpenAvailable {
-			return "no open beads"
+		if state.available {
+			return "no " + beadsModeName(m.mode) + " beads"
 		}
 		return "beads not configured"
 	}
@@ -1006,8 +1077,9 @@ func (m Model) activeItemCounts(filteredWorktrees, filteredBranches, filteredSta
 		return m.flows.ItemCount(), filteredFlows
 	case ui.ModeActiveFlows:
 		return m.activeFlows.ItemCount(), filteredFlows
-	case ui.ModeBeadsOpen:
-		return m.beadsOpen.ItemCount(), filteredBeadsOpen
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		state, _ := m.activeBeadSubview()
+		return state.pane.ItemCount(), filteredBeadsOpen
 	default:
 		return 0, 0
 	}
@@ -1033,8 +1105,8 @@ func modeDataName(mode ui.Mode) string {
 		return "flows"
 	case ui.ModeActiveFlows:
 		return "active flows"
-	case ui.ModeBeadsOpen:
-		return "open beads"
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		return beadsModeName(mode) + " beads"
 	default:
 		return "items"
 	}
@@ -1060,10 +1132,27 @@ func modeResultName(mode ui.Mode) string {
 		return "flow"
 	case ui.ModeActiveFlows:
 		return "flow"
-	case ui.ModeBeadsOpen:
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
 		return "bead"
 	default:
 		return "item"
+	}
+}
+
+func beadsModeName(mode ui.Mode) string {
+	switch mode {
+	case ui.ModeBeadsReady:
+		return "ready"
+	case ui.ModeBeadsBlocked:
+		return "blocked"
+	case ui.ModeBeadsOpen:
+		return "open"
+	case ui.ModeBeadsInProgress:
+		return "in-progress"
+	case ui.ModeBeadsClosed:
+		return "closed"
+	default:
+		return ""
 	}
 }
 
@@ -1350,8 +1439,16 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		next, autoLaunchCmd := m.handleActiveFlowResult(msg)
 		next, refreshCmd := next.finishFlowRefreshFetch(ui.ModeActiveFlows, msg.ListRequest)
 		return next, batchNonNil(refreshCmd, autoLaunchCmd)
+	case BeadsReadyResultMsg:
+		return m.handleBeadsResult(ui.ModeBeadsReady, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
+	case BeadsBlockedResultMsg:
+		return m.handleBeadsResult(ui.ModeBeadsBlocked, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
 	case BeadsOpenResultMsg:
 		return m.handleBeadsOpenResult(msg), nil
+	case BeadsInProgressResultMsg:
+		return m.handleBeadsResult(ui.ModeBeadsInProgress, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
+	case BeadsClosedResultMsg:
+		return m.handleBeadsResult(ui.ModeBeadsClosed, msg.RepoPath, msg.Beads, msg.ListRequest, msg.Available), nil
 	case FlowAutoModeSetMsg:
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:
@@ -2186,8 +2283,19 @@ func (m Model) reflowBranches() Model {
 	return m
 }
 
-func (m Model) reflowBeadsOpen() Model {
-	m.beadsOpen = m.beadsOpen.Reflow(m.rightContentHeight(), m.contentWidth())
+func (m Model) reflowBeads(mode ui.Mode) Model {
+	index, ok := beadSubviewIndex(mode)
+	if !ok {
+		return m
+	}
+	m.beads[index].pane = m.beads[index].pane.Reflow(m.beadsContentHeight(), m.contentWidth())
+	return m
+}
+
+func (m Model) reflowAllBeads() Model {
+	for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
+		m = m.reflowBeads(mode)
+	}
 	return m
 }
 

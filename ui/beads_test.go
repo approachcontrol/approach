@@ -98,10 +98,10 @@ func TestRender_BeadsOpenPendingShowsNeutralLoadingMessage(t *testing.T) {
 	}
 }
 
-func TestModeHeader_BeadsOpenShowsActiveTopLevelEntryWithoutSubviewRow(t *testing.T) {
+func TestModeHeader_BeadsShowsGroupedFiveSubviewRow(t *testing.T) {
 	lines := strings.Split(renderModeHeader(ModeBeadsOpen, 120), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("Beads header lines = %d, want top-level row and separator", len(lines))
+	if len(lines) != 3 {
+		t.Fatalf("Beads header lines = %d, want top-level row, subview row, and separator", len(lines))
 	}
 	top := ansi.Strip(lines[0])
 	for _, want := range []string{"1 git", "2 sessions", "3 plans", "4 flows", "[5] beads", "^a active flows"} {
@@ -109,10 +109,41 @@ func TestModeHeader_BeadsOpenShowsActiveTopLevelEntryWithoutSubviewRow(t *testin
 			t.Fatalf("Beads header missing %q: %q", want, top)
 		}
 	}
-	for _, unwanted := range []string{"w worktrees", "o open"} {
-		if strings.Contains(top, unwanted) {
-			t.Fatalf("Beads tracer header exposed deferred subview %q: %q", unwanted, top)
+	subviews := ansi.Strip(lines[1])
+	wants := []string{"r ready", "b blocked", "[o] open", "i in-progress", "c closed"}
+	last := -1
+	for _, want := range wants {
+		index := strings.Index(subviews, want)
+		if index < 0 {
+			t.Fatalf("Beads subview header missing %q: %q", want, subviews)
 		}
+		if index <= last {
+			t.Fatalf("Beads subview %q out of order: %q", want, subviews)
+		}
+		last = index
+	}
+}
+
+func TestModeHeader_BeadsStylesEachActiveSubview(t *testing.T) {
+	for _, tt := range []struct {
+		mode Mode
+		want string
+	}{
+		{mode: ModeBeadsReady, want: "[r] ready"},
+		{mode: ModeBeadsBlocked, want: "[b] blocked"},
+		{mode: ModeBeadsOpen, want: "[o] open"},
+		{mode: ModeBeadsInProgress, want: "[i] in-progress"},
+		{mode: ModeBeadsClosed, want: "[c] closed"},
+	} {
+		t.Run(tt.want, func(t *testing.T) {
+			lines := strings.Split(renderModeHeader(tt.mode, 120), "\n")
+			if got := ansi.Strip(lines[1]); !strings.Contains(got, tt.want) {
+				t.Fatalf("header = %q, want active %q", got, tt.want)
+			}
+			if top := ansi.Strip(lines[0]); !strings.Contains(top, "[5] beads") {
+				t.Fatalf("top-level header = %q, want active Beads group", top)
+			}
+		})
 	}
 }
 
@@ -122,6 +153,13 @@ func TestModeHeader_BeadsOpenKeepsActiveItemAtNarrowWidth(t *testing.T) {
 		if !strings.Contains(top, want) {
 			t.Fatalf("narrow Beads header missing %q: %q", want, top)
 		}
+	}
+}
+
+func TestModeHeader_BeadsKeepsActiveSubviewAtConstrainedWidth(t *testing.T) {
+	lines := strings.Split(renderModeHeader(ModeBeadsClosed, 32), "\n")
+	if got := ansi.Strip(lines[1]); !strings.Contains(got, "[c] closed") {
+		t.Fatalf("constrained Beads subview row lost active item: %q", got)
 	}
 }
 
@@ -174,7 +212,92 @@ func TestRender_BeadsOpenShortcutsDoNotAdvertiseDeferredArrowNavigation(t *testi
 	if !strings.Contains(pane, "Beads Open") {
 		t.Fatalf("shortcut pane missing Beads Open title:\n%s", pane)
 	}
-	if strings.Contains(pane, "←/→") || strings.Contains(pane, "view") {
+	if strings.Contains(pane, "←/→") || strings.Contains(pane, "select/view") {
 		t.Fatalf("shortcut pane advertised deferred Beads arrow navigation:\n%s", pane)
+	}
+}
+
+func TestRender_BeadsQuietStatesAreSubviewSpecific(t *testing.T) {
+	for _, tt := range []struct {
+		mode Mode
+		name string
+	}{
+		{mode: ModeBeadsReady, name: "ready"},
+		{mode: ModeBeadsBlocked, name: "blocked"},
+		{mode: ModeBeadsOpen, name: "open"},
+		{mode: ModeBeadsInProgress, name: "in-progress"},
+		{mode: ModeBeadsClosed, name: "closed"},
+	} {
+		t.Run(tt.name+"/empty", func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 90, Height: 12, Mode: tt.mode, BeadsOpenAvailable: true,
+			}))
+			if !strings.Contains(view, "no "+tt.name+" beads") {
+				t.Fatalf("empty view missing subview message:\n%s", view)
+			}
+		})
+		t.Run(tt.name+"/loading", func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 90, Height: 12, Mode: tt.mode, BeadsOpenPending: true,
+			}))
+			if !strings.Contains(view, "loading "+tt.name+" beads") || strings.Contains(view, "beads not configured") {
+				t.Fatalf("loading view has wrong quiet state:\n%s", view)
+			}
+		})
+		t.Run(tt.name+"/unavailable", func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 90, Height: 12, Mode: tt.mode,
+			}))
+			if !strings.Contains(view, "beads not configured") {
+				t.Fatalf("unavailable view missing blanket message:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestRender_BeadsGroupedHeaderConsumesOneListRow(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+		Width: 90, Height: BeadsContentOverhead + 2, Mode: ModeBeadsOpen, ActivePane: 1,
+		BeadsOpen: []beadsquery.Bead{
+			{ID: "bd-0", Title: "Zero"},
+			{ID: "bd-1", Title: "One"},
+			{ID: "bd-2", Title: "Two"},
+		},
+		BeadsOpenAvailable: true,
+	}))
+	if !strings.Contains(view, "bd-0") || !strings.Contains(view, "bd-1") {
+		t.Fatalf("height-2 Beads viewport omitted visible rows:\n%s", view)
+	}
+	if strings.Contains(view, "bd-2") {
+		t.Fatalf("Beads second header failed to reduce list capacity to two rows:\n%s", view)
+	}
+	if got := len(strings.Split(view, "\n")); got != BeadsContentOverhead+2 {
+		t.Fatalf("rendered height = %d, want unchanged outer height %d", got, BeadsContentOverhead+2)
+	}
+}
+
+func TestRender_AllBeadsShortcutTitlesExcludeDeferredArrowNavigation(t *testing.T) {
+	for _, tt := range []struct {
+		mode  Mode
+		title string
+	}{
+		{ModeBeadsReady, "Beads Ready"},
+		{ModeBeadsBlocked, "Beads Blocked"},
+		{ModeBeadsOpen, "Beads Open"},
+		{ModeBeadsInProgress, "Beads In-progr"},
+		{ModeBeadsClosed, "Beads Closed"},
+	} {
+		view := Render(RenderParams{
+			Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+			Width: 140, Height: 20, Mode: tt.mode, ActivePane: 1,
+		})
+		pane := ansi.Strip(shortcutPaneText(view))
+		if !strings.Contains(pane, tt.title) || !strings.Contains(pane, "r/b/o/i/c") || !strings.Contains(pane, "subview") || strings.Contains(pane, "←/→") || strings.Contains(pane, "select/view") {
+			t.Fatalf("shortcut pane for %v has wrong title/navigation:\n%s", tt.mode, pane)
+		}
 	}
 }
