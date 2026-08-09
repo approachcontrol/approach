@@ -350,6 +350,7 @@ type RenderParams struct {
 	FlowReasoningEffort          string
 	DefaultViewLabel             string
 	FlowNextLaunchReady          bool
+	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseResumableSelected   bool
@@ -617,6 +618,7 @@ func renderApplication(p RenderParams) string {
 		FlowReasoningEffort:          p.FlowReasoningEffort,
 		DefaultViewLabel:             p.DefaultViewLabel,
 		FlowNextLaunchReady:          p.FlowNextLaunchReady,
+		FlowRepairReady:              p.FlowRepairReady,
 		FlowManualMergeReadySelected: p.FlowManualMergeReadySelected && flowSelected && !flowPhaseSelected,
 		FlowPhaseResetReadySelected:  p.FlowPhaseResetReadySelected,
 		FlowPhaseResumableSelected:   p.FlowPhaseResumableSelected,
@@ -1049,6 +1051,7 @@ type statusBarParams struct {
 	FlowReasoningEffort          string
 	DefaultViewLabel             string
 	FlowNextLaunchReady          bool
+	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
 	FlowPhaseResetReadySelected  bool
 	FlowPhaseResumableSelected   bool
@@ -1571,6 +1574,9 @@ func flowShortcutSections(sp statusBarParams, actions, navigation, global []shor
 		flowModeControls = append(flowModeControls, shortcutHint{Key: "h", Label: headlessLabel, SuccessSuffix: headlessSuccessSuffix})
 		if sp.FlowSelected {
 			actions = append(actions, shortcutHint{Key: "enter", Label: "phases"})
+			if sp.FlowRepairReady {
+				actions = append(actions, shortcutHint{Key: "R", Label: "repair"})
+			}
 			if sp.FlowNextLaunchReady {
 				actions = append(actions, shortcutHint{Key: "g", Label: "launch next"})
 			}

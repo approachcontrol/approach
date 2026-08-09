@@ -78,7 +78,7 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 
 	var cmds []tea.Cmd
 	var autoCmd tea.Cmd
-	m, autoCmd, _ = m.prepareAutoFlowPhaseLaunch(previous, current)
+	m, autoCmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(previous, current, msg.Request)
 	cmds = append(cmds, autoCmd)
 	m.autoAdvanceSnapshot = current
 

@@ -2349,6 +2349,13 @@ func TestShouldPrefillEmbeddedPrompt(t *testing.T) {
 	if !actions.ShouldPrefillEmbeddedPrompt(base) {
 		t.Fatalf("ShouldPrefillEmbeddedPrompt(%#v) = false, want true", base)
 	}
+	repair := base
+	repair.FlowPhaseID = ""
+	repair.FlowLaunchTracked = false
+	repair.FlowRepair = true
+	if !actions.ShouldPrefillEmbeddedPrompt(repair) {
+		t.Fatalf("ShouldPrefillEmbeddedPrompt(%#v) = false, want interactive repair prefill", repair)
+	}
 
 	cases := []struct {
 		name string
@@ -2371,6 +2378,38 @@ func TestShouldPrefillEmbeddedPrompt(t *testing.T) {
 				t.Fatalf("ShouldPrefillEmbeddedPrompt(%#v) = true, want false", ctx)
 			}
 		})
+	}
+}
+
+func TestAgentCommandBuildsUntrackedEmbeddedFlowRepair(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:          "codex",
+		LaunchID:         "repair-launch-1",
+		RepoPath:         "/repo",
+		WorktreePath:     "/repo/worktree",
+		SessionStateRoot: "/state/approach/sessions/v1",
+		FlowID:           "flow-1",
+		FlowRepair:       true,
+		Embedded:         true,
+		InitialPrompt:    "Repair this Flow.",
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	if slices.Contains(cmd.Args, "Repair this Flow.") {
+		t.Fatalf("interactive Flow repair prompt should be prefilled, got argv %#v", cmd.Args)
+	}
+	env := envMap(cmd.Env)
+	if env["APPROACH_FLOW_ID"] != "flow-1" {
+		t.Fatalf("APPROACH_FLOW_ID = %q, want flow-1", env["APPROACH_FLOW_ID"])
+	}
+	if env["APPROACH_FLOW_PHASE_ID"] != "" {
+		t.Fatalf("APPROACH_FLOW_PHASE_ID = %q, want empty for repair", env["APPROACH_FLOW_PHASE_ID"])
+	}
+	for _, key := range []string{"APPROACH_SESSION_STATE_ROOT", "APPROACH_PLAN_STATE_ROOT", "APPROACH_FLOW_STATE_ROOT"} {
+		if env[key] != "/state/approach/sessions/v1" {
+			t.Fatalf("%s = %q, want shared state root", key, env[key])
+		}
 	}
 }
 

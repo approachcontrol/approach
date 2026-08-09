@@ -1338,6 +1338,49 @@ func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *tes
 	}
 }
 
+func TestFlowsSurfacesShowRepairShortcutOnlyWhenModelMarksItReady(t *testing.T) {
+	base := RenderParams{
+		Repos:        []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:     0,
+		Width:        180,
+		Height:       12,
+		Mode:         ModeFlows,
+		ActivePane:   1,
+		FlowSelected: 0,
+		Flows: []flowstore.FlowRecord{{
+			FlowID:       "flow-1",
+			Title:        "Stalled Flow",
+			RepoPath:     "/dev/approach",
+			WorktreePath: "/dev/approach-worktrees/flow-1",
+			Phases:       []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseBlocked}},
+		}},
+	}
+	if pane := shortcutPaneText(Render(base)); strings.Contains(pane, "R      repair") {
+		t.Fatalf("repair shortcut rendered without model availability:\n%s", pane)
+	}
+
+	base.FlowRepairReady = true
+	for _, active := range []bool{false, true} {
+		base.ActiveFlows = active
+		pane := shortcutPaneText(Render(base))
+		if !strings.Contains(pane, "R      repair") {
+			t.Fatalf("repair shortcut missing for active=%v:\n%s", active, pane)
+		}
+	}
+
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:           260,
+		Mode:            ModeFlows,
+		ActivePane:      1,
+		RepoSelected:    true,
+		FlowSelected:    true,
+		FlowRepairReady: true,
+	})
+	if !strings.Contains(bar, "R: repair") {
+		t.Fatalf("compact Flow footer missing repair shortcut: %q", bar)
+	}
+}
+
 func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},

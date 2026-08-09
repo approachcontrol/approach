@@ -239,6 +239,9 @@ func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstor
 	if !ok || record.FlowID == "" {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
+	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+	}
 	ordered := flowstore.OrderedPhases(record.Phases)
 	orderedRecord := record
 	orderedRecord.Phases = ordered
@@ -254,6 +257,11 @@ type flowPhaseLaunchTarget struct {
 	FlowPhaseLaunchPreparedRequest
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
+}
+
+type repairAutoDrainMarker struct {
+	MinimumRequest uint64
+	CleanExit      bool
 }
 
 func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
@@ -314,6 +322,10 @@ func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
+	return m.prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows, 0)
+}
+
+func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows []flowstore.FlowRecord, request uint64) (Model, tea.Cmd, []string) {
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previousFlows))
 	for _, record := range previousFlows {
 		if record.FlowID != "" {
@@ -325,6 +337,10 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			continue
 		}
 		if !record.AutoMode {
+			m = m.disarmAutoAdvanceDrain(record.FlowID)
+			continue
+		}
+		if m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) || m.hasPendingRepairAutoDrainMarker(record.FlowID) {
 			m = m.disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
@@ -340,8 +356,98 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			m = m.armAutoAdvanceDrain(record.FlowID)
 		}
 	}
+	if request != 0 {
+		m = m.consumeRepairAutoDrainMarkers(currentFlows, request)
+	}
 	m, cmd := m.prepareAutoAdvanceDrainLaunches(currentFlows)
 	return m, cmd, nil
+}
+
+func (m Model) armRepairAutoDrain(flowID string) Model {
+	return m.setRepairAutoDrainMarker(flowID, true)
+}
+
+func (m Model) suppressRepairAutoDrain(flowID string) Model {
+	return m.setRepairAutoDrainMarker(flowID, false)
+}
+
+func (m Model) setRepairAutoDrainMarker(flowID string, cleanExit bool) Model {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return m
+	}
+	if m.pendingRepairAutoDrainFlowIDs == nil {
+		m.pendingRepairAutoDrainFlowIDs = make(map[string]repairAutoDrainMarker)
+	}
+	marker := repairAutoDrainMarker{
+		MinimumRequest: m.autoAdvanceRequestSeq + 1,
+		CleanExit:      cleanExit,
+	}
+	// Repairs cannot overlap after launch reservation. The latest terminal
+	// removal is therefore authoritative: a successful retry must replace an
+	// earlier failed outcome, while a later failure must suppress an earlier
+	// clean handoff that has not been consumed yet.
+	m.pendingRepairAutoDrainFlowIDs[flowID] = marker
+	return m
+}
+
+func (m Model) hasPendingRepairAutoDrainMarker(flowID string) bool {
+	_, ok := m.pendingRepairAutoDrainFlowIDs[strings.TrimSpace(flowID)]
+	return ok
+}
+
+func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, request uint64) Model {
+	if request == 0 || len(m.pendingRepairAutoDrainFlowIDs) == 0 {
+		return m
+	}
+	recordsByID := make(map[string]flowstore.FlowRecord, len(records))
+	for _, record := range records {
+		if record.FlowID != "" {
+			recordsByID[record.FlowID] = record
+		}
+	}
+	for flowID, marker := range m.pendingRepairAutoDrainFlowIDs {
+		if request < marker.MinimumRequest {
+			continue
+		}
+		m = m.disarmAutoAdvanceDrain(flowID)
+		record, ok := recordsByID[flowID]
+		if !marker.CleanExit {
+			if !ok {
+				delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+				continue
+			}
+			switch flowstore.DeriveStatus(record) {
+			case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+				delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+				continue
+			}
+			if !record.AutoMode {
+				continue
+			}
+			if _, launchable := nextAutoLaunchPhase(record); !launchable {
+				// A detached repair can mutate the Flow long after the first
+				// post-removal poll. Retain suppression until such a mutation
+				// actually exposes work that AutoMode could otherwise launch.
+				continue
+			}
+			delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+			continue
+		}
+		delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+		if !ok || !record.AutoMode {
+			continue
+		}
+		switch flowstore.DeriveStatus(record) {
+		case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+			continue
+		}
+		m = m.armAutoAdvanceDrain(flowID)
+	}
+	if len(m.pendingRepairAutoDrainFlowIDs) == 0 {
+		m.pendingRepairAutoDrainFlowIDs = nil
+	}
+	return m
 }
 
 func newlyCompletedFlowPhases(previous, current flowstore.FlowRecord) []flowstore.FlowPhase {
@@ -468,6 +574,9 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
+	if m.hasPendingFlowRepairLaunch(record.FlowID) {
+		return true
+	}
 	for _, phase := range record.Phases {
 		if phase.Status == flowstore.PhaseRunning {
 			return true
@@ -482,6 +591,19 @@ func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
 	}
 	for _, slot := range m.embeddedTerminals {
 		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) hasFlowRepairEmbeddedTerminalForFlow(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.FlowRepair {
 			return true
 		}
 	}

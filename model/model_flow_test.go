@@ -4467,6 +4467,379 @@ func TestModel_GWithNoLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	}
 }
 
+func repairableFlowForShortcut() flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:       "flow-repair",
+		Title:        "Repair shortcut",
+		RepoPath:     os.TempDir(),
+		WorktreePath: os.TempDir(),
+		Branch:       "flow/repair",
+		Commit:       "abc123",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
+		AutoMode:     true,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID: "implementation",
+			Title:   "Implementation",
+			Kind:    flowstore.KindImplementation,
+			Status:  flowstore.PhaseBlocked,
+			Outcome: "blocked",
+			Notes:   "persisted metadata is inconsistent",
+		}},
+	}
+}
+
+func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		t.Run(fmt.Sprintf("active=%v", active), func(t *testing.T) {
+			var started actions.AgentLaunchContext
+			launchUpdates := 0
+			record := repairableFlowForShortcut()
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand:          "claude",
+				ClaudeModel:           "claude-sonnet-5",
+				ClaudeReasoningEffort: "max",
+				SessionStateRoot:      "/state/approach/sessions/v1",
+				AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					launchUpdates++
+					return flowstore.FlowRecord{}, nil
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+					started = ctx
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{record}, nil
+				},
+			})
+			if active {
+				m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{record})
+			} else {
+				m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+			}
+			if !active {
+				m = selectFlowPhaseByID(t, m, "implementation")
+			}
+
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if cmd == nil {
+				t.Fatal("R should prepare a Flow repair launch")
+			}
+			msg := cmd()
+			launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+			if !ok {
+				t.Fatalf("R command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+			}
+			ctx := launchMsg.LaunchContext
+			if launchMsg.RepairRecord.FlowID != record.FlowID || launchMsg.RepairValidationErr != "" {
+				t.Fatalf("persisted repair validation = record %#v error %q", launchMsg.RepairRecord, launchMsg.RepairValidationErr)
+			}
+			if !ctx.FlowRepair || ctx.FlowID != record.FlowID || ctx.FlowPhaseID != "" || ctx.FlowLaunchTracked {
+				t.Fatalf("repair launch classification = %#v", ctx)
+			}
+			if ctx.Command != "claude" || ctx.Model != "claude-sonnet-5" || ctx.ReasoningEffort != "max" || !ctx.Headless || !ctx.Embedded {
+				t.Fatalf("repair launch settings = %#v", ctx)
+			}
+			if ctx.PlanID != record.PlanID || ctx.PlanPath != record.PlanPath || ctx.WorktreePath != record.WorktreePath || ctx.Branch != record.Branch || ctx.Commit != record.Commit || ctx.SessionStateRoot != "/state/approach/sessions/v1" {
+				t.Fatalf("repair launch metadata = %#v", ctx)
+			}
+			for _, want := range []string{record.FlowID, "blocked", "persisted metadata is inconsistent", "approach flow read", "phase reset", "phase restart", "Do not launch the next phase"} {
+				if !strings.Contains(ctx.InitialPrompt, want) {
+					t.Fatalf("repair prompt missing %q:\n%s", want, ctx.InitialPrompt)
+				}
+			}
+			if strings.Contains(ctx.InitialPrompt, model.FlowPhaseDoneInstructionForTest()) {
+				t.Fatalf("repair prompt contains ordinary phase completion instruction:\n%s", ctx.InitialPrompt)
+			}
+
+			m, _ = update(m, launchMsg)
+			if !started.FlowRepair || started.FlowPhaseID != "" || started.FlowLaunchTracked {
+				t.Fatalf("started repair context = %#v", started)
+			}
+			if launchUpdates != 0 {
+				t.Fatalf("repair recorded %d phase launch updates, want zero", launchUpdates)
+			}
+		})
+	}
+}
+
+func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T) {
+	repoPath := t.TempDir()
+	record := repairableFlowForShortcut()
+	record.RepoPath = repoPath
+	record.WorktreePath = filepath.Join(repoPath, "deleted-before-repair")
+	persisted := record
+	persisted.RepoPath = filepath.Join(repoPath, "deleted-repo-before-validation")
+	persisted.WorktreePath = filepath.Join(repoPath, "deleted-before-validation")
+	var started actions.AgentLaunchContext
+	var validationFilter flowstore.FlowFilter
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			validationFilter = filter
+			return []flowstore.FlowRecord{persisted}, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			started = ctx
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if cmd == nil {
+		t.Fatal("repair with a usable repo fallback should prepare a launch")
+	}
+	launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	if validationFilter.RepoPath != "" {
+		t.Fatalf("repair validation filter = %#v, want unscoped Flow-ID lookup", validationFilter)
+	}
+	if launch.LaunchContext.WorktreePath != repoPath {
+		t.Fatalf("initial repair worktree = %q, want repo fallback %q", launch.LaunchContext.WorktreePath, repoPath)
+	}
+	m, _ = update(m, launch)
+	if started.RepoPath != repoPath || started.WorktreePath != repoPath {
+		t.Fatalf("refreshed repair paths = repo %q worktree %q, want context fallback %q", started.RepoPath, started.WorktreePath, repoPath)
+	}
+}
+
+func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
+	for _, retained := range []bool{false, true} {
+		name := "pending validation"
+		if retained {
+			name = "retained terminal"
+		}
+		t.Run(name, func(t *testing.T) {
+			record := repairableFlowForShortcut()
+			launchUpdates := 0
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{record}, nil
+				},
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					launchUpdates++
+					return record, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+			m, repairCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if repairCmd == nil {
+				t.Fatal("repair should reserve validation")
+			}
+			if retained {
+				m, _ = update(m, repairCmd())
+			}
+
+			repaired := record
+			repaired.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+			repaired.Phases[0].Status = flowstore.PhaseReady
+			m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{repaired}})
+			m, _ = update(m, flowLaunchKey())
+			if launchUpdates != 0 {
+				t.Fatalf("manual launch persisted %d phase updates during repair", launchUpdates)
+			}
+			if got := m.TransientError(); got != "No launchable Flow phase" {
+				t.Fatalf("manual launch status = %q, want repair occupancy to suppress launchability", got)
+			}
+		})
+	}
+}
+
+func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testing.T) {
+	t.Run("duplicate", func(t *testing.T) {
+		starts := 0
+		record := repairableFlowForShortcut()
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				starts++
+				return &fakeEmbeddedTerminal{state: "running"}, nil
+			},
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return []flowstore.FlowRecord{record}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+		m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if firstCmd == nil {
+			t.Fatal("first repair command is nil")
+		}
+		if got := m.TransientError(); !strings.Contains(got, "already pending") {
+			t.Fatalf("duplicate repair status = %q", got)
+		}
+		launch := firstCmd().(model.FlowEmbeddedLaunchRequestedMsg)
+		m, _ = update(m, launch)
+		m, _ = update(m, launch)
+		if starts != 1 {
+			t.Fatalf("duplicate repair message started %d terminals, want one", starts)
+		}
+	})
+
+	t.Run("stale eligibility", func(t *testing.T) {
+		starts := 0
+		record := repairableFlowForShortcut()
+		persisted := record
+		persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				starts++
+				return &fakeEmbeddedTerminal{state: "running"}, nil
+			},
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return []flowstore.FlowRecord{persisted}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+
+		persisted.Phases[0].Status = flowstore.PhaseReady
+		launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+		m, _ = update(m, launch)
+		if starts != 0 {
+			t.Fatalf("stale repair request started %d terminals, want zero", starts)
+		}
+		if got := m.TransientError(); !strings.Contains(got, "no longer repairable") {
+			t.Fatalf("stale repair status = %q", got)
+		}
+	})
+
+	t.Run("fresh read failure clears reservation", func(t *testing.T) {
+		record := repairableFlowForShortcut()
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return nil, errors.New("read failed")
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+		m, _ = update(m, launch)
+		if got := m.TransientError(); !strings.Contains(got, "read failed") {
+			t.Fatalf("fresh-read failure status = %q", got)
+		}
+		m, retryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if retryCmd == nil || strings.Contains(m.TransientError(), "already pending") {
+			t.Fatalf("fresh-read failure retained reservation: cmd=%T status=%q", retryCmd, m.TransientError())
+		}
+	})
+}
+
+func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
+	for _, status := range []string{flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
+		t.Run(status, func(t *testing.T) {
+			starts := 0
+			record := repairableFlowForShortcut()
+			record.Phases[0].Status = status
+			record.Phases[0].LaunchIDs = []string{"launch-1"}
+			record.Phases[0].Sessions = []flowstore.Session{{
+				SessionID: "live-session",
+				LaunchID:  "launch-1",
+				Status:    "last_seen",
+			}}
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					starts++
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+			if strings.Contains(m.View(), "R      repair") {
+				t.Fatalf("live %s Flow advertised repair:\n%s", status, m.View())
+			}
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if cmd != nil || starts != 0 || m.TransientError() != "" {
+				t.Fatalf("live %s repair: cmd=%T starts=%d status=%q", status, cmd, starts, m.TransientError())
+			}
+		})
+	}
+}
+
+func TestModel_RRejectsNonEmbeddedProvidersBeforeLaunch(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "missing", command: "", want: "Press A"},
+		{name: "codex app", command: "codex-app", want: "embedded CLI"},
+		{name: "malformed", command: "not a provider", want: "codex or claude"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			starts := 0
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: tt.command,
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					starts++
+					return &fakeEmbeddedTerminal{}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{repairableFlowForShortcut()})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if starts != 0 {
+				t.Fatalf("repair started %d terminals for provider %q", starts, tt.command)
+			}
+			if got := m.TransientError(); !strings.Contains(got, tt.want) {
+				t.Fatalf("status = %q, want containing %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestModel_RIsNoopForHealthyFlowAndExplainsOccupiedRepairSlot(t *testing.T) {
+	t.Run("healthy", func(t *testing.T) {
+		starts := 0
+		record := repairableFlowForShortcut()
+		record.Phases[0].Status = flowstore.PhaseReady
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				starts++
+				return &fakeEmbeddedTerminal{}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if cmd != nil || starts != 0 || m.TransientError() != "" {
+			t.Fatalf("healthy R result: cmd=%T starts=%d status=%q", cmd, starts, m.TransientError())
+		}
+	})
+
+	t.Run("occupied", func(t *testing.T) {
+		starts := 0
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				starts++
+				return &fakeEmbeddedTerminal{state: "failed"}, nil
+			},
+		})
+		record := repairableFlowForShortcut()
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			Command:     "codex",
+			FlowID:      record.FlowID,
+			FlowPhaseID: "implementation",
+			Headless:    true,
+		}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if starts != 1 {
+			t.Fatalf("occupied repair started %d terminals, want only existing slot", starts)
+		}
+		if got := m.TransientError(); !strings.Contains(got, "dismiss the existing Flow terminal") {
+			t.Fatalf("occupied repair status = %q", got)
+		}
+	})
+}
+
 func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 	addLaunchRan := false
 	launchAgentRan := false
@@ -6524,6 +6897,51 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 	if retainedPendingCmd != nil {
 		t.Fatal("clearing a derived model mutated the retained model's pending request")
 	}
+}
+
+func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testing.T) {
+	launchPath := t.TempDir()
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     launchPath,
+		WorktreePath: launchPath,
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Status:    flowstore.PhaseBlocked,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-session", LaunchID: "launch-old", Status: "ended",
+			}},
+		}},
+	}
+	newModel := func() model.Model {
+		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		return selectFlowPhaseByID(t, m, "implementation")
+	}
+
+	t.Run("pending resume blocks repair", func(t *testing.T) {
+		pending, resumeCmd := update(newModel(), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		if resumeCmd == nil {
+			t.Fatal("resume should reserve a persistence command")
+		}
+		blocked, _ := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if got := blocked.TransientError(); !strings.Contains(got, "phase resume is already pending") {
+			t.Fatalf("repair status = %q, want pending phase-resume guidance", got)
+		}
+	})
+
+	t.Run("pending repair blocks resume", func(t *testing.T) {
+		pending, repairCmd := update(newModel(), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if repairCmd == nil {
+			t.Fatal("repair should reserve a validation command")
+		}
+		_, resumeCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		if resumeCmd != nil {
+			t.Fatal("phase resume should not reserve persistence while a repair is pending")
+		}
+	})
 }
 
 func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *testing.T) {

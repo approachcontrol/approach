@@ -81,6 +81,16 @@ const (
 
 type embeddedTerminalID int
 
+type embeddedTerminalRemovalReason int
+
+const (
+	embeddedTerminalRemovalUserClose embeddedTerminalRemovalReason = iota
+	embeddedTerminalRemovalAutoClose
+	embeddedTerminalRemovalDetach
+	embeddedTerminalRemovalTerminate
+	embeddedTerminalRemovalPrefillFailure
+)
+
 type embeddedTerminalSlot struct {
 	Number         int
 	Scope          embeddedTerminalScope
@@ -91,6 +101,7 @@ type embeddedTerminalSlot struct {
 	WorkingDir     string
 	FlowID         string
 	FlowPhaseID    string
+	FlowRepair     bool
 	LaunchID       string
 	Terminal       EmbeddedTerminal
 	ID             embeddedTerminalID
@@ -400,6 +411,7 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		WorkingDir:     cleanEmbeddedTerminalPath(ctx.WorkingDir),
 		FlowID:         flowID,
 		FlowPhaseID:    flowPhaseID,
+		FlowRepair:     ctx.FlowRepair,
 		LaunchID:       strings.TrimSpace(ctx.LaunchID),
 		Terminal:       term,
 		ID:             id,
@@ -605,6 +617,9 @@ func embeddedTerminalIdentity(record sessions.SessionRecord) string {
 }
 
 func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
+	if ctx.FlowRepair {
+		return "repair"
+	}
 	for _, value := range []string{
 		ctx.FlowPhaseID,
 		ctx.FlowID,
@@ -808,7 +823,7 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 		}
 		return m.setStatus(statusOther, err.Error()), nil
 	}
-	m = m.dismissEmbeddedTerminal(slot.ID)
+	m = m.dismissEmbeddedTerminalForReason(slot.ID, embeddedTerminalRemovalDetach)
 	if target == "" {
 		target = "tmux"
 	}
@@ -868,7 +883,7 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 		}
 	}
 	for _, id := range ids {
-		m = m.dismissEmbeddedTerminal(id)
+		m = m.dismissEmbeddedTerminalForReason(id, embeddedTerminalRemovalAutoClose)
 	}
 	return m
 }
@@ -897,12 +912,16 @@ func (m Model) handleTerminateEmbeddedTerminal(msg terminateEmbeddedTerminalMsg)
 		if err := slot.Terminal.Terminate(); err != nil {
 			return m.setStatus(statusOther, err.Error()), nil
 		}
-		return m.dismissEmbeddedTerminal(msg.ID), nil
+		return m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalTerminate), nil
 	}
 	return m, nil
 }
 
 func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
+	return m.dismissEmbeddedTerminalForReason(id, embeddedTerminalRemovalUserClose)
+}
+
+func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason embeddedTerminalRemovalReason) Model {
 	removed := false
 	activeID := m.activeTerminalID()
 	terminalFocused := m.activePane == 1 && m.terminalFocus == terminalFocusTerminal
@@ -912,6 +931,7 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 			next = append(next, slot)
 		} else {
 			removed = true
+			m = m.recordRepairTerminalRemoval(slot, reason)
 		}
 	}
 	if !removed {
@@ -935,6 +955,18 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		m.terminalPrefixActive = true
 	}
 	return m
+}
+
+func (m Model) recordRepairTerminalRemoval(slot embeddedTerminalSlot, reason embeddedTerminalRemovalReason) Model {
+	if !slot.FlowRepair {
+		return m
+	}
+	cleanExit := (reason == embeddedTerminalRemovalUserClose || reason == embeddedTerminalRemovalAutoClose) &&
+		slot.Terminal != nil && slot.Terminal.State() == "exited"
+	if cleanExit {
+		return m.armRepairAutoDrain(slot.FlowID)
+	}
+	return m.suppressRepairAutoDrain(slot.FlowID)
 }
 
 func (m Model) clearEmbeddedTerminalConfirmFor(id embeddedTerminalID) Model {
