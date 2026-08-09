@@ -21,6 +21,18 @@ CI requires clean `gofmt -l .`, `make test`, and `make build`.
 - Never commit or push directly to main; branch first.
 - Run `gofmt -l .`, `make test`, and `make build` before shipping.
 
+## Beads Task Tracking
+
+This repository uses `bd` for durable task tracking. The command workflow lives
+in `.agents/skills/beads/SKILL.md`; run `bd prime` when session context is
+missing or stale. Track shared tasks, blockers, follow-up work, and persistent
+project knowledge in Beads rather than ad hoc TODO or memory files.
+
+The default profile is conservative: close completed Beads only after relevant
+validation passes, inspect `git status` at handoff, and do not commit, push, or
+sync the Dolt remote unless the user, orchestrator, or an explicit repository
+profile grants that authority.
+
 ## Safety in Practice
 
 - Destructive git actions are gated by destructive mode in the model — preserve that boundary. Locked worktrees are never deleted or pruned; unlock is a separate action.
