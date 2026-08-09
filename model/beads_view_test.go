@@ -753,6 +753,16 @@ func TestBeadsStartupFetchesOnlyConfiguredSubview(t *testing.T) {
 			if m.Mode() != tt.mode {
 				t.Fatalf("startup mode = %v, want %v", m.Mode(), tt.mode)
 			}
+			if !m.BeadsPending(tt.mode) {
+				t.Fatalf("configured mode %v is not pending before its startup result", tt.mode)
+			}
+			view := m.View()
+			if want := "loading " + tt.name + " beads"; !strings.Contains(view, want) {
+				t.Fatalf("startup view does not show %q before the result:\n%s", want, view)
+			}
+			if strings.Contains(view, "beads not configured") {
+				t.Fatalf("startup view reports Beads unavailable while the query is pending:\n%s", view)
+			}
 
 			cmd := m.Init()
 			if cmd == nil {
@@ -778,8 +788,8 @@ func TestBeadsStartupFetchesOnlyConfiguredSubview(t *testing.T) {
 			for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
 				beads := m.Beads(mode)
 				if mode == tt.mode {
-					if len(beads) != 1 || beads[0].ID != "bd-"+tt.name || !m.BeadsAvailable(mode) {
-						t.Fatalf("configured mode %v state = %#v available=%v", mode, beads, m.BeadsAvailable(mode))
+					if len(beads) != 1 || beads[0].ID != "bd-"+tt.name || !m.BeadsAvailable(mode) || m.BeadsPending(mode) {
+						t.Fatalf("configured mode %v state = %#v available=%v pending=%v", mode, beads, m.BeadsAvailable(mode), m.BeadsPending(mode))
 					}
 					continue
 				}
@@ -788,6 +798,29 @@ func TestBeadsStartupFetchesOnlyConfiguredSubview(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBeadsStartupWithoutRepoDoesNotRemainPendingOrQuery(t *testing.T) {
+	calls := 0
+	m := model.NewWithOptions(nil, model.Options{
+		StartupMode: ui.ModeBeadsReady,
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			calls++
+			return nil, nil
+		},
+	})
+	if m.Mode() != ui.ModeBeadsReady {
+		t.Fatalf("startup mode = %v, want Ready", m.Mode())
+	}
+	if m.BeadsPending(ui.ModeBeadsReady) {
+		t.Fatal("Ready is pending even though no repository is available to query")
+	}
+	if cmd := model.FetchForModeForTest(m); cmd != nil {
+		t.Fatalf("Beads startup without a repository returned fetch command %T", cmd)
+	}
+	if calls != 0 {
+		t.Fatalf("Ready query calls = %d, want 0 without a repository", calls)
 	}
 }
 
