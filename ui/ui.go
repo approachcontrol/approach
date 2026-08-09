@@ -155,6 +155,10 @@ func IsBeadsMode(mode Mode) bool {
 
 const LeftPaneWidth = 30
 
+// CollapsedRepoPaneWidth is the total width of the collapsed repos strip,
+// including its left and right borders.
+const CollapsedRepoPaneWidth = 4
+
 // ShortcutPaneWidth is the total width reserved for the right-hand keyboard
 // shortcut rail, including its left and right borders.
 const ShortcutPaneWidth = 28
@@ -284,6 +288,7 @@ type RenderParams struct {
 	RepoScroll                   int
 	StashScroll                  int
 	ActivePane                   int
+	RepoPaneCollapsed            bool
 	Destructive                  bool
 	Worktrees                    []gitquery.Worktree
 	WorktreeSelected             int
@@ -382,8 +387,12 @@ func FlowSplitPanelHeights(height int) (listHeight, terminalHeight int) {
 
 // RightContentWidth returns the render width inside the right pane after the
 // left pane, right-pane border, and optional shortcut pane are accounted for.
-func RightContentWidth(width, height int, activeStatusQuery bool) int {
-	rightContentWidth := width - LeftPaneWidth - 2
+func RightContentWidth(width, height int, activeStatusQuery, repoPaneCollapsed bool) int {
+	repoPaneWidth := LeftPaneWidth
+	if repoPaneCollapsed {
+		repoPaneWidth = CollapsedRepoPaneWidth
+	}
+	rightContentWidth := width - repoPaneWidth - 2
 	if shouldRenderShortcutPaneForViewport(width, height, activeStatusQuery) {
 		rightContentWidth -= ShortcutPaneWidth
 	}
@@ -539,6 +548,7 @@ func renderApplication(p RenderParams) string {
 		FormHasMultiline:             formHasMultilineField(p.Form),
 		WorktreeInputPrompt:          p.WorktreeInputPrompt,
 		ActivePane:                   p.ActivePane,
+		RepoPaneCollapsed:            p.RepoPaneCollapsed,
 		Destructive:                  p.Destructive,
 		RepoSelected:                 repoPath != "",
 		WorktreeSelected:             worktreeSelected,
@@ -607,12 +617,16 @@ func renderApplication(p RenderParams) string {
 	} else if p.ActivePane == 1 {
 		rightBorderColor = activeBorderColor
 	}
-	if p.ActivePane == 0 {
+	if p.ActivePane == 0 && !p.RepoPaneCollapsed {
 		leftBorderColor = activeBorderColor
 	}
 
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
 	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
+	if p.RepoPaneCollapsed {
+		leftContentWidth = CollapsedRepoPaneWidth - 2
+		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, innerHeight, !terminalShortcutsActive)
+	}
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -621,7 +635,7 @@ func renderApplication(p RenderParams) string {
 		Height(innerHeight).
 		Render(leftContent)
 
-	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery)
+	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery, p.RepoPaneCollapsed)
 
 	modeHeader := renderModeHeaderWithBeads(
 		p.Mode, rightContentWidth, p.BeadsSourceCount, p.BeadsClosedTotal,
@@ -943,6 +957,7 @@ type statusBarParams struct {
 	WorktreeInputPrompt          string
 	SelectPrompt                 string
 	ActivePane                   int
+	RepoPaneCollapsed            bool
 	Destructive                  bool
 	RepoSelected                 bool
 	WorktreeSelected             bool
@@ -1284,6 +1299,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		{Key: "ctrl+a", Label: "active flows"},
 		{Key: "f2", Label: "edit prompts"},
 		{Key: "f5", Label: "refresh"},
+	}
+	if sp.RepoPaneCollapsed {
+		global = slices.Insert(global, 0, shortcutHint{Key: "^r", Label: "repos"})
 	}
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
@@ -1697,7 +1715,7 @@ func transientStatusStyle(fadeStep int) lipgloss.Style {
 
 func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
+	base := footerHintsForKeys(hints, footerKeysWithRepoRestore(sp, paneShortcutKeyForStatus(sp), "q/esc")...)
 	agent := footerHintsForKeys(hints, "A")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
@@ -1784,9 +1802,9 @@ func renderFlowFooterShortcuts(sp statusBarParams, sections []shortcutSection) s
 		}
 	}
 	hints := flattenShortcutHints(sections)
-	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
-	compactBase := footerHintsForKeys(hints, paneBackShortcutKey, "q/esc")
-	tinyBase := footerHintsForKeys(hints, "q/esc")
+	base := footerHintsForKeys(hints, footerKeysWithRepoRestore(sp, paneShortcutKeyForStatus(sp), "q/esc")...)
+	compactBase := footerHintsForKeys(hints, footerKeysWithRepoRestore(sp, paneBackShortcutKey, "q/esc")...)
+	tinyBase := footerHintsForKeys(hints, footerKeysWithRepoRestore(sp, "q/esc")...)
 	toggle := footerHintsForKeys(hints, "ctrl+a")
 	upDown := footerHintsForKeys(hints, "↑/↓")
 	arrow := footerHintsForKeys(hints, "←/→")
@@ -1843,14 +1861,14 @@ func renderBranchFooterShortcuts(sp statusBarParams, sections []shortcutSection)
 	legend, rest := splitLegendSection(sections)
 	rest = branchFooterSectionOrder(rest)
 	hints := flattenShortcutHints(rest)
-	base := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc")
+	base := footerHintsForKeys(hints, footerKeysWithRepoRestore(sp, paneShortcutKeyForStatus(sp), "q/esc")...)
 	nav := footerHintsForKeys(hints, "↑/↓", "←/→")
 	actions := footerHintsForKeys(hints, "D", "n", "enter", "d", "f", "F", "t", "c", "a")
 
 	full := append(append(append([]string{}, base...), actions...), nav...)
 	baseActions := append(append([]string{}, base...), actions...)
 	baseNav := append(append([]string{}, base...), nav...)
-	baseArrow := footerHintsForKeys(hints, paneShortcutKeyForStatus(sp), "q/esc", "←/→")
+	baseArrow := footerHintsForKeys(hints, footerKeysWithRepoRestore(sp, paneShortcutKeyForStatus(sp), "q/esc", "←/→")...)
 
 	for _, parts := range [][]string{full, baseActions} {
 		if candidate, ok := branchFooterCandidateWithLegend(sp.Width, legend, parts); ok {
@@ -1907,6 +1925,13 @@ func footerHintsForKeys(hints []shortcutHint, keys ...string) []string {
 		}
 	}
 	return parts
+}
+
+func footerKeysWithRepoRestore(sp statusBarParams, keys ...string) []string {
+	if !sp.RepoPaneCollapsed {
+		return keys
+	}
+	return append([]string{"^r"}, keys...)
 }
 
 func appendParts(groups ...[]string) []string {
@@ -2206,6 +2231,39 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 		}
 	}
 
+	return lines
+}
+
+func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRestoreHint bool) []string {
+	if height <= 0 {
+		return nil
+	}
+	const contentWidth = CollapsedRepoPaneWidth - 2
+	lines := make([]string, 0, height)
+	restoreHint := strings.Repeat(" ", contentWidth)
+	if showRestoreHint {
+		restoreHint = "^r"
+	}
+	lines = append(lines, restoreHint)
+	if selected >= 0 && selected < len(repos) {
+		for _, r := range repos[selected].DisplayName {
+			if len(lines) >= height {
+				break
+			}
+			width := ansi.StringWidth(string(r))
+			if width <= 0 || width > contentWidth {
+				continue
+			}
+			line := string(r)
+			if width < contentWidth {
+				line += strings.Repeat(" ", contentWidth-width)
+			}
+			lines = append(lines, line)
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", contentWidth))
+	}
 	return lines
 }
 

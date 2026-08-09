@@ -4436,6 +4436,136 @@ func TestRender_UsesProvidedEmptyStateMessages(t *testing.T) {
 	}
 }
 
+func TestRender_CollapsedRepoPaneUsesNarrowStripAndWidensContent(t *testing.T) {
+	params := RenderParams{
+		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:   0,
+		Width:      100,
+		Height:     10,
+		Mode:       ModeWorktrees,
+		ActivePane: 1,
+	}
+	expanded := ansi.Strip(Render(params))
+	params.RepoPaneCollapsed = true
+	collapsed := ansi.Strip(Render(params))
+
+	if strings.Contains(collapsed, "alpha") {
+		t.Fatalf("collapsed strip should replace the horizontal repo list:\n%s", collapsed)
+	}
+	for _, want := range []string{"│^r│", "│a │", "│l │", "│p │", "│h │"} {
+		if !strings.Contains(collapsed, want) {
+			t.Fatalf("collapsed strip missing %q:\n%s", want, collapsed)
+		}
+	}
+	if !strings.Contains(expanded, "alpha") || strings.Contains(expanded, "│^r│") {
+		t.Fatalf("expanded rendering changed unexpectedly:\n%s", expanded)
+	}
+	if got, want := RightContentWidth(params.Width, params.Height, false, true), RightContentWidth(params.Width, params.Height, false, false)+(LeftPaneWidth-CollapsedRepoPaneWidth); got != want {
+		t.Fatalf("collapsed right content width = %d, want %d", got, want)
+	}
+	for _, view := range []string{expanded, collapsed} {
+		for i, line := range strings.Split(view, "\n")[:params.Height-1] {
+			if got := lipgloss.Width(line); got != params.Width {
+				t.Fatalf("rendered line %d width = %d, want %d: %q", i, got, params.Width, line)
+			}
+		}
+	}
+}
+
+func TestCollapsedRepoPaneHandlesWideAndCombiningRunes(t *testing.T) {
+	lines := renderCollapsedRepoPane([]scanner.Repo{{DisplayName: "a\u0301界🙂"}}, 0, 6, true)
+	want := []string{"^r", "a ", "界", "🙂", "  ", "  "}
+	if strings.Join(lines, "|") != strings.Join(want, "|") {
+		t.Fatalf("collapsed repo lines = %#v, want %#v", lines, want)
+	}
+	for i, line := range lines {
+		if got := ansi.StringWidth(line); got != CollapsedRepoPaneWidth-2 {
+			t.Fatalf("collapsed repo line %d width = %d, want %d: %q", i, got, CollapsedRepoPaneWidth-2, line)
+		}
+	}
+
+	empty := renderCollapsedRepoPane(nil, 0, 3, true)
+	if strings.Join(empty, "|") != "^r|  |  " {
+		t.Fatalf("empty collapsed repo lines = %#v, want hint only", empty)
+	}
+
+	oneRow := renderCollapsedRepoPane([]scanner.Repo{{DisplayName: "alpha"}}, 0, 1, true)
+	if strings.Join(oneRow, "|") != "^r" {
+		t.Fatalf("one-row collapsed repo lines = %#v, want restore hint only", oneRow)
+	}
+}
+
+func TestRender_CollapsedRepoPaneShowsRestoreHintInFooterAndShortcutRail(t *testing.T) {
+	params := RenderParams{
+		Repos:               []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:            0,
+		Height:              24,
+		Mode:                ModeWorktrees,
+		ActivePane:          1,
+		RepoPaneCollapsed:   true,
+		RightEmptyMessage:   "No worktrees",
+		NewAgentAvailable:   true,
+		DefaultViewLabel:    "flows",
+		RepoEmptyMessage:    "No repos",
+		FetchAvailable:      false,
+		PullAvailable:       false,
+		AgentAvailable:      false,
+		RepoCreateAvailable: false,
+	}
+	params.Width = 100
+	footerView := ansi.Strip(Render(params))
+	footerLines := strings.Split(footerView, "\n")
+	if status := footerLines[len(footerLines)-1]; !strings.Contains(status, "^r: repos") {
+		t.Fatalf("collapsed footer missing restore hint: %q", status)
+	}
+
+	params.Width = 140
+	rail := shortcutPaneText(Render(params))
+	if !strings.Contains(rail, "^r     repos") {
+		t.Fatalf("collapsed shortcut rail missing restore hint:\n%s", rail)
+	}
+}
+
+func TestRender_CollapsedRepoPaneHidesRestoreHintWhileTerminalOwnsInput(t *testing.T) {
+	tests := []struct {
+		name   string
+		params RenderParams
+	}{
+		{
+			name: "session terminal",
+			params: RenderParams{
+				Mode:              ModeSessions,
+				EmbeddedTerminals: []EmbeddedTerminalTab{{Active: true}},
+			},
+		},
+		{
+			name: "flow terminal",
+			params: RenderParams{
+				Mode:                  ModeFlows,
+				FlowEmbeddedTerminals: []EmbeddedTerminalTab{{Active: true}},
+				FlowTerminalFocused:   true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := tt.params
+			params.Repos = []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}
+			params.Selected = 0
+			params.Width = 100
+			params.Height = 10
+			params.ActivePane = 1
+			params.RepoPaneCollapsed = true
+
+			view := ansi.Strip(Render(params))
+			if strings.Contains(view, "│^r│") {
+				t.Fatalf("collapsed repo strip should hide ctrl+r while terminal input is active:\n%s", view)
+			}
+		})
+	}
+}
+
 func TestRender_EmptyStateMessagesDoNotPanicAtTinyHeights(t *testing.T) {
 	for _, height := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("height_%d", height), func(t *testing.T) {

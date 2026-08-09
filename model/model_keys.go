@@ -56,6 +56,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	m = m.clearAnyStatus()
 
+	if !m.searchActive && key == "ctrl+r" {
+		return m.focusRepoPane(), nil
+	}
+
 	if !m.searchActive && key == "ctrl+a" {
 		return m.handleActiveFlowsToggle()
 	}
@@ -287,6 +291,7 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.filteredRepos()) > 0 {
 			m.activePane = 1
+			m = m.setRepoPaneCollapsed(true)
 			if m.activeFlowSurfaceVisible() {
 				return m.syncActiveFlowsFromCache(), nil
 			}
@@ -490,6 +495,11 @@ func (m Model) togglePrimaryPaneFocus() Model {
 		}
 		return m
 	}
+	return m.focusRepoPane()
+}
+
+func (m Model) focusRepoPane() Model {
+	m = m.setRepoPaneCollapsed(false)
 	m.activePane = 0
 	if m.activeFlowSurfaceVisible() {
 		m = m.clearSelectedFlowPhase()
@@ -504,7 +514,33 @@ func (m Model) togglePrimaryPaneFocus() Model {
 	return m
 }
 
+func (m Model) setRepoPaneCollapsed(collapsed bool) Model {
+	if m.repoPaneCollapsed == collapsed {
+		return m
+	}
+	m.repoPaneCollapsed = collapsed
+	m = m.resizeEmbeddedTerminals()
+	return m.clampSelectionsAfterFilter()
+}
+
 func (m Model) cyclePaneFocusForward() Model {
+	if m.repoPaneCollapsed {
+		if m.mode == ui.ModeSessions && m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeSession) {
+			return m.focusRepoPane()
+		}
+		if !m.flowSurfaceVisible() || !m.hasActiveEmbeddedTerminalForScope(embeddedTerminalScopeFlow) {
+			return m
+		}
+		if m.flowFocus != flowFocusTerminal {
+			m.flowFocus = flowFocusTerminal
+			m.terminalPrefixActive = true
+			return m
+		}
+		m.flowFocus = flowFocusList
+		m.terminalPrefixActive = false
+		return m.syncActiveFlowTerminalToSelectedFlow()
+	}
+
 	if !m.flowSurfaceVisible() {
 		if m.activePane == 0 {
 			m.activePane = 1

@@ -340,7 +340,7 @@ func (m Model) embeddedTerminalLinesForScope(scope embeddedTerminalScope) []stri
 }
 
 func (m Model) embeddedTerminalOuterWidth() int {
-	return ui.RightContentWidth(m.width, m.height, m.searchActive)
+	return ui.RightContentWidth(m.width, m.height, m.searchActive, m.repoPaneCollapsed)
 }
 
 func (m Model) embeddedTerminalWidth() int {

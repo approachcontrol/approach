@@ -2578,8 +2578,8 @@ func TestModel_NKeyInBranchesModeWithNoRepoIsNoOp(t *testing.T) {
 	if m.Overlay() != ui.OverlayNone {
 		t.Errorf("expected OverlayNone, got %d", m.Overlay())
 	}
-	if cmd == nil {
-		t.Error("expected status expiry command")
+	if cmd != nil {
+		t.Errorf("no-repo branch creation returned cmd %T, want nil", cmd)
 	}
 }
 
@@ -5145,6 +5145,42 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	}
 }
 
+func TestModel_CollapsedSessionTerminalForwardsCtrlRAndTabRestoresRepoPane(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "codex-session-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed session terminal", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("terminal ctrl+r collapsed=%t activePane=%d, want unchanged collapsed terminal", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x12" {
+		t.Fatalf("terminal ctrl+r writes = %#v, want ctrl+r byte", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
+		t.Fatalf("terminal tab collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+}
+
 func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("pty tests require a Unix-like platform")
@@ -5288,13 +5324,13 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
-	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, false))
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, false, false))
 	wantStartHeight := ui.EmbeddedTerminalPTYHeight(14 - ui.BranchContentOverhead)
 	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
 	if started != wantStartSize {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], wantStartWidth, wantStartHeight)
 	}
-	wantPaddedStartWidth := ui.RightContentWidth(180, 14, false) - ui.EmbeddedTerminalFrameColumns - 2*ui.EmbeddedTerminalSidePadding
+	wantPaddedStartWidth := ui.RightContentWidth(180, 14, false, false) - ui.EmbeddedTerminalFrameColumns - 2*ui.EmbeddedTerminalSidePadding
 	if started[0] != wantPaddedStartWidth {
 		t.Fatalf("embedded terminal start width = %d, want padded width %d", started[0], wantPaddedStartWidth)
 	}
@@ -5304,7 +5340,7 @@ func TestModel_EmbeddedTerminalUsesRenderedPaneWidth(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 12})
-	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 12, false))
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 12, false, false))
 	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(12 - ui.BranchContentOverhead)
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
@@ -5319,7 +5355,7 @@ func TestModel_EmbeddedTerminalWidthMatchesRendererWhenShortcutSuppressed(t *tes
 		m = model.SetSearchActiveForTest(m, true)
 		_ = m.View()
 		want := [2]int{
-			ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, true)),
+			ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(180, 14, true, false)),
 			ui.EmbeddedTerminalPTYHeight(14 - ui.BranchContentOverhead),
 		}
 		if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != want {
@@ -5344,13 +5380,37 @@ func TestModel_EmbeddedTerminalWidthMatchesRendererWhenShortcutSuppressed(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, started := openEmbeddedSessionForSizingTest(t, tc.width, tc.height)
 			want := [2]int{
-				ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(tc.width, tc.height, false)),
+				ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(tc.width, tc.height, false, false)),
 				ui.EmbeddedTerminalPTYHeight(tc.height - ui.BranchContentOverhead),
 			}
 			if started != want {
 				t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], want[0], want[1])
 			}
 		})
+	}
+}
+
+func TestModel_EmbeddedTerminalResizesWhenRepoPaneCollapsesAndExpands(t *testing.T) {
+	const width, height = 180, 14
+	m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, width, height)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	wantCollapsed := [2]int{
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, true)),
+		ui.EmbeddedTerminalPTYHeight(height - ui.BranchContentOverhead),
+	}
+	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantCollapsed {
+		t.Fatalf("collapse resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantCollapsed[0], wantCollapsed[1])
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	wantExpanded := [2]int{
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, false)),
+		ui.EmbeddedTerminalPTYHeight(height - ui.BranchContentOverhead),
+	}
+	if len(fakeTerm.resizes) < 2 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantExpanded {
+		t.Fatalf("expand resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantExpanded[0], wantExpanded[1])
 	}
 }
 

@@ -52,7 +52,8 @@ Repos on the left, content on the right. The essentials:
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `k`/`j` | Move selection |
-| `enter`/`tab`, `bksp` | Focus the content pane / return to the repo pane |
+| `enter` / `tab` | Collapse repos and focus content / focus content without collapsing |
+| `ctrl+r` / `bksp` | Restore and focus the full repo pane outside search or terminal input |
 | `1`–`5` | Git view, sessions, plans, flows, Beads group at its last-used subview (Open on first entry); `6`–`9` are unbound |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |

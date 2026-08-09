@@ -138,7 +138,7 @@ func assertOnlyListRequestChanged(t *testing.T, before map[ui.Mode]uint64, after
 
 // inRightPane switches focus to the right pane.
 func inRightPane(m model.Model) model.Model {
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	return m
 }
 
@@ -508,6 +508,9 @@ func TestModel_TabFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *t
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
 	}
+	if m.RepoPaneCollapsed() {
+		t.Fatal("tab from the repos pane should leave it expanded")
+	}
 	if cmd != nil {
 		t.Fatalf("tab from left pane produced cmd %T, want nil", cmd)
 	}
@@ -529,8 +532,83 @@ func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t 
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
 	}
+	if !m.RepoPaneCollapsed() {
+		t.Fatal("enter from the repos pane should collapse it")
+	}
 	if cmd != nil {
 		t.Fatalf("enter from left pane produced cmd %T, want nil", cmd)
+	}
+}
+
+func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed right pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+
+	if m.RepoPaneCollapsed() {
+		t.Fatal("ctrl+r should expand the repos pane")
+	}
+	if m.ActivePane() != 0 {
+		t.Fatalf("ctrl+r active pane = %d, want repos pane", m.ActivePane())
+	}
+	if cmd != nil {
+		t.Fatalf("ctrl+r returned cmd %T, want nil", cmd)
+	}
+
+	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
+		t.Fatalf("ctrl+r from expanded right pane collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+}
+
+func TestModel_CtrlRDoesNotRestoreRepoPaneDuringSearch(t *testing.T) {
+	m := model.New(testRepos())
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+
+	if !m.SearchActive() || !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("search ctrl+r searchActive=%t collapsed=%t activePane=%d, want unchanged collapsed search", m.SearchActive(), m.RepoPaneCollapsed(), m.ActivePane())
+	}
+}
+
+func TestModel_TabSkipsCollapsedRepoPaneWithoutSessionTerminal(t *testing.T) {
+	for _, mode := range []ui.Mode{ui.ModeWorktrees, ui.ModeSessions} {
+		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
+			m := model.New(testRepos())
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+			if mode != ui.ModeWorktrees {
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{keyForMode(mode)}})
+			}
+
+			for i := 0; i < 3; i++ {
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+				if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+					t.Fatalf("tab %d collapsed=%t activePane=%d, want collapsed content pane", i+1, m.RepoPaneCollapsed(), m.ActivePane())
+				}
+			}
+		})
+	}
+}
+
+func TestModel_BackKeysRestoreCollapsedRepoPane(t *testing.T) {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyBackspace}, {Type: tea.KeyCtrlH}} {
+		t.Run(key.String(), func(t *testing.T) {
+			m := model.New(testRepos())
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+			m, _ = update(m, key)
+
+			if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
+				t.Fatalf("%s collapsed=%t activePane=%d, want expanded repos pane", key.String(), m.RepoPaneCollapsed(), m.ActivePane())
+			}
+		})
 	}
 }
 

@@ -91,6 +91,7 @@ type Model struct {
 	pendingRepoSelection      string
 	listRequests              [listRequestSlots]uint64
 	activePane                int // 0=left (repos), 1=right (content)
+	repoPaneCollapsed         bool
 	activeFlowsReturnMode     ui.Mode
 	destructive               bool
 	status                    statusError
@@ -678,6 +679,41 @@ func (m Model) Flows() []flowstore.FlowRecord {
 	flows, _, _ := m.flows.View()
 	return flows
 }
+func (m Model) PlanSelected() int               { return m.plans.SelectedIndex() }
+func (m Model) PlanScroll() int                 { return m.plans.Scroll() }
+func (m Model) FlowSelected() int               { return m.flows.SelectedIndex() }
+func (m Model) FlowScroll() int                 { return m.flows.Scroll() }
+func (m Model) ExpandedPlanID() string          { return m.expandedPlanID }
+func (m Model) ExpandedFlowID() string          { return m.expandedFlowID }
+func (m Model) SelectedPlanPhaseID() string     { return m.selectedPlanPhaseID }
+func (m Model) SelectedFlowPhaseID() string     { return m.selectedFlowPhaseID }
+func (m Model) ReflogSelected() int             { return m.reflogs.SelectedIndex() }
+func (m Model) ReflogScroll() int               { return m.reflogs.Scroll() }
+func (m Model) Overlay() ui.OverlayState        { return m.overlayState() }
+func (m Model) OverlayDiff() string             { return m.modal.View().Diff }
+func (m Model) OverlayText() string             { return m.modal.View().Text }
+func (m Model) OverlayScroll() int              { return m.modal.View().Scroll }
+func (m Model) FormView() ui.FormView           { return uiFormView(m.modal.View().Form) }
+func (m Model) ConfirmPrompt() string           { return m.modal.View().Prompt }
+func (m Model) ConfirmForce() bool              { return m.modal.View().Force }
+func (m Model) WorktreeInput() string           { return m.modal.View().Input }
+func (m Model) InputMode() modal.InputMode      { return m.modal.View().InputMode }
+func (m Model) InputCursor() int                { return m.modal.View().InputCursor }
+func (m Model) WorktreeInputErr() string        { return m.modal.View().InputErr }
+func (m Model) BranchScroll() int               { return m.rows.Scroll() }
+func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
+func (m Model) StashScroll() int                { return m.stashes.Scroll() }
+func (m Model) ActivePane() int                 { return m.activePane }
+func (m Model) RepoPaneCollapsed() bool         { return m.repoPaneCollapsed }
+func (m Model) Destructive() bool               { return m.destructive }
+func (m Model) TransientError() string          { return m.visibleStatusText() }
+func (m Model) TransientErrorFadeStep() int     { return m.visibleStatusFadeStep() }
+func (m Model) SearchActive() bool              { return m.searchActive }
+func (m Model) RepoSearch() string              { return m.repos.Query() }
+func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
+func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
+func (m Model) AgentCommand() string            { return m.agentCommand }
+func (m Model) DefaultView() ui.Mode            { return m.defaultView }
 func (m Model) Beads(mode ui.Mode) []beadsquery.Bead {
 	state, ok := m.beadSubview(mode)
 	if !ok {
@@ -724,40 +760,6 @@ func (m Model) BeadsOpenAvailable() bool           { return m.BeadsAvailable(ui.
 func (m Model) BeadsOpenPending() bool             { return m.BeadsPending(ui.ModeBeadsOpen) }
 func (m Model) BeadsOpenSelected() int             { return m.BeadsSelected(ui.ModeBeadsOpen) }
 func (m Model) BeadsOpenScroll() int               { return m.BeadsScroll(ui.ModeBeadsOpen) }
-func (m Model) PlanSelected() int                  { return m.plans.SelectedIndex() }
-func (m Model) PlanScroll() int                    { return m.plans.Scroll() }
-func (m Model) FlowSelected() int                  { return m.flows.SelectedIndex() }
-func (m Model) FlowScroll() int                    { return m.flows.Scroll() }
-func (m Model) ExpandedPlanID() string             { return m.expandedPlanID }
-func (m Model) ExpandedFlowID() string             { return m.expandedFlowID }
-func (m Model) SelectedPlanPhaseID() string        { return m.selectedPlanPhaseID }
-func (m Model) SelectedFlowPhaseID() string        { return m.selectedFlowPhaseID }
-func (m Model) ReflogSelected() int                { return m.reflogs.SelectedIndex() }
-func (m Model) ReflogScroll() int                  { return m.reflogs.Scroll() }
-func (m Model) Overlay() ui.OverlayState           { return m.overlayState() }
-func (m Model) OverlayDiff() string                { return m.modal.View().Diff }
-func (m Model) OverlayText() string                { return m.modal.View().Text }
-func (m Model) OverlayScroll() int                 { return m.modal.View().Scroll }
-func (m Model) FormView() ui.FormView              { return uiFormView(m.modal.View().Form) }
-func (m Model) ConfirmPrompt() string              { return m.modal.View().Prompt }
-func (m Model) ConfirmForce() bool                 { return m.modal.View().Force }
-func (m Model) WorktreeInput() string              { return m.modal.View().Input }
-func (m Model) InputMode() modal.InputMode         { return m.modal.View().InputMode }
-func (m Model) InputCursor() int                   { return m.modal.View().InputCursor }
-func (m Model) WorktreeInputErr() string           { return m.modal.View().InputErr }
-func (m Model) BranchScroll() int                  { return m.rows.Scroll() }
-func (m Model) RepoScroll() int                    { return m.repos.Scroll() }
-func (m Model) StashScroll() int                   { return m.stashes.Scroll() }
-func (m Model) ActivePane() int                    { return m.activePane }
-func (m Model) Destructive() bool                  { return m.destructive }
-func (m Model) TransientError() string             { return m.visibleStatusText() }
-func (m Model) TransientErrorFadeStep() int        { return m.visibleStatusFadeStep() }
-func (m Model) SearchActive() bool                 { return m.searchActive }
-func (m Model) RepoSearch() string                 { return m.repos.Query() }
-func (m Model) ItemSearch() string                 { return m.activeItemPaneQuery() }
-func (m Model) ListRequest(mode ui.Mode) uint64    { return m.currentListRequest(mode) }
-func (m Model) AgentCommand() string               { return m.agentCommand }
-func (m Model) DefaultView() ui.Mode               { return m.defaultView }
 func (m Model) ReasoningEffortFor(command string) string {
 	switch agent.Normalize(command) {
 	case agent.CommandCodex:
@@ -977,6 +979,7 @@ func (m Model) View() string {
 		RepoScroll:                   repoScroll,
 		StashScroll:                  stashScroll,
 		ActivePane:                   m.activePane,
+		RepoPaneCollapsed:            m.repoPaneCollapsed,
 		Destructive:                  m.destructive,
 		Worktrees:                    worktrees,
 		WorktreeSelected:             worktreeSelected,
@@ -2256,8 +2259,7 @@ func (m Model) reflowStashes() Model {
 	if contentHeight <= 0 {
 		contentHeight = 1
 	}
-	rightContentWidth := m.width - ui.LeftPaneWidth - 2
-	m.stashes = m.stashes.Reflow(contentHeight, rightContentWidth)
+	m.stashes = m.stashes.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
@@ -2356,7 +2358,11 @@ func (m Model) reflowAllBeads() Model {
 }
 
 func (m Model) contentWidth() int {
-	width := m.width - ui.LeftPaneWidth - 2
+	repoPaneWidth := ui.LeftPaneWidth
+	if m.repoPaneCollapsed {
+		repoPaneWidth = ui.CollapsedRepoPaneWidth
+	}
+	width := m.width - repoPaneWidth - 2
 	if width < 0 {
 		return 0
 	}
