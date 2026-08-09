@@ -249,16 +249,18 @@ working directory are covered in `docs/agent-sessions.md`.
 ## Embedded Terminals
 
 Resuming a CLI `codex` or `claude` session or launching a CLI Flow phase opens
-a runtime-only terminal in one shared dock below the current content list.
+a runtime-only terminal in one shared full-width dock — a top-level pane below
+the repo, content, and shortcut panes, directly above the status bar.
 The dock persists while switching among Git, sessions, plans, flows, and
 Active Flows. Its terminal numbers and active selection are global, so a
 session resume and a Flow launch appear in the same numbered header. The
 current list remains usable above the dock; in particular, the saved-session
 table is never replaced by the terminal surface.
 
-Press `ctrl+t` from repo or list focus to collapse or expand the dock. A
-collapsed dock reserves one bottom row for a narrow-safe chip showing the
-terminal count, active terminal, and `ctrl+t` hint when space permits. From
+Press `ctrl+t` from repo or list focus to collapse or expand the dock. The
+dock's bottom chip row is always reserved: when terminals run collapsed, the
+narrow-safe chip shows the terminal count, active terminal, and `ctrl+t` hint
+when space permits; with no terminals it reads `no terminals running`. From
 terminal input, `ctrl+t` is sent to the PTY; use `ctrl+] t` to hide the dock.
 Hiding it returns terminal focus to the current list without stopping or
 resizing any terminal.

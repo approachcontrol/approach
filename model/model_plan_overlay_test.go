@@ -179,7 +179,7 @@ func TestModel_ExpandedPlanAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 				{PhaseID: "p2", Title: "Bottom phase two", Status: "completed", Order: 2},
 			}},
 	}
-	m = plansInRightPaneAtSize(t, m, records, 140, ui.BranchContentOverhead+4)
+	m = plansInRightPaneAtSize(t, m, records, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 	for i := 0; i < 4; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
@@ -207,7 +207,7 @@ func TestModel_ExpandedSinglePlanScrollsWithinManyPhases(t *testing.T) {
 			{PhaseID: "p4", Title: "Phase 4", Status: "pending", Order: 4},
 			{PhaseID: "p5", Title: "Phase 5", Status: "pending", Order: 5},
 		},
-	}}, 140, ui.BranchContentOverhead+4)
+	}}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	for i := 0; i < 3; i++ {
@@ -240,7 +240,7 @@ func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
 			{PhaseID: "p4", Title: "Phase 4", Status: "pending", Order: 4},
 			{PhaseID: "p5", Title: "Phase 5", Status: "pending", Order: 5},
 		},
-	}}, 140, ui.BranchContentOverhead+4)
+	}}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	for i := 0; i < 5; i++ {
@@ -253,7 +253,7 @@ func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
 		t.Fatalf("expected selected phase scroll before reflow to be 3, got %d", got)
 	}
 
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: ui.BranchContentOverhead + 4})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: ui.BranchContentOverhead + 4 + ui.TerminalChipRows})
 	if got := m.SelectedPlanPhaseID(); got != "p5" {
 		t.Fatalf("selected phase after reflow = %q, want p5", got)
 	}
@@ -285,7 +285,7 @@ func TestModel_TallExpandedPlanAtViewportBottomShowsFirstPhases(t *testing.T) {
 				{PhaseID: "p5", Title: "Phase 5", Status: "pending", Order: 5},
 			}},
 	}
-	m = plansInRightPaneAtSize(t, m, records, 140, ui.BranchContentOverhead+4)
+	m = plansInRightPaneAtSize(t, m, records, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 	for i := 0; i < 4; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
@@ -316,7 +316,7 @@ func TestModel_ExpandedPlanPhaseSelectionMovesToNextPlanAfterLastPhase(t *testin
 			},
 		},
 		{PlanID: "plan-2", RepoPath: "/dev/alpha", Title: "Plan 2", Status: "draft"},
-	}, 140, ui.BranchContentOverhead+4)
+	}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	for i := 0; i < 6; i++ {
@@ -346,7 +346,7 @@ func TestModel_ExpandedSinglePlanKeepsLastPhaseSelectedAtBottomBoundary(t *testi
 			{PhaseID: "p1", Title: "Phase 1", Status: "completed", Order: 1},
 			{PhaseID: "p2", Title: "Phase 2", Status: "pending", Order: 2},
 		},
-	}}, 140, ui.BranchContentOverhead+4)
+	}}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -381,7 +381,7 @@ func TestModel_ExpandedPlanScrollsUpWithinManyPhases(t *testing.T) {
 				{PhaseID: "p5", Title: "Phase 5", Status: "pending", Order: 5},
 			},
 		},
-	}, 140, ui.BranchContentOverhead+4)
+	}, 140, ui.BranchContentOverhead+4+ui.TerminalChipRows)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})

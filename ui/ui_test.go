@@ -103,7 +103,6 @@ func TestEmbeddedTerminalDockHeights(t *testing.T) {
 		wantList     int
 		wantTerminal int
 	}{
-		{name: "empty", height: 10, state: EmbeddedTerminalDockEmpty, wantList: 10},
 		{name: "collapsed", height: 10, state: EmbeddedTerminalDockCollapsed, wantList: 10},
 		{name: "expanded", height: 10, state: EmbeddedTerminalDockExpanded, wantList: 4, wantTerminal: 6},
 		{name: "tiny expanded", height: 3, state: EmbeddedTerminalDockExpanded, wantList: 1, wantTerminal: 2},
@@ -380,11 +379,13 @@ func TestRenderFlowCreateFormOverlayIsCompactAndLeavesBackgroundVisible(t *testi
 			{ID: "base-ref", Kind: FormText, Label: "Base ref", Placeholder: FlowBaseRefInputPlaceholder, Value: "main", Cursor: len([]rune("main"))},
 		},
 	}
+	// Height 16 lands the centered panel's title row beside the shortcut
+	// rail's "destructive mode" row so same-row compositing stays assertable.
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}},
 		Selected: 0,
 		Width:    120,
-		Height:   18,
+		Height:   16,
 		Mode:     ModeFlows,
 		Overlay:  OverlayForm,
 		Form:     form,
@@ -610,16 +611,28 @@ func TestRender_EmbeddedTerminalDockPersistsUnderNonFlowLists(t *testing.T) {
 	}
 }
 
-func TestRenderEmbeddedTerminalDockShowsCollapsedChipOnLastRow(t *testing.T) {
+func TestEmbeddedTerminalDockRows(t *testing.T) {
+	if got := EmbeddedTerminalDockRows(20, EmbeddedTerminalDockExpanded); got != 11 {
+		t.Fatalf("expanded dock rows = %d, want 11", got)
+	}
+	if got := EmbeddedTerminalDockRows(20, EmbeddedTerminalDockCollapsed); got != TerminalChipRows {
+		t.Fatalf("collapsed dock rows = %d, want %d", got, TerminalChipRows)
+	}
+	if got := EmbeddedTerminalDockRows(RepoContentOverhead+TerminalChipRows, EmbeddedTerminalDockCollapsed); got != 0 {
+		t.Fatalf("degenerate collapsed dock rows = %d, want 0", got)
+	}
+}
+
+func TestRenderEmbeddedTerminalDockPaneShowsCollapsedChip(t *testing.T) {
 	tabs := []EmbeddedTerminalTab{
 		{Number: 1, Provider: "codex", Identity: "session", State: "running"},
 		{Number: 2, Provider: "claude", Identity: "review", State: "exited", Active: true},
 	}
-	lines := stripLines(renderEmbeddedTerminalDock([]string{"list row"}, tabs, nil, false, false, 80, 6, EmbeddedTerminalDockCollapsed))
-	if len(lines) != 6 {
-		t.Fatalf("collapsed dock line count = %d, want 6: %#v", len(lines), lines)
+	lines := stripLines(renderEmbeddedTerminalDockPane(tabs, nil, false, false, 80, TerminalChipRows, EmbeddedTerminalDockCollapsed))
+	if len(lines) != TerminalChipRows {
+		t.Fatalf("collapsed dock line count = %d, want %d: %#v", len(lines), TerminalChipRows, lines)
 	}
-	chip := lines[len(lines)-1]
+	chip := lines[0]
 	for _, want := range []string{"●", "2 terminals", "2 claude review exited", "ctrl+t show"} {
 		if !strings.Contains(chip, want) {
 			t.Fatalf("collapsed chip missing %q: %q", want, chip)
@@ -627,6 +640,155 @@ func TestRenderEmbeddedTerminalDockShowsCollapsedChipOnLastRow(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(lines, "\n"), "┌") {
 		t.Fatalf("collapsed dock should not render terminal frame: %#v", lines)
+	}
+}
+
+func TestRenderExpandedTerminalDockIsTopLevelFullWidthPane(t *testing.T) {
+	p := RenderParams{
+		Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:                0,
+		Width:                   120,
+		Height:                  20,
+		Mode:                    ModeSessions,
+		ActivePane:              1,
+		Sessions:                []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
+		EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
+		EmbeddedTerminalLines:   []string{"persistent terminal output"},
+		EmbeddedTerminalVisible: true,
+	}
+	view := Render(p)
+	lines := strippedLines(view)
+	dockRows := EmbeddedTerminalDockRows(p.Height, EmbeddedTerminalDockExpanded)
+	if len(lines) != p.Height {
+		t.Fatalf("view line count = %d, want %d:\n%s", len(lines), p.Height, view)
+	}
+
+	top := lines[len(lines)-1-dockRows]
+	if !strings.HasPrefix(top, "┌") || !strings.HasSuffix(top, "┐") || strings.Contains(top, "┐┌") {
+		t.Fatalf("dock top border should be one full-width frame: %q", top)
+	}
+	if got := lipgloss.Width(top); got != p.Width {
+		t.Fatalf("dock top border width = %d, want %d", got, p.Width)
+	}
+	bottom := lines[len(lines)-2]
+	if !strings.HasPrefix(bottom, "└") || !strings.HasSuffix(bottom, "┘") || strings.Contains(bottom, "┘└") {
+		t.Fatalf("dock bottom border should be one full-width frame above the status bar: %q", bottom)
+	}
+	header := lines[len(lines)-dockRows]
+	if !strings.Contains(header, "1 codex dock running") {
+		t.Fatalf("dock header should be first framed row: %q", header)
+	}
+	if !strings.Contains(view, "persistent terminal output") {
+		t.Fatalf("dock should render live terminal output:\n%s", view)
+	}
+
+	paneRow := lines[:len(lines)-1-dockRows]
+	for i, line := range paneRow {
+		if strings.HasPrefix(line, "┌") && !strings.Contains(line, "┐┌") {
+			t.Fatalf("pane row line %d looks like a nested full-width terminal frame: %q", i, line)
+		}
+	}
+}
+
+func TestRenderCollapsedTerminalDockChipIsFullWidthAboveStatusBar(t *testing.T) {
+	p := RenderParams{
+		Repos:             []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:          0,
+		Width:             120,
+		Height:            16,
+		Mode:              ModeSessions,
+		ActivePane:        1,
+		Sessions:          []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
+		EmbeddedTerminals: []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
+	}
+	view := Render(p)
+	lines := strippedLines(view)
+	if len(lines) != p.Height {
+		t.Fatalf("view line count = %d, want %d:\n%s", len(lines), p.Height, view)
+	}
+	chip := lines[len(lines)-2]
+	for _, want := range []string{"● 1 terminal", "1 codex dock running", "ctrl+t show"} {
+		if !strings.Contains(chip, want) {
+			t.Fatalf("chip row missing %q: %q", want, chip)
+		}
+	}
+	if !strings.HasPrefix(lines[len(lines)-3], "└") {
+		t.Fatalf("pane row bottom border should sit directly above the chip: %q", lines[len(lines)-3])
+	}
+}
+
+func TestRenderNeverOverflowsViewportHeight(t *testing.T) {
+	terminal := EmbeddedTerminalTab{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}
+	states := []struct {
+		name      string
+		terminals []EmbeddedTerminalTab
+		visible   bool
+	}{
+		{name: "empty"},
+		{name: "collapsed", terminals: []EmbeddedTerminalTab{terminal}},
+		{name: "expanded", terminals: []EmbeddedTerminalTab{terminal}, visible: true},
+	}
+	for _, mode := range []Mode{ModeSessions, ModeWorktrees} {
+		for _, state := range states {
+			for height := 5; height <= 30; height++ {
+				view := Render(RenderParams{
+					Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+					Width:                   90,
+					Height:                  height,
+					Mode:                    mode,
+					ActivePane:              1,
+					EmbeddedTerminals:       state.terminals,
+					EmbeddedTerminalVisible: state.visible,
+				})
+				if got := len(strippedLines(view)); got != height {
+					t.Fatalf("mode %d %s dock at height %d rendered %d lines:\n%s", mode, state.name, height, got, view)
+				}
+			}
+		}
+	}
+}
+
+func TestRender_ShortcutRailSurvivesExpandedDock(t *testing.T) {
+	view := Render(RenderParams{
+		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:   0,
+		Width:      180,
+		Height:     60,
+		Mode:       ModeSessions,
+		ActivePane: 1,
+		Sessions:   []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
+			Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true,
+		}},
+		EmbeddedTerminalVisible: true,
+	})
+	pane := shortcutPaneText(view)
+	for _, want := range []string{"Actions", "r      resume"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("shortcut rail with expanded dock missing %q:\n%s", want, pane)
+		}
+	}
+	if strings.Contains(pane, "ctrl+] commands") {
+		t.Fatalf("unfocused terminal should not surface terminal shortcuts in the rail:\n%s", pane)
+	}
+}
+
+func TestRenderEmptyTerminalDockChipIsFullWidthAboveStatusBar(t *testing.T) {
+	p := RenderParams{
+		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected: 0,
+		Width:    120,
+		Height:   16,
+		Mode:     ModeSessions,
+		Sessions: []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
+	}
+	view := Render(p)
+	lines := strippedLines(view)
+	if len(lines) != p.Height {
+		t.Fatalf("view line count = %d, want %d:\n%s", len(lines), p.Height, view)
+	}
+	if chip := lines[len(lines)-2]; !strings.Contains(chip, "no terminals running") {
+		t.Fatalf("empty chip row = %q, want %q", chip, "no terminals running")
 	}
 }
 
@@ -643,15 +805,34 @@ func TestRenderEmbeddedTerminalChipDegradesWithoutOverflow(t *testing.T) {
 	}
 }
 
-func TestRenderEmbeddedTerminalChipOnlyAppearsForCollapsedDockWithTerminals(t *testing.T) {
+func TestRenderEmbeddedTerminalChipOnlyAppearsForCollapsedDock(t *testing.T) {
 	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", State: "running", Active: true}}
-	expanded := strings.Join(stripLines(renderEmbeddedTerminalDock([]string{"list"}, tabs, nil, false, false, 40, 6, EmbeddedTerminalDockExpanded)), "\n")
+	expanded := strings.Join(stripLines(renderEmbeddedTerminalDockPane(tabs, nil, false, false, 40, 6, EmbeddedTerminalDockExpanded)), "\n")
 	if strings.Contains(expanded, "ctrl+t show") {
 		t.Fatalf("expanded dock rendered collapsed chip:\n%s", expanded)
 	}
-	empty := strings.Join(stripLines(renderEmbeddedTerminalDock([]string{"list"}, nil, nil, false, false, 40, 6, EmbeddedTerminalDockEmpty)), "\n")
-	if strings.Contains(empty, "ctrl+t show") || strings.Contains(empty, "●") {
-		t.Fatalf("empty dock rendered collapsed chip:\n%s", empty)
+}
+
+func TestRenderEmbeddedTerminalDockPaneShowsEmptyChipWithoutTerminals(t *testing.T) {
+	lines := stripLines(renderEmbeddedTerminalDockPane(nil, nil, false, false, 40, TerminalChipRows, EmbeddedTerminalDockCollapsed))
+	if len(lines) != TerminalChipRows {
+		t.Fatalf("empty dock line count = %d, want %d: %#v", len(lines), TerminalChipRows, lines)
+	}
+	if chip := lines[0]; !strings.Contains(chip, "no terminals running") {
+		t.Fatalf("empty dock chip = %q, want %q", chip, "no terminals running")
+	}
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "●") || strings.Contains(joined, "┌") {
+		t.Fatalf("empty dock rendered terminal marker or frame:\n%s", joined)
+	}
+}
+
+func TestRenderEmbeddedTerminalChipDegradesWithoutTerminals(t *testing.T) {
+	for width := 1; width <= 40; width++ {
+		chip := renderEmbeddedTerminalChip(nil, width)
+		if got := lipgloss.Width(chip); got > width {
+			t.Fatalf("width %d empty chip overflowed to %d columns: %q", width, got, ansi.Strip(chip))
+		}
 	}
 }
 
@@ -684,6 +865,40 @@ func TestRenderCollapsedTerminalChipPersistsInEveryMode(t *testing.T) {
 					t.Fatalf("collapsed dock view missing %q:\n%s", want, view)
 				}
 			}
+		})
+	}
+}
+
+func TestRenderEmptyTerminalChipPersistsInEveryMode(t *testing.T) {
+	flow := flowstore.FlowRecord{FlowID: "flow-1", Title: "Dock flow", Status: flowstore.StatusInProgress, Branch: "flow/dock"}
+	tests := []struct {
+		name     string
+		params   RenderParams
+		listText string
+	}{
+		{name: "worktrees", params: RenderParams{Mode: ModeWorktrees, Worktrees: []gitquery.Worktree{{Path: "/dev/dock", BranchName: "feature/dock"}}}, listText: "feature/dock"},
+		{name: "sessions", params: RenderParams{Mode: ModeSessions, Sessions: []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}}}, listText: "feature/dock"},
+		{name: "plans", params: RenderParams{Mode: ModePlans, Plans: []planstore.PlanRecord{{PlanID: "plan-1", Title: "Dock plan", Status: "approved"}}}, listText: "Dock plan"},
+		{name: "flows", params: RenderParams{Mode: ModeFlows, Flows: []flowstore.FlowRecord{flow}}, listText: "flow/dock"},
+		{name: "active flows", params: RenderParams{Mode: ModeSessions, ActiveFlows: true, Flows: []flowstore.FlowRecord{flow}}, listText: "flow/dock"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.params
+			p.Repos = []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}
+			p.Selected = 0
+			p.Width = 180
+			p.Height = 14
+			p.ActivePane = 1
+			p.EmbeddedTerminalVisible = true
+			view := Render(p)
+			for _, want := range []string{tt.listText, "no terminals running"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("empty dock view missing %q:\n%s", want, view)
+				}
+			}
+			requireLinesWithinWidth(t, strippedLines(view), p.Width)
 		})
 	}
 }
@@ -1119,7 +1334,7 @@ func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
-		Height:   10,
+		Height:   11,
 		Mode:     ModeSessions,
 		Sessions: []sessions.SessionRecord{{
 			Provider:  sessions.ProviderCodex,
@@ -1217,7 +1432,7 @@ func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
 		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:          0,
 		Width:             140,
-		Height:            20,
+		Height:            21,
 		Mode:              1,
 		ActivePane:        1,
 		Worktrees:         []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
@@ -1240,7 +1455,7 @@ func TestRender_WorktreesModeShowsInlineSessionHints(t *testing.T) {
 		},
 		Selected:          0,
 		Width:             140,
-		Height:            12,
+		Height:            13,
 		Mode:              ModeWorktrees,
 		ActivePane:        1,
 		WorktreeSelected:  0,
@@ -1333,7 +1548,7 @@ func TestRender_StaleWorktreeShowsSetAgentHint(t *testing.T) {
 		Repos:             []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:          0,
 		Width:             140,
-		Height:            16,
+		Height:            17,
 		Mode:              1,
 		ActivePane:        1,
 		Worktrees:         []gitquery.Worktree{{Path: "/gone", BranchName: "gone", Stale: true}},
@@ -1586,7 +1801,7 @@ func TestRender_WideLayoutShowsShortcutPane(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected: 0,
 		Width:    120,
-		Height:   18,
+		Height:   19,
 		Mode:     ModeWorktrees,
 		Worktrees: []gitquery.Worktree{
 			{Path: "/a", BranchName: "main", IsMain: true},
@@ -1609,7 +1824,7 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:   0,
 		Width:      120,
-		Height:     18,
+		Height:     19,
 		Mode:       ModeWorktrees,
 		ActivePane: 1,
 	})
@@ -1709,12 +1924,12 @@ func TestRender_ShortcutPaneUsesUsableHeightGate(t *testing.T) {
 		ActivePane:       1,
 	}
 
-	params.Height = 5 // two usable pane rows after borders/status.
+	params.Height = 6 // two usable pane rows after borders/status/dock chip.
 	if view := Render(params); strings.Contains(view, "Shortcuts") {
 		t.Fatalf("shortcut pane should stay hidden below three usable rows, got:\n%s", view)
 	}
 
-	params.Height = 6 // three usable pane rows after borders/status.
+	params.Height = 7 // three usable pane rows after borders/status/dock chip.
 	view := Render(params)
 	if !strings.Contains(view, "Shortcuts") || !strings.Contains(shortcutPaneText(view), shortcutOverflowMarker) {
 		t.Fatalf("shortcut pane should render and clip at three usable rows, got:\n%s", view)
@@ -1960,7 +2175,7 @@ func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    120,
-		Height:   10,
+		Height:   11,
 		Mode:     ModeSessions,
 		Sessions: []sessions.SessionRecord{{
 			Provider:  sessions.ProviderCodex,

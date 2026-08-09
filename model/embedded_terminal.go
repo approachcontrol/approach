@@ -316,19 +316,17 @@ func (m Model) embeddedTerminalLines() []string {
 }
 
 func (m Model) embeddedTerminalOuterWidth() int {
-	return ui.RightContentWidth(m.width, m.height, m.searchActive, m.repoPaneCollapsed)
+	return m.width
 }
 
 func (m Model) embeddedTerminalWidth() int {
 	return ui.EmbeddedTerminalPTYWidth(m.embeddedTerminalOuterWidth())
 }
 
+// embeddedTerminalOuterHeight is the height the top-level dock partition works
+// from. It is mode-independent so the terminal keeps one size across views.
 func (m Model) embeddedTerminalOuterHeight() int {
-	overhead := ui.BranchContentOverhead
-	if ui.IsGitMode(m.mode) {
-		overhead = ui.GitContentOverhead
-	}
-	height := m.height - overhead
+	height := m.height - ui.BranchContentOverhead
 	if height > 0 {
 		return height
 	}
@@ -583,13 +581,6 @@ func (m Model) focusEmbeddedTerminalInput() Model {
 	m.terminalDockVisible = true
 	m = m.resizeEmbeddedTerminals()
 	return m.reflowForTerminalDock()
-}
-
-func (m Model) resizeEmbeddedTerminalsAfterModeChange(previousMode ui.Mode) Model {
-	if ui.IsGitMode(previousMode) == ui.IsGitMode(m.mode) {
-		return m
-	}
-	return m.resizeEmbeddedTerminals()
 }
 
 func embeddedTerminalIdentity(record sessions.SessionRecord) string {

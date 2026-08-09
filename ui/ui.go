@@ -235,8 +235,7 @@ const TerminalChipRows = 1
 type EmbeddedTerminalDockState int
 
 const (
-	EmbeddedTerminalDockEmpty EmbeddedTerminalDockState = iota
-	EmbeddedTerminalDockCollapsed
+	EmbeddedTerminalDockCollapsed EmbeddedTerminalDockState = iota
 	EmbeddedTerminalDockExpanded
 )
 
@@ -369,6 +368,25 @@ type RenderParams struct {
 	WorktreeSessionsOpen         bool
 	AgentAvailable               bool
 	NewAgentAvailable            bool
+}
+
+// EmbeddedTerminalDockRows is the number of full-width rows the top-level
+// terminal dock consumes between the pane row and the status bar: the framed
+// terminal pane when expanded, or the single chip row otherwise. The expanded
+// height is derived from the same partition the dock used when it was nested,
+// so the terminal keeps its familiar size and is mode-independent.
+func EmbeddedTerminalDockRows(height int, state EmbeddedTerminalDockState) int {
+	if state == EmbeddedTerminalDockExpanded {
+		_, terminalHeight := EmbeddedTerminalDockHeights(height-BranchContentOverhead, state)
+		return terminalHeight
+	}
+	// At or below this height the pane row is already at its irreducible
+	// header height in every mode, so reserving the chip row would cost
+	// header rows instead of shrinking the lists.
+	if height <= GitContentOverhead {
+		return 0
+	}
+	return TerminalChipRows
 }
 
 func EmbeddedTerminalDockHeights(height int, state EmbeddedTerminalDockState) (listHeight, terminalHeight int) {
@@ -614,6 +632,15 @@ func renderApplication(p RenderParams) string {
 		NewAgent:                     p.NewAgentAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
+	dockState := EmbeddedTerminalDockCollapsed
+	if embeddedTerminalActive && p.EmbeddedTerminalVisible {
+		dockState = EmbeddedTerminalDockExpanded
+	}
+	dockRows := EmbeddedTerminalDockRows(p.Height, dockState)
+	paneRowHeight := innerHeight - dockRows
+	if paneRowHeight < 0 {
+		paneRowHeight = 0
+	}
 	activeStatusQuery := hasActiveStatusQuery(status)
 	showShortcutPane := shouldRenderShortcutPaneForViewport(p.Width, p.Height, activeStatusQuery)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
@@ -627,7 +654,7 @@ func renderApplication(p RenderParams) string {
 	rightBorderColor := inactiveBorderColor
 	if p.Destructive {
 		rightBorderColor = destructiveBorderColor
-	} else if p.ActivePane == 1 {
+	} else if p.ActivePane == 1 && !p.EmbeddedTerminalFocused {
 		rightBorderColor = activeBorderColor
 	}
 	if p.ActivePane == 0 && !p.RepoPaneCollapsed {
@@ -635,17 +662,17 @@ func renderApplication(p RenderParams) string {
 	}
 
 	leftContentWidth := LeftPaneWidth - 2 // left + right border
-	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
+	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, paneRowHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
 	if p.RepoPaneCollapsed {
 		leftContentWidth = CollapsedRepoPaneWidth - 2
-		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, innerHeight, !terminalShortcutsActive)
+		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, paneRowHeight, !terminalShortcutsActive)
 	}
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(leftBorderColor).
 		Width(leftContentWidth).
-		Height(innerHeight).
+		Height(paneRowHeight).
 		Render(leftContent)
 
 	rightContentWidth := RightContentWidth(p.Width, p.Height, activeStatusQuery, p.RepoPaneCollapsed)
@@ -660,6 +687,7 @@ func renderApplication(p RenderParams) string {
 	} else if IsBeadsMode(p.Mode) {
 		rightContentHeight = p.Height - BeadsContentOverhead
 	}
+	rightContentHeight -= dockRows
 	if rightContentHeight < 0 {
 		rightContentHeight = 0
 	}
@@ -693,14 +721,7 @@ func renderApplication(p RenderParams) string {
 	}
 
 	repoDisplayNames := repoDisplayNamesByPath(p.Repos)
-	dockState := EmbeddedTerminalDockEmpty
-	if embeddedTerminalActive {
-		dockState = EmbeddedTerminalDockCollapsed
-		if p.EmbeddedTerminalVisible {
-			dockState = EmbeddedTerminalDockExpanded
-		}
-	}
-	listHeight, _ := EmbeddedTerminalDockHeights(rightContentHeight, dockState)
+	listHeight := rightContentHeight
 	var rightLines []string
 	switch {
 	case flowSurfaceActive && len(p.Flows) > 0:
@@ -752,17 +773,20 @@ func renderApplication(p RenderParams) string {
 	default:
 		rightLines = renderPlaceholderPane(rightContentWidth, listHeight, p.RightEmptyMessage)
 	}
-	rightLines = renderEmbeddedTerminalDock(rightLines, p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, p.EmbeddedTerminalFocused, rightContentWidth, rightContentHeight, dockState)
 
-	rightContent := modeHeader
-	if len(rightLines) > 0 {
-		rightContent += "\n" + strings.Join(rightLines, "\n")
+	rightContentLines := append(strings.Split(modeHeader, "\n"), rightLines...)
+	if len(rightContentLines) > paneRowHeight {
+		// lipgloss Height is a minimum, not a clip: at degenerate viewport
+		// heights the fixed mode header would otherwise grow the pane row
+		// past the viewport.
+		rightContentLines = rightContentLines[:paneRowHeight]
 	}
+	rightContent := strings.Join(rightContentLines, "\n")
 	rightPane := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(rightBorderColor).
 		Width(rightContentWidth).
-		Height(innerHeight).
+		Height(paneRowHeight).
 		Render(rightContent)
 
 	panes := []string{leftPane, rightPane}
@@ -772,12 +796,15 @@ func renderApplication(p RenderParams) string {
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(inactiveBorderColor).
 			Width(shortcutContentWidth).
-			Height(innerHeight).
-			Render(renderShortcutPane(status, shortcutContentWidth, innerHeight))
+			Height(paneRowHeight).
+			Render(renderShortcutPane(status, shortcutContentWidth, paneRowHeight))
 		panes = append(panes, shortcutPane)
 	}
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, panes...)
+	if dockLines := renderEmbeddedTerminalDockPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, p.EmbeddedTerminalFocused, p.Width, dockRows, dockState); len(dockLines) > 0 {
+		content += "\n" + strings.Join(dockLines, "\n")
+	}
 
 	return content + "\n" + statusBar
 }
@@ -1055,7 +1082,13 @@ func shouldRenderShortcutPane(width, height int, sp statusBarParams) bool {
 }
 
 func shouldRenderShortcutPaneForViewport(width, height int, activeStatusQuery bool) bool {
-	return !activeStatusQuery && shouldRenderShortcutPaneForInnerHeight(width, height-RepoContentOverhead)
+	// The terminal dock chip row is always reserved below the pane row, so it
+	// never counts toward the shortcut rail's usable height. The gate stays
+	// dock-state-agnostic on purpose — it also decides pane widths via
+	// RightContentWidth, which the model calls without dock state — so an
+	// expanded dock clips the rail (with the overflow marker) rather than
+	// hiding it.
+	return !activeStatusQuery && shouldRenderShortcutPaneForInnerHeight(width, height-RepoContentOverhead-TerminalChipRows)
 }
 
 func shouldRenderShortcutPaneForInnerHeight(width, height int) bool {
@@ -2614,27 +2647,34 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 	return append([]string{header}, scrollAndPad(rows, scroll, rowHeight)...)
 }
 
-func renderEmbeddedTerminalDock(listLines []string, tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused bool, outerWidth, outerHeight int, state EmbeddedTerminalDockState) []string {
-	listHeight, terminalHeight := EmbeddedTerminalDockHeights(outerHeight, state)
-	if state == EmbeddedTerminalDockCollapsed && len(tabs) > 0 && listHeight > 0 {
-		listHeight -= TerminalChipRows
-		if listHeight < 0 {
-			listHeight = 0
-		}
-		lines := scrollAndPad(listLines, 0, listHeight)
-		lines = append(lines, renderEmbeddedTerminalChip(tabs, outerWidth))
-		return scrollAndPad(lines, 0, outerHeight)
+// renderEmbeddedTerminalDockPane renders the top-level terminal dock that
+// spans the full application width between the pane row and the status bar:
+// the framed terminal pane when expanded, or the single chip row otherwise.
+func renderEmbeddedTerminalDockPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused bool, width, dockRows int, state EmbeddedTerminalDockState) []string {
+	if dockRows <= 0 || width <= 0 {
+		return nil
 	}
-	lines := scrollAndPad(listLines, 0, listHeight)
-	if terminalHeight > 0 {
-		lines = append(lines, renderEmbeddedTerminalPane(tabs, liveLines, prefixActive, focused, outerWidth, terminalHeight)...)
+	if state == EmbeddedTerminalDockExpanded {
+		return renderEmbeddedTerminalPane(tabs, liveLines, prefixActive, focused, width, dockRows)
 	}
-	return scrollAndPad(lines, 0, outerHeight)
+	chip := renderEmbeddedTerminalChip(tabs, width)
+	if pad := width - lipgloss.Width(chip); pad > 0 {
+		chip += strings.Repeat(" ", pad)
+	}
+	return scrollAndPad([]string{chip}, 0, dockRows)
 }
 
 func renderEmbeddedTerminalChip(tabs []EmbeddedTerminalTab, width int) string {
-	if len(tabs) == 0 || width <= 0 {
+	if width <= 0 {
 		return ""
+	}
+	if len(tabs) == 0 {
+		for _, candidate := range []string{"no terminals running", "no terminals"} {
+			if lipgloss.Width(candidate) <= width {
+				return statusStyle.Render(candidate)
+			}
+		}
+		return truncateToWidth(statusStyle.Render("no terminals"), width)
 	}
 	active := tabs[0]
 	for _, tab := range tabs {
@@ -2931,20 +2971,6 @@ const (
 	flowPRWidth      = 8
 	flowUpdatedWidth = 10
 )
-
-func renderFlowSplitPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, terminals []EmbeddedTerminalTab, terminalLines []string, prefixActive, terminalFocused, showRepo bool, repoDisplayNames map[string]string) []string {
-	if height <= 0 {
-		return nil
-	}
-	listHeight, _ := EmbeddedTerminalDockHeights(height, EmbeddedTerminalDockExpanded)
-	var lines []string
-	if len(records) > 0 {
-		lines = renderFlowPane(records, selected, scroll, width, listHeight, expandedFlowID, selectedPhaseID, activity, showRepo, repoDisplayNames)
-	} else {
-		lines = renderPlaceholderPane(width, listHeight, "No flows")
-	}
-	return renderEmbeddedTerminalDock(lines, terminals, terminalLines, prefixActive, terminalFocused, width, height, EmbeddedTerminalDockExpanded)
-}
 
 func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, height int, expandedFlowID, selectedPhaseID string, activity []FlowTerminalActivity, showRepo bool, repoDisplayNames map[string]string) []string {
 	if height <= 0 {

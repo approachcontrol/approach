@@ -115,7 +115,7 @@ func TestFirstAndLastEmbeddedTerminalReflowSessionSelection(t *testing.T) {
 	m := Model{
 		mode:                ui.ModeSessions,
 		width:               160,
-		height:              20,
+		height:              20 + ui.TerminalChipRows,
 		terminalDockVisible: true,
 		sessions:            newSessionPane().SetItems(records).Move(13, 14, 80),
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
@@ -140,6 +140,39 @@ func TestFirstAndLastEmbeddedTerminalReflowSessionSelection(t *testing.T) {
 	}
 }
 
+func TestRepoContentHeightAccountsForTerminalDockState(t *testing.T) {
+	m := Model{height: 20, terminalDockVisible: true}
+	if got := m.repoContentHeight(); got != 16 {
+		t.Fatalf("no-terminals repo height = %d, want 16 (chip row reserved)", got)
+	}
+	m.embeddedTerminals = []embeddedTerminalSlot{{Number: 1, Scope: embeddedTerminalScopeSession, Terminal: internalFakeEmbeddedTerminal{}}}
+	if got := m.repoContentHeight(); got != 6 {
+		t.Fatalf("expanded-dock repo height = %d, want 6", got)
+	}
+	m.terminalDockVisible = false
+	if got := m.repoContentHeight(); got != 16 {
+		t.Fatalf("collapsed-dock repo height = %d, want 16", got)
+	}
+}
+
+func TestEmbeddedTerminalSpansFullAppWidth(t *testing.T) {
+	m := Model{width: 120, height: 30}
+	if got := m.embeddedTerminalOuterWidth(); got != 120 {
+		t.Fatalf("terminal outer width = %d, want full app width 120", got)
+	}
+}
+
+func TestEmbeddedTerminalOuterHeightIsModeIndependent(t *testing.T) {
+	base := Model{height: 24, mode: ui.ModeSessions}
+	git := Model{height: 24, mode: ui.ModeWorktrees}
+	if base.embeddedTerminalOuterHeight() != git.embeddedTerminalOuterHeight() {
+		t.Fatalf("terminal outer height differs by mode: %d vs %d", base.embeddedTerminalOuterHeight(), git.embeddedTerminalOuterHeight())
+	}
+	if got := base.embeddedTerminalOuterHeight(); got != 24-ui.BranchContentOverhead {
+		t.Fatalf("terminal outer height = %d, want %d", got, 24-ui.BranchContentOverhead)
+	}
+}
+
 func TestContentHeightForModeAccountsForTerminalDockState(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -148,15 +181,15 @@ func TestContentHeightForModeAccountsForTerminalDockState(t *testing.T) {
 		wantExpanded  int
 		wantCollapsed int
 	}{
-		{name: "worktrees", mode: ui.ModeWorktrees, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
-		{name: "branches", mode: ui.ModeBranches, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
-		{name: "stashes", mode: ui.ModeStashes, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
-		{name: "history", mode: ui.ModeHistory, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
-		{name: "reflog", mode: ui.ModeReflog, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
-		{name: "sessions", mode: ui.ModeSessions, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
-		{name: "plans", mode: ui.ModePlans, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
-		{name: "flows", mode: ui.ModeFlows, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
-		{name: "active flows", mode: ui.ModeActiveFlows, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
+		{name: "worktrees", mode: ui.ModeWorktrees, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "branches", mode: ui.ModeBranches, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "stashes", mode: ui.ModeStashes, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "history", mode: ui.ModeHistory, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "reflog", mode: ui.ModeReflog, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "sessions", mode: ui.ModeSessions, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "plans", mode: ui.ModePlans, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "flows", mode: ui.ModeFlows, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "active flows", mode: ui.ModeActiveFlows, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
 	}
 
 	for _, tt := range tests {
@@ -445,7 +478,7 @@ func TestInteractiveFlowLaunchFocusExpandsCollapsedDock(t *testing.T) {
 	}
 }
 
-func TestGitAndNonGitModeSwitchesResizeVisibleTerminalDock(t *testing.T) {
+func TestGitAndNonGitModeSwitchesKeepTerminalDockSize(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
 		mode:                ui.ModeSessions,
@@ -464,18 +497,19 @@ func TestGitAndNonGitModeSwitchesResizeVisibleTerminalDock(t *testing.T) {
 	if !handled || next.mode != ui.ModeWorktrees {
 		t.Fatalf("switch to Git = handled %v mode %d, want worktrees", handled, next.mode)
 	}
-	wantGit := [2]int{next.embeddedTerminalWidth(), next.embeddedTerminalContentHeight()}
-	if len(term.resizes) != 1 || term.resizes[0] != wantGit {
-		t.Fatalf("Git switch resize calls = %#v, want [%v]", term.resizes, wantGit)
+	if next.embeddedTerminalContentHeight() != m.embeddedTerminalContentHeight() || next.embeddedTerminalWidth() != m.embeddedTerminalWidth() {
+		t.Fatal("terminal dimensions should be mode-independent")
+	}
+	if len(term.resizes) != 0 {
+		t.Fatalf("Git switch should not resize the mode-independent terminal, got %#v", term.resizes)
 	}
 
 	next, _, handled = next.switchModeFromKey("2")
 	if !handled || next.mode != ui.ModeSessions {
 		t.Fatalf("switch from Git = handled %v mode %d, want sessions", handled, next.mode)
 	}
-	wantSessions := [2]int{next.embeddedTerminalWidth(), next.embeddedTerminalContentHeight()}
-	if len(term.resizes) != 2 || term.resizes[1] != wantSessions {
-		t.Fatalf("non-Git switch resize calls = %#v, want second resize %v", term.resizes, wantSessions)
+	if len(term.resizes) != 0 {
+		t.Fatalf("non-Git switch should not resize the mode-independent terminal, got %#v", term.resizes)
 	}
 }
 

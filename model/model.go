@@ -2258,11 +2258,7 @@ func (m Model) reflowStashes() Model {
 }
 
 func (m Model) reflowRepos() Model {
-	contentHeight := m.height - ui.RepoContentOverhead
-	if contentHeight <= 0 {
-		contentHeight = 1
-	}
-	m.repos = m.repos.Reflow(contentHeight, ui.LeftPaneWidth-2)
+	m.repos = m.repos.Reflow(m.repoContentHeight(), ui.LeftPaneWidth-2)
 	return m
 }
 

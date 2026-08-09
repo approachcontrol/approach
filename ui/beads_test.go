@@ -433,7 +433,7 @@ func TestRender_BeadsQuietStatesAreSubviewSpecific(t *testing.T) {
 func TestRender_BeadsGroupedHeaderConsumesOneListRow(t *testing.T) {
 	view := ansi.Strip(Render(RenderParams{
 		Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
-		Width: 90, Height: BeadsContentOverhead + 2, Mode: ModeBeadsOpen, ActivePane: 1,
+		Width: 90, Height: BeadsContentOverhead + TerminalChipRows + 2, Mode: ModeBeadsOpen, ActivePane: 1,
 		BeadsOpen: []beadsquery.Bead{
 			{ID: "bd-0", Title: "Zero"},
 			{ID: "bd-1", Title: "One"},
@@ -447,8 +447,8 @@ func TestRender_BeadsGroupedHeaderConsumesOneListRow(t *testing.T) {
 	if strings.Contains(view, "bd-2") {
 		t.Fatalf("Beads second header failed to reduce list capacity to two rows:\n%s", view)
 	}
-	if got := len(strings.Split(view, "\n")); got != BeadsContentOverhead+2 {
-		t.Fatalf("rendered height = %d, want unchanged outer height %d", got, BeadsContentOverhead+2)
+	if got := len(strings.Split(view, "\n")); got != BeadsContentOverhead+TerminalChipRows+2 {
+		t.Fatalf("rendered height = %d, want unchanged outer height %d", got, BeadsContentOverhead+TerminalChipRows+2)
 	}
 }
 

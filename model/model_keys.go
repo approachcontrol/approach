@@ -166,6 +166,7 @@ func (m Model) toggleEmbeddedTerminalDock() Model {
 }
 
 func (m Model) reflowForTerminalDock() Model {
+	m = m.reflowRepos()
 	m = m.reflowWorktrees()
 	m = m.reflowBranches()
 	m = m.reflowStashes()
@@ -174,6 +175,7 @@ func (m Model) reflowForTerminalDock() Model {
 	m = m.reflowSessions()
 	m = m.reflowPlans()
 	m = m.reflowFlows()
+	m = m.reflowAllBeads()
 	return m.reflowActiveFlows()
 }
 
@@ -554,7 +556,7 @@ func (m Model) setRepoPaneCollapsed(collapsed bool) Model {
 		return m
 	}
 	m.repoPaneCollapsed = collapsed
-	m = m.resizeEmbeddedTerminals()
+	// Embedded PTYs span the full app width, so collapse needs no resize.
 	return m.clampSelectionsAfterFilter()
 }
 
@@ -2840,7 +2842,9 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 	} else {
 		m = m.resetModeCursors()
 	}
-	return m.resizeEmbeddedTerminalsAfterModeChange(from)
+	// Terminal dimensions are mode-independent, so mode switches need no
+	// PTY resize.
+	return m
 }
 
 func isFlowMode(mode ui.Mode) bool {
@@ -2908,7 +2912,7 @@ func (m Model) repoContentHeight() int {
 	if height <= 0 {
 		return 1
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) rightContentHeight() int {
@@ -2916,31 +2920,19 @@ func (m Model) rightContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) planContentHeight() int {
-	height := m.height - ui.PlanContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
 }
 
 func (m Model) flowContentHeight() int {
-	height := m.height - ui.FlowContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
 }
 
 func (m Model) sessionContentHeight() int {
-	height := m.height - ui.SessionContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
 }
 
 func (m Model) worktreeSessionContentHeight() int {
@@ -2979,7 +2971,7 @@ func (m Model) beadsContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return height
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 // gitPaneContentHeight is the list height for the branches, history, and
@@ -2989,7 +2981,7 @@ func (m Model) gitPaneContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, height, 0)
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) worktreeContentHeight() int {
@@ -2997,30 +2989,29 @@ func (m Model) worktreeContentHeight() int {
 	if height <= 0 {
 		return 16
 	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, height, 0)
+	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
 }
 
 func (m Model) stashContentHeight() int {
-	height := m.height - ui.StashContentOverhead
-	if height <= 0 {
-		return 1
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, height, 0)
+	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.StashContentOverhead, 0)
 }
 
-func (m Model) applyEmbeddedTerminalDockContentHeight(baseHeight, outerHeight, headerRows int) int {
-	if len(m.embeddedTerminals) == 0 {
-		return baseHeight
-	}
-	listHeight := outerHeight
-	if m.terminalDockVisible {
-		listHeight, _ = ui.EmbeddedTerminalDockHeights(outerHeight, ui.EmbeddedTerminalDockExpanded)
-	} else {
-		listHeight -= ui.TerminalChipRows
-	}
-	rows := listHeight - headerRows
+func (m Model) applyEmbeddedTerminalDockContentHeight(outerHeight, headerRows int) int {
+	rows := outerHeight - m.embeddedTerminalDockRows() - headerRows
 	if rows <= 0 {
 		return 1
 	}
 	return rows
+}
+
+// embeddedTerminalDockRows is the number of full-width rows the top-level
+// terminal dock consumes below the pane row: the framed terminal pane when
+// expanded, or the always-reserved chip row that shows the terminal summary
+// when collapsed and the empty-state notice when no terminals run.
+func (m Model) embeddedTerminalDockRows() int {
+	state := ui.EmbeddedTerminalDockCollapsed
+	if len(m.embeddedTerminals) > 0 && m.terminalDockVisible {
+		state = ui.EmbeddedTerminalDockExpanded
+	}
+	return ui.EmbeddedTerminalDockRows(m.height, state)
 }

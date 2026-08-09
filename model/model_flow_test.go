@@ -5493,7 +5493,7 @@ func TestModel_ExpandedFlowAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 		{FlowID: "flow-5", RepoPath: "/dev/alpha", Title: "Fifth flow", Status: flowstore.StatusPending},
 		flow,
 	})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12 + ui.TerminalChipRows})
 	for i := 0; i < 5; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
@@ -5517,7 +5517,7 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 		flowstore.FlowPhase{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
 	)
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 10 + ui.TerminalChipRows})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	for i := 0; i < 4; i++ {
@@ -7794,7 +7794,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
 	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(18-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
-	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false))
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(140)
 	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
@@ -7809,7 +7809,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	}
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
 	_, terminalResizeOuterHeight := ui.EmbeddedTerminalDockHeights(20-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
-	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 20, false, false))
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(160)
 	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
@@ -8462,7 +8462,7 @@ func TestModel_FlowTerminalActivityMatchesStructuredFlowAndPhaseIDs(t *testing.T
 	}
 }
 
-func TestModel_FlowEmbeddedTerminalResizesWhenSearchTogglesShortcutPane(t *testing.T) {
+func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
@@ -8492,11 +8492,11 @@ func TestModel_FlowEmbeddedTerminalResizesWhenSearchTogglesShortcutPane(t *testi
 
 	wantHeight := flowTerminalPTYHeightForViewport(18)
 	wantSearchSize := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, true, false)),
+		ui.EmbeddedTerminalPTYWidth(140),
 		wantHeight,
 	}
 	wantInactiveSize := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false)),
+		ui.EmbeddedTerminalPTYWidth(140),
 		wantHeight,
 	}
 
@@ -8579,7 +8579,7 @@ func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 
 	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	want := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, false)),
+		ui.EmbeddedTerminalPTYWidth(width),
 		ui.EmbeddedTerminalPTYHeight(terminalOuterHeight),
 	}
 	if started != want {
