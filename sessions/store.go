@@ -40,9 +40,11 @@ type Store struct {
 	lockTimeout        time.Duration
 	env                map[string]string
 	launchStale        launchStaleFunc
+	acquireFileLock    acquireFileLockFunc
 }
 
 type launchStaleFunc func(existing, incoming SessionRecord) (stale, known bool)
+type acquireFileLockFunc func(path, label string, timeout time.Duration) (func(), error)
 
 type StoreOptions struct {
 	Root               string
@@ -109,7 +111,13 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	return &Store{root: root, copyRawTranscripts: opts.CopyRawTranscripts, lockTimeout: lockTimeout, env: opts.Env}, nil
+	return &Store{
+		root:               root,
+		copyRawTranscripts: opts.CopyRawTranscripts,
+		lockTimeout:        lockTimeout,
+		env:                opts.Env,
+		acquireFileLock:    artifacts.AcquireFileLock,
+	}, nil
 }
 
 func DefaultRoot() (string, error) {
@@ -304,7 +312,11 @@ func (s *Store) acquireSessionLock(provider Provider, sessionID string) (func(),
 	}
 	lockName := providerPathPart(provider) + "-" + safeSessionDirName(sessionID) + ".lock"
 	label := fmt.Sprintf("session lock %q/%q", provider, sessionID)
-	return artifacts.AcquireFileLock(filepath.Join(lockDir, lockName), label, s.lockTimeout)
+	acquire := s.acquireFileLock
+	if acquire == nil {
+		acquire = artifacts.AcquireFileLock
+	}
+	return acquire(filepath.Join(lockDir, lockName), label, s.lockTimeout)
 }
 
 func (s *Store) readMetadata(provider Provider, sessionID string) (SessionRecord, bool, error) {

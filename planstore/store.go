@@ -44,10 +44,13 @@ var validPhaseStatuses = map[string]bool{
 
 // Store reads and writes saved plans under an artifact root.
 type Store struct {
-	root        string
-	now         func() time.Time
-	lockTimeout time.Duration
+	root            string
+	now             func() time.Time
+	lockTimeout     time.Duration
+	acquireFileLock acquireFileLockFunc
 }
+
+type acquireFileLockFunc func(path, label string, timeout time.Duration) (func(), error)
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
@@ -129,7 +132,7 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	return &Store{root: root, now: now, lockTimeout: lockTimeout}, nil
+	return &Store{root: root, now: now, lockTimeout: lockTimeout, acquireFileLock: artifacts.AcquireFileLock}, nil
 }
 
 // DefaultRoot returns the default artifact root, matching sessions.DefaultRoot.
@@ -275,6 +278,67 @@ func (s *Store) SetPhase(planID string, phase PlanPhase) error {
 		return record.Phases[i].Order < record.Phases[j].Order
 	})
 
+	record.UpdatedAt = s.now()
+	return s.write(record)
+}
+
+// SetPhaseStatus updates only the status of an existing normalized phase while
+// holding the plan mutation lock. A missing phase is an intentional no-op; a
+// missing plan remains an error. Legacy duplicate spellings collapse to the
+// first matching row without replacing its title, order, or phase ID.
+func (s *Store) SetPhaseStatus(planID, phaseID, status string) error {
+	if err := validatePlanID(planID); err != nil {
+		return err
+	}
+	if status == "" {
+		status = "pending"
+	}
+	if !validPhaseStatuses[status] {
+		return fmt.Errorf("invalid phase status %q", status)
+	}
+	phaseID = artifacts.NormalizePhaseID(phaseID)
+	if phaseID == "" {
+		return fmt.Errorf("phase id is required")
+	}
+
+	release, err := s.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	record, ok := s.readRecord(planID)
+	if !ok {
+		return fmt.Errorf("plan %q not found", planID)
+	}
+
+	found := false
+	changed := false
+	keptIndex := -1
+	kept := make([]PlanPhase, 0, len(record.Phases))
+	for _, existing := range record.Phases {
+		if artifacts.NormalizePhaseID(existing.PhaseID) != phaseID {
+			kept = append(kept, existing)
+			continue
+		}
+		if found {
+			changed = true
+			continue
+		}
+		found = true
+		keptIndex = len(kept)
+		if existing.Status != status {
+			existing.Status = status
+			changed = true
+		}
+		kept = append(kept, existing)
+	}
+	if !found || !changed {
+		return nil
+	}
+	if strings.TrimSpace(kept[keptIndex].Title) == "" {
+		return fmt.Errorf("phase title is required")
+	}
+	record.Phases = kept
 	record.UpdatedAt = s.now()
 	return s.write(record)
 }
@@ -441,7 +505,11 @@ func (s *Store) acquireMutationLock() (func(), error) {
 	if err := os.Chmod(lockDir, artifacts.DirPerm); err != nil {
 		return nil, fmt.Errorf("secure plan lock directory: %w", err)
 	}
-	return artifacts.AcquireFileLock(filepath.Join(lockDir, "mutations.lock"), "plan mutation lock", s.lockTimeout)
+	acquire := s.acquireFileLock
+	if acquire == nil {
+		acquire = artifacts.AcquireFileLock
+	}
+	return acquire(filepath.Join(lockDir, "mutations.lock"), "plan mutation lock", s.lockTimeout)
 }
 
 func validatePlanID(planID string) error {
