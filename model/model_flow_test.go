@@ -9206,6 +9206,47 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	}
 }
 
+func TestModel_FlowTerminalInputModeTabCyclesPaneFocus(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:     "codex",
+		FlowID:      "flow-1",
+		FlowPhaseID: "implementation",
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "z" {
+		t.Fatalf("interactive Flow launch should focus terminal input, writes = %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.ActivePane() != 0 {
+		t.Fatalf("tab from input-mode Flow terminal active pane = %d, want left pane", m.ActivePane())
+	}
+	if len(fakeTerm.writes) != 1 {
+		t.Fatalf("tab from input-mode Flow terminal should not write to PTY: %#v", fakeTerm.writes)
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.ActivePane() != 1 {
+		t.Fatalf("tab from left pane active pane = %d, want Flow list", m.ActivePane())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != 1 {
+		t.Fatalf("returning to Flow terminal should restore command mode: %#v", fakeTerm.writes)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
+		t.Fatalf("status = %q, want command-mode unknown-key error", got)
+	}
+}
+
 func TestModel_FlowTerminalInputModeForwardsCtrlGToAgent(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
