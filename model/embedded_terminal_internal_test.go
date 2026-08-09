@@ -275,6 +275,48 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 		t.Fatalf("pending terminal accepted focus/input before prefill: tab cmd=%T key cmd=%T writes=%#v pane=%d focus=%v", tabCmd, keyCmd, writes, beforeReady.activePane, beforeReady.flowFocus)
 	}
 
+	// A lone pending slot cannot separate activation by stable ID from
+	// activation of slot 0 or Flow terminal number 1. Open a second pending
+	// slot and let its prefill finish first, so only ID-keyed activation can
+	// satisfy the assertions below.
+	secondTerm := newDelayedPrefillFakeEmbeddedTerminal()
+	t.Cleanup(secondTerm.release)
+	next.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+		startCalls++
+		return secondTerm, nil
+	}
+	secondModel, secondCmd := next.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
+	next = secondModel.(Model)
+	if startCalls != 2 || len(next.embeddedTerminals) != 2 {
+		t.Fatalf("second interactive launch starts=%d slots=%#v, want a second pending slot", startCalls, next.embeddedTerminals)
+	}
+	secondID := next.embeddedTerminals[1].ID
+	if secondID == 0 || secondID == stableID || next.embeddedTerminals[1].Number != 2 || !next.embeddedTerminals[1].PrefillPending {
+		t.Fatalf("second pending slot = %#v, want distinct stable ID on Flow terminal number 2", next.embeddedTerminals[1])
+	}
+	if next.embeddedTerminals[0].ID != stableID || !next.embeddedTerminals[0].PrefillPending || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
+		t.Fatalf("second launch disturbed the first pending slot: slots=%#v active=%d focus=%v", next.embeddedTerminals, next.activeFlowTerminalNum, next.flowFocus)
+	}
+
+	// The second prefill completes while the first is still withheld, so its
+	// result arrives out of order relative to slot creation.
+	secondTerm.release()
+	secondMsg := commandMessageOfType[embeddedPromptPrefillResultMsg](t, secondCmd)
+	if secondMsg.ID != secondID || secondMsg.Err != nil {
+		t.Fatalf("second prefill result = %#v, want successful result for stable terminal ID %d", secondMsg, secondID)
+	}
+	outOfOrderModel, _ := next.Update(secondMsg)
+	outOfOrder := outOfOrderModel.(Model)
+	if outOfOrder.activeFlowTerminalNum != 2 || outOfOrder.flowFocus != flowFocusTerminal {
+		t.Fatalf("out-of-order prefill activated the wrong terminal: active=%d focus=%v", outOfOrder.activeFlowTerminalNum, outOfOrder.flowFocus)
+	}
+	if outOfOrder.embeddedTerminals[1].ID != secondID || outOfOrder.embeddedTerminals[1].PrefillPending || !outOfOrder.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("out-of-order prefill cleared the wrong pending slot: slots=%#v", outOfOrder.embeddedTerminals)
+	}
+	if _, secondWrites := secondTerm.snapshot(); len(secondWrites) != 1 || secondWrites[0] != embeddedPromptPasteStart+"Build it"+embeddedPromptPasteEnd {
+		t.Fatalf("second prefill writes = %#v, want exactly one prompt paste", secondWrites)
+	}
+
 	term.release()
 	var rawMsg tea.Msg
 	select {
@@ -294,19 +336,22 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	if msg.ID != stableID || msg.Err != nil {
 		t.Fatalf("prefill result = %#v, want successful result for stable terminal ID %d", msg, stableID)
 	}
-	if next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList || !next.embeddedTerminals[0].PrefillPending {
-		t.Fatalf("prefill command activated terminal before result Update: active=%d focus=%v pending=%v", next.activeFlowTerminalNum, next.flowFocus, next.embeddedTerminals[0].PrefillPending)
+	if outOfOrder.activeFlowTerminalNum != 2 || !outOfOrder.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("prefill command activated terminal before result Update: active=%d pending=%v", outOfOrder.activeFlowTerminalNum, outOfOrder.embeddedTerminals[0].PrefillPending)
 	}
 
-	activatedModel, _ := next.Update(msg)
+	activatedModel, _ := outOfOrder.Update(msg)
 	activated := activatedModel.(Model)
 	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
 	visibleHits, writes = term.snapshot()
-	if startCalls != 1 || visibleHits != 1 || len(writes) != 1 || writes[0] != wantWrite {
-		t.Fatalf("async prefill starts=%d calls=%d writes=%#v, want one start, one probe, and %q", startCalls, visibleHits, writes, wantWrite)
+	if startCalls != 2 || visibleHits != 1 || len(writes) != 1 || writes[0] != wantWrite {
+		t.Fatalf("async prefill starts=%d calls=%d writes=%#v, want two starts, one probe, and %q", startCalls, visibleHits, writes, wantWrite)
 	}
-	if len(activated.embeddedTerminals) != 1 || activated.embeddedTerminals[0].ID != stableID || activated.embeddedTerminals[0].PrefillPending || activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
-		t.Fatalf("successful prefill did not activate stable terminal: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeFlowTerminalNum, activated.flowFocus)
+	if len(activated.embeddedTerminals) != 2 || activated.embeddedTerminals[0].ID != stableID || activated.embeddedTerminals[0].PrefillPending || activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
+		t.Fatalf("late prefill did not activate its own stable terminal: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeFlowTerminalNum, activated.flowFocus)
+	}
+	if activated.embeddedTerminals[1].ID != secondID || activated.embeddedTerminals[1].PrefillPending {
+		t.Fatalf("late prefill disturbed the already-activated slot: slots=%#v", activated.embeddedTerminals)
 	}
 }
 
