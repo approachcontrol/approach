@@ -117,6 +117,9 @@ func hasAbsenceDiagnostic(message string) bool {
 	})
 	for _, segment := range segments {
 		normalized := strings.ToLower(strings.Join(strings.Fields(segment), " "))
+		// bd terminates its no-database diagnostic with a period before the
+		// newline-delimited setup hint.
+		normalized = strings.TrimSuffix(normalized, ".")
 		if normalized == "no beads project found" || normalized == "no beads database found" {
 			return true
 		}

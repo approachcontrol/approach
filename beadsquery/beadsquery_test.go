@@ -23,7 +23,8 @@ func TestQuerierListOpenClassifiesOnlyKnownAbsenceFailures(t *testing.T) {
 
 	missingExecutable := &exec.Error{Name: "bd", Err: exec.ErrNotFound}
 	missingProject := errors.New("Error: cannot use -C directory /repo: no beads project found: exit status 1")
-	missingDatabase := errors.New("NO   BEADS\tDATABASE FOUND")
+	missingDatabase := errors.New("Error: no beads database found.\nHint: run 'bd init' to create a database in the current directory")
+	normalizedMissingDatabase := errors.New("NO   BEADS\tDATABASE FOUND")
 	genericFailure := errors.New("bd failed: permission denied")
 	outputLimit := errors.New("bd output exceeded 33554432-byte limit")
 	tests := []struct {
@@ -35,7 +36,8 @@ func TestQuerierListOpenClassifiesOnlyKnownAbsenceFailures(t *testing.T) {
 	}{
 		{name: "missing executable", err: missingExecutable, notConfigured: true},
 		{name: "missing project wrapped by runner", err: missingProject, notConfigured: true},
-		{name: "missing database normalized", err: missingDatabase, notConfigured: true},
+		{name: "missing database with hint", err: missingDatabase, notConfigured: true},
+		{name: "missing database normalized", err: normalizedMissingDatabase, notConfigured: true},
 		{name: "generic nonzero", err: genericFailure, wantDetail: "permission denied"},
 		{name: "output limit", err: outputLimit, wantDetail: "output exceeded"},
 		{name: "garbage output", out: "not-json", wantDetail: "parsing open beads"},
@@ -186,7 +188,7 @@ func TestEveryQueryUsesSharedAbsenceClassification(t *testing.T) {
 				cause         error
 				notConfigured bool
 			}{
-				{name: "absence", cause: errors.New("no beads database found"), notConfigured: true},
+				{name: "absence", cause: errors.New("Error: no beads database found.\nHint: run 'bd init'"), notConfigured: true},
 				{name: "configured error", cause: errors.New("bd failed")},
 			} {
 				t.Run(failure.name, func(t *testing.T) {
