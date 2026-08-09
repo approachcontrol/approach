@@ -92,8 +92,13 @@ func TestIndependentStoresSerializeUpsertAndMarkLaunchEndedAtSessionLock(t *test
 	release()
 	released = true
 	for i := 0; i < 2; i++ {
-		if err := <-results; err != nil {
-			t.Fatalf("concurrent session mutation error = %v", err)
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("concurrent session mutation error = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for concurrent session mutations to finish")
 		}
 	}
 

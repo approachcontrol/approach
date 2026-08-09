@@ -98,8 +98,13 @@ func TestLinkedPlanPhaseSyncPreservesConcurrentPlanSave(t *testing.T) {
 		t.Fatalf("concurrent plan Save() error = %v", err)
 	}
 	close(resumeSync)
-	if err := <-completion; err != nil {
-		t.Fatalf("SetPhase(implementation completed) error = %v", err)
+	select {
+	case err := <-completion:
+		if err != nil {
+			t.Fatalf("SetPhase(implementation completed) error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for linked plan phase sync to finish")
 	}
 
 	got, err := planStore.ReadMetadata("linked-plan")

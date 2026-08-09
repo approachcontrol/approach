@@ -71,8 +71,13 @@ func TestIndependentStoresSerializeSaveAndSetPhaseAtMutationLock(t *testing.T) {
 	release()
 	released = true
 	for i := 0; i < 2; i++ {
-		if err := <-results; err != nil {
-			t.Fatalf("concurrent plan mutation error = %v", err)
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("concurrent plan mutation error = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for concurrent plan mutations to finish")
 		}
 	}
 
@@ -91,6 +96,124 @@ func TestIndependentStoresSerializeSaveAndSetPhaseAtMutationLock(t *testing.T) {
 	}
 	assertPlanLockMode(t, lockDir, 0o700)
 	assertPlanLockMode(t, lockPath, 0o600)
+}
+
+func TestSetPhaseStatusRereadsAfterMutationLockAcquisition(t *testing.T) {
+	root := t.TempDir()
+	saveStore, err := NewStore(StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(save) error = %v", err)
+	}
+	statusStore, err := NewStore(StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(status) error = %v", err)
+	}
+	if _, err := saveStore.Save(PlanRecord{
+		PlanID:   "shared-status",
+		Title:    "Original title",
+		Summary:  "Original summary",
+		Markdown: "Original body",
+		Status:   "draft",
+		Phases: []PlanPhase{
+			{PhaseID: "Implementation", Title: "Original implementation", Status: "in_progress", Order: 3},
+			{PhaseID: "unrelated", Title: "Unrelated", Status: "blocked", Order: 4},
+		},
+	}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+
+	lockPath := filepath.Join(root, "plans", ".locks", "mutations.lock")
+	release, err := artifacts.AcquireFileLock(lockPath, "test plan mutation lock", time.Second)
+	if err != nil {
+		t.Fatalf("hold plan mutation lock: %v", err)
+	}
+	released := false
+	allowStatusAcquire := make(chan struct{})
+	statusAllowed := false
+	t.Cleanup(func() {
+		if !released {
+			release()
+		}
+		if !statusAllowed {
+			close(allowStatusAcquire)
+		}
+	})
+
+	saveAttempts := make(chan planLockAttempt, 1)
+	statusAttempts := make(chan planLockAttempt, 1)
+	saveStore.acquireFileLock = func(path, label string, timeout time.Duration) (func(), error) {
+		saveAttempts <- planLockAttempt{path: path, label: label}
+		return artifacts.AcquireFileLock(path, label, timeout)
+	}
+	statusStore.acquireFileLock = func(path, label string, timeout time.Duration) (func(), error) {
+		statusAttempts <- planLockAttempt{path: path, label: label}
+		<-allowStatusAcquire
+		return artifacts.AcquireFileLock(path, label, timeout)
+	}
+
+	saveResult := make(chan error, 1)
+	go func() {
+		_, err := saveStore.Save(PlanRecord{
+			PlanID:   "shared-status",
+			Title:    "Concurrent title",
+			Summary:  "Concurrent summary",
+			Markdown: "Concurrent body",
+			Status:   "approved",
+			// Phases is intentionally omitted so the under-lock merge preserves
+			// the status-only update after this Save completes.
+		})
+		saveResult <- err
+	}()
+	statusResult := make(chan error, 1)
+	go func() {
+		statusResult <- statusStore.SetPhaseStatus("shared-status", " implementation ", "completed")
+	}()
+
+	waitForPlanLockAttempts(t, saveAttempts, 1, lockPath)
+	waitForPlanLockAttempts(t, statusAttempts, 1, lockPath)
+	release()
+	released = true
+	select {
+	case err := <-saveResult:
+		if err != nil {
+			t.Fatalf("concurrent Save() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for concurrent Save to finish")
+	}
+	close(allowStatusAcquire)
+	statusAllowed = true
+	select {
+	case err := <-statusResult:
+		if err != nil {
+			t.Fatalf("SetPhaseStatus() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for status-only plan mutation to finish")
+	}
+
+	got, err := saveStore.ReadMetadata("shared-status")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if got.Title != "Concurrent title" || got.Summary != "Concurrent summary" || got.Status != "approved" {
+		t.Fatalf("status-only mutation overwrote concurrent plan metadata: %#v", got)
+	}
+	wantPhases := []PlanPhase{
+		{PhaseID: "Implementation", Title: "Original implementation", Status: "completed", Order: 3},
+		{PhaseID: "unrelated", Title: "Unrelated", Status: "blocked", Order: 4},
+	}
+	if len(got.Phases) != len(wantPhases) {
+		t.Fatalf("phases = %#v, want %#v", got.Phases, wantPhases)
+	}
+	for i := range wantPhases {
+		if got.Phases[i] != wantPhases[i] {
+			t.Fatalf("phase[%d] = %#v, want %#v", i, got.Phases[i], wantPhases[i])
+		}
+	}
+	if body, err := saveStore.ReadPlan("shared-status"); err != nil || body != "Concurrent body" {
+		t.Fatalf("ReadPlan() = %q, %v; want concurrent body", body, err)
+	}
 }
 
 func TestIndependentStoresSerializeGeneratedIDAllocationAtMutationLock(t *testing.T) {
@@ -143,11 +266,15 @@ func TestIndependentStoresSerializeGeneratedIDAllocationAtMutationLock(t *testin
 	released = true
 	ids := make(map[string]bool)
 	for i := 0; i < 2; i++ {
-		result := <-results
-		if result.err != nil {
-			t.Fatalf("generated Save() error = %v", result.err)
+		select {
+		case result := <-results:
+			if result.err != nil {
+				t.Fatalf("generated Save() error = %v", result.err)
+			}
+			ids[result.id] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for generated-ID plan saves to finish")
 		}
-		ids[result.id] = true
 	}
 	if len(ids) != 2 {
 		t.Fatalf("generated plan IDs = %#v, want two unique IDs", ids)

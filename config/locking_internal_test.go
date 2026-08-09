@@ -89,8 +89,13 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	release()
 	released = true
 	for i := 0; i < 6; i++ {
-		if err := <-results; err != nil {
-			t.Fatalf("concurrent config mutation error = %v", err)
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("concurrent config mutation error = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for concurrent config mutations to finish")
 		}
 	}
 
