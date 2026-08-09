@@ -249,7 +249,7 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 		t.Fatalf("next Flow terminal number = %d, %v; want reserved slot 1 and next number 2", number, ok)
 	}
 
-	prefillCmd := flowPrefillCommandFromParent(t, cmd)
+	prefillCmd := isolatedFlowPrefillCommandFromLaunchBatch(t, cmd)
 	prefillResult := make(chan tea.Msg, 1)
 	go func() {
 		prefillResult <- prefillCmd()
@@ -339,7 +339,7 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 
 	nextModel, parentCmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
 	next := nextModel.(Model)
-	prefillCmd := flowPrefillCommandFromParent(t, parentCmd)
+	prefillCmd := isolatedFlowPrefillCommandFromLaunchBatch(t, parentCmd)
 	rawMsg := prefillCmd()
 	msg, ok := rawMsg.(embeddedPromptPrefillResultMsg)
 	if !ok {
@@ -407,7 +407,9 @@ func commandMessageOfType[T any](t *testing.T, cmd tea.Cmd) T {
 	return zero
 }
 
-func flowPrefillCommandFromParent(t *testing.T, parentCmd tea.Cmd) tea.Cmd {
+// isolatedFlowPrefillCommandFromLaunchBatch extracts the prefill command from
+// the single-level batch returned by a minimal Flow model with no refresh cmd.
+func isolatedFlowPrefillCommandFromLaunchBatch(t *testing.T, parentCmd tea.Cmd) tea.Cmd {
 	t.Helper()
 	if parentCmd == nil {
 		t.Fatal("interactive Flow launch returned nil parent command")
