@@ -277,7 +277,7 @@ mode. The command-mode keys are the same in every view:
 | `left` / `right` | Cycle terminals with wrap |
 | `i` | Return to terminal input mode |
 | `t` | Hide the terminal dock |
-| `l` | Open a saved-session picker |
+| `l` | Open a saved-session picker for the selected repo, loading its sessions on demand when the sessions view has not populated them |
 | `d` | Detach a tmux-backed terminal and open a new external terminal attached to that tmux session |
 | `x` | Dismiss an exited terminal or confirm termination of a running one |
 | `q` / `esc` | Quit with cleanup |

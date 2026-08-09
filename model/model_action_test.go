@@ -5450,6 +5450,75 @@ func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Mo
 	return m, fakeTerm, started
 }
 
+func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.T) {
+	terms := map[string]*fakeEmbeddedTerminal{
+		"alpha-session": {lines: []string{"alpha output"}, state: "running"},
+		"bravo-session": {lines: []string{"bravo output"}, state: "running"},
+	}
+	var started []string
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
+			started = append(started, ctx.ResumeSessionID)
+			return terms[ctx.ResumeSessionID], nil
+		},
+		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.RepoPath != "/dev/bravo" {
+				return nil, nil
+			}
+			return []sessions.SessionRecord{{
+				Provider:     sessions.ProviderClaude,
+				SessionID:    "bravo-session",
+				RepoPath:     "/dev/bravo",
+				WorktreePath: "/dev/bravo-worktrees/docs",
+				Branch:       "docs",
+			}}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
+		Provider:     sessions.ProviderCodex,
+		SessionID:    "alpha-session",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		Branch:       "feature",
+	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Switching the selected repo clears the sessions cache while the dock
+	// and its terminal persist.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if len(m.Sessions()) != 0 {
+		t.Fatalf("repo switch should clear the sessions cache, got %d records", len(m.Sessions()))
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if cmd == nil {
+		t.Fatal("picker with a cold cache should load sessions on demand")
+	}
+	m, _ = update(m, cmd())
+	if m.Overlay() != ui.OverlaySelect {
+		t.Fatalf("expected picker overlay after on-demand load, got overlay %d:\n%s", m.Overlay(), m.View())
+	}
+	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
+		t.Fatalf("picker view missing loaded session:\n%s", view)
+	}
+
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected picker submit command")
+	}
+	m, _ = update(m, cmd())
+	if want := []string{"alpha-session", "bravo-session"}; !reflect.DeepEqual(started, want) {
+		t.Fatalf("started sessions = %#v, want %#v", started, want)
+	}
+	_ = m
+}
+
 func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	terms := map[string]*fakeEmbeddedTerminal{
 		"codex-session-1":  {lines: []string{"first output"}},

@@ -98,7 +98,14 @@ type embeddedTerminalSlot struct {
 }
 
 type embeddedSessionPickerSelectedMsg struct {
-	Index int
+	Record sessions.SessionRecord
+	OK     bool
+}
+
+type embeddedSessionPickerLoadedMsg struct {
+	RepoPath string
+	Records  []sessions.SessionRecord
+	Err      error
 }
 
 type terminateEmbeddedTerminalMsg struct {
@@ -685,10 +692,11 @@ func (m Model) handleFocusedEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd,
 		case terminalCommandKey:
 			return m.writeToActiveTerminal([]byte{terminalCommandLiteralByte}), nil, true
 		case "l":
-			if len(m.sessions.Items()) == 0 {
-				return m.setStatus(statusOther, "No saved sessions available"), nil, true
+			if records := m.sessions.Items(); len(records) > 0 {
+				return m.openEmbeddedSessionPicker(records), nil, true
 			}
-			return m.openEmbeddedSessionPicker(), nil, true
+			next, cmd := m.loadEmbeddedSessionPicker()
+			return next, cmd, true
 		case "i":
 			m.terminalPrefixActive = false
 			return m, nil, true
@@ -985,8 +993,37 @@ func (m Model) firstEmbeddedTerminalNumber() int {
 	return 0
 }
 
-func (m Model) openEmbeddedSessionPicker() Model {
-	records := m.sessions.Items()
+// loadEmbeddedSessionPicker fetches the selected repo's saved sessions before
+// deciding the picker is empty: the sessions pane cache is only warm after
+// visiting the sessions view, but the picker command is available in every
+// view.
+func (m Model) loadEmbeddedSessionPicker() (Model, tea.Cmd) {
+	repoPath, ok := m.currentRepoPath()
+	if !ok || m.listSessions == nil {
+		return m.setStatus(statusOther, "No saved sessions available"), nil
+	}
+	listSessions := m.listSessions
+	return m, func() tea.Msg {
+		records, err := listSessions(sessions.SessionFilter{RepoPath: repoPath})
+		return embeddedSessionPickerLoadedMsg{RepoPath: repoPath, Records: records, Err: err}
+	}
+}
+
+func (m Model) handleEmbeddedSessionPickerLoaded(msg embeddedSessionPickerLoadedMsg) (Model, tea.Cmd) {
+	repoPath, ok := m.currentRepoPath()
+	if !ok || repoPath != msg.RepoPath || m.modal.IsOpen() {
+		return m, nil
+	}
+	if msg.Err != nil {
+		return m.setStatus(statusOther, "failed to load sessions: "+msg.Err.Error()), nil
+	}
+	if len(msg.Records) == 0 {
+		return m.setStatus(statusOther, "No saved sessions available"), nil
+	}
+	return m.openEmbeddedSessionPicker(msg.Records), nil
+}
+
+func (m Model) openEmbeddedSessionPicker(records []sessions.SessionRecord) Model {
 	items := make([]modal.SelectItem, 0, len(records))
 	for i, record := range records {
 		items = append(items, modal.SelectItem{
@@ -997,10 +1034,10 @@ func (m Model) openEmbeddedSessionPicker() Model {
 	m.modal = modal.OpenSelectWithLayout("Resume session", items, 0, modal.Layout{Width: 72, Height: 12, Placement: modal.PlacementCenter}, func(value string) tea.Cmd {
 		return func() tea.Msg {
 			index, err := strconv.Atoi(value)
-			if err != nil {
-				index = -1
+			if err != nil || index < 0 || index >= len(records) {
+				return embeddedSessionPickerSelectedMsg{}
 			}
-			return embeddedSessionPickerSelectedMsg{Index: index}
+			return embeddedSessionPickerSelectedMsg{Record: records[index], OK: true}
 		}
 	})
 	return m
@@ -1015,11 +1052,10 @@ func embeddedSessionPickerLabel(record sessions.SessionRecord) string {
 }
 
 func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSelectedMsg) (Model, tea.Cmd) {
-	records := m.sessions.Items()
-	if msg.Index < 0 || msg.Index >= len(records) {
+	if !msg.OK {
 		return m.setStatus(statusOther, "Selected session is unavailable"), nil
 	}
-	record := records[msg.Index]
+	record := msg.Record
 	ctx, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil

@@ -1375,6 +1375,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m = m.clampSelectionsAfterFilter()
 	case embeddedSessionPickerSelectedMsg:
 		return m.handleEmbeddedSessionPickerSelected(msg)
+	case embeddedSessionPickerLoadedMsg:
+		return m.handleEmbeddedSessionPickerLoaded(msg)
 	case terminateEmbeddedTerminalMsg:
 		return m.handleTerminateEmbeddedTerminal(msg)
 	case quitEmbeddedTerminalsMsg:

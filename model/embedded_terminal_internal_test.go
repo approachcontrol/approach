@@ -407,28 +407,71 @@ func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
 	}
 }
 
-func TestTerminalCommandSessionPickerIsDockLevelAndGuardsEmptyRecords(t *testing.T) {
-	base := Model{
+func terminalPickerTestModel(listSessions func(sessions.SessionFilter) ([]sessions.SessionRecord, error)) Model {
+	return Model{
 		mode:                 ui.ModeFlows,
 		activePane:           1,
 		terminalFocus:        terminalFocusTerminal,
 		terminalPrefixActive: true,
 		terminalDockVisible:  true,
 		activeTerminalNum:    1,
+		repos:                newRepoPane().SetItems([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}),
+		listSessions:         listSessions,
 		embeddedTerminals: []embeddedTerminalSlot{{
 			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: internalFakeEmbeddedTerminal{},
 		}},
 	}
+}
 
-	next, _, consumed := base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if !consumed || next.modal.IsOpen() || !strings.Contains(next.status.Text, "No saved sessions available") {
-		t.Fatalf("empty picker result = consumed %v modal %v status %q", consumed, next.modal.IsOpen(), next.status.Text)
+func TestTerminalCommandSessionPickerLoadsStoredSessionsOnDemand(t *testing.T) {
+	stored := []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: "session-1", RepoPath: "/dev/alpha", Branch: "feature/dock"}}
+	base := terminalPickerTestModel(func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+		if filter.RepoPath != "/dev/alpha" {
+			return nil, nil
+		}
+		return stored, nil
+	})
+
+	next, cmd, consumed := base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !consumed || cmd == nil || next.modal.IsOpen() {
+		t.Fatalf("empty cache should defer to on-demand load: consumed %v cmd %v modal %v", consumed, cmd, next.modal.IsOpen())
+	}
+	if strings.Contains(next.status.Text, "No saved sessions available") {
+		t.Fatalf("empty cache should not report missing sessions before loading, got %q", next.status.Text)
+	}
+	msg, ok := cmd().(embeddedSessionPickerLoadedMsg)
+	if !ok || msg.RepoPath != "/dev/alpha" || len(msg.Records) != 1 || msg.Err != nil {
+		t.Fatalf("picker load message = %#v", msg)
+	}
+	loaded, _ := next.handleEmbeddedSessionPickerLoaded(msg)
+	if !loaded.modal.IsOpen() || loaded.modal.View().Kind != modal.Select {
+		t.Fatalf("on-demand load should open the picker, modal %#v", loaded.modal.View())
 	}
 
-	base.sessions = newSessionPane().SetItems([]sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: "session-1", Branch: "feature/dock"}})
-	next, _, consumed = base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if !consumed || !next.modal.IsOpen() || next.modal.View().Kind != modal.Select {
-		t.Fatalf("Flow-terminal picker result = consumed %v modal %#v", consumed, next.modal.View())
+	base.sessions = newSessionPane().SetItems(stored)
+	next, cmd, consumed = base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !consumed || cmd != nil || !next.modal.IsOpen() || next.modal.View().Kind != modal.Select {
+		t.Fatalf("warm cache picker result = consumed %v cmd %v modal %#v", consumed, cmd, next.modal.View())
+	}
+}
+
+func TestTerminalCommandSessionPickerLoadHandlesEmptyErrorAndStaleResults(t *testing.T) {
+	base := terminalPickerTestModel(nil)
+
+	next, _ := base.handleEmbeddedSessionPickerLoaded(embeddedSessionPickerLoadedMsg{RepoPath: "/dev/alpha"})
+	if next.modal.IsOpen() || !strings.Contains(next.status.Text, "No saved sessions available") {
+		t.Fatalf("empty store result = modal %v status %q", next.modal.IsOpen(), next.status.Text)
+	}
+
+	next, _ = base.handleEmbeddedSessionPickerLoaded(embeddedSessionPickerLoadedMsg{RepoPath: "/dev/alpha", Err: errors.New("store unreadable")})
+	if next.modal.IsOpen() || !strings.Contains(next.status.Text, "failed to load sessions") || !strings.Contains(next.status.Text, "store unreadable") {
+		t.Fatalf("load error result = modal %v status %q", next.modal.IsOpen(), next.status.Text)
+	}
+
+	stale := embeddedSessionPickerLoadedMsg{RepoPath: "/dev/bravo", Records: []sessions.SessionRecord{{SessionID: "session-1"}}}
+	next, _ = base.handleEmbeddedSessionPickerLoaded(stale)
+	if next.modal.IsOpen() || next.status.Text != "" {
+		t.Fatalf("stale repo result should be ignored: modal %v status %q", next.modal.IsOpen(), next.status.Text)
 	}
 }
 
