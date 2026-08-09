@@ -2355,9 +2355,29 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 	return m.runAgentLaunchWithContext(ctx, launch)
 }
 
+func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
+	var repairRecord *flowstore.FlowRecord
+	if msg.LaunchContext.FlowRepair && msg.RepairValidationErr == "" && strings.TrimSpace(msg.RepairRecord.FlowID) != "" {
+		repairRecord = &msg.RepairRecord
+	}
+	return m.launchFlowEmbeddedWithRepairValidation(msg.LaunchContext, repairRecord, msg.RepairValidationErr)
+}
+
 func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	return m.launchFlowEmbeddedWithRepairValidation(ctx, nil, "")
+}
+
+func (m Model) launchFlowEmbeddedWithRepairValidation(ctx actions.AgentLaunchContext, repairRecord *flowstore.FlowRecord, validationErr string) (Model, tea.Cmd) {
 	ctx.Embedded = true
 	if ctx.FlowRepair {
+		var current bool
+		m, current = m.consumePendingFlowRepairLaunch(ctx, repairRecord, validationErr)
+		if !current {
+			return m, nil
+		}
+		if repairRecord != nil {
+			ctx = refreshFlowRepairLaunchContext(ctx, *repairRecord)
+		}
 		ctx.FlowPhaseID = ""
 		ctx.FlowLaunchTracked = false
 	} else {

@@ -247,6 +247,43 @@ func repairAutoDrainTestFlow(status, kind string, autoMode bool) flowstore.FlowR
 	}
 }
 
+func repairCompletionEdgeTestFlow(repairStatus, successorStatus string) flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:       "flow-repair",
+		Title:        "Repair completion edge",
+		RepoPath:     "/dev/bravo",
+		WorktreePath: "/dev/bravo-worktrees/flow-repair",
+		Branch:       "flow/repair",
+		AutoMode:     true,
+		Phases: []flowstore.FlowPhase{
+			{
+				PhaseID:   "repair-work",
+				Title:     "Repair work",
+				Kind:      flowstore.KindImplementation,
+				Status:    repairStatus,
+				DependsOn: []string{},
+				Order:     1,
+			},
+			{
+				PhaseID:   "successor",
+				Title:     "Successor",
+				Kind:      flowstore.KindReviewLoop,
+				Status:    successorStatus,
+				DependsOn: []string{"repair-work"},
+				Order:     2,
+			},
+		},
+	}
+}
+
+func cleanRepairAutoDrainMarker(minimumRequest uint64) repairAutoDrainMarker {
+	return repairAutoDrainMarker{MinimumRequest: minimumRequest, CleanExit: true}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
+}
+
 func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *testing.T) {
 	previous := repairAutoDrainTestFlow(flowstore.PhasePending, flowstore.KindImplementation, true)
 	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
@@ -272,8 +309,8 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	}}
 
 	m = m.handleEmbeddedTerminalClosePrefix()
-	if got := m.pendingRepairAutoDrainFlowIDs[previous.FlowID]; got != 8 {
-		t.Fatalf("repair marker generation = %d, want 8", got)
+	if got := m.pendingRepairAutoDrainFlowIDs[previous.FlowID]; got.MinimumRequest != 8 || !got.CleanExit {
+		t.Fatalf("repair marker = %#v, want clean generation 8", got)
 	}
 	if len(m.embeddedTerminals) != 0 {
 		t.Fatalf("repair terminal retained after user close: %#v", m.embeddedTerminals)
@@ -286,8 +323,8 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	if len(updates) != 0 {
 		t.Fatalf("pre-exit poll launched updates %#v", updates)
 	}
-	if got := m.pendingRepairAutoDrainFlowIDs[previous.FlowID]; got != 8 {
-		t.Fatalf("pre-exit poll consumed marker, got generation %d", got)
+	if got := m.pendingRepairAutoDrainFlowIDs[previous.FlowID]; got.MinimumRequest != 8 || !got.CleanExit {
+		t.Fatalf("pre-exit poll changed marker to %#v", got)
 	}
 
 	m.autoAdvanceRequestSeq = 8
@@ -313,6 +350,41 @@ func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *tes
 	}
 }
 
+func TestCleanRepairMarkerSuppressesPreExitCompletionEdgeUntilEligiblePoll(t *testing.T) {
+	previous := repairCompletionEdgeTestFlow(flowstore.PhaseRunning, flowstore.PhasePending)
+	current := repairCompletionEdgeTestFlow(flowstore.PhaseCompleted, flowstore.PhaseReady)
+	updates := 0
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates++
+			return current, nil
+		},
+	})
+	m.autoAdvanceRequestSeq = 7
+	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{
+		current.FlowID: cleanRepairAutoDrainMarker(8),
+	}
+
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(
+		[]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current}, 7,
+	)
+	if cmd != nil || updates != 0 || len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("pre-exit completion edge escaped fence: cmd=%T updates=%d drains=%#v", cmd, updates, m.autoAdvanceDrainFlows)
+	}
+	if marker := m.pendingRepairAutoDrainFlowIDs[current.FlowID]; marker != cleanRepairAutoDrainMarker(8) {
+		t.Fatalf("pre-exit poll changed clean marker to %#v", marker)
+	}
+
+	m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+		[]flowstore.FlowRecord{current}, []flowstore.FlowRecord{current}, 8,
+	)
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
+		t.Fatalf("eligible clean handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
+	}
+}
+
 func TestRepairAutoDrainMarkerSurvivesStaleAndFailedEligiblePolls(t *testing.T) {
 	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
 	updates := 0
@@ -323,16 +395,16 @@ func TestRepairAutoDrainMarkerSurvivesStaleAndFailedEligiblePolls(t *testing.T) 
 			return ready, nil
 		},
 	})
-	m.pendingRepairAutoDrainFlowIDs = map[string]uint64{ready.FlowID: 4}
+	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{ready.FlowID: cleanRepairAutoDrainMarker(4)}
 	m.autoAdvanceRequestSeq = 4
 	m.autoAdvanceInFlight = 4
 
 	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 3})
-	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != 4 {
+	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != cleanRepairAutoDrainMarker(4) {
 		t.Fatal("stale poll consumed repair marker")
 	}
 	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Err: "temporary failure", Request: 4})
-	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != 4 {
+	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != cleanRepairAutoDrainMarker(4) {
 		t.Fatal("failed eligible poll consumed repair marker")
 	}
 
@@ -370,7 +442,7 @@ func TestRepairAutoDrainClearsWithoutLaunchingWhenAutoOffOrOnlyMergeReady(t *tes
 					return tt.record, nil
 				},
 			})
-			m.pendingRepairAutoDrainFlowIDs = map[string]uint64{tt.record.FlowID: 1}
+			m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{tt.record.FlowID: cleanRepairAutoDrainMarker(1)}
 			var cmd tea.Cmd
 			m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{tt.record}, 1)
 			if cmd != nil {
@@ -383,23 +455,23 @@ func TestRepairAutoDrainClearsWithoutLaunchingWhenAutoOffOrOnlyMergeReady(t *tes
 	}
 }
 
-func TestRepairTerminalRemovalArmsOnlyCleanExitedClosePaths(t *testing.T) {
+func TestRepairTerminalRemovalRecordsCleanAndSuppressingOutcomes(t *testing.T) {
 	tests := []struct {
-		name       string
-		state      string
-		repair     bool
-		reason     embeddedTerminalRemovalReason
-		wantMarker bool
+		name      string
+		state     string
+		repair    bool
+		reason    embeddedTerminalRemovalReason
+		wantClean *bool
 	}{
-		{name: "user closes exited repair", state: "exited", repair: true, reason: embeddedTerminalRemovalUserClose, wantMarker: true},
-		{name: "tick closes exited repair", state: "exited", repair: true, reason: embeddedTerminalRemovalAutoClose, wantMarker: true},
+		{name: "user closes exited repair", state: "exited", repair: true, reason: embeddedTerminalRemovalUserClose, wantClean: boolPointer(true)},
+		{name: "tick closes exited repair", state: "exited", repair: true, reason: embeddedTerminalRemovalAutoClose, wantClean: boolPointer(true)},
 		{name: "ordinary phase exits", state: "exited", reason: embeddedTerminalRemovalAutoClose},
-		{name: "failed repair dismissed", state: "failed", repair: true, reason: embeddedTerminalRemovalUserClose},
-		{name: "terminated repair dismissed", state: "terminated", repair: true, reason: embeddedTerminalRemovalUserClose},
-		{name: "running repair detached", state: "running", repair: true, reason: embeddedTerminalRemovalDetach},
-		{name: "exited repair detached", state: "exited", repair: true, reason: embeddedTerminalRemovalDetach},
-		{name: "repair prefill failed", state: "terminated", repair: true, reason: embeddedTerminalRemovalPrefillFailure},
-		{name: "repair terminated", state: "terminated", repair: true, reason: embeddedTerminalRemovalTerminate},
+		{name: "failed repair dismissed", state: "failed", repair: true, reason: embeddedTerminalRemovalUserClose, wantClean: boolPointer(false)},
+		{name: "terminated repair dismissed", state: "terminated", repair: true, reason: embeddedTerminalRemovalUserClose, wantClean: boolPointer(false)},
+		{name: "running repair detached", state: "running", repair: true, reason: embeddedTerminalRemovalDetach, wantClean: boolPointer(false)},
+		{name: "exited repair detached", state: "exited", repair: true, reason: embeddedTerminalRemovalDetach, wantClean: boolPointer(false)},
+		{name: "repair prefill failed", state: "terminated", repair: true, reason: embeddedTerminalRemovalPrefillFailure, wantClean: boolPointer(false)},
+		{name: "repair terminated", state: "terminated", repair: true, reason: embeddedTerminalRemovalTerminate, wantClean: boolPointer(false)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -414,11 +486,157 @@ func TestRepairTerminalRemovalArmsOnlyCleanExitedClosePaths(t *testing.T) {
 				}},
 			}
 			m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
-			_, got := m.pendingRepairAutoDrainFlowIDs["flow-repair"]
-			if got != tt.wantMarker {
-				t.Fatalf("marker present = %v, want %v", got, tt.wantMarker)
+			marker, got := m.pendingRepairAutoDrainFlowIDs["flow-repair"]
+			if tt.wantClean == nil {
+				if got {
+					t.Fatalf("ordinary phase recorded repair marker %#v", marker)
+				}
+				return
+			}
+			if !got || marker.MinimumRequest != 12 || marker.CleanExit != *tt.wantClean {
+				t.Fatalf("repair marker = %#v, present=%v, want clean=%v generation 12", marker, got, *tt.wantClean)
 			}
 		})
+	}
+}
+
+func TestNonCleanRepairRemovalSuppressesRepairCompletionEdge(t *testing.T) {
+	previous := repairCompletionEdgeTestFlow(flowstore.PhaseRunning, flowstore.PhasePending)
+	current := repairCompletionEdgeTestFlow(flowstore.PhaseCompleted, flowstore.PhaseReady)
+	tests := []struct {
+		name   string
+		state  string
+		reason embeddedTerminalRemovalReason
+	}{
+		{name: "failed", state: "failed", reason: embeddedTerminalRemovalUserClose},
+		{name: "terminated", state: "terminated", reason: embeddedTerminalRemovalUserClose},
+		{name: "detached", state: "running", reason: embeddedTerminalRemovalDetach},
+	}
+	for _, tt := range tests {
+		for _, removalFirst := range []bool{false, true} {
+			name := "completion before removal"
+			if removalFirst {
+				name = "removal before completion poll"
+			}
+			t.Run(tt.name+"/"+name, func(t *testing.T) {
+				updates := 0
+				m := NewWithOptions(flowRefreshTestRepos(), Options{
+					AgentCommand: "codex",
+					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+						updates++
+						return current, nil
+					},
+				})
+				m.autoAdvanceRequestSeq = 1
+				m.embeddedTerminals = []embeddedTerminalSlot{{
+					Scope:      embeddedTerminalScopeFlow,
+					FlowID:     current.FlowID,
+					FlowRepair: true,
+					ID:         1,
+					Terminal:   internalFakeEmbeddedTerminal{state: tt.state},
+				}}
+
+				var cmd tea.Cmd
+				if removalFirst {
+					m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
+					m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+						[]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current}, 1,
+					)
+				} else {
+					m, _, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+						[]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current}, 1,
+					)
+					m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
+					m.autoAdvanceRequestSeq = 2
+					m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+						[]flowstore.FlowRecord{current}, []flowstore.FlowRecord{current}, 2,
+					)
+				}
+				if cmd != nil {
+					if message := cmd(); message != nil {
+						if _, ok := message.(FlowEmbeddedLaunchRequestedMsg); ok {
+							t.Fatalf("non-clean repair returned successor launch message %#v", message)
+						}
+					}
+				}
+
+				if updates != 0 || len(m.autoAdvanceDrainFlows) != 0 {
+					t.Fatalf("non-clean repair queued successor: updates=%d drains=%#v", updates, m.autoAdvanceDrainFlows)
+				}
+			})
+		}
+	}
+}
+
+func TestDetachedRepairSuppressionWaitsForLateMutation(t *testing.T) {
+	before := repairCompletionEdgeTestFlow(flowstore.PhaseBlocked, flowstore.PhasePending)
+	after := repairCompletionEdgeTestFlow(flowstore.PhaseCompleted, flowstore.PhaseReady)
+	updates := 0
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates++
+			return after, nil
+		},
+	})
+	m.embeddedTerminals = []embeddedTerminalSlot{{
+		Scope:      embeddedTerminalScopeFlow,
+		FlowID:     before.FlowID,
+		FlowRepair: true,
+		ID:         1,
+		Terminal:   internalFakeEmbeddedTerminal{state: "running"},
+	}}
+	m = m.dismissEmbeddedTerminalForReason(1, embeddedTerminalRemovalDetach)
+
+	m.autoAdvanceRequestSeq = 1
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(
+		[]flowstore.FlowRecord{before}, []flowstore.FlowRecord{before}, 1,
+	)
+	if cmd != nil {
+		t.Fatalf("unchanged post-detach poll returned command %T", cmd)
+	}
+	if _, ok := m.pendingRepairAutoDrainFlowIDs[before.FlowID]; !ok {
+		t.Fatal("unchanged post-detach poll consumed suppression marker")
+	}
+
+	m.autoAdvanceRequestSeq = 2
+	m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(
+		[]flowstore.FlowRecord{before}, []flowstore.FlowRecord{after}, 2,
+	)
+	if cmd != nil {
+		t.Fatalf("late detached repair mutation returned command %T", cmd)
+	}
+	if updates != 0 || len(m.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("late detached mutation: updates=%d drains=%#v", updates, m.autoAdvanceDrainFlows)
+	}
+	if _, ok := m.pendingRepairAutoDrainFlowIDs[after.FlowID]; ok {
+		t.Fatal("launchable detached mutation did not consume suppression marker")
+	}
+}
+
+func TestSuccessfulRepairRetryOverridesEarlierSuppressingOutcome(t *testing.T) {
+	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
+	updates := 0
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates++
+			return ready, nil
+		},
+	})
+	m.autoAdvanceRequestSeq = 4
+	m = m.suppressRepairAutoDrain(ready.FlowID)
+	m.autoAdvanceRequestSeq = 5
+	m = m.armRepairAutoDrain(ready.FlowID)
+	marker := m.pendingRepairAutoDrainFlowIDs[ready.FlowID]
+	if !marker.CleanExit || marker.MinimumRequest != 6 {
+		t.Fatalf("successful retry marker = %#v, want clean generation 6", marker)
+	}
+
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{ready}, 6)
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
+		t.Fatalf("successful retry handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
 	}
 }
 
@@ -434,7 +652,7 @@ func TestRepairAutoDrainRearmsAfterRunningToReadyStopTransition(t *testing.T) {
 		},
 	})
 	m.autoAdvanceDrainFlows = map[string]struct{}{ready.FlowID: {}}
-	m.pendingRepairAutoDrainFlowIDs = map[string]uint64{ready.FlowID: 1}
+	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{ready.FlowID: cleanRepairAutoDrainMarker(1)}
 	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{ready}, 1)
 	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
 	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
@@ -456,7 +674,7 @@ func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
 			return record, nil
 		},
 	})
-	m.pendingRepairAutoDrainFlowIDs = map[string]uint64{record.FlowID: 1}
+	m.pendingRepairAutoDrainFlowIDs = map[string]repairAutoDrainMarker{record.FlowID: cleanRepairAutoDrainMarker(1)}
 	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{record}, 1)
 	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
 	if len(updates) != 1 || updates[0].PhaseID != "branch-a" || launch.LaunchContext.FlowPhaseID != "branch-a" {

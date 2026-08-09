@@ -28,19 +28,30 @@ type internalFakeEmbeddedTerminal struct {
 	lines []string
 }
 
+func repairEmbeddedLaunchTestModel(ctx actions.AgentLaunchContext) Model {
+	record := repairClassificationRecord(flowstore.FlowPhase{
+		PhaseID: "implementation",
+		Kind:    flowstore.KindImplementation,
+		Status:  flowstore.PhaseBlocked,
+	})
+	record.FlowID = ctx.FlowID
+	m := Model{mode: ui.ModeFlows, activePane: 1}
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+	m.pendingFlowRepairLaunchIDs = map[string]string{ctx.FlowID: ctx.LaunchID}
+	return m
+}
+
 func TestFlowRepairTerminalSlotPreservesRepairIdentityBeforePrefill(t *testing.T) {
-	m := Model{
-		mode:       ui.ModeFlows,
-		activePane: 1,
-		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			return internalFakeEmbeddedTerminal{}, nil
-		},
-	}
 	ctx := actions.AgentLaunchContext{
 		Command:       "codex",
+		LaunchID:      "repair-launch",
 		FlowID:        "flow-1",
 		FlowRepair:    true,
 		InitialPrompt: "Repair it",
+	}
+	m := repairEmbeddedLaunchTestModel(ctx)
+	m.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+		return internalFakeEmbeddedTerminal{}, nil
 	}
 	nextModel, cmd := m.Update(FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx})
 	next := nextModel.(Model)
@@ -77,9 +88,10 @@ func (t *repairPrefillFailureTerminal) Terminate() error {
 	return nil
 }
 
-func TestFlowRepairLaunchFailuresNeverMutatePhaseOrArmAutoDrain(t *testing.T) {
+func TestFlowRepairLaunchFailuresNeverMutatePhaseOrAllowAutoDrain(t *testing.T) {
 	ctx := actions.AgentLaunchContext{
 		Command:       "codex",
+		LaunchID:      "repair-launch",
 		FlowID:        "flow-1",
 		FlowRepair:    true,
 		InitialPrompt: "Repair it",
@@ -87,14 +99,13 @@ func TestFlowRepairLaunchFailuresNeverMutatePhaseOrArmAutoDrain(t *testing.T) {
 
 	t.Run("startup", func(t *testing.T) {
 		phaseUpdates := 0
-		m := Model{
-			setFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-				phaseUpdates++
-				return flowstore.FlowRecord{}, nil
-			},
-			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-				return nil, errors.New("startup failed")
-			},
+		m := repairEmbeddedLaunchTestModel(ctx)
+		m.setFlowPhase = func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates++
+			return flowstore.FlowRecord{}, nil
+		}
+		m.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return nil, errors.New("startup failed")
 		}
 		next, _ := m.launchFlowEmbeddedWithContext(ctx)
 		if phaseUpdates != 0 || len(next.pendingRepairAutoDrainFlowIDs) != 0 || !strings.Contains(next.visibleStatusText(), "startup failed") {
@@ -104,11 +115,10 @@ func TestFlowRepairLaunchFailuresNeverMutatePhaseOrArmAutoDrain(t *testing.T) {
 
 	t.Run("capacity", func(t *testing.T) {
 		phaseUpdates := 0
-		m := Model{
-			setFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-				phaseUpdates++
-				return flowstore.FlowRecord{}, nil
-			},
+		m := repairEmbeddedLaunchTestModel(ctx)
+		m.setFlowPhase = func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates++
+			return flowstore.FlowRecord{}, nil
 		}
 		for i := 1; i <= 9; i++ {
 			m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{Number: i, ID: embeddedTerminalID(i), Terminal: internalFakeEmbeddedTerminal{}})
@@ -122,20 +132,20 @@ func TestFlowRepairLaunchFailuresNeverMutatePhaseOrArmAutoDrain(t *testing.T) {
 	t.Run("prefill", func(t *testing.T) {
 		phaseUpdates := 0
 		term := &repairPrefillFailureTerminal{}
-		m := Model{
-			setFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
-				phaseUpdates++
-				return flowstore.FlowRecord{}, nil
-			},
-			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-				return term, nil
-			},
+		m := repairEmbeddedLaunchTestModel(ctx)
+		m.setFlowPhase = func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates++
+			return flowstore.FlowRecord{}, nil
+		}
+		m.startEmbeddedTerminal = func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return term, nil
 		}
 		next, cmd := m.launchFlowEmbeddedWithContext(ctx)
 		prefillCmd := isolatedFlowPrefillCommandFromLaunchBatch(t, cmd)
 		afterModel, _ := next.Update(prefillCmd())
 		after := afterModel.(Model)
-		if !term.terminated || len(after.embeddedTerminals) != 0 || phaseUpdates != 0 || len(after.pendingRepairAutoDrainFlowIDs) != 0 {
+		marker, suppressed := after.pendingRepairAutoDrainFlowIDs[ctx.FlowID]
+		if !term.terminated || len(after.embeddedTerminals) != 0 || phaseUpdates != 0 || !suppressed || marker.CleanExit {
 			t.Fatalf("prefill failure: terminated=%v slots=%#v updates=%d markers=%#v", term.terminated, after.embeddedTerminals, phaseUpdates, after.pendingRepairAutoDrainFlowIDs)
 		}
 		if !strings.Contains(after.visibleStatusText(), "prefill write failed") {

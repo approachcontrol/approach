@@ -4494,6 +4494,7 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 		t.Run(fmt.Sprintf("active=%v", active), func(t *testing.T) {
 			var started actions.AgentLaunchContext
 			launchUpdates := 0
+			record := repairableFlowForShortcut()
 			m := model.NewWithOptions(testRepos(), model.Options{
 				AgentCommand:          "claude",
 				ClaudeModel:           "claude-sonnet-5",
@@ -4507,9 +4508,10 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 					started = ctx
 					return &fakeEmbeddedTerminal{state: "running"}, nil
 				},
-				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{record}, nil
+				},
 			})
-			record := repairableFlowForShortcut()
 			if active {
 				m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{record})
 			} else {
@@ -4529,6 +4531,9 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 				t.Fatalf("R command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
 			}
 			ctx := launchMsg.LaunchContext
+			if launchMsg.RepairRecord.FlowID != record.FlowID || launchMsg.RepairValidationErr != "" {
+				t.Fatalf("persisted repair validation = record %#v error %q", launchMsg.RepairRecord, launchMsg.RepairValidationErr)
+			}
 			if !ctx.FlowRepair || ctx.FlowID != record.FlowID || ctx.FlowPhaseID != "" || ctx.FlowLaunchTracked {
 				t.Fatalf("repair launch classification = %#v", ctx)
 			}
@@ -4553,6 +4558,120 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 			}
 			if launchUpdates != 0 {
 				t.Fatalf("repair recorded %d phase launch updates, want zero", launchUpdates)
+			}
+		})
+	}
+}
+
+func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testing.T) {
+	t.Run("duplicate", func(t *testing.T) {
+		starts := 0
+		record := repairableFlowForShortcut()
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				starts++
+				return &fakeEmbeddedTerminal{state: "running"}, nil
+			},
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return []flowstore.FlowRecord{record}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+		m, firstCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if firstCmd == nil {
+			t.Fatal("first repair command is nil")
+		}
+		if got := m.TransientError(); !strings.Contains(got, "already pending") {
+			t.Fatalf("duplicate repair status = %q", got)
+		}
+		launch := firstCmd().(model.FlowEmbeddedLaunchRequestedMsg)
+		m, _ = update(m, launch)
+		m, _ = update(m, launch)
+		if starts != 1 {
+			t.Fatalf("duplicate repair message started %d terminals, want one", starts)
+		}
+	})
+
+	t.Run("stale eligibility", func(t *testing.T) {
+		starts := 0
+		record := repairableFlowForShortcut()
+		persisted := record
+		persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+				starts++
+				return &fakeEmbeddedTerminal{state: "running"}, nil
+			},
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return []flowstore.FlowRecord{persisted}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+
+		persisted.Phases[0].Status = flowstore.PhaseReady
+		launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+		m, _ = update(m, launch)
+		if starts != 0 {
+			t.Fatalf("stale repair request started %d terminals, want zero", starts)
+		}
+		if got := m.TransientError(); !strings.Contains(got, "no longer repairable") {
+			t.Fatalf("stale repair status = %q", got)
+		}
+	})
+
+	t.Run("fresh read failure clears reservation", func(t *testing.T) {
+		record := repairableFlowForShortcut()
+		m := model.NewWithOptions(testRepos(), model.Options{
+			AgentCommand: "codex",
+			ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+				return nil, errors.New("read failed")
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+		m, _ = update(m, launch)
+		if got := m.TransientError(); !strings.Contains(got, "read failed") {
+			t.Fatalf("fresh-read failure status = %q", got)
+		}
+		m, retryCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if retryCmd == nil || strings.Contains(m.TransientError(), "already pending") {
+			t.Fatalf("fresh-read failure retained reservation: cmd=%T status=%q", retryCmd, m.TransientError())
+		}
+	})
+}
+
+func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
+	for _, status := range []string{flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
+		t.Run(status, func(t *testing.T) {
+			starts := 0
+			record := repairableFlowForShortcut()
+			record.Phases[0].Status = status
+			record.Phases[0].LaunchIDs = []string{"launch-1"}
+			record.Phases[0].Sessions = []flowstore.Session{{
+				SessionID: "live-session",
+				LaunchID:  "launch-1",
+				Status:    "last_seen",
+			}}
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					starts++
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+			if strings.Contains(m.View(), "R      repair") {
+				t.Fatalf("live %s Flow advertised repair:\n%s", status, m.View())
+			}
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if cmd != nil || starts != 0 || m.TransientError() != "" {
+				t.Fatalf("live %s repair: cmd=%T starts=%d status=%q", status, cmd, starts, m.TransientError())
 			}
 		})
 	}

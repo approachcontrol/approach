@@ -51,6 +51,14 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 			wantReason: "needs_attention",
 		},
 		{
+			name:   "blocked phase with live session",
+			record: repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseBlocked, LaunchIDs: []string{"launch-1"}, Sessions: []flowstore.Session{liveSession}}),
+		},
+		{
+			name:   "needs attention phase with live session",
+			record: repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseNeedsAttention, LaunchIDs: []string{"launch-1"}, Sessions: []flowstore.Session{liveSession}}),
+		},
+		{
 			name: "missing PR metadata",
 			record: repairClassificationRecord(
 				flowstore.FlowPhase{PhaseID: "pr-creation", Kind: flowstore.KindPRCreation, Status: flowstore.PhaseCompleted},

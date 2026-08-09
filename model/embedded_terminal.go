@@ -931,10 +931,7 @@ func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason em
 			next = append(next, slot)
 		} else {
 			removed = true
-			if (reason == embeddedTerminalRemovalUserClose || reason == embeddedTerminalRemovalAutoClose) &&
-				slot.FlowRepair && slot.Terminal != nil && slot.Terminal.State() == "exited" {
-				m = m.armRepairAutoDrain(slot.FlowID)
-			}
+			m = m.recordRepairTerminalRemoval(slot, reason)
 		}
 	}
 	if !removed {
@@ -958,6 +955,18 @@ func (m Model) dismissEmbeddedTerminalForReason(id embeddedTerminalID, reason em
 		m.terminalPrefixActive = true
 	}
 	return m
+}
+
+func (m Model) recordRepairTerminalRemoval(slot embeddedTerminalSlot, reason embeddedTerminalRemovalReason) Model {
+	if !slot.FlowRepair {
+		return m
+	}
+	cleanExit := (reason == embeddedTerminalRemovalUserClose || reason == embeddedTerminalRemovalAutoClose) &&
+		slot.Terminal != nil && slot.Terminal.State() == "exited"
+	if cleanExit {
+		return m.armRepairAutoDrain(slot.FlowID)
+	}
+	return m.suppressRepairAutoDrain(slot.FlowID)
 }
 
 func (m Model) clearEmbeddedTerminalConfirmFor(id embeddedTerminalID) Model {

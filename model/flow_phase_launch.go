@@ -256,6 +256,11 @@ type flowPhaseLaunchTarget struct {
 	AutoAdvanceRetryPhaseID string
 }
 
+type repairAutoDrainMarker struct {
+	MinimumRequest uint64
+	CleanExit      bool
+}
+
 func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
 	record, phase, ok := m.selectedFlowNextLaunchablePhase()
 	if !ok {
@@ -332,6 +337,10 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 			m = m.disarmAutoAdvanceDrain(record.FlowID)
 			continue
 		}
+		if m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) || m.hasPendingRepairAutoDrainMarker(record.FlowID) {
+			m = m.disarmAutoAdvanceDrain(record.FlowID)
+			continue
+		}
 		previous, ok := previousByFlowID[record.FlowID]
 		if !ok {
 			continue
@@ -352,15 +361,36 @@ func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows 
 }
 
 func (m Model) armRepairAutoDrain(flowID string) Model {
+	return m.setRepairAutoDrainMarker(flowID, true)
+}
+
+func (m Model) suppressRepairAutoDrain(flowID string) Model {
+	return m.setRepairAutoDrainMarker(flowID, false)
+}
+
+func (m Model) setRepairAutoDrainMarker(flowID string, cleanExit bool) Model {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {
 		return m
 	}
 	if m.pendingRepairAutoDrainFlowIDs == nil {
-		m.pendingRepairAutoDrainFlowIDs = make(map[string]uint64)
+		m.pendingRepairAutoDrainFlowIDs = make(map[string]repairAutoDrainMarker)
 	}
-	m.pendingRepairAutoDrainFlowIDs[flowID] = m.autoAdvanceRequestSeq + 1
+	marker := repairAutoDrainMarker{
+		MinimumRequest: m.autoAdvanceRequestSeq + 1,
+		CleanExit:      cleanExit,
+	}
+	// Repairs cannot overlap after launch reservation. The latest terminal
+	// removal is therefore authoritative: a successful retry must replace an
+	// earlier failed outcome, while a later failure must suppress an earlier
+	// clean handoff that has not been consumed yet.
+	m.pendingRepairAutoDrainFlowIDs[flowID] = marker
 	return m
+}
+
+func (m Model) hasPendingRepairAutoDrainMarker(flowID string) bool {
+	_, ok := m.pendingRepairAutoDrainFlowIDs[strings.TrimSpace(flowID)]
+	return ok
 }
 
 func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, request uint64) Model {
@@ -373,12 +403,35 @@ func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, req
 			recordsByID[record.FlowID] = record
 		}
 	}
-	for flowID, minimumRequest := range m.pendingRepairAutoDrainFlowIDs {
-		if request < minimumRequest {
+	for flowID, marker := range m.pendingRepairAutoDrainFlowIDs {
+		if request < marker.MinimumRequest {
+			continue
+		}
+		m = m.disarmAutoAdvanceDrain(flowID)
+		record, ok := recordsByID[flowID]
+		if !marker.CleanExit {
+			if !ok {
+				delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+				continue
+			}
+			switch flowstore.DeriveStatus(record) {
+			case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+				delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+				continue
+			}
+			if !record.AutoMode {
+				continue
+			}
+			if _, launchable := nextAutoLaunchPhase(record); !launchable {
+				// A detached repair can mutate the Flow long after the first
+				// post-removal poll. Retain suppression until such a mutation
+				// actually exposes work that AutoMode could otherwise launch.
+				continue
+			}
+			delete(m.pendingRepairAutoDrainFlowIDs, flowID)
 			continue
 		}
 		delete(m.pendingRepairAutoDrainFlowIDs, flowID)
-		record, ok := recordsByID[flowID]
 		if !ok || !record.AutoMode {
 			continue
 		}
@@ -532,6 +585,19 @@ func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
 	}
 	for _, slot := range m.embeddedTerminals {
 		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) hasFlowRepairEmbeddedTerminalForFlow(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
+	for _, slot := range m.embeddedTerminals {
+		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.FlowRepair {
 			return true
 		}
 	}

@@ -158,7 +158,8 @@ type Model struct {
 	terminalFocus             terminalFocus
 	autoAdvanceDrainFlows     map[string]struct{}
 
-	pendingRepairAutoDrainFlowIDs map[string]uint64
+	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
+	pendingFlowRepairLaunchIDs    map[string]string
 
 	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen   uint64
@@ -1637,7 +1638,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
-		next, launchCmd := m.launchFlowEmbeddedWithContext(msg.LaunchContext)
+		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)

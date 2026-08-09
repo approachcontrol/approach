@@ -474,9 +474,13 @@ otherwise proceed: blocked or needs-attention phases, stale or inconsistent
 running-session metadata, missing structured PR metadata, or a gated graph
 with no launchable phase. Ready work, healthy active sessions, every derived
 terminal Flow status, and manual Merge boundaries are intentionally not repair
-targets. Any retained Flow terminal slot — including exited-before-auto-close,
+targets. A matched non-ended provider session counts as healthy active work
+even if its phase already says blocked or needs-attention. Any retained Flow terminal slot — including exited-before-auto-close,
 failed, terminated, starting, or prompt-prefill state — blocks repair until it
-is dismissed or detached.
+is dismissed or detached. A pending repair launch also reserves the Flow, so
+repeated `R` input or a replayed/stale launch message cannot start a second
+repair agent; Approach fresh-reads the persisted Flow and rechecks eligibility
+before allocating the terminal.
 
 Repair is an embedded CLI operation and accepts only `codex` or `claude`.
 `codex-app`, an unset agent, or another configured command produces guidance
@@ -512,7 +516,12 @@ that began after that exit may launch the newly ready non-merge successor,
 including after metadata-only repair or a running-to-ready reset. Stale,
 pre-exit, and failed polls retain the handoff marker; auto mode off, failed or
 terminated repair, detach, and Merge-only readiness clear or bypass it without
-launching.
+launching. While a repair terminal is retained, ordinary completion edges for
+that Flow are held. A non-clean removal keeps suppressing repair-caused edges
+until a later state first exposes work that auto mode could otherwise launch,
+so failure, termination, or a detached agent's delayed mutation cannot leak a
+successor launch. A later clean repair retry replaces the earlier suppressing
+outcome and receives its normal one-shot handoff.
 
 ### Headless mode, model, and effort
 
