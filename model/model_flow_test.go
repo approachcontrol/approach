@@ -4572,9 +4572,11 @@ func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T)
 	persisted.RepoPath = filepath.Join(repoPath, "deleted-repo-before-validation")
 	persisted.WorktreePath = filepath.Join(repoPath, "deleted-before-validation")
 	var started actions.AgentLaunchContext
+	var validationFilter flowstore.FlowFilter
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			validationFilter = filter
 			return []flowstore.FlowRecord{persisted}, nil
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
@@ -4589,12 +4591,61 @@ func TestModel_RFallsBackToRepoWhenRecordedRepairWorktreeIsMissing(t *testing.T)
 		t.Fatal("repair with a usable repo fallback should prepare a launch")
 	}
 	launch := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	if validationFilter.RepoPath != "" {
+		t.Fatalf("repair validation filter = %#v, want unscoped Flow-ID lookup", validationFilter)
+	}
 	if launch.LaunchContext.WorktreePath != repoPath {
 		t.Fatalf("initial repair worktree = %q, want repo fallback %q", launch.LaunchContext.WorktreePath, repoPath)
 	}
 	m, _ = update(m, launch)
 	if started.RepoPath != repoPath || started.WorktreePath != repoPath {
 		t.Fatalf("refreshed repair paths = repo %q worktree %q, want context fallback %q", started.RepoPath, started.WorktreePath, repoPath)
+	}
+}
+
+func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
+	for _, retained := range []bool{false, true} {
+		name := "pending validation"
+		if retained {
+			name = "retained terminal"
+		}
+		t.Run(name, func(t *testing.T) {
+			record := repairableFlowForShortcut()
+			launchUpdates := 0
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{record}, nil
+				},
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					launchUpdates++
+					return record, nil
+				},
+				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+			m, repairCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if repairCmd == nil {
+				t.Fatal("repair should reserve validation")
+			}
+			if retained {
+				m, _ = update(m, repairCmd())
+			}
+
+			repaired := record
+			repaired.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+			repaired.Phases[0].Status = flowstore.PhaseReady
+			m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{repaired}})
+			m, _ = update(m, flowLaunchKey())
+			if launchUpdates != 0 {
+				t.Fatalf("manual launch persisted %d phase updates during repair", launchUpdates)
+			}
+			if got := m.TransientError(); got != "No launchable Flow phase" {
+				t.Fatalf("manual launch status = %q, want repair occupancy to suppress launchability", got)
+			}
+		})
 	}
 }
 

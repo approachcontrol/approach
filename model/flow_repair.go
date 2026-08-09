@@ -223,7 +223,7 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	listFlows := m.listFlows
 	return m, func() tea.Msg {
 		msg := FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-		records, err := listFlows(flowstore.FlowFilter{RepoPath: ctx.RepoPath})
+		records, err := listFlows(flowstore.FlowFilter{})
 		if err != nil {
 			msg.RepairValidationErr = "Refresh persisted Flow before repair: " + err.Error()
 			return msg

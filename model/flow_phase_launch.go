@@ -239,6 +239,9 @@ func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstor
 	if !ok || record.FlowID == "" {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
+	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+	}
 	ordered := flowstore.OrderedPhases(record.Phases)
 	orderedRecord := record
 	orderedRecord.Phases = ordered
