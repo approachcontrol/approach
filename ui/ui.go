@@ -625,7 +625,7 @@ func renderApplication(p RenderParams) string {
 	leftLines := renderRepoList(p.Repos, p.Selected, p.RepoScroll, leftContentWidth, innerHeight, p.RepoEmptyMessage, p.ActiveTerminalRepoPaths)
 	if p.RepoPaneCollapsed {
 		leftContentWidth = CollapsedRepoPaneWidth - 2
-		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, innerHeight)
+		leftLines = renderCollapsedRepoPane(p.Repos, p.Selected, innerHeight, !terminalShortcutsActive)
 	}
 	leftContent := strings.Join(leftLines, "\n")
 	leftPane := lipgloss.NewStyle().
@@ -2234,13 +2234,17 @@ func renderRepoList(repos []scanner.Repo, selected, scroll, width, height int, e
 	return lines
 }
 
-func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int) []string {
+func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int, showRestoreHint bool) []string {
 	if height <= 0 {
 		return nil
 	}
 	const contentWidth = CollapsedRepoPaneWidth - 2
 	lines := make([]string, 0, height)
-	lines = append(lines, "^r")
+	restoreHint := strings.Repeat(" ", contentWidth)
+	if showRestoreHint {
+		restoreHint = "^r"
+	}
+	lines = append(lines, restoreHint)
 	if selected >= 0 && selected < len(repos) {
 		for _, r := range repos[selected].DisplayName {
 			if len(lines) >= height {
