@@ -332,6 +332,7 @@ type RenderParams struct {
 	BeadsOpenScroll              int
 	BeadsOpenAvailable           bool
 	BeadsOpenPending             bool
+	ReadyBeadFlowCreateAvailable bool
 	BeadsError                   string
 	BeadsSourceCount             int
 	BeadsClosedTotal             int
@@ -630,6 +631,7 @@ func renderApplication(p RenderParams) string {
 		PullAvailable:                p.PullAvailable,
 		AgentAvailable:               p.AgentAvailable,
 		NewAgent:                     p.NewAgentAvailable,
+		ReadyBeadFlowCreateAvailable: p.ReadyBeadFlowCreateAvailable,
 	}
 	innerHeight := p.Height - 3 // status bar + top/bottom borders
 	dockState := EmbeddedTerminalDockCollapsed
@@ -1061,6 +1063,7 @@ type statusBarParams struct {
 	PullAvailable                bool
 	AgentAvailable               bool
 	NewAgent                     bool
+	ReadyBeadFlowCreateAvailable bool
 }
 
 type shortcutHint struct {
@@ -1126,6 +1129,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	itemSearch := sp.ItemSearch
 
 	if transientError != "" {
+		transientError = terminalSafeSingleLine(transientError)
 		return statusStyle.Width(width).Render("  " + transientStatusStyle(sp.TransientErrorFadeStep).Render(transientError))
 	}
 
@@ -1378,6 +1382,9 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	if sp.ActivePane == 0 && sp.RepoCreateAvailable {
 		actions = append(actions, shortcutHint{Key: "n", Label: "new repo"})
+	}
+	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowCreateAvailable {
+		actions = append(actions, shortcutHint{Key: "f", Label: "new flow"})
 	}
 	if flowSurfaceActive {
 		return flowShortcutSections(sp, actions, navigation, global)
@@ -3011,7 +3018,8 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		planCell := statusStyle.Render(fitSessionColumn(plan, flowPlanWidth))
 		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
 		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
-		titleCell := stashMsgStyle.Render(record.Title)
+		title := terminalSafeSingleLine(record.Title)
+		titleCell := stashMsgStyle.Render(title)
 		line := formatFlowColumns(showRepo, flowRowPrefix(false, active.hasFlow(record.FlowID)),
 			statusCell,
 			repoCell,
@@ -3033,7 +3041,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				plan,
 				pr,
 				updated,
-				record.Title,
+				title,
 				width)
 		}
 		rows = append(rows, truncateToWidth(line, width))
@@ -3946,6 +3954,7 @@ func renderFormDialogOverApplication(p RenderParams, contentHeight int) []string
 }
 
 func renderConfirmDialog(prompt string, force bool, width, height int) []string {
+	prompt = terminalSafeSingleLine(prompt)
 	lines := make([]string, height)
 	mid := height / 2
 	if mid < len(lines) {

@@ -143,6 +143,37 @@ func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
 	}
 }
 
+func TestStatusBar_TransientStatusIsTerminalSafeSingleLine(t *testing.T) {
+	const unsafeTitle = "bd-1: \x1b]52;c;dGVzdA==\aUnsafe\nTitle"
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:          120,
+		TransientError: "Created flow: " + unsafeTitle,
+	})
+
+	if strings.Contains(bar, "\x1b]52;") {
+		t.Fatalf("status bar retained OSC sequence: %q", bar)
+	}
+	if strings.Contains(bar, "\n") {
+		t.Fatalf("status bar retained embedded newline: %q", bar)
+	}
+	if got := ansi.Strip(bar); !strings.Contains(got, "Created flow: bd-1: Unsafe Title") {
+		t.Fatalf("status bar text = %q, want sanitized single-line title", got)
+	}
+}
+
+func TestRenderConfirmDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
+	const unsafePrompt = "Delete Flow bd-1: \x1b]52;c;dGVzdA==\aUnsafe\nTitle?"
+	lines := renderConfirmDialog(unsafePrompt, false, 120, 5)
+	view := strings.Join(lines, "\n")
+
+	if strings.Contains(view, "\x1b]52;") {
+		t.Fatalf("confirmation retained OSC sequence: %q", view)
+	}
+	if got := ansi.Strip(lines[2]); !strings.Contains(got, "Delete Flow bd-1: Unsafe Title?") {
+		t.Fatalf("confirmation text = %q, want sanitized single-line prompt", got)
+	}
+}
+
 func TestStatusBar_IndicatorLegendSpacing(t *testing.T) {
 	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
 	for _, pair := range [][2]string{

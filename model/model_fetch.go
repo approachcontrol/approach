@@ -191,6 +191,29 @@ func (m Model) clearFlowCreateRequest(request uint64) Model {
 	return m
 }
 
+func (m Model) nextReadyBeadFlowCreateRequest() (Model, uint64) {
+	m.readyBeadFlowCreateSeq++
+	m.activeReadyBeadFlowCreate = m.readyBeadFlowCreateSeq
+	return m, m.activeReadyBeadFlowCreate
+}
+
+func (m Model) isCurrentReadyBeadFlowCreateRequest(request uint64) bool {
+	return request != 0 && request == m.activeReadyBeadFlowCreate
+}
+
+func (m Model) clearReadyBeadFlowCreateRequest(request uint64) Model {
+	if m.isCurrentReadyBeadFlowCreateRequest(request) {
+		m.activeReadyBeadFlowCreate = 0
+	}
+	return m
+}
+
+func (m Model) invalidateReadyBeadFlowCreateRequest() Model {
+	m.readyBeadFlowCreateSeq++
+	m.activeReadyBeadFlowCreate = 0
+	return m
+}
+
 func (m Model) startFetchVisibleRepos() (Model, tea.Cmd) {
 	if m.visibleRepoFetch.Request != 0 {
 		return m, nil
@@ -506,6 +529,20 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) 
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
 		}
 		return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title}
+	}
+}
+
+func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		record, err := m.createFlowRecord(flowstore.FlowRecord{
+			Title:        title,
+			Instructions: instructions,
+			RepoPath:     repoPath,
+		})
+		if err != nil {
+			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error(), Request: request}
+		}
+		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: record.FlowID, Title: title, Request: request}
 	}
 }
 

@@ -86,6 +86,8 @@ type Model struct {
 	activeRepoCreate          uint64
 	flowCreateSeq             uint64
 	activeFlowCreate          uint64
+	readyBeadFlowCreateSeq    uint64
+	activeReadyBeadFlowCreate uint64
 	repoRefreshSeq            uint64
 	activeRepoRefresh         uint64
 	pendingRepoSelection      string
@@ -122,6 +124,7 @@ type Model struct {
 	listBeads                 [beadSubviewCount]func(string) ([]beadsquery.Bead, error)
 	showBead                  func(repoPath, beadID string) (string, error)
 	countClosedBeads          func(string) (int, error)
+	createFlowRecord          func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -234,6 +237,7 @@ type Options struct {
 	ListClosedBeads          func(repoPath string) ([]beadsquery.Bead, error)
 	ShowBead                 func(repoPath, beadID string) (string, error)
 	CountClosedBeads         func(repoPath string) (int, error)
+	CreateFlowRecord         func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -476,16 +480,25 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if runBootstrapHook == nil {
 		runBootstrapHook = actions.RunBootstrapHook
 	}
+	// storeCreateFlowRecord is the store-backed default for both the Ready-Bead
+	// record seam and the Flow starter. The starter always keeps this private
+	// callback so injecting Options.CreateFlowRecord cannot change the legacy
+	// Flows-pane create/plan paths.
+	storeCreateFlowRecord := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		store, err := newFlowStore()
+		if err != nil {
+			return flowstore.FlowRecord{}, err
+		}
+		return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
+	}
+	createFlowRecord := opts.CreateFlowRecord
+	if createFlowRecord == nil {
+		createFlowRecord = storeCreateFlowRecord
+	}
 	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
 	if createFlowForRepo == nil || startFlowPlan == nil {
-		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
-			store, err := newFlowStore()
-			if err != nil {
-				return flowstore.FlowRecord{}, err
-			}
-			return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
-		}
+		createFlow := storeCreateFlowRecord
 		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
 			if err != nil {
@@ -559,6 +572,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		},
 		showBead:                 showBead,
 		countClosedBeads:         countClosedBeads,
+		createFlowRecord:         createFlowRecord,
 		createFlow:               createFlowForRepo,
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
@@ -1013,6 +1027,7 @@ func (m Model) View() string {
 		BeadsOpenScroll:              beadsScroll,
 		BeadsOpenAvailable:           beadsAvailable,
 		BeadsOpenPending:             beadsPending,
+		ReadyBeadFlowCreateAvailable: m.canCreateReadyBeadFlow(),
 		BeadsError:                   beadsError,
 		BeadsSourceCount:             beadsSourceCount,
 		BeadsClosedTotal:             beadsClosedTotal,
@@ -1632,6 +1647,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowCreated(msg)
 	case FlowCreateFailedMsg:
 		return m.handleFlowCreateFailed(msg)
+	case ReadyBeadFlowCreatedMsg:
+		return m.handleReadyBeadFlowCreated(msg)
+	case ReadyBeadFlowCreateFailedMsg:
+		return m.handleReadyBeadFlowCreateFailed(msg)
 	case AgentResultMsg:
 		// Detached launches only start the agent in an external
 		// terminal/multiplexer session and return while it keeps running, so the

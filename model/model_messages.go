@@ -494,6 +494,20 @@ type FlowCreateFailedMsg struct {
 	Request  uint64
 }
 
+type ReadyBeadFlowCreatedMsg struct {
+	RepoPath string
+	FlowID   string
+	Title    string
+	Request  uint64
+}
+
+type ReadyBeadFlowCreateFailedMsg struct {
+	RepoPath string
+	Title    string
+	Err      string
+	Request  uint64
+}
+
 type FlowDeletedMsg struct {
 	RepoPath string
 	FlowID   string

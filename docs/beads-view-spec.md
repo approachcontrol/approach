@@ -5,7 +5,8 @@ five visible query/header subviews, sticky group re-entry, arrow navigation, and
 per-subview filter/cursor preservation with refetch clamping, plus
 configured/not-configured/error classification are shipped, as are the
 newest-100 Closed cap with its plain/truncated header count and `default_view`
-10–14 startup routing and read-only detail paging. Companion docs:
+10–14 startup routing, read-only detail paging, and record-only Flow creation
+from a settled Ready selection. Companion docs:
 `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
@@ -33,7 +34,9 @@ the selected repo's beads one status at a time. Data comes from the `bd` CLI in
 JSON mode, fetched asynchronously when the user enters the group or moves the
 repo cursor. Repos without beads show a calm "beads not configured" message;
 configured repos where `bd` fails show a real error. The view is read-only in
-v1, with `enter` paging a bead's detail through the pager.
+its Beads access and tracker state, with `enter` paging a bead's detail through
+the pager. A settled Ready selection also exposes `f` to create an
+Approach-owned record-only Flow without invoking `bd` or mutating the Bead.
 
 ## User Stories
 
@@ -61,11 +64,12 @@ v1, with `enter` paging a bead's detail through the pager.
 22. As an Approach user, I want bead data fetched asynchronously on group entry and repo-cursor change, so that the UI never blocks on a `bd` subprocess.
 23. As an Approach user, I want stale-result protection on bead fetches, so that moving quickly across repos never shows one repo's beads under another repo's name.
 24. As an Approach user, I want `enter` on a bead to page its full detail (`bd show`) through the pager, so that I can read descriptions and dependencies without leaving the TUI.
-25. As an Approach user, I want the Beads view to be read-only, so that browsing can never mutate the tracker by accident.
+25. As an Approach user, I want Beads queries and tracker state to remain read-only, so that browsing or creating a Flow can never mutate the tracker by accident.
 26. As an Approach user, I want `default_view` numbers 10–14 pinning each beads subview, so that I can start the app directly in any of them, mirroring the git subview numbers.
 27. As an Approach user, I want the frozen `default_view` vocabulary (1–9) untouched, so that existing configs keep their meaning.
 28. As an Approach user, I want a manual way to refetch beads via the app's existing refresh affordance, so that I can pull in changes an agent made without bouncing the repo cursor.
 29. As an agent operator, I want issue state visible next to Sessions, Plans, and Flows, so that I can see what my agents should pick up next and what they have finished.
+30. As an Approach user, I want `f` on a settled visible Ready selection to create a record-only Flow for that Bead, so that I can carry the durable requirement into the Flow workflow without creating a worktree, launching an agent, or changing the Bead.
 
 ## Implementation Decisions
 
@@ -108,6 +112,29 @@ v1, with `enter` paging a bead's detail through the pager.
 - `enter` on a bead pages `bd show <id> --readonly` output through the pager with
   stale-result protection, the same pattern as the app's other read-only
   detail views.
+- `f` is a Ready-only record-persistence action. It requires right-pane focus,
+  an available settled filtered selection whose Bead has a non-empty trimmed
+  ID, a selected repo, and no existing Ready Flow request. It creates a Flow
+  titled `<trimmed bead ID>: <trimmed bead title>` with instructions directing
+  agents to use `bd show <id>` as the durable source of requirements. Creation
+  uses the configured preset but supplies only title, instructions, and repo
+  path: no worktree, branch, base ref, commit, plan/link, launch/session, agent,
+  issue, or PR metadata. It never invokes the Flow starter, bootstrap hooks,
+  agent launchers, or `bd`.
+- Ready Flow persistence has its own monotonically increasing request token.
+  Duplicate keypresses are ignored while it is active. Cursor-driven repo
+  changes invalidate it at the top of `handleRepoSelectionChanged`, before
+  either the normal or Active-Flows reset branch; rescan-driven repo changes
+  reach it through `resetRightPaneCursors`, which `handleRepoRefreshResult`
+  uses on every selection-changing path. Completion handlers release the token
+  before checking the repo, so no repo-change route can strand the shortcut.
+  Accepted success or failure updates status and refreshes exactly the
+  currently visible Flow surface, if any; Beads and other surfaces do not
+  refresh.
+- The resulting Flow is record-only, not the Flows-pane form's parked Flow: it
+  has no worktree, so existing Flow rendering labels it `missing-worktree` /
+  `recover-worktree`, and phase launch falls back to the repository root. The
+  docs state this explicitly rather than implying an isolated worktree exists.
 - Config: `default_view` gains frozen numbers 10 (ready), 11 (blocked),
   12 (open), 13 (in-progress), 14 (closed), parallel to the git subviews'
   1–5. Numbers 1–9 keep their existing frozen meanings.
@@ -133,13 +160,15 @@ v1, with `enter` paging a bead's detail through the pager.
   and list-fetch model tests.
 - ui: stateless render tests from a `RenderParams` snapshot — beads header
   letter row, row formatting, the "100 of N" closed header, empty-subview
-  messages, and not-configured vs error rendering. Prior art: the git header
+  messages, not-configured vs error rendering, and the Ready `f: new flow`
+  hint only when its model predicate is executable. Prior art: the git header
   and ui render tests.
 
 ## Out of Scope
 
 - Any mutation of beads (create, start, close, reopen, edit, dependency
-  changes). The view is strictly read-only in v1.
+  changes). Beads access and tracker state remain strictly read-only; creating
+  an Approach-owned Flow artifact is not a Beads mutation.
 - Background polling or auto-refresh while the view is visible.
 - Reading beads storage files directly, or any fallback path that bypasses the
   `bd` CLI.
