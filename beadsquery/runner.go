@@ -55,6 +55,8 @@ func defaultQuery() *Querier {
 
 func (r execRunner) Run(dir string, args ...string) (string, error) {
 	commandArgs := make([]string, 0, len(args)+2)
+	// bd resolves -C before its user-level db fallback, setting BEADS_DIR to
+	// the repo's effective (redirect-aware) Beads directory.
 	commandArgs = append(commandArgs, "-C", dir)
 	commandArgs = append(commandArgs, args...)
 	cmd := exec.Command("bd", commandArgs...)
