@@ -108,7 +108,22 @@ func withoutBeadsDatabaseSelectors(env []string) []string {
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
 		switch strings.ToUpper(name) {
-		case "BEADS_DIR", "BEADS_DB", "BD_DB", "BEADS_DOLT_SERVER_DATABASE":
+		case "BEADS_DIR",
+			"BEADS_DB",
+			"BD_DB",
+			"BEADS_CENTRAL_CONFIG",
+			"BEADS_DOLT_DATA_DIR",
+			"BEADS_DOLT_PORT",
+			"BEADS_DOLT_PROXIED_SERVER",
+			"BEADS_DOLT_SERVER_DATABASE",
+			"BEADS_DOLT_SERVER_HOST",
+			"BEADS_DOLT_SERVER_MODE",
+			"BEADS_DOLT_SERVER_PORT",
+			"BEADS_DOLT_SERVER_SOCKET",
+			"BEADS_DOLT_SHARED_SERVER",
+			"BEADS_MYSQL_URL",
+			"BEADS_POSTGRES_URL",
+			"BEADS_SHARED_SERVER_DIR":
 			continue
 		}
 		filtered = append(filtered, entry)

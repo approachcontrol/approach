@@ -106,3 +106,34 @@ func TestExecRunnerRejectsOversizedOutput(t *testing.T) {
 		t.Fatalf("Run() output = %q, want no partial data", out)
 	}
 }
+
+func TestWithoutBeadsDatabaseSelectorsRemovesTargetOverrides(t *testing.T) {
+	targetOverrides := []string{
+		"BEADS_DIR=/other/.beads",
+		"BEADS_DB=/other/beads.db",
+		"BD_DB=/other/legacy.db",
+		"BEADS_CENTRAL_CONFIG=/other/central.yaml",
+		"BEADS_DOLT_DATA_DIR=/other/dolt",
+		"BEADS_DOLT_PORT=3308",
+		"BEADS_DOLT_PROXIED_SERVER=1",
+		"BEADS_DOLT_SERVER_DATABASE=other_database",
+		"BEADS_DOLT_SERVER_HOST=other.example",
+		"BEADS_DOLT_SERVER_MODE=1",
+		"BEADS_DOLT_SERVER_PORT=3309",
+		"BEADS_DOLT_SERVER_SOCKET=/other/dolt.sock",
+		"BEADS_DOLT_SHARED_SERVER=1",
+		"BEADS_MYSQL_URL=mysql://other",
+		"BEADS_POSTGRES_URL=postgres://other",
+		"BEADS_SHARED_SERVER_DIR=/other/shared",
+	}
+	env := append(targetOverrides,
+		"BD_JSON_ENVELOPE=1",
+		"BEADS_DOLT_PASSWORD=secret",
+	)
+
+	got := withoutBeadsDatabaseSelectors(env)
+	want := []string{"BD_JSON_ENVELOPE=1", "BEADS_DOLT_PASSWORD=secret"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("withoutBeadsDatabaseSelectors() = %#v, want %#v", got, want)
+	}
+}
