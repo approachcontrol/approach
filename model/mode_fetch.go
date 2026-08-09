@@ -150,6 +150,9 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 		mode: mode,
 		pane: paneName,
 		beforeStart: func(m Model) Model {
+			if m.activeViewKind == FetchBeadDetail {
+				m = m.invalidateViewRequest()
+			}
 			index, _ := beadSubviewIndex(mode)
 			// Rows and cursor are retained across a same-repo refetch so the
 			// accepted replacement can refilter and clamp them. Rows belonging

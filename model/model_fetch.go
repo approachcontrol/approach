@@ -618,6 +618,42 @@ func (m Model) fetchBranchDiff() tea.Cmd {
 	}
 }
 
+func (m Model) fetchBeadDetail() tea.Cmd {
+	repoPath, ok := m.currentRepoPath()
+	if !ok {
+		return nil
+	}
+	bead, ok := m.selectedVisibleBead()
+	if !ok {
+		return nil
+	}
+	mode := m.mode
+	beadID := bead.ID
+	diffRequest := m.activeViewRequest
+	showBead := m.showBead
+	return func() tea.Msg {
+		body, err := showBead(repoPath, beadID)
+		if err != nil {
+			return FetchErrorMsg{
+				RepoPath:    repoPath,
+				Pane:        "bead detail",
+				Err:         fmt.Sprintf("failed to load bead detail: %v", err),
+				Kind:        FetchBeadDetail,
+				Mode:        mode,
+				DiffRequest: diffRequest,
+				BeadID:      beadID,
+			}
+		}
+		return BeadDetailResultMsg{
+			RepoPath:    repoPath,
+			Mode:        mode,
+			BeadID:      beadID,
+			DiffRequest: diffRequest,
+			Body:        body,
+		}
+	}
+}
+
 func (m Model) fetchWorktreeDiff() tea.Cmd {
 	repoPath, ok := m.currentRepoPath()
 	if !ok {

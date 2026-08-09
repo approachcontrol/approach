@@ -320,6 +320,14 @@ type BeadsClosedResultMsg struct {
 	Available   bool
 }
 
+type BeadDetailResultMsg struct {
+	RepoPath    string
+	Mode        ui.Mode
+	BeadID      string
+	DiffRequest uint64
+	Body        string
+}
+
 type FlowAutoModeSetMsg struct {
 	RepoPath string
 	FlowID   string
@@ -540,6 +548,7 @@ const (
 	FetchReflogDiff
 	FetchSessionTranscript
 	FetchPlanText
+	FetchBeadDetail
 )
 
 // FetchErrorMsg carries an error encountered while loading data for a pane,
@@ -562,6 +571,7 @@ type FetchErrorMsg struct {
 	Provider     sessions.Provider
 	SessionID    string
 	PlanID       string
+	BeadID       string
 }
 
 // ActionFailedMsg carries an async action error so the failure can be surfaced
@@ -1629,6 +1639,13 @@ func (m Model) handlePlanReadResult(msg PlanReadResultMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleBeadDetailResult(msg BeadDetailResultMsg) (Model, tea.Cmd) {
+	if m.beadDetailTargetMatches(msg.RepoPath, msg.Mode, msg.BeadID, msg.DiffRequest) {
+		return m.pageBody(msg.Body)
+	}
+	return m, nil
+}
+
 func (m Model) handleCommitDiffResult(msg CommitDiffResultMsg) (Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) && m.activeViewMatches(FetchCommitDiff, ui.ModeHistory, msg.DiffRequest) {
 		if commit, ok := m.selectedCommit(); ok && commit.Hash == msg.Hash {
@@ -1723,9 +1740,20 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 			return false
 		}
 		return m.currentPlanTextTargetMatches(msg.Mode, msg.PlanID)
+	case FetchBeadDetail:
+		return m.beadDetailTargetMatches(msg.RepoPath, msg.Mode, msg.BeadID, msg.DiffRequest)
 	default:
 		return false
 	}
+}
+
+func (m Model) beadDetailTargetMatches(repoPath string, mode ui.Mode, beadID string, request uint64) bool {
+	if !m.isCurrentRepo(repoPath) || m.mode != mode || !ui.IsBeadsMode(mode) ||
+		!m.activeViewMatches(FetchBeadDetail, mode, request) {
+		return false
+	}
+	bead, ok := m.selectedVisibleBead()
+	return ok && bead.ID == beadID
 }
 
 func (m Model) currentPlanTextTargetMatches(mode ui.Mode, planID string) bool {

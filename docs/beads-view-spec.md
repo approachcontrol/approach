@@ -2,9 +2,9 @@
 
 Status: forward-looking full-v1 draft, partially implemented. The Open tracer,
 five visible query/header subviews, sticky group re-entry, arrow navigation, and
-per-subview filter/cursor preservation with refetch clamping are shipped. Detail
-paging, error classification, Closed cap/count, and `default_view` 10–14 remain
-deferred. Companion docs: `architecture.md`
+per-subview filter/cursor preservation with refetch clamping, and read-only
+detail paging are shipped. Error classification, Closed cap/count, and
+`default_view` 10–14 remain deferred. Companion docs: `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
 
@@ -78,9 +78,10 @@ v1, with `enter` paging a bead's detail through the pager.
   reuses the grouped-selector mechanics (top-level row plus letter row), with
   the extra row's height taken out of the list height as the git panes do.
 - Data access is a new beads query package shaped like the git query package: a
-  small `Runner` seam that executes `bd` with `--json`, wrapped by a querier;
-  parsing is pure functions over captured JSON. Nothing outside this package
-  invokes `bd`.
+  small `Runner` seam wrapped by a querier. List queries execute `bd` with
+  `--json` and use pure parsers over captured JSON; detail returns the raw
+  human-readable output of `bd show <id> --readonly`. Nothing outside this
+  package invokes `bd`.
 - Ready comes from `bd ready` — the dependency-graph readiness computation stays
   in `bd`, never reimplemented. Open is literally `bd list -s open`, so ready
   beads intentionally appear in both Ready and Open. Blocked, in-progress, and

@@ -59,6 +59,60 @@ func (r *fakeRunner) Run(dir string, args ...string) (string, error) {
 	return r.out, r.err
 }
 
+func TestQuerierShowUsesReadonlyRunnerAndPreservesOutput(t *testing.T) {
+	t.Parallel()
+
+	const want = "\x1b[1mbead-42\x1b[0m\n\n  body with trailing space \n\n"
+	runner := &fakeRunner{out: want}
+
+	got, err := beadsquery.NewQuerier(runner).Show("/selected/repo", "bead-42")
+	if err != nil {
+		t.Fatalf("Show() error = %v", err)
+	}
+	if runner.calls != 1 || runner.dir != "/selected/repo" {
+		t.Fatalf("runner call = (%d, %q), want (1, %q)", runner.calls, runner.dir, "/selected/repo")
+	}
+	wantArgs := []string{"show", "bead-42", "--readonly"}
+	if !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner args = %#v, want %#v", runner.args, wantArgs)
+	}
+	if got != want {
+		t.Fatalf("Show() = %q, want byte-for-byte output %q", got, want)
+	}
+}
+
+func TestQuerierShowPreservesRunnerFailureCauses(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("bd show failed")
+	got, err := beadsquery.NewQuerier(&fakeRunner{out: "partial", err: cause}).Show("/repo", "bead-42")
+	if !errors.Is(err, cause) {
+		t.Fatalf("Show() error = %v, want wrapped cause %v", err, cause)
+	}
+	if got != "" {
+		t.Fatalf("Show() = %q, want no partial output", got)
+	}
+}
+
+func TestShowUsesDefaultRunner(t *testing.T) {
+	runner := &fakeRunner{out: "raw detail\n"}
+	previous := beadsquery.DefaultRunner
+	beadsquery.DefaultRunner = runner
+	t.Cleanup(func() { beadsquery.DefaultRunner = previous })
+
+	got, err := beadsquery.Show("/repo", "bead-default")
+	if err != nil {
+		t.Fatalf("Show() error = %v", err)
+	}
+	wantArgs := []string{"show", "bead-default", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+	if got != "raw detail\n" {
+		t.Fatalf("Show() = %q, want raw output", got)
+	}
+}
+
 func TestQuerierListOpenUsesRunnerAndReturnsSortedBeads(t *testing.T) {
 	t.Parallel()
 

@@ -68,7 +68,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
-| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
+| `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -341,10 +341,17 @@ Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
 
-`enter` still has no Beads detail pager. The later Closed 100-row cap/count,
-configured-versus-error classification, pager, and `default_view` 10–14
-additions remain deferred; keys `6`–`9` and the existing frozen 1–9 startup
-vocabulary are unchanged.
+After the active subview settles, `enter` on its visible selected row
+asynchronously loads the raw human-readable output of
+`bd show <id> --readonly` and pages it through `less -R`. Detail results use the
+same active-view request lifecycle as other read-only detail panes: a repeated
+`enter`, subview or repo transition, or Beads list refresh invalidates the old
+request, and delivery also requires the same bead to remain visibly selected.
+Stale successes do not launch a pager and stale errors do not change status.
+
+The later Closed 100-row cap/count, configured-versus-error classification,
+and `default_view` 10–14 additions remain deferred; keys `6`–`9` and the
+existing frozen 1–9 startup vocabulary are unchanged.
 
 ## Flows View (`4`)
 

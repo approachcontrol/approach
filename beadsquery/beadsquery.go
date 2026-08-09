@@ -10,6 +10,20 @@ type Bead struct {
 	Assignee string
 }
 
+// Show returns the selected bead's human-readable detail.
+func Show(repoPath, beadID string) (string, error) {
+	return defaultQuery().Show(repoPath, beadID)
+}
+
+// Show returns the selected bead's human-readable detail.
+func (q *Querier) Show(repoPath, beadID string) (string, error) {
+	out, err := q.runner.Run(repoPath, "show", beadID, "--readonly")
+	if err != nil {
+		return "", fmt.Errorf("showing bead %s: %w", beadID, err)
+	}
+	return out, nil
+}
+
 // ListReady returns the selected repository's dependency-graph-ready beads.
 func ListReady(repoPath string) ([]Bead, error) {
 	return defaultQuery().ListReady(repoPath)
