@@ -1,8 +1,10 @@
 package beadsquery
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -12,7 +14,20 @@ type Runner interface {
 	Run(dir string, args ...string) (string, error)
 }
 
-type execRunner struct{}
+const (
+	defaultBDOutputLimit = 32 << 20
+	defaultBDErrorLimit  = 1 << 20
+)
+
+type execRunner struct {
+	maxOutputBytes int
+}
+
+type cappedBuffer struct {
+	buffer   bytes.Buffer
+	limit    int
+	exceeded bool
+}
 
 var defaultRunner Runner = execRunner{}
 
@@ -38,18 +53,60 @@ func defaultQuery() *Querier {
 	return NewQuerier(DefaultRunner)
 }
 
-func (execRunner) Run(dir string, args ...string) (string, error) {
+func (r execRunner) Run(dir string, args ...string) (string, error) {
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	cmd.Env = withoutBeadsDatabaseSelectors(os.Environ())
+	limit := r.maxOutputBytes
+	if limit <= 0 {
+		limit = defaultBDOutputLimit
+	}
+	out := cappedBuffer{limit: limit}
+	stderr := cappedBuffer{limit: defaultBDErrorLimit}
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			if msg := strings.TrimSpace(string(exitErr.Stderr)); msg != "" {
+			if msg := strings.TrimSpace(stderr.buffer.String()); msg != "" {
 				return "", fmt.Errorf("%s: %w", msg, err)
 			}
 		}
 		return "", err
 	}
-	return string(out), nil
+	if out.exceeded {
+		return "", fmt.Errorf("bd output exceeded %d-byte limit", limit)
+	}
+	return out.buffer.String(), nil
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.buffer.Len()
+	if remaining < 0 {
+		remaining = 0
+	}
+	writeLen := len(p)
+	if writeLen > remaining {
+		writeLen = remaining
+		b.exceeded = true
+	}
+	if writeLen > 0 {
+		_, _ = b.buffer.Write(p[:writeLen])
+	}
+	// Report the full write so os/exec keeps draining stdout after the cap.
+	return len(p), nil
+}
+
+func withoutBeadsDatabaseSelectors(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		switch strings.ToUpper(name) {
+		case "BEADS_DIR", "BEADS_DB", "BD_DB":
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
