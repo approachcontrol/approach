@@ -4486,6 +4486,11 @@ func TestCollapsedRepoPaneHandlesWideAndCombiningRunes(t *testing.T) {
 	if strings.Join(empty, "|") != "^r|  |  " {
 		t.Fatalf("empty collapsed repo lines = %#v, want hint only", empty)
 	}
+
+	oneRow := renderCollapsedRepoPane([]scanner.Repo{{DisplayName: "alpha"}}, 0, 1)
+	if strings.Join(oneRow, "|") != "^r" {
+		t.Fatalf("one-row collapsed repo lines = %#v, want restore hint only", oneRow)
+	}
 }
 
 func TestRender_CollapsedRepoPaneShowsRestoreHintInFooterAndShortcutRail(t *testing.T) {

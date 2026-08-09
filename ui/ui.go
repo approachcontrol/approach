@@ -2107,6 +2107,9 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int) []strin
 	lines = append(lines, "^r")
 	if selected >= 0 && selected < len(repos) {
 		for _, r := range repos[selected].DisplayName {
+			if len(lines) >= height {
+				break
+			}
 			width := ansi.StringWidth(string(r))
 			if width <= 0 || width > contentWidth {
 				continue
@@ -2116,9 +2119,6 @@ func renderCollapsedRepoPane(repos []scanner.Repo, selected, height int) []strin
 				line += strings.Repeat(" ", contentWidth-width)
 			}
 			lines = append(lines, line)
-			if len(lines) == height {
-				break
-			}
 		}
 	}
 	for len(lines) < height {
