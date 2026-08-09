@@ -405,7 +405,8 @@ number, `x` closes, `d` detaches to tmux when available and opens the detached
 session in an external terminal, `q`/`esc` quits, unknown ordinary keys do not
 pass through to the PTY, `ctrl+]` sends a literal `ctrl+]`, and `i` enters
 terminal input mode. In input mode, keys pass through to the PTY (including
-agent shortcuts like `ctrl+g`) and `ctrl+]` returns to command mode.
+agent shortcuts like `ctrl+g`) except `tab`, which cycles pane focus, and
+`ctrl+]`, which returns to command mode.
 
 ### Recovery labels
 

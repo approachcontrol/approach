@@ -1,9 +1,11 @@
 package artifacts_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -182,6 +184,68 @@ func TestAcquireFileLockIsBoundedAndReusable(t *testing.T) {
 		t.Fatalf("AcquireFileLock(after release) error = %v", err)
 	}
 	releaseAgain()
+}
+
+func TestAcquireFileLockSerializesIndependentProcesses(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "cross-process.lock")
+	release, err := artifacts.AcquireFileLock(lockPath, "cross-process store lock", time.Second)
+	if err != nil {
+		t.Fatalf("AcquireFileLock(parent) error = %v", err)
+	}
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			release()
+		}
+	})
+
+	runFileLockHelper(t, lockPath, "timeout")
+	release()
+	released = true
+	runFileLockHelper(t, lockPath, "acquire")
+}
+
+func TestAcquireFileLockHelperProcess(t *testing.T) {
+	if os.Getenv("APPROACH_TEST_FILE_LOCK_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+	path := os.Getenv("APPROACH_TEST_FILE_LOCK_PATH")
+	switch os.Getenv("APPROACH_TEST_FILE_LOCK_MODE") {
+	case "timeout":
+		_, err := artifacts.AcquireFileLock(path, "cross-process store lock", 20*time.Millisecond)
+		if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "cross-process store lock") {
+			t.Fatalf("AcquireFileLock(contended helper) error = %v, want descriptive timeout", err)
+		}
+	case "acquire":
+		release, err := artifacts.AcquireFileLock(path, "cross-process store lock", time.Second)
+		if err != nil {
+			t.Fatalf("AcquireFileLock(released helper) error = %v", err)
+		}
+		release()
+		release()
+	default:
+		t.Fatalf("unknown helper mode %q", os.Getenv("APPROACH_TEST_FILE_LOCK_MODE"))
+	}
+}
+
+func runFileLockHelper(t *testing.T, path, mode string) {
+	t.Helper()
+	const helperGuard = 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), helperGuard)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAcquireFileLockHelperProcess$", "-test.count=1")
+	cmd.Env = append(os.Environ(),
+		"APPROACH_TEST_FILE_LOCK_HELPER=1",
+		"APPROACH_TEST_FILE_LOCK_PATH="+path,
+		"APPROACH_TEST_FILE_LOCK_MODE="+mode,
+	)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("file lock helper (%s) exceeded %s guard: %v\n%s", mode, helperGuard, ctx.Err(), output)
+	}
+	if err != nil {
+		t.Fatalf("file lock helper (%s) error = %v\n%s", mode, err, output)
+	}
 }
 
 type errReader struct{}

@@ -1959,7 +1959,6 @@ func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, 
 	}
 	ctx := actions.AgentLaunchContext{
 		Command:           command,
-		LaunchID:          newLaunchID(),
 		RepoPath:          repoPath,
 		WorktreePath:      record.WorktreePath,
 		WorkingDir:        workingDir,
@@ -2210,9 +2209,16 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 }
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
+	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
+	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
+		return m, nil
+	}
+	ctx.FlowID = key.FlowID
+	ctx.LaunchID = newLaunchID()
 	ctx.FlowLaunchTracked = true
 	ctx.Embedded = true
 	ctx.Headless = false
+	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
 	return m, func() tea.Msg {
 		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   ctx.FlowID,
@@ -2228,6 +2234,11 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 }
 
 func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (Model, tea.Cmd) {
+	key, ok := m.matchingPendingFlowPhaseResume(msg.LaunchContext)
+	if !ok {
+		return m, nil
+	}
+	m = m.withoutPendingFlowPhaseResume(key)
 	ctx := msg.LaunchContext
 	// The store decided from the persisted record whether this resume preserved
 	// a terminal phase or reopened a running one; the snapshot the launch
@@ -2261,11 +2272,60 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 }
 
 func (m Model) handleFlowPhaseResumePersistFailed(msg flowPhaseResumePersistFailedMsg) (Model, tea.Cmd) {
+	key, ok := m.matchingPendingFlowPhaseResume(msg.LaunchContext)
+	if !ok {
+		return m, nil
+	}
+	m = m.withoutPendingFlowPhaseResume(key)
 	m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", msg.Err))
 	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
+}
+
+func newFlowPhaseResumeKey(flowID, phaseID string) (flowPhaseResumeKey, bool) {
+	key := flowPhaseResumeKey{
+		FlowID:  strings.TrimSpace(flowID),
+		PhaseID: artifacts.NormalizePhaseID(phaseID),
+	}
+	return key, key.FlowID != "" && key.PhaseID != ""
+}
+
+func (m Model) matchingPendingFlowPhaseResume(ctx actions.AgentLaunchContext) (flowPhaseResumeKey, bool) {
+	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
+	if !ok {
+		return flowPhaseResumeKey{}, false
+	}
+	launchID := strings.TrimSpace(ctx.LaunchID)
+	return key, launchID != "" && m.pendingFlowPhaseResumes[key] == launchID
+}
+
+func (m Model) withPendingFlowPhaseResume(key flowPhaseResumeKey, launchID string) Model {
+	pending := make(map[flowPhaseResumeKey]string, len(m.pendingFlowPhaseResumes)+1)
+	for existingKey, existingLaunchID := range m.pendingFlowPhaseResumes {
+		pending[existingKey] = existingLaunchID
+	}
+	pending[key] = strings.TrimSpace(launchID)
+	m.pendingFlowPhaseResumes = pending
+	return m
+}
+
+func (m Model) withoutPendingFlowPhaseResume(key flowPhaseResumeKey) Model {
+	if _, ok := m.pendingFlowPhaseResumes[key]; !ok {
+		return m
+	}
+	pending := make(map[flowPhaseResumeKey]string, len(m.pendingFlowPhaseResumes)-1)
+	for existingKey, launchID := range m.pendingFlowPhaseResumes {
+		if existingKey != key {
+			pending[existingKey] = launchID
+		}
+	}
+	if len(pending) == 0 {
+		pending = nil
+	}
+	m.pendingFlowPhaseResumes = pending
+	return m
 }
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {
