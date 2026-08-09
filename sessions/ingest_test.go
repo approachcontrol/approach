@@ -534,6 +534,53 @@ func TestIngestHookPersistsFlowMetadataAndAttachesSession(t *testing.T) {
 	}
 }
 
+func TestIngestHookPersistsUntrackedFlowRepairWithoutAttachingPhase(t *testing.T) {
+	root := t.TempDir()
+	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	flow, err := flowStore.Create(flowstore.FlowRecord{
+		FlowID:       "flow-repair",
+		Title:        "Repair session",
+		Instructions: "Repair persisted state",
+		RepoPath:     "/repo",
+		WorktreePath: "/repo/worktree",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	record, err := sessions.IngestHook(sessions.ProviderCodex, bytes.NewReader([]byte(`{
+		"session_id": "codex-repair-1",
+		"timestamp": "2026-08-09T18:00:00Z"
+	}`)), sessions.IngestOptions{Env: map[string]string{
+		"APPROACH_LAUNCH_ID":          "repair-launch-1",
+		"APPROACH_REPO_PATH":          "/repo",
+		"APPROACH_WORKTREE_PATH":      "/repo/worktree",
+		"APPROACH_SESSION_STATE_ROOT": root,
+		"APPROACH_FLOW_STATE_ROOT":    root,
+		"APPROACH_FLOW_ID":            flow.FlowID,
+		"APPROACH_FLOW_PHASE_ID":      "",
+	}})
+	if err != nil {
+		t.Fatalf("IngestHook() error = %v", err)
+	}
+	if record.FlowID != flow.FlowID || record.FlowPhaseID != "" || record.LaunchID != "repair-launch-1" {
+		t.Fatalf("repair session metadata = %#v", record)
+	}
+
+	read, err := flowStore.Read(flow.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	for _, phase := range read.Phases {
+		if len(phase.LaunchIDs) != 0 || len(phase.Sessions) != 0 {
+			t.Fatalf("repair attached to phase %s: launches=%#v sessions=%#v", phase.PhaseID, phase.LaunchIDs, phase.Sessions)
+		}
+	}
+}
+
 func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
 	root := t.TempDir()
 	flowStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

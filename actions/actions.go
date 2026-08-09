@@ -732,6 +732,10 @@ type AgentLaunchContext struct {
 	FlowPhaseKind     string
 	FlowLaunchTracked bool
 	FlowAutoLaunch    bool
+	// FlowRepair marks an untracked Flow-scoped repair session. Repair launches
+	// deliberately carry no phase ID so provider hooks retain Flow
+	// discoverability without attaching the session to a phase attempt.
+	FlowRepair bool
 	// FlowPhaseTerminal records that the persisted phase kept a terminal
 	// status (completed, skipped) when the launch was recorded, so launch
 	// failures must not regress the phase to needs_attention.
@@ -958,14 +962,15 @@ func UsesStreamJSONOutput(ctx AgentLaunchContext) bool {
 
 func ShouldPrefillEmbeddedPrompt(ctx AgentLaunchContext) bool {
 	command := agent.Normalize(ctx.Command)
+	trackedPhase := ctx.FlowPhaseID != "" && ctx.FlowLaunchTracked && !ctx.FlowRepair
+	untrackedRepair := ctx.FlowRepair && ctx.FlowPhaseID == "" && !ctx.FlowLaunchTracked
 	return (command == agent.CommandCodex || command == agent.CommandClaude) &&
 		ctx.Embedded &&
 		!ctx.Headless &&
 		ctx.ResumeSessionID == "" &&
 		ctx.InitialPrompt != "" &&
 		ctx.FlowID != "" &&
-		ctx.FlowPhaseID != "" &&
-		ctx.FlowLaunchTracked
+		(trackedPhase || untrackedRepair)
 }
 
 func agentCommandSpec(ctx AgentLaunchContext) (*exec.Cmd, []envVar, error) {

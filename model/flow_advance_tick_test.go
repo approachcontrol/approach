@@ -229,6 +229,241 @@ func TestAutoModeSkipDisarmsExistingDrain(t *testing.T) {
 	}
 }
 
+func repairAutoDrainTestFlow(status, kind string, autoMode bool) flowstore.FlowRecord {
+	return flowstore.FlowRecord{
+		FlowID:       "flow-repair",
+		Title:        "Repair drain",
+		RepoPath:     "/dev/bravo",
+		WorktreePath: "/dev/bravo-worktrees/flow-repair",
+		Branch:       "flow/repair",
+		AutoMode:     autoMode,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "successor",
+			Title:     "Successor",
+			Kind:      kind,
+			Status:    status,
+			DependsOn: []string{},
+		}},
+	}
+}
+
+func TestRepairExitAutoDrainWaitsForPostExitPollGenerationAndLaunchesOnce(t *testing.T) {
+	previous := repairAutoDrainTestFlow(flowstore.PhasePending, flowstore.KindImplementation, true)
+	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return ready, nil
+		},
+	})
+	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
+	m.autoAdvanceRequestSeq = 7
+	m.autoAdvanceInFlight = 7
+	m.activeTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{{
+		Number:     1,
+		Scope:      embeddedTerminalScopeFlow,
+		FlowID:     previous.FlowID,
+		FlowRepair: true,
+		ID:         1,
+		Terminal:   internalFakeEmbeddedTerminal{state: "exited"},
+	}}
+
+	m = m.handleEmbeddedTerminalClosePrefix()
+	if got := m.pendingRepairAutoDrainFlowIDs[previous.FlowID]; got != 8 {
+		t.Fatalf("repair marker generation = %d, want 8", got)
+	}
+	if len(m.embeddedTerminals) != 0 {
+		t.Fatalf("repair terminal retained after user close: %#v", m.embeddedTerminals)
+	}
+
+	// This request began before the repair exited. Even though it is still the
+	// current request and succeeds, it cannot observe the repair result.
+	var cmd tea.Cmd
+	m, cmd = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{previous}, Request: 7})
+	if len(updates) != 0 {
+		t.Fatalf("pre-exit poll launched updates %#v", updates)
+	}
+	if got := m.pendingRepairAutoDrainFlowIDs[previous.FlowID]; got != 8 {
+		t.Fatalf("pre-exit poll consumed marker, got generation %d", got)
+	}
+
+	m.autoAdvanceRequestSeq = 8
+	m.autoAdvanceInFlight = 8
+	m, cmd = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 8})
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if len(updates) != 1 || updates[0].PhaseID != "successor" || !updates[0].AutoLaunch {
+		t.Fatalf("post-exit updates = %#v, want one automatic successor", updates)
+	}
+	if !launch.LaunchContext.Headless || launch.LaunchContext.FlowRepair || launch.LaunchContext.FlowPhaseID != "successor" {
+		t.Fatalf("repair-origin successor launch = %#v", launch.LaunchContext)
+	}
+	if len(m.pendingRepairAutoDrainFlowIDs) != 0 {
+		t.Fatalf("repair marker not consumed: %#v", m.pendingRepairAutoDrainFlowIDs)
+	}
+
+	// Repeating the same successful snapshot cannot queue another successor.
+	m.autoAdvanceRequestSeq = 9
+	m.autoAdvanceInFlight = 9
+	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 9})
+	if len(updates) != 1 {
+		t.Fatalf("repeated snapshot queued duplicate updates %#v", updates)
+	}
+}
+
+func TestRepairAutoDrainMarkerSurvivesStaleAndFailedEligiblePolls(t *testing.T) {
+	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
+	updates := 0
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates++
+			return ready, nil
+		},
+	})
+	m.pendingRepairAutoDrainFlowIDs = map[string]uint64{ready.FlowID: 4}
+	m.autoAdvanceRequestSeq = 4
+	m.autoAdvanceInFlight = 4
+
+	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 3})
+	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != 4 {
+		t.Fatal("stale poll consumed repair marker")
+	}
+	m, _ = m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Err: "temporary failure", Request: 4})
+	if m.pendingRepairAutoDrainFlowIDs[ready.FlowID] != 4 {
+		t.Fatal("failed eligible poll consumed repair marker")
+	}
+
+	m.autoAdvanceRequestSeq = 5
+	m.autoAdvanceInFlight = 5
+	m, cmd := m.handleAutoAdvanceResult(AutoAdvanceResultMsg{Flows: []flowstore.FlowRecord{ready}, Request: 5})
+	_ = firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if updates != 1 || len(m.pendingRepairAutoDrainFlowIDs) != 0 {
+		t.Fatalf("successful retry: updates=%d markers=%#v", updates, m.pendingRepairAutoDrainFlowIDs)
+	}
+}
+
+func TestRepairAutoDrainClearsWithoutLaunchingWhenAutoOffOrOnlyMergeReady(t *testing.T) {
+	merged := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
+	merged.Merge.Status = flowstore.MergeMerged
+	abandoned := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
+	abandoned.Status = flowstore.StatusAbandoned
+	for _, tt := range []struct {
+		name   string
+		record flowstore.FlowRecord
+	}{
+		{name: "auto off", record: repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, false)},
+		{name: "merge boundary", record: repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindMerge, true)},
+		{name: "no successor", record: repairAutoDrainTestFlow(flowstore.PhasePending, flowstore.KindImplementation, true)},
+		{name: "completed flow", record: repairAutoDrainTestFlow(flowstore.PhaseCompleted, flowstore.KindImplementation, true)},
+		{name: "merged flow", record: merged},
+		{name: "abandoned flow", record: abandoned},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			updates := 0
+			m := NewWithOptions(flowRefreshTestRepos(), Options{
+				AgentCommand: "codex",
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					updates++
+					return tt.record, nil
+				},
+			})
+			m.pendingRepairAutoDrainFlowIDs = map[string]uint64{tt.record.FlowID: 1}
+			var cmd tea.Cmd
+			m, cmd, _ = m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{tt.record}, 1)
+			if cmd != nil {
+				_ = cmd()
+			}
+			if updates != 0 || len(m.pendingRepairAutoDrainFlowIDs) != 0 || len(m.autoAdvanceDrainFlows) != 0 {
+				t.Fatalf("updates=%d repair=%#v drain=%#v", updates, m.pendingRepairAutoDrainFlowIDs, m.autoAdvanceDrainFlows)
+			}
+		})
+	}
+}
+
+func TestRepairTerminalRemovalArmsOnlyCleanExitedClosePaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      string
+		repair     bool
+		reason     embeddedTerminalRemovalReason
+		wantMarker bool
+	}{
+		{name: "user closes exited repair", state: "exited", repair: true, reason: embeddedTerminalRemovalUserClose, wantMarker: true},
+		{name: "tick closes exited repair", state: "exited", repair: true, reason: embeddedTerminalRemovalAutoClose, wantMarker: true},
+		{name: "ordinary phase exits", state: "exited", reason: embeddedTerminalRemovalAutoClose},
+		{name: "failed repair dismissed", state: "failed", repair: true, reason: embeddedTerminalRemovalUserClose},
+		{name: "terminated repair dismissed", state: "terminated", repair: true, reason: embeddedTerminalRemovalUserClose},
+		{name: "running repair detached", state: "running", repair: true, reason: embeddedTerminalRemovalDetach},
+		{name: "exited repair detached", state: "exited", repair: true, reason: embeddedTerminalRemovalDetach},
+		{name: "repair prefill failed", state: "terminated", repair: true, reason: embeddedTerminalRemovalPrefillFailure},
+		{name: "repair terminated", state: "terminated", repair: true, reason: embeddedTerminalRemovalTerminate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				autoAdvanceRequestSeq: 11,
+				embeddedTerminals: []embeddedTerminalSlot{{
+					FlowID:     "flow-repair",
+					FlowRepair: tt.repair,
+					Scope:      embeddedTerminalScopeFlow,
+					ID:         1,
+					Terminal:   internalFakeEmbeddedTerminal{state: tt.state},
+				}},
+			}
+			m = m.dismissEmbeddedTerminalForReason(1, tt.reason)
+			_, got := m.pendingRepairAutoDrainFlowIDs["flow-repair"]
+			if got != tt.wantMarker {
+				t.Fatalf("marker present = %v, want %v", got, tt.wantMarker)
+			}
+		})
+	}
+}
+
+func TestRepairAutoDrainRearmsAfterRunningToReadyStopTransition(t *testing.T) {
+	previous := repairAutoDrainTestFlow(flowstore.PhaseRunning, flowstore.KindImplementation, true)
+	ready := repairAutoDrainTestFlow(flowstore.PhaseReady, flowstore.KindImplementation, true)
+	updates := 0
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates++
+			return ready, nil
+		},
+	})
+	m.autoAdvanceDrainFlows = map[string]struct{}{ready.FlowID: {}}
+	m.pendingRepairAutoDrainFlowIDs = map[string]uint64{ready.FlowID: 1}
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{ready}, 1)
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if updates != 1 || launch.LaunchContext.FlowPhaseID != "successor" {
+		t.Fatalf("running-to-ready repair handoff: updates=%d launch=%#v", updates, launch.LaunchContext)
+	}
+}
+
+func TestRepairAutoDrainUsesCustomDAGOrdering(t *testing.T) {
+	record := autoAdvanceCustomFlow(map[string]string{
+		"root":     flowstore.PhaseCompleted,
+		"branch-a": flowstore.PhaseReady,
+		"branch-b": flowstore.PhaseReady,
+	})
+	var updates []flowstore.PhaseLaunchUpdate
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		AgentCommand: "codex",
+		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			return record, nil
+		},
+	})
+	m.pendingRepairAutoDrainFlowIDs = map[string]uint64{record.FlowID: 1}
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunchForRequest(nil, []flowstore.FlowRecord{record}, 1)
+	launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, cmd)
+	if len(updates) != 1 || updates[0].PhaseID != "branch-a" || launch.LaunchContext.FlowPhaseID != "branch-a" {
+		t.Fatalf("custom DAG repair handoff: updates=%#v launch=%#v", updates, launch.LaunchContext)
+	}
+}
+
 func TestAutoModeResetToReadyDisarmsExistingDrain(t *testing.T) {
 	branchARunning := autoAdvanceCustomFlow(map[string]string{
 		"root":     flowstore.PhaseCompleted,

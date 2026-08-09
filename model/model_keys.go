@@ -450,6 +450,10 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		if m.flowSurfaceVisible() {
 			return m.handleLaunchNextFlowPhase()
 		}
+	case "R":
+		if m.flowSurfaceVisible() {
+			return m.handleRepairSelectedFlow()
+		}
 	case "enter":
 		return m.handleEnter()
 	case "n":
@@ -659,6 +663,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleToggleFlowHeadless()
 	case "g":
 		return m.handleLaunchNextFlowPhase()
+	case "R":
+		return m.handleRepairSelectedFlow()
 	case "enter":
 		return m.handleFlowEnter()
 	case "o":
@@ -2351,7 +2357,12 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 
 func (m Model) launchFlowEmbeddedWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	ctx.Embedded = true
-	ctx.FlowLaunchTracked = true
+	if ctx.FlowRepair {
+		ctx.FlowPhaseID = ""
+		ctx.FlowLaunchTracked = false
+	} else {
+		ctx.FlowLaunchTracked = true
+	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
 	if err != nil || !opened {

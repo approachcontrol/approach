@@ -314,6 +314,10 @@ func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
+	return m.prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows, 0)
+}
+
+func (m Model) prepareAutoFlowPhaseLaunchForRequest(previousFlows, currentFlows []flowstore.FlowRecord, request uint64) (Model, tea.Cmd, []string) {
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previousFlows))
 	for _, record := range previousFlows {
 		if record.FlowID != "" {
@@ -340,8 +344,54 @@ func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstor
 			m = m.armAutoAdvanceDrain(record.FlowID)
 		}
 	}
+	if request != 0 {
+		m = m.consumeRepairAutoDrainMarkers(currentFlows, request)
+	}
 	m, cmd := m.prepareAutoAdvanceDrainLaunches(currentFlows)
 	return m, cmd, nil
+}
+
+func (m Model) armRepairAutoDrain(flowID string) Model {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return m
+	}
+	if m.pendingRepairAutoDrainFlowIDs == nil {
+		m.pendingRepairAutoDrainFlowIDs = make(map[string]uint64)
+	}
+	m.pendingRepairAutoDrainFlowIDs[flowID] = m.autoAdvanceRequestSeq + 1
+	return m
+}
+
+func (m Model) consumeRepairAutoDrainMarkers(records []flowstore.FlowRecord, request uint64) Model {
+	if request == 0 || len(m.pendingRepairAutoDrainFlowIDs) == 0 {
+		return m
+	}
+	recordsByID := make(map[string]flowstore.FlowRecord, len(records))
+	for _, record := range records {
+		if record.FlowID != "" {
+			recordsByID[record.FlowID] = record
+		}
+	}
+	for flowID, minimumRequest := range m.pendingRepairAutoDrainFlowIDs {
+		if request < minimumRequest {
+			continue
+		}
+		delete(m.pendingRepairAutoDrainFlowIDs, flowID)
+		record, ok := recordsByID[flowID]
+		if !ok || !record.AutoMode {
+			continue
+		}
+		switch flowstore.DeriveStatus(record) {
+		case flowstore.StatusCompleted, flowstore.StatusMerged, flowstore.StatusAbandoned:
+			continue
+		}
+		m = m.armAutoAdvanceDrain(flowID)
+	}
+	if len(m.pendingRepairAutoDrainFlowIDs) == 0 {
+		m.pendingRepairAutoDrainFlowIDs = nil
+	}
+	return m
 }
 
 func newlyCompletedFlowPhases(previous, current flowstore.FlowRecord) []flowstore.FlowPhase {
