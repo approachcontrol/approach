@@ -709,10 +709,11 @@ func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) 
 func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, scope embeddedTerminalScope) (Model, tea.Cmd, bool) {
 	key := msg.String()
 	if scope == embeddedTerminalScopeFlow {
+		if key == "tab" {
+			return m.cyclePaneFocusForward(), nil, true
+		}
 		if m.terminalPrefixActive {
 			switch key {
-			case "tab":
-				return m.cyclePaneFocusForward(), nil, true
 			case "left":
 				return m.cycleEmbeddedTerminalForScope(scope, -1), nil, true
 			case "right":

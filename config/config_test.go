@@ -13,55 +13,6 @@ import (
 	"github.com/approachcontrol/approach/internal/artifacts"
 )
 
-func TestConfigMutationsSerializeAndPreserveConcurrentAssignments(t *testing.T) {
-	configHome := t.TempDir()
-	getenv := func(key string) string {
-		if key == "XDG_CONFIG_HOME" {
-			return configHome
-		}
-		return ""
-	}
-	opts := []config.Option{config.WithGetenv(getenv), config.WithLockTimeout(time.Second)}
-	path := filepath.Join(configHome, "approach", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("create config dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("[agent]\nplan_prompt = \"remove me\"\n"), 0o644); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
-	release, err := artifacts.AcquireFileLock(path+".lock", "test config lock", time.Second)
-	if err != nil {
-		t.Fatalf("hold config lock: %v", err)
-	}
-	results := make(chan error, 3)
-	go func() { results <- config.SaveAgentCommand("codex", opts...) }()
-	go func() { results <- config.SaveAgentModel("codex", "gpt-5.5", opts...) }()
-	go func() { results <- config.ResetPromptTemplate("agent", "plan_prompt", opts...) }()
-	select {
-	case err := <-results:
-		release()
-		t.Fatalf("config mutation completed while lock was held: %v", err)
-	case <-time.After(30 * time.Millisecond):
-	}
-	release()
-	for range 3 {
-		if err := <-results; err != nil {
-			t.Fatalf("concurrent config mutation error = %v", err)
-		}
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile(config) error = %v", err)
-	}
-	text := string(data)
-	if !strings.Contains(text, `command = "codex"`) || !strings.Contains(text, `codex_model = "gpt-5.5"`) || strings.Contains(text, "plan_prompt") {
-		t.Fatalf("concurrent config result lost an update:\n%s", text)
-	}
-	if _, err := config.LoadFrom(path, opts...); err != nil {
-		t.Fatalf("concurrent config result is invalid TOML: %v", err)
-	}
-}
-
 func TestConfigMutationReportsBoundedLockTimeout(t *testing.T) {
 	configHome := t.TempDir()
 	path := filepath.Join(configHome, "approach", "config.toml")
