@@ -107,7 +107,7 @@ func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
 
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
-	if m.ActivePane() == 0 {
+	if m.ActivePane() == ui.PaneRepos {
 		m = inRightPane(m)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
@@ -355,7 +355,7 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	if len(filters) != 2 || filters[len(filters)-1].RepoPath != "" {
 		t.Fatalf("flow filters = %#v, want no repo-scoped fetch on left-pane enter", filters)
 	}
-	if m.ActivePane() != 1 || m.Mode() != ui.ModeActiveFlows {
+	if m.ActivePane() == ui.PaneRepos || m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("active pane/mode = %d/%d, want right pane in active flows", m.ActivePane(), m.Mode())
 	}
 }
@@ -482,7 +482,7 @@ func TestModel_ActiveFlowsHorizontalNavigationIsInert(t *testing.T) {
 			if cmd != nil {
 				t.Fatalf("%s from active Flow surface returned command %T, want nil", tc.name, cmd)
 			}
-			if m.ActivePane() != 1 {
+			if m.ActivePane() == ui.PaneRepos {
 				t.Fatalf("%s from active Flow surface active pane = %d, want right pane", tc.name, m.ActivePane())
 			}
 			if m.Mode() != ui.ModeActiveFlows {
@@ -540,7 +540,7 @@ func TestModel_ActiveFlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.
 	if cmd != nil {
 		t.Fatalf("tab from active Flow surface returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from active Flow surface active pane = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeActiveFlows {
@@ -555,7 +555,7 @@ func TestModel_ActiveFlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.
 	if cmd != nil {
 		t.Fatalf("tab back to active Flow surface returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("second tab active pane = %d, want active Flow list", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
@@ -612,13 +612,13 @@ func TestModel_ActiveFlowsTabWithTerminalCyclesListTerminalLeft(t *testing.T) {
 	before := listRequests(m)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from active Flow terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from left pane active pane = %d, want active Flow list", m.ActivePane())
 	}
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "agent output") {
@@ -644,7 +644,7 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab from Flow list returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from Flow list active pane = %d, want left pane", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
@@ -653,7 +653,7 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab back to Flow list returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("second tab active pane = %d, want Flow list", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
@@ -666,7 +666,7 @@ func TestModel_CollapsedFlowPaneWithoutTerminalIgnoresTab(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-		if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 			t.Fatalf("tab %d collapsed=%t activePane=%d, want collapsed Flow list", i+1, m.RepoPaneCollapsed(), m.ActivePane())
 		}
 	}
@@ -687,12 +687,12 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 	}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed Flow list", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab to Flow terminal collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
@@ -700,16 +700,16 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x12" {
 		t.Fatalf("Flow terminal ctrl+r writes = %#v, want ctrl+r byte", fakeTerm.writes)
 	}
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("Flow terminal ctrl+r collapsed=%t activePane=%d, want unchanged collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab to Flow list collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("second tab to Flow terminal collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 }
@@ -730,7 +730,7 @@ func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *te
 	if cmd != nil {
 		t.Fatalf("Backspace from active Flow surface returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("Backspace from active Flow surface active pane = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeActiveFlows {
@@ -753,7 +753,7 @@ func TestModel_ActiveFlowsLeftPaneNumberedKeysAreNoOps(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("left-pane numbered key on active Flow surface returned command %T, want nil", cmd)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("left-pane numbered key activePane = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeActiveFlows {
@@ -5842,7 +5842,7 @@ func TestModel_RightArrowFromFlowsEntersBeads(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("right from flows returned nil command, want Beads Open fetch")
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeBeadsOpen {
@@ -6444,7 +6444,7 @@ func TestModel_RightNavigationMovesFromFlowsToBeadsUnderGroupedKeys(t *testing.T
 	if m.Mode() != ui.ModeBeadsOpen {
 		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
@@ -9316,13 +9316,13 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 	before := listRequests(m)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from Flow terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	assertListRequestsUnchanged(t, before, m)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from left pane active pane = %d, want Flow list", m.ActivePane())
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
@@ -9349,7 +9349,7 @@ func TestModel_BackKeysFromFlowListReturnToLeftPaneAndClearSelectedPhase(t *test
 
 			m, cmd := update(m, tt.key)
 
-			if m.ActivePane() != 0 {
+			if m.ActivePane() != ui.PaneRepos {
 				t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
 			}
 			if got := m.SelectedFlowPhaseID(); got != "" {
@@ -9387,7 +9387,7 @@ func TestModel_BackKeysFromActiveFlowsReturnToLeftPaneAndClearSelectedPhase(t *t
 
 			m, cmd := update(m, tt.key)
 
-			if m.ActivePane() != 0 {
+			if m.ActivePane() != ui.PaneRepos {
 				t.Fatalf("active pane = %d, want left pane after %s", m.ActivePane(), tt.name)
 			}
 			if got := model.SelectedActiveFlowPhaseIDForTest(m); got != "" {
@@ -9432,7 +9432,7 @@ func TestModel_BackKeysForwardWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 
 			m, cmd = update(m, tt.key)
 
-			if m.ActivePane() != 1 {
+			if m.ActivePane() == ui.PaneRepos {
 				t.Fatalf("terminal-owned %s activePane = %d, want right pane", tt.name, m.ActivePane())
 			}
 			if cmd != nil {
@@ -9469,7 +9469,7 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 	m, _ = update(m, cmd())
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("backspace with inactive Flow terminal activePane = %d, want left pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 0 {
@@ -9510,7 +9510,7 @@ func TestModel_F2ForwardsWhenFlowTerminalInputOwnsKeys(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("terminal-owned f2 activePane = %d, want right pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1bOQ" {
@@ -9673,7 +9673,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	if len(fakeTerm.writes) != 2 {
 		t.Fatalf("command mode should let tab leave focus without writing: %#v", fakeTerm.writes)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from command-mode terminal active pane = %d, want left pane", m.ActivePane())
 	}
 
@@ -9704,7 +9704,7 @@ func TestModel_FlowTerminalInputModeTabCyclesPaneFocus(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from input-mode Flow terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 1 {
@@ -9712,7 +9712,7 @@ func TestModel_FlowTerminalInputModeTabCyclesPaneFocus(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from left pane active pane = %d, want Flow list", m.ActivePane())
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -9824,7 +9824,7 @@ func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x1d" {
 		t.Fatalf("ctrl+] should send literal byte before tab leaves focus, writes = %#v", fakeTerm.writes)
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("tab from command-mode terminal active pane = %d, want left pane", m.ActivePane())
 	}
 	if got := m.TransientError(); strings.Contains(got, "Unknown terminal prefix command") {

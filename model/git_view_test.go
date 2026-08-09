@@ -209,7 +209,7 @@ func TestActiveFlowsToggle_WorksFromLeftPane(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ctrl+a from left pane active pane = %d, want left pane preserved", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeActiveFlows {

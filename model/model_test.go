@@ -184,7 +184,7 @@ func keyForMode(mode ui.Mode) rune {
 
 func TestModel_InitialActivePaneIsLeft(t *testing.T) {
 	m := model.New(testRepos())
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Errorf("expected left pane (0) active initially, got %d", m.ActivePane())
 	}
 }
@@ -483,7 +483,7 @@ func TestModel_TabFromRightPaneSwitchesToLeft(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Errorf("expected left pane after tab, got %d", m.ActivePane())
 	}
 	if cmd != nil {
@@ -499,7 +499,7 @@ func TestModel_TabFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *t
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Errorf("expected right pane after tab, got %d", m.ActivePane())
 	}
 	if m.Selected() != 1 {
@@ -523,7 +523,7 @@ func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t 
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("expected right pane after enter, got %d", m.ActivePane())
 	}
 	if m.Selected() != 1 {
@@ -543,7 +543,7 @@ func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t 
 func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed right pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 
@@ -552,7 +552,7 @@ func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 	if m.RepoPaneCollapsed() {
 		t.Fatal("ctrl+r should expand the repos pane")
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ctrl+r active pane = %d, want repos pane", m.ActivePane())
 	}
 	if cmd != nil {
@@ -561,7 +561,7 @@ func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
+	if m.RepoPaneCollapsed() || m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ctrl+r from expanded right pane collapsed=%t activePane=%d, want expanded repos pane", m.RepoPaneCollapsed(), m.ActivePane())
 	}
 }
@@ -573,7 +573,7 @@ func TestModel_CtrlRDoesNotRestoreRepoPaneDuringSearch(t *testing.T) {
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 
-	if !m.SearchActive() || !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+	if !m.SearchActive() || !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("search ctrl+r searchActive=%t collapsed=%t activePane=%d, want unchanged collapsed search", m.SearchActive(), m.RepoPaneCollapsed(), m.ActivePane())
 	}
 }
@@ -589,7 +589,7 @@ func TestModel_TabSkipsCollapsedRepoPaneWithoutSessionTerminal(t *testing.T) {
 
 			for i := 0; i < 3; i++ {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-				if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+				if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 					t.Fatalf("tab %d collapsed=%t activePane=%d, want collapsed content pane", i+1, m.RepoPaneCollapsed(), m.ActivePane())
 				}
 			}
@@ -605,7 +605,7 @@ func TestModel_BackKeysRestoreCollapsedRepoPane(t *testing.T) {
 
 			m, _ = update(m, key)
 
-			if m.RepoPaneCollapsed() || m.ActivePane() != 0 {
+			if m.RepoPaneCollapsed() || m.ActivePane() != ui.PaneRepos {
 				t.Fatalf("%s collapsed=%t activePane=%d, want expanded repos pane", key.String(), m.RepoPaneCollapsed(), m.ActivePane())
 			}
 		})
@@ -620,7 +620,7 @@ func TestModel_TabDoesNotChangeMode(t *testing.T) {
 	if m.Mode() != 3 {
 		t.Errorf("expected mode unchanged at 3, got %d", m.Mode())
 	}
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Errorf("expected active pane cycled to left pane, got %d", m.ActivePane())
 	}
 }
@@ -631,7 +631,7 @@ func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testin
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})                 // right to left
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeStashes {
@@ -665,14 +665,14 @@ func TestModel_BackspaceFromRightPaneSwitchesToLeftAcrossModes(t *testing.T) {
 			m := model.New(testRepos())
 			m = inRightPane(m)
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{keyForMode(tt.mode)}})
-			if m.ActivePane() != 1 || m.Mode() != tt.mode {
+			if m.ActivePane() == ui.PaneRepos || m.Mode() != tt.mode {
 				t.Fatalf("setup activePane=%d mode=%d, want right pane mode %d", m.ActivePane(), m.Mode(), tt.mode)
 			}
 			before := listRequests(m)
 
 			m, cmd := update(m, tt.key)
 
-			if m.ActivePane() != 0 {
+			if m.ActivePane() != ui.PaneRepos {
 				t.Fatalf("active pane = %d, want left pane", m.ActivePane())
 			}
 			if m.Mode() != tt.mode {
@@ -702,7 +702,7 @@ func TestModel_BackspaceFromPlansPaneClearsSelectedPhase(t *testing.T) {
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
@@ -737,7 +737,7 @@ func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
 
 			m, cmd := update(m, tt.key)
 
-			if m.ActivePane() != 0 {
+			if m.ActivePane() != ui.PaneRepos {
 				t.Fatalf("expected left pane after %s, got %d", tt.name, m.ActivePane())
 			}
 			if got := m.SelectedPlanPhaseID(); got != "" {
@@ -759,7 +759,7 @@ func TestModel_BackspaceFromFlowsPaneClearsSelectedPhase(t *testing.T) {
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
 	}
 	if got := m.SelectedFlowPhaseID(); got != "" {
@@ -780,7 +780,7 @@ func TestModel_TabFromLeftPaneReturnsToActiveFlowsWithoutChangingMode(t *testing
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("active pane = %d, want right pane after tab", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeActiveFlows {
@@ -797,7 +797,7 @@ func TestModel_F2DoesNotSwitchPanesWhileSearchIsActive(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF2})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("active pane = %d, want left pane while search handles f2", m.ActivePane())
 	}
 }
@@ -815,7 +815,7 @@ func TestModel_BackKeysEditRightPaneSearchInsteadOfSwitchingPanes(t *testing.T) 
 			if cmd != nil {
 				t.Fatalf("search back key returned cmd %T, want nil", cmd)
 			}
-			if m.ActivePane() != 1 {
+			if m.ActivePane() == ui.PaneRepos {
 				t.Fatalf("active pane = %d, want right pane while search owns back key", m.ActivePane())
 			}
 			if m.ItemSearch() != "" || !m.SearchActive() {
@@ -847,7 +847,7 @@ func TestModel_BackKeysEditModalInputInsteadOfSwitchingPanes(t *testing.T) {
 			if cmd != nil {
 				t.Fatalf("modal %s returned cmd %T, want nil", tt.name, cmd)
 			}
-			if m.ActivePane() != 1 {
+			if m.ActivePane() == ui.PaneRepos {
 				t.Fatalf("active pane = %d, want right pane while modal owns %s", m.ActivePane(), tt.name)
 			}
 			if got := m.WorktreeInput(); got != "fea" {
@@ -966,7 +966,7 @@ func TestModel_LeftPaneModeKeysAreNoOps(t *testing.T) {
 		if m2.Mode() != 1 {
 			t.Errorf("key %v changed mode in left pane: got %d", key, m2.Mode())
 		}
-		if m2.ActivePane() != 0 {
+		if m2.ActivePane() != ui.PaneRepos {
 			t.Errorf("key %v changed active pane in left pane: got %d", key, m2.ActivePane())
 		}
 		if cmd != nil {
@@ -982,7 +982,7 @@ func TestModel_RightArrowFromLeftPaneIsNoOp(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeWorktrees {
@@ -1000,7 +1000,7 @@ func TestModel_LeftArrowFromLeftPaneIsNoOp(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeWorktrees {
@@ -1024,7 +1024,7 @@ func TestModel_RightArrowFromLeftPaneInNonEdgeModeIsNoOp(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeBranches {
@@ -1055,7 +1055,7 @@ func TestModel_LeftArrowFromLeftPaneAtFlowsIsNoOp(t *testing.T) {
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
 
-	if m.ActivePane() != 0 {
+	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
 	if m.Mode() != ui.ModeFlows {
@@ -1132,7 +1132,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		setup     func(model.Model) model.Model
-		wantPane  int
+		wantPane  ui.Pane
 		wantMode  ui.Mode
 		wantQuery string
 	}{
@@ -1143,7 +1143,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 				return m
 			},
-			wantPane:  0,
+			wantPane:  ui.PaneRepos,
 			wantMode:  ui.ModeWorktrees,
 			wantQuery: "a",
 		},
@@ -1155,7 +1155,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 				return m
 			},
-			wantPane:  1,
+			wantPane:  ui.PaneTop,
 			wantMode:  ui.ModeWorktrees,
 			wantQuery: "w",
 		},
@@ -1175,7 +1175,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 					t.Fatalf("key %v activePane=%d mode=%d, want pane=%d mode=%d", key, m2.ActivePane(), m2.Mode(), tc.wantPane, tc.wantMode)
 				}
 				query := m2.RepoSearch()
-				if tc.wantPane == 1 {
+				if tc.wantPane != ui.PaneRepos {
 					query = m2.ItemSearch()
 				}
 				if query != tc.wantQuery {
@@ -1207,7 +1207,7 @@ func TestModel_ModalSuppressesPaneNavigationKeys(t *testing.T) {
 		if m2.Overlay() != ui.OverlayWorktreeInput {
 			t.Fatalf("key %v overlay=%d, want worktree input", key, m2.Overlay())
 		}
-		if m2.ActivePane() != 1 || m2.Mode() != ui.ModeWorktrees {
+		if m2.ActivePane() == ui.PaneRepos || m2.Mode() != ui.ModeWorktrees {
 			t.Fatalf("key %v activePane=%d mode=%d, want right pane worktrees", key, m2.ActivePane(), m2.Mode())
 		}
 		if m2.WorktreeInput() != "" {
@@ -1873,7 +1873,7 @@ func TestModel_RightCyclesGitSubviewsAndWrapsToWorktrees(t *testing.T) {
 		if m.Mode() != want {
 			t.Fatalf("mode after right = %d, want %d", m.Mode(), want)
 		}
-		if m.ActivePane() != 1 {
+		if m.ActivePane() == ui.PaneRepos {
 			t.Fatalf("ActivePane() = %d, want right pane while moving through subviews", m.ActivePane())
 		}
 	}
@@ -1883,7 +1883,7 @@ func TestModel_RightCyclesGitSubviewsAndWrapsToWorktrees(t *testing.T) {
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("Mode() = %d, want worktrees after wrapping", m.Mode())
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
@@ -1920,7 +1920,7 @@ func TestModel_LeftCyclesTopLevelViewsIntoGitThenWrapsGitSubviews(t *testing.T) 
 		if m.Mode() != want {
 			t.Fatalf("mode after left = %d, want %d", m.Mode(), want)
 		}
-		if m.ActivePane() != 1 {
+		if m.ActivePane() == ui.PaneRepos {
 			t.Fatalf("ActivePane() = %d, want right pane while moving through views", m.ActivePane())
 		}
 	}
@@ -1930,7 +1930,7 @@ func TestModel_LeftCyclesTopLevelViewsIntoGitThenWrapsGitSubviews(t *testing.T) 
 	if m.Mode() != ui.ModeReflog {
 		t.Fatalf("Mode() = %d, want reflog: arrows wrap inside the Git view without spilling out", m.Mode())
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
@@ -1957,7 +1957,7 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 	if m.Mode() != ui.ModeReflog {
 		t.Fatalf("Mode() = %d, want reflog after wrapping inside the Git view", m.Mode())
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if m.WorktreeSelected() != 1 {
@@ -1986,7 +1986,7 @@ func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
 	if m.Mode() != ui.ModeBeadsOpen {
 		t.Fatalf("Mode() = %d, want default Beads Open after right from flows", m.Mode())
 	}
-	if m.ActivePane() != 1 {
+	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
 	}
 	if cmd == nil {
@@ -2013,7 +2013,7 @@ func TestModel_HKeyOpensHistorySubviewAndLAliasesRightInFlows(t *testing.T) {
 	before := listRequests(m)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if m.ActivePane() != 1 || m.Mode() != ui.ModeHistory {
+	if m.ActivePane() == ui.PaneRepos || m.Mode() != ui.ModeHistory {
 		t.Fatalf("h at worktrees activePane=%d mode=%d, want right pane history", m.ActivePane(), m.Mode())
 	}
 	if cmd == nil {
@@ -2024,7 +2024,7 @@ func TestModel_HKeyOpensHistorySubviewAndLAliasesRightInFlows(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	before = listRequests(m)
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if m.ActivePane() != 1 || m.Mode() != ui.ModeBeadsOpen {
+	if m.ActivePane() == ui.PaneRepos || m.Mode() != ui.ModeBeadsOpen {
 		t.Fatalf("l at flows activePane=%d mode=%d, want right pane Beads Open", m.ActivePane(), m.Mode())
 	}
 	if cmd == nil {

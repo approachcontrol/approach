@@ -20,6 +20,11 @@ func FormForTest(m Model) ui.FormView {
 	return uiFormView(m.modal.View().Form)
 }
 
+func modelWithModeForTest(m Model, mode ui.Mode) Model {
+	m.topMode, m.bottomMode, m.contentPane, m.activeFlowSurface = startupPaneState(startupMode(mode))
+	return m
+}
+
 func ActiveFlowCreateForTest(m Model) uint64 {
 	return m.activeFlowCreate
 }

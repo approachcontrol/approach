@@ -1114,7 +1114,7 @@ func TestBeadsSubviews_ArrowsCycleWithWrapAndFetchOnlyTarget(t *testing.T) {
 
 			m, cmd := update(m, tea.KeyMsg{Type: tt.direction})
 
-			if m.Mode() != tt.want || m.ActivePane() != 1 {
+			if m.Mode() != tt.want || m.ActivePane() == ui.PaneRepos {
 				t.Fatalf("arrow mode/pane = %v/%d, want %v/1", m.Mode(), m.ActivePane(), tt.want)
 			}
 			if cmd == nil {

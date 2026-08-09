@@ -135,7 +135,7 @@ func forceTrueColor(t *testing.T) {
 }
 
 func TestStatusBar_BranchesModeContainsIndicatorLegend(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(120, 2, 0, PaneTop, true, false, false)
 	for _, legend := range []string{"✔ clean", "● ahead/behind", "● dirty", "● no upstream", "merged"} {
 		if !strings.Contains(bar, legend) {
 			t.Errorf("branches mode status bar should contain legend %q", legend)
@@ -175,7 +175,7 @@ func TestRenderConfirmDialogPromptIsTerminalSafeSingleLine(t *testing.T) {
 }
 
 func TestStatusBar_IndicatorLegendSpacing(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(120, 2, 0, PaneTop, true, false, false)
 	for _, pair := range [][2]string{
 		{"clean", "●"},
 	} {
@@ -193,14 +193,14 @@ func TestStatusBar_IndicatorLegendSpacing(t *testing.T) {
 }
 
 func TestStatusBar_StashesModeOmitsIndicatorLegend(t *testing.T) {
-	bar := RenderStatusBar(120, 3, 0, 1, true, false, false)
+	bar := RenderStatusBar(120, 3, 0, PaneTop, true, false, false)
 	if strings.Contains(bar, "clean") {
 		t.Error("stashes mode status bar should not contain indicator legend")
 	}
 }
 
 func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(120, 2, 0, PaneTop, true, false, false)
 	upstreamIdx := strings.Index(bar, "no upstream")
 	paneIdx := strings.Index(bar, "bksp: pane")
 	if upstreamIdx == -1 || paneIdx == -1 {
@@ -213,7 +213,7 @@ func TestStatusBar_PipeSeparatesLegendAndHints(t *testing.T) {
 }
 
 func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
-	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(160, 2, 0, PaneTop, true, false, false)
 	paneIdx := strings.Index(bar, "bksp: pane")
 	tIdx := strings.Index(bar, "t: terminal")
 	if paneIdx == -1 || tIdx == -1 {
@@ -229,7 +229,7 @@ func TestStatusBar_TabAndQuitBeforeOtherHints(t *testing.T) {
 }
 
 func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
-	bar := RenderStatusBar(120, 2, 0, 0, true, false, false) // activePane=0 (left), destructive=true
+	bar := RenderStatusBar(120, 2, 0, PaneRepos, true, false, false) // repositories focused, destructive=true
 	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code", "d: delete"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be hidden when left pane is active", hint)
@@ -244,7 +244,7 @@ func TestStatusBar_ActionHintsHiddenWhenLeftPaneActive(t *testing.T) {
 }
 
 func TestStatusBar_ActionHintsShownWhenRightPaneActive(t *testing.T) {
-	bar := RenderStatusBar(160, 2, 0, 1, true, false, false) // activePane=1 (right)
+	bar := RenderStatusBar(160, 2, 0, PaneTop, true, false, false) // content focused
 	for _, hint := range []string{"n: new branch", "f: fetch", "t: terminal", "c: code", "d: delete"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("hint %q should be shown when right pane is active", hint)
@@ -265,7 +265,7 @@ func TestRender_BranchesModeShowsPullWhenAvailable(t *testing.T) {
 		Branches: []gitquery.BranchRow{
 			{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/a"},
 		},
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 		FetchAvailable: true,
 		PullAvailable:  true,
 	})
@@ -282,7 +282,7 @@ func TestRender_LeftPaneShowsFetchVisibleWhenReposExist(t *testing.T) {
 		Width:                 120,
 		Height:                10,
 		Mode:                  1,
-		ActivePane:            0,
+		ActivePane:            PaneRepos,
 		FetchVisibleAvailable: true,
 	})
 	if !strings.Contains(shortcutPaneText(view), "f      fetch visible") {
@@ -297,7 +297,7 @@ func TestRender_LeftPaneShowsNewRepoWhenAvailable(t *testing.T) {
 		Width:                 120,
 		Height:                10,
 		Mode:                  ModeWorktrees,
-		ActivePane:            0,
+		ActivePane:            PaneRepos,
 		FetchVisibleAvailable: true,
 		RepoCreateAvailable:   true,
 	})
@@ -314,7 +314,7 @@ func TestRender_LeftPaneHidesNewRepoWhenUnavailable(t *testing.T) {
 		Width:               120,
 		Height:              10,
 		Mode:                ModeWorktrees,
-		ActivePane:          0,
+		ActivePane:          PaneRepos,
 		RepoCreateAvailable: false,
 	})
 	if strings.Contains(shortcutPaneText(view), "new repo") {
@@ -496,7 +496,7 @@ func TestRender_SessionsModeShowsHeaderAndRows(t *testing.T) {
 			Branch:       "feature/headers",
 			Summary:      "Implement session capture",
 		}},
-		ActivePane:      1,
+		ActivePane:      PaneTop,
 		SessionSelected: 0,
 	})
 
@@ -545,7 +545,7 @@ func TestRender_SessionsModeShowsSessionRowsAboveEmbeddedTerminalDock(t *testing
 		}},
 		EmbeddedTerminalLines:   []string{"agent output"},
 		EmbeddedTerminalVisible: true,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		SessionSelected:         0,
 	})
 
@@ -626,7 +626,7 @@ func TestRender_EmbeddedTerminalDockPersistsUnderNonFlowLists(t *testing.T) {
 			p.Selected = 0
 			p.Width = 180
 			p.Height = 18
-			p.ActivePane = 1
+			p.ActivePane = PaneTop
 			p.EmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}}
 			p.EmbeddedTerminalLines = []string{"persistent terminal output"}
 			p.EmbeddedTerminalVisible = true
@@ -681,7 +681,7 @@ func TestRenderExpandedTerminalDockIsTopLevelFullWidthPane(t *testing.T) {
 		Width:                   120,
 		Height:                  20,
 		Mode:                    ModeSessions,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		Sessions:                []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
 		EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
 		EmbeddedTerminalLines:   []string{"persistent terminal output"},
@@ -728,7 +728,7 @@ func TestRenderCollapsedTerminalDockChipIsFullWidthAboveStatusBar(t *testing.T) 
 		Width:             120,
 		Height:            16,
 		Mode:              ModeSessions,
-		ActivePane:        1,
+		ActivePane:        PaneTop,
 		Sessions:          []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
 		EmbeddedTerminals: []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}},
 	}
@@ -767,7 +767,7 @@ func TestRenderNeverOverflowsViewportHeight(t *testing.T) {
 					Width:                   90,
 					Height:                  height,
 					Mode:                    mode,
-					ActivePane:              1,
+					ActivePane:              PaneTop,
 					EmbeddedTerminals:       state.terminals,
 					EmbeddedTerminalVisible: state.visible,
 				})
@@ -786,7 +786,7 @@ func TestRender_ShortcutRailSurvivesExpandedDock(t *testing.T) {
 		Width:      180,
 		Height:     60,
 		Mode:       ModeSessions,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 		Sessions:   []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
 		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true,
@@ -888,7 +888,7 @@ func TestRenderCollapsedTerminalChipPersistsInEveryMode(t *testing.T) {
 			p.Selected = 0
 			p.Width = 180
 			p.Height = 14
-			p.ActivePane = 1
+			p.ActivePane = PaneTop
 			p.EmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}}
 			view := Render(p)
 			for _, want := range []string{tt.listText, "● 1 terminal", "1 codex dock running", "ctrl+t show"} {
@@ -921,7 +921,7 @@ func TestRenderEmptyTerminalChipPersistsInEveryMode(t *testing.T) {
 			p.Selected = 0
 			p.Width = 180
 			p.Height = 14
-			p.ActivePane = 1
+			p.ActivePane = PaneTop
 			p.EmbeddedTerminalVisible = true
 			view := Render(p)
 			for _, want := range []string{tt.listText, "no terminals running"} {
@@ -1080,7 +1080,7 @@ func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 		EmbeddedTerminalLines:   []string{"agent output"},
 		EmbeddedTerminalPrefix:  true,
 		EmbeddedTerminalVisible: true,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 	})
 
 	if !strings.Contains(view, "ctrl+]") {
@@ -1100,7 +1100,7 @@ func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
 
 	normal := renderShortcutPane(statusBarParams{
 		Mode:                   ModeSessions,
-		ActivePane:             1,
+		ActivePane:             PaneTop,
 		EmbeddedTerminalActive: true,
 	}, 26, 12)
 	normalText := ansi.Strip(normal)
@@ -1116,7 +1116,7 @@ func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
 
 	prefix := renderShortcutPane(statusBarParams{
 		Mode:                   ModeSessions,
-		ActivePane:             1,
+		ActivePane:             PaneTop,
 		EmbeddedTerminalActive: true,
 		EmbeddedTerminalPrefix: true,
 	}, 26, 12)
@@ -1134,7 +1134,7 @@ func TestRender_SessionsEmbeddedTerminalShortcutsDimUntilPrefix(t *testing.T) {
 func TestTerminalShortcutSurfaceUsesDockFocusAndShowsToggleHints(t *testing.T) {
 	focused := renderShortcutPane(statusBarParams{
 		Mode:                    ModePlans,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		EmbeddedTerminalActive:  true,
 		EmbeddedTerminalExists:  true,
 		EmbeddedTerminalVisible: true,
@@ -1152,7 +1152,7 @@ func TestTerminalShortcutSurfaceUsesDockFocusAndShowsToggleHints(t *testing.T) {
 
 	unfocused := renderShortcutPane(statusBarParams{
 		Mode:                    ModePlans,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		EmbeddedTerminalExists:  true,
 		EmbeddedTerminalVisible: true,
 	}, 34, 18)
@@ -1163,7 +1163,7 @@ func TestTerminalShortcutSurfaceUsesDockFocusAndShowsToggleHints(t *testing.T) {
 
 	collapsed := renderShortcutPane(statusBarParams{
 		Mode:                    ModePlans,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		EmbeddedTerminalExists:  true,
 		EmbeddedTerminalVisible: false,
 	}, 34, 18)
@@ -1205,7 +1205,7 @@ func TestRender_SessionsModeKeepsSummaryOnOneLine(t *testing.T) {
 				Summary:   "below summary",
 			},
 		},
-		ActivePane:      1,
+		ActivePane:      PaneTop,
 		SessionSelected: 1,
 	}
 
@@ -1374,7 +1374,7 @@ func TestRender_SessionsModeShowsSelectedSessionShortcuts(t *testing.T) {
 			RepoPath:  "/dev/approach",
 			Summary:   "Implement session capture",
 		}},
-		ActivePane:      1,
+		ActivePane:      PaneTop,
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
@@ -1401,7 +1401,7 @@ func TestRender_SessionsModeHidesSessionActionsWithoutSelection(t *testing.T) {
 			Status:    "ended",
 			RepoPath:  "/dev/approach",
 		}},
-		ActivePane:      1,
+		ActivePane:      PaneTop,
 		SessionSelected: -1,
 	})
 	pane := shortcutPaneText(view)
@@ -1419,7 +1419,7 @@ func TestRender_LeftPaneShortcutPaneShowsFetchVisibleWhenReposExist(t *testing.T
 		Width:                 120,
 		Height:                24,
 		Mode:                  1,
-		ActivePane:            0,
+		ActivePane:            PaneRepos,
 		FetchVisibleAvailable: true,
 	})
 	if !strings.Contains(shortcutPaneText(view), "f      fetch visible") {
@@ -1432,7 +1432,7 @@ func TestRender_LeftPaneHidesFetchVisibleWhenNoReposVisible(t *testing.T) {
 		Width:      120,
 		Height:     10,
 		Mode:       1,
-		ActivePane: 0,
+		ActivePane: PaneRepos,
 	})
 	if strings.Contains(view, "f: fetch visible") {
 		t.Fatalf("empty left-pane render should hide fetch-visible hint, got:\n%s", view)
@@ -1440,7 +1440,7 @@ func TestRender_LeftPaneHidesFetchVisibleWhenNoReposVisible(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
+	bar := RenderStatusBar(120, 1, 0, PaneTop, false, false, false)
 	if !strings.Contains(bar, "n: new worktree") {
 		t.Fatalf("expected new worktree hint in worktrees mode, got %q", bar)
 	}
@@ -1450,7 +1450,7 @@ func TestStatusBar_WorktreesModeShowsNewWorktreeHint(t *testing.T) {
 }
 
 func TestStatusBar_ShowsSetAgentHint(t *testing.T) {
-	for _, activePane := range []int{0, 1} {
+	for _, activePane := range []Pane{PaneRepos, PaneTop} {
 		bar := RenderStatusBar(160, 1, 0, activePane, false, false, false)
 		if !strings.Contains(bar, "A: set agent") {
 			t.Fatalf("expected set agent hint for activePane %d, got %q", activePane, bar)
@@ -1465,7 +1465,7 @@ func TestRender_WorktreesModeShowsAgentHints(t *testing.T) {
 		Width:             140,
 		Height:            21,
 		Mode:              1,
-		ActivePane:        1,
+		ActivePane:        PaneTop,
 		Worktrees:         []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
 		AgentAvailable:    true,
 		NewAgentAvailable: true,
@@ -1488,7 +1488,7 @@ func TestRender_WorktreesModeShowsInlineSessionHints(t *testing.T) {
 		Width:             140,
 		Height:            13,
 		Mode:              ModeWorktrees,
-		ActivePane:        1,
+		ActivePane:        PaneTop,
 		WorktreeSelected:  0,
 		NewAgentAvailable: true,
 	}
@@ -1529,7 +1529,7 @@ func TestRender_WorktreesInlineSessionsVisibleWhenSelectedAtViewportBottom(t *te
 		Width:                   140,
 		Height:                  10,
 		Mode:                    ModeWorktrees,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		WorktreeSelected:        4,
 		WorktreeScroll:          0,
 		InlineWorktreeSessions:  true,
@@ -1560,7 +1560,7 @@ func TestRender_WorktreesModeShowsEmptyInlineSessions(t *testing.T) {
 		Width:                  140,
 		Height:                 12,
 		Mode:                   ModeWorktrees,
-		ActivePane:             1,
+		ActivePane:             PaneTop,
 		WorktreeSelected:       0,
 		InlineWorktreeSessions: true,
 		WorktreeSessionsOpen:   true,
@@ -1581,7 +1581,7 @@ func TestRender_StaleWorktreeShowsSetAgentHint(t *testing.T) {
 		Width:             140,
 		Height:            17,
 		Mode:              1,
-		ActivePane:        1,
+		ActivePane:        PaneTop,
 		Worktrees:         []gitquery.Worktree{{Path: "/gone", BranchName: "gone", Stale: true}},
 		NewAgentAvailable: true,
 	})
@@ -1600,7 +1600,7 @@ func TestRender_BranchesModeShowsAgentHintOnlyWhenTargetAvailable(t *testing.T) 
 		Width:      140,
 		Height:     18,
 		Mode:       2,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 		Branches:   []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "feat"}}},
 	}
 	view := Render(params)
@@ -1623,7 +1623,7 @@ func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		Width:            140,
 		Height:           28,
 		Mode:             ModeWorktrees,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		DefaultViewLabel: "8 flows",
 		Worktrees:        []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
 		WorktreeSelected: 0,
@@ -1641,7 +1641,7 @@ func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
 		Width:            160,
 		Height:           28,
 		Mode:             ModeFlows,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		DefaultViewLabel: "2 branches",
 		Flows:            []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/a", Status: flowstore.StatusInProgress}},
 		FlowSelected:     0,
@@ -1661,7 +1661,7 @@ func TestRender_DefaultViewFooterHintFitsNarrowWidth(t *testing.T) {
 		Width:            80,
 		Height:           10,
 		Mode:             ModeWorktrees,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		DefaultViewLabel: "8 flows",
 		Worktrees:        []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
 		WorktreeSelected: 0,
@@ -1679,7 +1679,7 @@ func TestRender_DefaultViewFooterHintFitsNarrowWidth(t *testing.T) {
 func TestRender_TerminalFocusedShortcutPaneOmitsDefaultViewSetting(t *testing.T) {
 	pane := shortcutPaneText(renderShortcutPane(statusBarParams{
 		Mode:                   ModeFlows,
-		ActivePane:             1,
+		ActivePane:             PaneTop,
 		EmbeddedTerminalActive: true,
 		DefaultViewLabel:       "8 flows",
 	}, 26, 12))
@@ -1729,7 +1729,7 @@ func TestStatusBar_InputOverlayShowsMultiLineHints(t *testing.T) {
 }
 
 func TestStatusBar_SelectOverlayShowsSelectHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, OverlaySelect, 1, false, false, false)
+	bar := RenderStatusBar(120, 1, OverlaySelect, PaneTop, false, false, false)
 	for _, hint := range []string{"up/down select", "enter: confirm", "esc: cancel"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("expected hint %q in select overlay bar %q", hint, bar)
@@ -1766,7 +1766,7 @@ func TestStatusBar_LaunchInstructionsOverlayShowsLaunchHint(t *testing.T) {
 }
 
 func TestStatusBar_KeyHintSpacingIs2(t *testing.T) {
-	bar := RenderStatusBar(160, 2, 0, 1, true, false, false)
+	bar := RenderStatusBar(160, 2, 0, PaneTop, true, false, false)
 	for _, pair := range [][2]string{
 		{"bksp: pane", "q/esc: quit"},
 		{"d: delete", "f: fetch"},
@@ -1838,7 +1838,7 @@ func TestRender_WideLayoutShowsShortcutPane(t *testing.T) {
 			{Path: "/a", BranchName: "main", IsMain: true},
 		},
 		WorktreeSelected: 0,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		FetchAvailable:   true,
 		PullAvailable:    true,
 	})
@@ -1857,7 +1857,7 @@ func TestRender_WideLayoutReplacesFooterHints(t *testing.T) {
 		Width:      120,
 		Height:     19,
 		Mode:       ModeWorktrees,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	})
 
 	lines := strings.Split(view, "\n")
@@ -1896,7 +1896,7 @@ func TestRender_NarrowRightPaneLayoutKeepsBackspaceAndQuitFooterHints(t *testing
 		Width:      80,
 		Height:     18,
 		Mode:       ModeBranches,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	})
 
 	lines := strings.Split(view, "\n")
@@ -1922,7 +1922,7 @@ func TestRender_ShortWideLayoutKeepsClippedShortcutPane(t *testing.T) {
 			{Path: "/a", BranchName: "main", IsMain: true},
 		},
 		WorktreeSelected: 0,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		FetchAvailable:   true,
 		PullAvailable:    true,
 	})
@@ -1952,7 +1952,7 @@ func TestRender_ShortcutPaneUsesUsableHeightGate(t *testing.T) {
 			{Path: "/a", BranchName: "main", IsMain: true},
 		},
 		WorktreeSelected: 0,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 	}
 
 	params.Height = 6 // two usable pane rows after borders/status/dock chip.
@@ -1973,7 +1973,7 @@ func TestRender_ShortcutPaneUsesUsableHeightGate(t *testing.T) {
 func TestRenderShortcutPane_ClipsOverflowAtEdgeHeights(t *testing.T) {
 	sp := statusBarParams{
 		Mode:                      ModeWorktrees,
-		ActivePane:                1,
+		ActivePane:                PaneTop,
 		RepoSelected:              true,
 		WorktreeSelected:          true,
 		WorktreeOpenableSelected:  true,
@@ -2004,7 +2004,7 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 			{Path: "/a", BranchName: "main", IsMain: true},
 		},
 		WorktreeSelected: 0,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		FetchAvailable:   true,
 		PullAvailable:    true,
 	})
@@ -2025,7 +2025,7 @@ func TestRender_ShortcutPanePrioritizesActions(t *testing.T) {
 func TestRender_ShortcutPaneSeparatesSectionsWithBlankRows(t *testing.T) {
 	sp := statusBarParams{
 		Mode:                     ModeWorktrees,
-		ActivePane:               1,
+		ActivePane:               PaneTop,
 		RepoSelected:             true,
 		WorktreeSelected:         true,
 		WorktreeOpenableSelected: true,
@@ -2062,7 +2062,7 @@ func TestRender_ShortcutPaneStylesModeTitleSeparately(t *testing.T) {
 }
 
 func TestRender_StatusBarShowsGlobalRefreshShortcut(t *testing.T) {
-	bar := ansi.Strip(RenderStatusBar(180, ModeFlows, OverlayNone, 1, false, false, false))
+	bar := ansi.Strip(RenderStatusBar(180, ModeFlows, OverlayNone, PaneBottom, false, false, false))
 	if !strings.Contains(bar, "f5: refresh") {
 		t.Fatalf("status bar should expose refresh shortcut, got %q", bar)
 	}
@@ -2113,7 +2113,7 @@ func TestRender_ShortcutPaneGroupsRelatedRows(t *testing.T) {
 		Mode:                  ModeWorktrees,
 		Worktrees:             []gitquery.Worktree{{Path: "/a-worktrees/feat", BranchName: "feat"}},
 		WorktreeSelected:      0,
-		ActivePane:            1,
+		ActivePane:            PaneTop,
 		FetchAvailable:        true,
 		PullAvailable:         true,
 		WorktreeMoveAvailable: true,
@@ -2142,7 +2142,7 @@ func TestRender_ShortcutPaneAlignsLabels(t *testing.T) {
 		Height:         18,
 		Mode:           ModeWorktrees,
 		Worktrees:      []gitquery.Worktree{{Path: "/a-worktrees/feat", BranchName: "feat"}},
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 		FetchAvailable: true,
 		PullAvailable:  true,
 	})
@@ -2185,7 +2185,7 @@ func TestRender_ShortBranchPaneClipsLegendAfterActions(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "feature", HasUpstream: false, Dirty: true, IsWorktree: true}, WorktreePath: "/a-feature"},
 		},
 		BranchSelected: 0,
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 		Destructive:    true,
 		FetchAvailable: true,
 		PullAvailable:  true,
@@ -2214,7 +2214,7 @@ func TestRender_ShortSessionPaneKeepsSelectedSessionActions(t *testing.T) {
 			Status:    "ended",
 			RepoPath:  "/dev/approach",
 		}},
-		ActivePane:      1,
+		ActivePane:      PaneTop,
 		SessionSelected: 0,
 	})
 	pane := shortcutPaneText(view)
@@ -2232,7 +2232,7 @@ func TestRender_ShortLeftPaneOmitsRightPaneActions(t *testing.T) {
 		Width:                 120,
 		Height:                8,
 		Mode:                  ModeHistory,
-		ActivePane:            0,
+		ActivePane:            PaneRepos,
 		FetchVisibleAvailable: true,
 	})
 	pane := shortcutPaneText(view)
@@ -2253,7 +2253,7 @@ func TestRender_HistoryShortcutPaneOmitsDestructiveMode(t *testing.T) {
 		Width:      120,
 		Height:     18,
 		Mode:       ModeHistory,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	})
 
 	if !strings.Contains(view, "Shortcuts") {
@@ -2271,7 +2271,7 @@ func TestRender_LeftPaneShortcutPaneOmitsModeNumberHint(t *testing.T) {
 		Width:      120,
 		Height:     18,
 		Mode:       ModeWorktrees,
-		ActivePane: 0,
+		ActivePane: PaneRepos,
 	})
 
 	if !strings.Contains(view, "Shortcuts") {
@@ -2285,7 +2285,7 @@ func TestRender_LeftPaneShortcutPaneOmitsModeNumberHint(t *testing.T) {
 func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 	leftPane := shortcutPaneText(renderShortcutPane(statusBarParams{
 		Mode:       ModeFlows,
-		ActivePane: 0,
+		ActivePane: PaneRepos,
 	}, 26, 18))
 	if !strings.Contains(leftPane, "tab") || !strings.Contains(leftPane, "pane") {
 		t.Fatalf("left-pane shortcut pane should include tab pane hint, got:\n%s", leftPane)
@@ -2296,7 +2296,7 @@ func TestRender_ShortcutPaneShowsArrowViewHintOnlyForRightPane(t *testing.T) {
 
 	rightPane := shortcutPaneText(renderShortcutPane(statusBarParams{
 		Mode:       ModeFlows,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	}, 26, 18))
 	if !strings.Contains(rightPane, "bksp") || !strings.Contains(rightPane, "pane") {
 		t.Fatalf("right-pane shortcut pane should include bksp pane hint, got:\n%s", rightPane)
@@ -2320,7 +2320,7 @@ func TestRender_BranchShortcutPaneKeepsLegend(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "feature", HasUpstream: false, Dirty: true, IsWorktree: true}, WorktreePath: "/a-feature"},
 		},
 		BranchSelected: 0,
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 		Destructive:    true,
 		FetchAvailable: true,
 		PullAvailable:  true,
@@ -2352,7 +2352,7 @@ func TestRender_SearchActiveSuppressesShortcutPane(t *testing.T) {
 		Width:        120,
 		Height:       18,
 		Mode:         ModeWorktrees,
-		ActivePane:   1,
+		ActivePane:   PaneTop,
 		SearchActive: true,
 		ItemSearch:   "feat",
 	})
@@ -2374,7 +2374,7 @@ func TestRender_FilteredItemStateKeepsShortcutPane(t *testing.T) {
 		Width:      120,
 		Height:     18,
 		Mode:       ModeWorktrees,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 		ItemSearch: "feat",
 	})
 
@@ -2395,7 +2395,7 @@ func TestRender_FilteredRepoStateKeepsShortcutPane(t *testing.T) {
 		Width:      120,
 		Height:     18,
 		Mode:       ModeWorktrees,
-		ActivePane: 0,
+		ActivePane: PaneRepos,
 		RepoSearch: "alp",
 	})
 
@@ -2428,7 +2428,7 @@ func TestRender_LeftPaneOmitsRightPaneActions(t *testing.T) {
 				Width:       120,
 				Height:      18,
 				Mode:        tt.mode,
-				ActivePane:  0,
+				ActivePane:  PaneRepos,
 				Destructive: true,
 			})
 
@@ -2455,7 +2455,7 @@ func TestRender_WorktreeRootOmitsDeleteHint(t *testing.T) {
 			{Path: "/a", BranchName: "main", IsMain: true},
 		},
 		WorktreeSelected: 0,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		Destructive:      true,
 	})
 
@@ -2510,7 +2510,7 @@ func TestRender_WorktreeMoveHintAvailability(t *testing.T) {
 				Mode:                  ModeWorktrees,
 				Worktrees:             []gitquery.Worktree{tt.worktree},
 				WorktreeSelected:      0,
-				ActivePane:            1,
+				ActivePane:            PaneTop,
 				WorktreeMoveAvailable: tt.canMove,
 			})
 			hasMove := strings.Contains(shortcutPaneText(view), "m      move")
@@ -2530,7 +2530,7 @@ func TestRender_NarrowWorktreeFooterIncludesMoveWhenAvailable(t *testing.T) {
 		Mode:                  ModeWorktrees,
 		Worktrees:             []gitquery.Worktree{{Path: "/a-worktrees/feat", BranchName: "feat"}},
 		WorktreeSelected:      0,
-		ActivePane:            1,
+		ActivePane:            PaneTop,
 		WorktreeMoveAvailable: true,
 	})
 	if strings.Contains(view, "Shortcuts") {
@@ -2553,7 +2553,7 @@ func TestRender_BranchShortcutPaneShowsDiffButOmitsRootDelete(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "main", HasUpstream: true, Dirty: true, IsWorktree: true}, WorktreePath: "/a"},
 		},
 		BranchSelected: 0,
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 		Destructive:    true,
 	})
 
@@ -2576,7 +2576,7 @@ func TestRender_BranchWithoutWorktreeOmitsOpenHints(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "feature", HasUpstream: true}},
 		},
 		BranchSelected: 0,
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 	})
 
 	if !strings.Contains(view, "Shortcuts") {
@@ -2608,7 +2608,7 @@ func TestRender_EmptyItemPanesOmitItemActions(t *testing.T) {
 				Width:       120,
 				Height:      18,
 				Mode:        tt.mode,
-				ActivePane:  1,
+				ActivePane:  PaneTop,
 				Destructive: true,
 			})
 
@@ -2662,7 +2662,7 @@ func TestRender_NonWorktreeModesShowSyncHintsWhenAvailable(t *testing.T) {
 			params.Selected = 0
 			params.Width = 120
 			params.Height = 18
-			params.ActivePane = 1
+			params.ActivePane = PaneTop
 			params.FetchAvailable = true
 			params.PullAvailable = true
 
@@ -3113,7 +3113,7 @@ func TestRender_HighlightsSelectedBranch(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "dirty", IsWorktree: true, Dirty: true}, WorktreePath: "/a"},
 		},
 		BranchSelected: 0,
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 	})
 	if !strings.Contains(view, "> clean") {
 		t.Error("first branch should be highlighted when BranchSelected=0")
@@ -3135,7 +3135,7 @@ func TestRender_HighlightsSecondBranch(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "dirty", IsWorktree: true, Dirty: true}, WorktreePath: "/a"},
 		},
 		BranchSelected: 1,
-		ActivePane:     1,
+		ActivePane:     PaneTop,
 	})
 	if !strings.Contains(view, "> dirty") {
 		t.Error("dirty branch should be highlighted when BranchSelected=1")
@@ -3156,7 +3156,7 @@ func TestRender_HidesCursorWhenLeftPaneActive(t *testing.T) {
 			{Branch: gitquery.Branch{Name: "main"}},
 		},
 		BranchSelected: 0,
-		ActivePane:     0,
+		ActivePane:     PaneRepos,
 	})
 	if strings.Contains(view, "> main") {
 		t.Error("branch cursor should be hidden when left pane is active")
@@ -3739,7 +3739,7 @@ func TestRender_SelectOverlayUsesBoundedPanelAndKeepsBaseVisible(t *testing.T) {
 		Width:            80,
 		Height:           16,
 		Mode:             ModeWorktrees,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 		Worktrees:        []gitquery.Worktree{{Path: "/dev/alpha-worktrees/feature", BranchName: "feature/picker"}},
 		WorktreeSelected: 0,
 		Overlay:          OverlaySelect,
@@ -3869,7 +3869,7 @@ func TestRender_SelectOverlayPreservesStyledBaseRowsAroundPanel(t *testing.T) {
 		Width:           72,
 		Height:          12,
 		Mode:            ModeBranches,
-		ActivePane:      1,
+		ActivePane:      PaneTop,
 		Branches:        []gitquery.BranchRow{{Branch: gitquery.Branch{Name: "main", IsWorktree: true}, WorktreePath: "/dev/alpha"}},
 		BranchSelected:  0,
 		Overlay:         OverlaySelect,
@@ -4110,7 +4110,7 @@ func TestRender_LaunchInstructionsInputDialogMarksOverflow(t *testing.T) {
 }
 
 func TestStatusBar_StashesModeHintsSpacing(t *testing.T) {
-	bar := RenderStatusBar(120, 3, 0, 1, true, false, false)
+	bar := RenderStatusBar(120, 3, 0, PaneTop, true, false, false)
 	for _, hint := range []string{"f: fetch", "F: pull"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("stashes mode status bar should not contain %q", hint)
@@ -4227,7 +4227,7 @@ func TestModeHeader_ShowsFiveGitSubviews(t *testing.T) {
 }
 
 func TestStatusBar_HistoryModeShowsHistoryHints(t *testing.T) {
-	bar := RenderStatusBar(120, 4, 0, 1, false, false, false)
+	bar := RenderStatusBar(120, 4, 0, PaneTop, false, false, false)
 	for _, hint := range []string{"enter: diff", "y: copy hash", "t: terminal", "c: code"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("mode 3 status bar should contain %q", hint)
@@ -4236,7 +4236,7 @@ func TestStatusBar_HistoryModeShowsHistoryHints(t *testing.T) {
 }
 
 func TestStatusBar_HistoryModeOmitsDeleteHint(t *testing.T) {
-	bar := RenderStatusBar(120, 4, 0, 1, true, false, false)
+	bar := RenderStatusBar(120, 4, 0, PaneTop, true, false, false)
 	if strings.Contains(bar, "d: delete") {
 		t.Error("mode 3 status bar should not contain 'd: delete'")
 	}
@@ -4246,7 +4246,7 @@ func TestStatusBar_HistoryModeOmitsDeleteHint(t *testing.T) {
 }
 
 func TestStatusBar_HistoryModeOmitsDestructiveHint(t *testing.T) {
-	bar := RenderStatusBar(120, 4, 0, 1, false, false, false)
+	bar := RenderStatusBar(120, 4, 0, PaneTop, false, false, false)
 	if strings.Contains(bar, "D: destructive mode") {
 		t.Error("mode 3 status bar should not contain 'D: destructive mode'")
 	}
@@ -4500,7 +4500,7 @@ func TestWorktreePane_ScrollOffset(t *testing.T) {
 }
 
 func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T) {
-	bar := ansi.Strip(RenderStatusBar(52, 3, 0, 1, true, false, false))
+	bar := ansi.Strip(RenderStatusBar(52, 3, 0, PaneTop, true, false, false))
 	for _, want := range []string{"bksp: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("tight generic footer should keep %q, got %q", want, bar)
@@ -4514,7 +4514,7 @@ func TestStatusBar_GenericFooterKeepsQuitBeforeNavigationWhenTight(t *testing.T)
 }
 
 func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
-	bar := RenderStatusBar(160, 1, 0, 1, false, false, false)
+	bar := RenderStatusBar(160, 1, 0, PaneTop, false, false, false)
 	for _, hint := range []string{"bksp: pane", "q/esc: quit", "↑/↓ select", "←/→ view"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode status bar should contain %q", hint)
@@ -4523,7 +4523,7 @@ func TestStatusBar_WorktreesModeShowsNavHints(t *testing.T) {
 }
 
 func TestStatusBar_HidesArrowViewHintWhenLeftPaneActive(t *testing.T) {
-	bar := RenderStatusBar(80, ModeFlows, OverlayNone, 0, false, false, false)
+	bar := RenderStatusBar(80, ModeFlows, OverlayNone, PaneRepos, false, false, false)
 	if strings.Contains(bar, "←/→") || strings.Contains(bar, "pane/view") {
 		t.Fatalf("left-pane status bar should not advertise arrow view navigation, got %q", bar)
 	}
@@ -4533,7 +4533,7 @@ func TestStatusBar_ActiveFlowsShowsToggleButNoArrowViewHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:        120,
 		Mode:         ModeActiveFlows,
-		ActivePane:   1,
+		ActivePane:   PaneTop,
 		RepoSelected: true,
 		FlowSelected: true,
 	})
@@ -4549,7 +4549,7 @@ func TestStatusBar_ActiveFlowsShowsToggleButNoArrowViewHint(t *testing.T) {
 }
 
 func TestStatusBar_RightPaneShowsBackspacePaneHint(t *testing.T) {
-	bar := RenderStatusBar(120, ModeBranches, OverlayNone, 1, false, false, false)
+	bar := RenderStatusBar(120, ModeBranches, OverlayNone, PaneTop, false, false, false)
 	for _, want := range []string{"bksp: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("right-pane status bar should advertise %q, got %q", want, bar)
@@ -4564,7 +4564,7 @@ func TestStatusBar_RightPaneShowsBackspacePaneHint(t *testing.T) {
 }
 
 func TestStatusBar_BranchesModeShowsArrowViewHint(t *testing.T) {
-	bar := RenderStatusBar(120, ModeBranches, OverlayNone, 1, false, false, false)
+	bar := RenderStatusBar(120, ModeBranches, OverlayNone, PaneTop, false, false, false)
 	if !strings.Contains(bar, "←/→ view") {
 		t.Fatalf("branches status bar should advertise arrow view navigation, got %q", bar)
 	}
@@ -4584,7 +4584,7 @@ func TestStatusBar_BranchesModeDoesNotWrapNarrowFooter(t *testing.T) {
 		{name: "action heavy", width: 160, destructive: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bar := RenderStatusBar(tc.width, ModeBranches, OverlayNone, 1, tc.destructive, false, false)
+			bar := RenderStatusBar(tc.width, ModeBranches, OverlayNone, PaneTop, tc.destructive, false, false)
 			stripped := ansi.Strip(bar)
 			if strings.Contains(stripped, "\n") {
 				t.Fatalf("branch status bar width %d should stay one line, got %q", tc.width, stripped)
@@ -4601,7 +4601,7 @@ func TestStatusBar_BranchesModePrefersActionsOverLegendWhenTight(t *testing.T) {
 		Width:                   130,
 		Mode:                    ModeBranches,
 		Overlay:                 OverlayNone,
-		ActivePane:              1,
+		ActivePane:              PaneTop,
 		Destructive:             true,
 		RepoSelected:            true,
 		BranchDirtySelected:     true,
@@ -4630,14 +4630,14 @@ func TestStatusBar_ArrowViewHintFitsNarrowFooter(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		mode      Mode
-		pane      int
+		pane      Pane
 		wantArrow bool
 	}{
-		{name: "worktrees left pane", mode: ModeWorktrees, pane: 0},
-		{name: "branches", mode: ModeBranches, pane: 1, wantArrow: true},
-		{name: "flows", mode: ModeFlows, pane: 1, wantArrow: true},
-		{name: "beads left pane", mode: ModeBeadsOpen, pane: 0},
-		{name: "beads right pane", mode: ModeBeadsOpen, pane: 1, wantArrow: true},
+		{name: "worktrees repos pane", mode: ModeWorktrees, pane: PaneRepos},
+		{name: "branches", mode: ModeBranches, pane: PaneTop, wantArrow: true},
+		{name: "flows", mode: ModeFlows, pane: PaneBottom, wantArrow: true},
+		{name: "beads repos pane", mode: ModeBeadsOpen, pane: PaneRepos},
+		{name: "beads top pane", mode: ModeBeadsOpen, pane: PaneTop, wantArrow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bar := RenderStatusBar(80, tc.mode, OverlayNone, tc.pane, false, false, false)
@@ -4669,7 +4669,7 @@ func TestStatusBar_GenericActionModesDoNotWrapNarrowFooter(t *testing.T) {
 		{name: "reflog", mode: ModeReflog, wantHints: []string{"q/esc: quit", "enter: diff", "y: copy hash"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bar := RenderStatusBar(80, tc.mode, OverlayNone, 1, tc.destructive, false, false)
+			bar := RenderStatusBar(80, tc.mode, OverlayNone, PaneTop, tc.destructive, false, false)
 			stripped := ansi.Strip(bar)
 			if strings.Contains(stripped, "\n") {
 				t.Fatalf("status bar should stay one line, got %q", stripped)
@@ -4691,7 +4691,7 @@ func TestStatusBar_PlanPhaseFooterPreservesActionsAtNarrowWidth(t *testing.T) {
 		Width:             80,
 		Mode:              ModePlans,
 		Overlay:           OverlayNone,
-		ActivePane:        1,
+		ActivePane:        PaneTop,
 		PlanSelected:      true,
 		PlanPhaseSelected: true,
 	})
@@ -4710,7 +4710,7 @@ func TestStatusBar_PlanPhaseFooterPreservesActionsAtNarrowWidth(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeShowsDiffHintWhenDirty(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, false, true)
+	bar := RenderStatusBar(120, 1, 0, PaneTop, false, false, true)
 	for _, hint := range []string{"enter: diff", "f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode should show %q when dirty", hint)
@@ -4719,7 +4719,7 @@ func TestStatusBar_WorktreesModeShowsDiffHintWhenDirty(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeHidesDiffHintWhenClean(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
+	bar := RenderStatusBar(120, 1, 0, PaneTop, false, false, false)
 	if strings.Contains(bar, "enter: diff") {
 		t.Error("worktrees mode should NOT show 'enter: diff' when clean")
 	}
@@ -4731,7 +4731,7 @@ func TestStatusBar_WorktreesModeHidesDiffHintWhenClean(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeStaleHidesAllActionHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, true, true)
+	bar := RenderStatusBar(120, 1, 0, PaneTop, false, true, true)
 	for _, hint := range []string{"enter: diff", "f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode should NOT show %q when stale", hint)
@@ -4740,7 +4740,7 @@ func TestStatusBar_WorktreesModeStaleHidesAllActionHints(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeDestructiveNonStaleShowsDelete(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, true, false, false) // destructive, not stale
+	bar := RenderStatusBar(120, 1, 0, PaneTop, true, false, false) // destructive, not stale
 	if !strings.Contains(bar, "d: delete") {
 		t.Error("worktrees mode destructive non-stale should show 'd: delete'")
 	}
@@ -4750,7 +4750,7 @@ func TestStatusBar_WorktreesModeDestructiveNonStaleShowsDelete(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeDestructiveStaleShowsPrune(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, true, true, false) // destructive, stale
+	bar := RenderStatusBar(120, 1, 0, PaneTop, true, true, false) // destructive, stale
 	if !strings.Contains(bar, "p: prune") {
 		t.Error("worktrees mode destructive stale should show 'p: prune'")
 	}
@@ -4760,7 +4760,7 @@ func TestStatusBar_WorktreesModeDestructiveStaleShowsPrune(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, false, false) // read-only
+	bar := RenderStatusBar(120, 1, 0, PaneTop, false, false, false) // read-only
 	if !strings.Contains(bar, "D: destructive mode") {
 		t.Error("worktrees mode read-only should show 'D: destructive mode'")
 	}
@@ -4773,7 +4773,7 @@ func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeReadOnlyShowsDestructiveHintBeforeActions(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, false, false, false)
+	bar := RenderStatusBar(120, 1, 0, PaneTop, false, false, false)
 	dIdx := strings.Index(bar, "D: destructive mode")
 	nIdx := strings.Index(bar, "n: new worktree")
 	if dIdx == -1 || nIdx == -1 {
@@ -4798,7 +4798,7 @@ func TestStatusBar_WorktreesModeDoesNotWrapNarrowFooter(t *testing.T) {
 		{name: "stale", destructive: true, stale: true, wantHints: []string{"←/→ view", "p: prune"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bar := RenderStatusBar(80, ModeWorktrees, OverlayNone, 1, tc.destructive, tc.stale, tc.dirty)
+			bar := RenderStatusBar(80, ModeWorktrees, OverlayNone, PaneTop, tc.destructive, tc.stale, tc.dirty)
 			stripped := ansi.Strip(bar)
 			if strings.Contains(stripped, "\n") {
 				t.Fatalf("worktree status bar should stay one line, got %q", stripped)
@@ -4816,7 +4816,7 @@ func TestStatusBar_WorktreesModeDoesNotWrapNarrowFooter(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeRightPaneShowsActionHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 1, true, false, false) // right pane active
+	bar := RenderStatusBar(120, 1, 0, PaneTop, true, false, false) // right pane active
 	for _, hint := range []string{"f: fetch", "F: pull", "t: terminal", "c: code"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode right pane should show %q", hint)
@@ -4825,7 +4825,7 @@ func TestStatusBar_WorktreesModeRightPaneShowsActionHints(t *testing.T) {
 }
 
 func TestStatusBar_WorktreesModeLeftPaneHidesActionHints(t *testing.T) {
-	bar := RenderStatusBar(120, 1, 0, 0, true, false, true) // left pane active, destructive
+	bar := RenderStatusBar(120, 1, 0, PaneRepos, true, false, true) // left pane active, destructive
 	for _, hint := range []string{"enter: diff", "f: fetch", "F: pull", "t: terminal", "c: code", "d: delete", "p: prune"} {
 		if strings.Contains(bar, hint) {
 			t.Errorf("worktrees mode left pane should hide %q", hint)
@@ -4845,7 +4845,7 @@ func TestRender_WorktreesModeShowsData(t *testing.T) {
 			{Path: "/a-feat", BranchName: "feat"},
 		},
 		WorktreeSelected: 0,
-		ActivePane:       1,
+		ActivePane:       PaneTop,
 	})
 	if !strings.Contains(view, "main") {
 		t.Error("render should contain worktree branch name 'main'")
@@ -4892,7 +4892,7 @@ func TestRender_CollapsedRepoPaneUsesNarrowStripAndWidensContent(t *testing.T) {
 		Width:      100,
 		Height:     10,
 		Mode:       ModeWorktrees,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	}
 	expanded := ansi.Strip(Render(params))
 	params.RepoPaneCollapsed = true
@@ -4950,7 +4950,7 @@ func TestRender_CollapsedRepoPaneShowsRestoreHintInFooterAndShortcutRail(t *test
 		Selected:            0,
 		Height:              24,
 		Mode:                ModeWorktrees,
-		ActivePane:          1,
+		ActivePane:          PaneTop,
 		RepoPaneCollapsed:   true,
 		RightEmptyMessage:   "No worktrees",
 		NewAgentAvailable:   true,
@@ -5007,7 +5007,7 @@ func TestRender_CollapsedRepoPaneHidesRestoreHintWhileTerminalOwnsInput(t *testi
 			params.Selected = 0
 			params.Width = 100
 			params.Height = 10
-			params.ActivePane = 1
+			params.ActivePane = PaneTop
 			params.RepoPaneCollapsed = true
 
 			view := ansi.Strip(Render(params))
@@ -5127,7 +5127,7 @@ func TestReflogDiffOverlay_NonEmptyDiffShowsContent(t *testing.T) {
 }
 
 func TestStatusBar_ReflogModeHints(t *testing.T) {
-	bar := RenderStatusBar(120, 5, 0, 1, false, false, false)
+	bar := RenderStatusBar(120, 5, 0, PaneTop, false, false, false)
 	for _, hint := range []string{"enter: diff", "y: copy hash", "bksp: pane", "q/esc: quit"} {
 		if !strings.Contains(bar, hint) {
 			t.Errorf("reflog status bar should contain %q", hint)

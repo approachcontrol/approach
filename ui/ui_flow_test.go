@@ -36,7 +36,7 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
 			},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 
@@ -112,7 +112,7 @@ func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 			UpdatedAt: time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC),
 			Phases:    []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted}},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 
@@ -135,7 +135,7 @@ func TestRender_ActiveFlowsHeaderAndShortcutLabels(t *testing.T) {
 		Height:      24,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
-		ActivePane:  1,
+		ActivePane:  PaneBottom,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
 			Title:  "Active flow",
@@ -172,7 +172,7 @@ func TestRender_ActiveFlowsShowsRepoColumnBetweenStatusAndBranch(t *testing.T) {
 		Height:      12,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
-		ActivePane:  1,
+		ActivePane:  PaneBottom,
 		Flows: []flowstore.FlowRecord{{
 			FlowID:   "flow-1",
 			Title:    "Active repo flow",
@@ -235,7 +235,7 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 			"terminal line 8",
 		},
 		EmbeddedTerminalVisible: true,
-		ActivePane:              1,
+		ActivePane:              PaneBottom,
 	})
 
 	for _, want := range []string{
@@ -261,7 +261,7 @@ func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 		Height:      14,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
-		ActivePane:  1,
+		ActivePane:  PaneBottom,
 		Flows: []flowstore.FlowRecord{{
 			FlowID:   "flow-1",
 			Title:    "Split active repo flow",
@@ -321,7 +321,7 @@ func TestRender_FlowsModeSplitTerminalTinyViewportDoesNotPanic(t *testing.T) {
 		}},
 		EmbeddedTerminalLines:   []string{"terminal output"},
 		EmbeddedTerminalVisible: true,
-		ActivePane:              1,
+		ActivePane:              PaneBottom,
 	})
 
 	requireLinesWithinWidth(t, strippedLines(view), 120)
@@ -335,7 +335,7 @@ func TestRender_ActiveFlowsExpandedPhaseRowsKeepRepoColumnAlignment(t *testing.T
 		Height:      12,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
-		ActivePane:  1,
+		ActivePane:  PaneBottom,
 		Flows: []flowstore.FlowRecord{{
 			FlowID:   "flow-1",
 			Title:    "Expanded active repo flow",
@@ -373,7 +373,7 @@ func TestRender_ActiveFlowsExpandedNoPhasesKeepsRepoColumnAlignment(t *testing.T
 		Height:      12,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
-		ActivePane:  1,
+		ActivePane:  PaneBottom,
 		Flows: []flowstore.FlowRecord{{
 			FlowID:   "flow-1",
 			Title:    "Expanded active repo flow",
@@ -672,7 +672,7 @@ func TestRenderFlowPaneMarksActiveTerminalRows(t *testing.T) {
 }
 
 func TestStatusBar_FlowsModeShowsNewFlowHint(t *testing.T) {
-	bar := RenderStatusBar(120, ModeFlows, OverlayNone, 1, false, false, false)
+	bar := RenderStatusBar(120, ModeFlows, OverlayNone, PaneBottom, false, false, false)
 	if !strings.Contains(bar, "n: new flow") {
 		t.Fatalf("expected new flow hint in flows mode, got %q", bar)
 	}
@@ -683,7 +683,7 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 		Width:                    240,
 		Mode:                     ModeFlows,
 		ActiveFlows:              true,
-		ActivePane:               1,
+		ActivePane:               PaneBottom,
 		RepoSelected:             true,
 		FlowSelected:             true,
 		FlowWorktreePathSelected: true,
@@ -711,7 +711,7 @@ func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 		Width:               180,
 		Height:              12,
 		Mode:                ModeFlows,
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		FlowAgentLabel:      "codex",
 		FlowModel:           "gpt-5.5",
 		FlowReasoningEffort: "effort: high",
@@ -736,7 +736,7 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowRow(t *testing.T) {
 		Width:          180,
 		Height:         28,
 		Mode:           ModeFlows,
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		Flows:          []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress}},
 		FlowSelected:   0,
 		FlowAgentLabel: "codex",
@@ -759,7 +759,7 @@ func TestRender_FlowsModeShowsModelShortcutOnSelectedFlowPhaseRow(t *testing.T) 
 		Width:               180,
 		Height:              28,
 		Mode:                ModeFlows,
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		Flows:               []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Flow one", Status: flowstore.StatusInProgress, Phases: []flowstore.FlowPhase{{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseReady}}}},
 		FlowSelected:        0,
 		ExpandedFlowID:      "flow-1",
@@ -795,7 +795,7 @@ func TestRender_FlowsModeShortcutSectionsUseFlowGroups(t *testing.T) {
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:                 1,
+		ActivePane:                 PaneBottom,
 		Destructive:                true,
 		FlowSelected:               0,
 		FlowHeadless:               true,
@@ -857,7 +857,7 @@ func TestRender_ActiveFlowsShortcutSectionsHideNewFlow(t *testing.T) {
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:                 1,
+		ActivePane:                 PaneBottom,
 		Destructive:                true,
 		FlowSelected:               0,
 		FlowHeadless:               true,
@@ -899,7 +899,7 @@ func TestRender_FlowShortcutPaneShowsOpenPRWhenTargetSelected(t *testing.T) {
 		Width:        180,
 		Height:       28,
 		Mode:         ModeFlows,
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -944,7 +944,7 @@ func TestRender_FlowShortcutPaneShowsOpenIssueWhenTargetSelected(t *testing.T) {
 		Width:        180,
 		Height:       28,
 		Mode:         ModeFlows,
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -987,7 +987,7 @@ func TestRender_FlowShortcutPaneHidesOpenPRWithoutTopLevelPRTarget(t *testing.T)
 		Width:        180,
 		Height:       28,
 		Mode:         ModeFlows,
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -1062,7 +1062,7 @@ func TestRender_FlowsModeReasoningEffortShortcutHandlesSpecialLabels(t *testing.
 				Width:               180,
 				Height:              12,
 				Mode:                ModeFlows,
-				ActivePane:          1,
+				ActivePane:          PaneBottom,
 				FlowAgentLabel:      tt.agent,
 				FlowReasoningEffort: tt.effort,
 			})
@@ -1081,7 +1081,7 @@ func TestStatusBar_FlowsModeShowsPhaseToggleHintForSelectedFlow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:                    240,
 		Mode:                     ModeFlows,
-		ActivePane:               1,
+		ActivePane:               PaneBottom,
 		RepoSelected:             true,
 		FlowSelected:             true,
 		FlowWorktreePathSelected: true,
@@ -1104,7 +1104,7 @@ func TestStatusBar_FlowsModeShowsFlowIDCopyHintWithoutWorktreePath(t *testing.T)
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:        240,
 		Mode:         ModeFlows,
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		RepoSelected: true,
 		FlowSelected: true,
 		FlowHeadless: true,
@@ -1123,7 +1123,7 @@ func TestStatusBar_FlowsModeShowsManualMergeOnlyForEligibleFlowRow(t *testing.T)
 	base := statusBarParams{
 		Width:                        160,
 		Mode:                         ModeFlows,
-		ActivePane:                   1,
+		ActivePane:                   PaneBottom,
 		RepoSelected:                 true,
 		FlowSelected:                 true,
 		FlowManualMergeReadySelected: true,
@@ -1154,7 +1154,7 @@ func TestRender_FlowsModeCompactSelectedFlowPrioritizesFlowActions(t *testing.T)
 		Width:      180,
 		Height:     12,
 		Mode:       ModeFlows,
-		ActivePane: 1,
+		ActivePane: PaneBottom,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
 			Title:  "Compact selected flow",
@@ -1181,7 +1181,7 @@ func TestStatusBar_ActiveFlowsModeShowsFlowIDCopyHint(t *testing.T) {
 		Width:                    240,
 		Mode:                     ModeActiveFlows,
 		ActiveFlows:              true,
-		ActivePane:               1,
+		ActivePane:               PaneBottom,
 		RepoSelected:             true,
 		FlowSelected:             true,
 		FlowWorktreePathSelected: true,
@@ -1201,7 +1201,7 @@ func TestStatusBar_FlowsModeFullFooterPreservesSectionOrder(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:                    240,
 		Mode:                     ModeFlows,
-		ActivePane:               1,
+		ActivePane:               PaneBottom,
 		RepoSelected:             true,
 		FlowSelected:             true,
 		FlowWorktreePathSelected: true,
@@ -1232,7 +1232,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 	flowRow := renderStatusBarWithState(statusBarParams{
 		Width:                180,
 		Mode:                 ModeFlows,
-		ActivePane:           1,
+		ActivePane:           PaneBottom,
 		RepoSelected:         true,
 		FlowSelected:         true,
 		FlowAutoModeSelected: false,
@@ -1244,7 +1244,7 @@ func TestStatusBar_FlowsModeShowsAutoModeToggleForSelectedFlow(t *testing.T) {
 	phaseRow := renderStatusBarWithState(statusBarParams{
 		Width:                180,
 		Mode:                 ModeFlows,
-		ActivePane:           1,
+		ActivePane:           PaneBottom,
 		RepoSelected:         true,
 		FlowSelected:         true,
 		FlowPhaseSelected:    true,
@@ -1259,7 +1259,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 	flowRow := renderStatusBarWithState(statusBarParams{
 		Width:                120,
 		Mode:                 ModeFlows,
-		ActivePane:           1,
+		ActivePane:           PaneBottom,
 		RepoSelected:         true,
 		FlowSelected:         true,
 		FlowAutoModeSelected: false,
@@ -1271,7 +1271,7 @@ func TestStatusBar_FlowsModeCompactFooterKeepsAutoModeToggle(t *testing.T) {
 	phaseRow := renderStatusBarWithState(statusBarParams{
 		Width:                120,
 		Mode:                 ModeFlows,
-		ActivePane:           1,
+		ActivePane:           PaneBottom,
 		RepoSelected:         true,
 		FlowSelected:         true,
 		FlowPhaseSelected:    true,
@@ -1294,7 +1294,7 @@ func TestStatusBar_FlowsModeHidesCopyPathWithoutWorktreePath(t *testing.T) {
 			bar := renderStatusBarWithState(statusBarParams{
 				Width:             140,
 				Mode:              ModeFlows,
-				ActivePane:        1,
+				ActivePane:        PaneBottom,
 				RepoSelected:      true,
 				FlowSelected:      true,
 				FlowPhaseSelected: tt.phase,
@@ -1310,7 +1310,7 @@ func TestStatusBar_FlowsModeShowsNextLaunchOnlyWhenFlowHasLaunchablePhase(t *tes
 	base := statusBarParams{
 		Width:        120,
 		Mode:         ModeFlows,
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		RepoSelected: true,
 		FlowSelected: true,
 	}
@@ -1401,7 +1401,7 @@ func TestRender_FlowsModeShowsResumeShortcutForResumableSelectedPhase(t *testing
 				},
 			}},
 		}},
-		ActivePane:                 1,
+		ActivePane:                 PaneBottom,
 		FlowSelected:               0,
 		ExpandedFlowID:             "flow-1",
 		SelectedFlowPhaseID:        "implementation",
@@ -1431,7 +1431,7 @@ func TestRender_FlowsModeShowsCopyPathShortcutForSelectedPhase(t *testing.T) {
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		FlowSelected:        0,
 		ExpandedFlowID:      "flow-1",
 		SelectedFlowPhaseID: "implementation",
@@ -1464,7 +1464,7 @@ func TestRender_FlowsModeShowsResetShortcutForResettableSelectedPhase(t *testing
 				LaunchIDs: []string{"launch-orphan"},
 			}},
 		}},
-		ActivePane:                  1,
+		ActivePane:                  PaneBottom,
 		FlowSelected:                0,
 		ExpandedFlowID:              "flow-1",
 		SelectedFlowPhaseID:         "implementation",
@@ -1499,7 +1499,7 @@ func TestRender_FlowsModeShowsLaunchAndHeadlessShortcutForLaunchableSelectedPhas
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		FlowSelected:        0,
 		ExpandedFlowID:      "flow-1",
 		SelectedFlowPhaseID: "implementation",
@@ -1537,7 +1537,7 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	}
 
@@ -1586,7 +1586,7 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:               80,
 		Mode:                ModeFlows,
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		RepoSelected:        true,
 		FlowSelected:        true,
 		FlowHeadless:        true,
@@ -1608,7 +1608,7 @@ func TestStatusBar_FlowsModeTinyFooterKeepsQuitOverBackspace(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:               18,
 		Mode:                ModeFlows,
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		RepoSelected:        true,
 		FlowSelected:        true,
 		FlowHeadless:        true,
@@ -1626,7 +1626,7 @@ func TestStatusBar_FlowsModeFooterGroupsAgentAndEffort(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:               180,
 		Mode:                ModeFlows,
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		RepoSelected:        true,
 		FlowAgentLabel:      "codex",
 		FlowModel:           "gpt-5.5",
@@ -1647,7 +1647,7 @@ func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowRow(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:          180,
 		Mode:           ModeFlows,
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		RepoSelected:   true,
 		FlowSelected:   true,
 		FlowAgentLabel: "codex",
@@ -1665,7 +1665,7 @@ func TestStatusBar_FlowsModeFooterShowsModelOnSelectedFlowPhaseRow(t *testing.T)
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:             180,
 		Mode:              ModeFlows,
-		ActivePane:        1,
+		ActivePane:        PaneBottom,
 		RepoSelected:      true,
 		FlowSelected:      true,
 		FlowPhaseSelected: true,
@@ -1681,7 +1681,7 @@ func TestStatusBar_FlowsModeFooterShowsAgentOutsideFlowPane(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:               180,
 		Mode:                ModeFlows,
-		ActivePane:          0,
+		ActivePane:          PaneRepos,
 		FlowAgentLabel:      "codex",
 		FlowReasoningEffort: "effort: high",
 	})
@@ -1700,7 +1700,7 @@ func TestStatusBar_FlowsModeCompressedFooterDoesNotKeepEffortAfterDroppingAgent(
 		bar := renderStatusBarWithState(statusBarParams{
 			Width:               width,
 			Mode:                ModeFlows,
-			ActivePane:          1,
+			ActivePane:          PaneBottom,
 			RepoSelected:        true,
 			FlowSelected:        true,
 			FlowHeadless:        true,
@@ -1718,7 +1718,7 @@ func TestStatusBar_FlowsModeCompressedFooterKeepsAgentWhenOnlyEffortIsDropped(t 
 		bar := renderStatusBarWithState(statusBarParams{
 			Width:               width,
 			Mode:                ModeFlows,
-			ActivePane:          1,
+			ActivePane:          PaneBottom,
 			RepoSelected:        true,
 			FlowSelected:        true,
 			FlowHeadless:        true,
@@ -1736,7 +1736,7 @@ func TestStatusBar_FlowsModeNarrowFooterPreservesDeleteSafetyHints(t *testing.T)
 	readOnly := renderStatusBarWithState(statusBarParams{
 		Width:        80,
 		Mode:         ModeFlows,
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		RepoSelected: true,
 		FlowSelected: true,
 	})
@@ -1750,7 +1750,7 @@ func TestStatusBar_FlowsModeNarrowFooterPreservesDeleteSafetyHints(t *testing.T)
 	destructive := renderStatusBarWithState(statusBarParams{
 		Width:                 80,
 		Mode:                  ModeFlows,
-		ActivePane:            1,
+		ActivePane:            PaneBottom,
 		Destructive:           true,
 		RepoSelected:          true,
 		FlowSelected:          true,
@@ -1768,7 +1768,7 @@ func TestStatusBar_FlowsModeNarrowTerminalFooterKeepsPrefixHint(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:                  14,
 		Mode:                   ModeFlows,
-		ActivePane:             1,
+		ActivePane:             PaneBottom,
 		EmbeddedTerminalActive: true,
 	})
 	if !strings.Contains(bar, "ctrl+]") {
@@ -1779,7 +1779,7 @@ func TestStatusBar_FlowsModeNarrowTerminalFooterKeepsPrefixHint(t *testing.T) {
 func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 	pane := renderShortcutPane(statusBarParams{
 		Mode:                   ModeFlows,
-		ActivePane:             1,
+		ActivePane:             PaneBottom,
 		EmbeddedTerminalActive: true,
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
@@ -1798,7 +1798,7 @@ func TestRender_ActiveFlowsOverSessionsUsesFlowTerminalPrefixShortcuts(t *testin
 	pane := renderShortcutPane(statusBarParams{
 		Mode:                   ModeSessions,
 		ActiveFlows:            true,
-		ActivePane:             1,
+		ActivePane:             PaneBottom,
 		EmbeddedTerminalActive: true,
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
@@ -1838,7 +1838,7 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 			Active:   true,
 		}},
 		EmbeddedTerminalVisible: false,
-		ActivePane:              1,
+		ActivePane:              PaneBottom,
 		FlowSelected:            0,
 		FlowNextLaunchReady:     true,
 		FlowHeadless:            true,
@@ -1876,7 +1876,7 @@ func TestRender_FlowsModeIgnoresStaleSelectedPhaseForCopyShortcut(t *testing.T) 
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		FlowSelected:        0,
 		ExpandedFlowID:      "flow-1",
 		SelectedFlowPhaseID: "missing",
@@ -1908,7 +1908,7 @@ func TestRender_FlowsModeHidesCopyPathShortcutWithoutWorktreePath(t *testing.T) 
 				Status:  flowstore.PhaseReady,
 			}},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	}
 
@@ -1942,7 +1942,7 @@ func TestRender_FlowsModeHidesResumeShortcutWithoutResumableSelectedPhase(t *tes
 				LaunchIDs: []string{"launch-new"},
 			}},
 		}},
-		ActivePane:          1,
+		ActivePane:          PaneBottom,
 		FlowSelected:        0,
 		ExpandedFlowID:      "flow-1",
 		SelectedFlowPhaseID: "implementation",
@@ -1970,7 +1970,7 @@ func TestRender_FlowsModeShowsExpandedPhaseRowsWithFullPhaseIDs(t *testing.T) {
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 2},
 			},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2011,7 +2011,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowSessionSummary(t *testing.T) {
 				},
 			}},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2047,7 +2047,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowMissingSessionID(t *testing.T) {
 				},
 			}},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2086,7 +2086,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedSessionRecovery(t *testing.T)
 				},
 			}},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2120,7 +2120,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowEndedLatestSessionWithOlderLiveSes
 				},
 			}},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2153,7 +2153,7 @@ func TestRender_FlowsModeExpandedPhaseRowsShowAwaitingLatestSessionWithOlderLive
 				},
 			}},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2182,7 +2182,7 @@ func TestRender_FlowsModeGroupsChildImplementationPhasesUnderParent(t *testing.T
 				{PhaseID: "implementation-api", ParentPhaseID: "implementation", Title: "API integration", Status: flowstore.PhaseReady, Order: 10},
 			},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "flow-1",
 	})
@@ -2240,7 +2240,7 @@ func TestRender_FlowsModeShowsUpdatedPhaseDrivenStates(t *testing.T) {
 				},
 			},
 		},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 
@@ -2282,7 +2282,7 @@ func TestRender_FlowsModeShowsMergedFlowsAsInspectableRows(t *testing.T) {
 				{PhaseID: "merge", Title: "Merge", Status: flowstore.PhaseCompleted, Outcome: "merged"},
 			},
 		}},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: "merged-flow",
 	})
@@ -2313,7 +2313,7 @@ func TestRender_FlowsModeShowsPlanReviewGateState(t *testing.T) {
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhasePending},
 			},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 		FlowHeadless: true,
 	})
@@ -2351,7 +2351,7 @@ func TestRender_FlowsModeShowsAutoreviewMissingPRMetadata(t *testing.T) {
 				{PhaseID: "autoreview", Title: "Autoreview", Status: flowstore.PhasePending},
 			},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 
@@ -2379,7 +2379,7 @@ func TestRender_FlowsModeShowsAutoreviewKindMissingPRMetadata(t *testing.T) {
 				{PhaseID: "second-review", Kind: flowstore.KindAutoreview, Title: "Second Review", Status: flowstore.PhasePending},
 			},
 		}},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 
@@ -2451,7 +2451,7 @@ func TestRender_FlowsModeShowsRecoveryWarnings(t *testing.T) {
 				},
 			},
 		},
-		ActivePane: 1,
+		ActivePane: PaneBottom,
 	})
 
 	for _, want := range []string{"plan:recover-worktree", "implementation:await-session", "review-loop:session-mismatch", "implementation:ended-session"} {
@@ -2515,7 +2515,7 @@ func TestRender_FlowRecoveryWarningsFlagLatestRelaunchWithoutSession(t *testing.
 		Height:       10,
 		Mode:         ModeFlows,
 		Flows:        []flowstore.FlowRecord{record},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 	if !strings.Contains(view, "implementation:await-session") {
@@ -2544,7 +2544,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		Height:         12,
 		Mode:           ModeFlows,
 		Flows:          []flowstore.FlowRecord{flow},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: flow.FlowID,
 	})
@@ -2566,7 +2566,7 @@ func TestRender_FlowRecoveryWarningsPreservePhaseSpecificStates(t *testing.T) {
 		Height:         12,
 		Mode:           ModeFlows,
 		Flows:          []flowstore.FlowRecord{flow},
-		ActivePane:     1,
+		ActivePane:     PaneBottom,
 		FlowSelected:   0,
 		ExpandedFlowID: flow.FlowID,
 	})
@@ -2603,7 +2603,7 @@ func TestFlowRecoveryLabelsDoNotFlagHealthySessionOrBranchOnlyRecord(t *testing.
 		Height:       10,
 		Mode:         ModeFlows,
 		Flows:        []flowstore.FlowRecord{record},
-		ActivePane:   1,
+		ActivePane:   PaneBottom,
 		FlowSelected: 0,
 	})
 	if !strings.Contains(view, "review-loop:needs_attention") {

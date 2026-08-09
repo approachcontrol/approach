@@ -35,15 +35,6 @@ func (m Model) lastBeadsSubview() ui.Mode {
 	return ui.ModeBeadsOpen
 }
 
-// rememberBeadsSubview records the active Beads subview so Beads re-entry is
-// sticky.
-func (m Model) rememberBeadsSubview() Model {
-	if ui.IsBeadsMode(m.mode) {
-		m.lastBeadsMode = m.mode
-	}
-	return m
-}
-
 // lastGitSubview is where entering the top-level Git view lands: the
 // last-used git subview, defaulting to worktrees on first-ever entry.
 func (m Model) lastGitSubview() ui.Mode {
@@ -51,14 +42,6 @@ func (m Model) lastGitSubview() ui.Mode {
 		return m.lastGitMode
 	}
 	return ui.ModeWorktrees
-}
-
-// rememberGitSubview records the active git subview so Git re-entry is sticky.
-func (m Model) rememberGitSubview() Model {
-	if ui.IsGitMode(m.mode) {
-		m.lastGitMode = m.mode
-	}
-	return m
 }
 
 // gitSubviewForLetter maps the Git view's direct subview keys to their modes.
@@ -82,19 +65,19 @@ func gitSubviewForLetter(key string) (ui.Mode, bool) {
 // keys. The letters only apply while a git subview is already active, so the
 // same keys keep their meanings in the other top-level views.
 func (m Model) handleGitSubviewKey(key string) (Model, tea.Cmd, bool) {
-	if !ui.IsGitMode(m.mode) {
+	currentMode := m.focusedMode()
+	if !ui.IsGitMode(currentMode) {
 		return m, nil, false
 	}
 	target, ok := gitSubviewForLetter(key)
 	if !ok {
 		return m, nil, false
 	}
-	if m.mode == target {
+	if currentMode == target {
 		return m, nil, true
 	}
-	previousMode := m.mode
-	m.mode = target
-	m = m.rememberGitSubview()
+	previousMode := currentMode
+	m, _ = m.selectStoredMode(target)
 	m = m.resetModeCursorsForSwitch(previousMode, target)
 	next, cmd := m.startFetchMode(target)
 	return next, cmd, true
@@ -118,19 +101,19 @@ func beadsSubviewForLetter(key string) (ui.Mode, bool) {
 }
 
 func (m Model) handleBeadsSubviewKey(key string) (Model, tea.Cmd, bool) {
-	if !ui.IsBeadsMode(m.mode) {
+	currentMode := m.focusedMode()
+	if !ui.IsBeadsMode(currentMode) {
 		return m, nil, false
 	}
 	target, ok := beadsSubviewForLetter(key)
 	if !ok {
 		return m, nil, false
 	}
-	if m.mode == target {
+	if currentMode == target {
 		return m, nil, true
 	}
-	previousMode := m.mode
-	m.mode = target
-	m = m.rememberBeadsSubview()
+	previousMode := currentMode
+	m, _ = m.selectStoredMode(target)
 	m = m.resetModeCursorsForSwitch(previousMode, target)
 	next, cmd := m.startFetchMode(target)
 	return next, cmd, true

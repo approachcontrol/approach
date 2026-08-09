@@ -9,18 +9,52 @@ import (
 )
 
 func (m Model) activeFlowSurfaceVisible() bool {
-	return m.mode == ui.ModeActiveFlows
+	return m.activeFlowSurface
+}
+
+func (m Model) focusedMode() ui.Mode {
+	if m.activeFlowSurfaceVisible() {
+		return ui.ModeActiveFlows
+	}
+	if m.contentPane == ui.PaneBottom {
+		return m.bottomMode
+	}
+	return m.topMode
 }
 
 func (m Model) flowSurfaceVisible() bool {
-	return m.mode == ui.ModeFlows || m.activeFlowSurfaceVisible()
+	return m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible()
 }
 
 func (m Model) activeContentFetchMode() ui.Mode {
 	if m.activeFlowSurfaceVisible() {
 		return ui.ModeActiveFlows
 	}
-	return m.mode
+	return m.focusedMode()
+}
+
+// selectStoredMode updates the canonical mode owner and moves content focus to
+// that owner. Active Flows is intentionally rejected because it is a takeover,
+// not a stored pane mode.
+func (m Model) selectStoredMode(mode ui.Mode) (Model, bool) {
+	pane, ok := ui.PaneForMode(mode)
+	if !ok {
+		return m, false
+	}
+	if pane == ui.PaneTop {
+		m.topMode = mode
+	} else {
+		m.bottomMode = mode
+	}
+	m.activePane = pane
+	m.contentPane = pane
+	if ui.IsGitMode(mode) {
+		m.lastGitMode = mode
+	}
+	if ui.IsBeadsMode(mode) {
+		m.lastBeadsMode = mode
+	}
+	return m, true
 }
 
 func (m Model) syncActiveFlowsFromCache() Model {
@@ -38,7 +72,7 @@ func (m Model) syncActiveFlowsFromCache() Model {
 }
 
 func (m Model) visibleActiveFlowRecords() []flowstore.FlowRecord {
-	if m.activeFlowSurfaceVisible() && m.activePane == 0 {
+	if m.activeFlowSurfaceVisible() && m.activePane == ui.PaneRepos {
 		repoPath, ok := m.currentRepoPath()
 		if !ok {
 			return nil
@@ -208,21 +242,16 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	if !ok {
 		return m, nil, true
 	}
-	if m.mode == mode || (ui.IsGitMode(mode) && ui.IsGitMode(m.mode)) ||
-		(ui.IsBeadsMode(mode) && ui.IsBeadsMode(m.mode)) {
+	currentMode := m.focusedMode()
+	if currentMode == mode || (ui.IsGitMode(mode) && ui.IsGitMode(currentMode)) ||
+		(ui.IsBeadsMode(mode) && ui.IsBeadsMode(currentMode)) {
 		return m, nil, true
 	}
-	previousMode := m.mode
-	m.mode = mode
-	m = m.rememberGitSubview()
-	m = m.rememberBeadsSubview()
-	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
-	if m.mode == ui.ModeFlows {
+	previousMode := currentMode
+	m, _ = m.selectStoredMode(mode)
+	m = m.resetModeCursorsForSwitch(previousMode, mode)
+	if mode == ui.ModeFlows {
 		next, cmd := m.startFlowsModeFetchWithRefreshTick()
-		return next, cmd, true
-	}
-	if m.mode == ui.ModeActiveFlows {
-		next, cmd := m.startActiveFlowsFetchWithRefreshTick()
 		return next, cmd, true
 	}
 	next, cmd := m.startFetchMode(mode)
@@ -230,28 +259,18 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 }
 
 func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
-	if m.mode != ui.ModeActiveFlows {
-		previousMode := m.mode
-		m.activeFlowsReturnMode = previousMode
-		m.mode = ui.ModeActiveFlows
-		m = m.rememberGitSubview()
-		m = m.rememberBeadsSubview()
-		m = m.resetModeCursorsForSwitch(previousMode, m.mode)
+	if !m.activeFlowSurfaceVisible() {
+		previousMode := m.focusedMode()
+		m.activeFlowSurface = true
+		m = m.resetModeCursorsForSwitch(previousMode, ui.ModeActiveFlows)
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
 
-	returnMode := m.activeFlowsReturnMode
-	if returnMode == 0 || returnMode == ui.ModeActiveFlows {
-		returnMode = ui.ModeFlows
-	}
-	previousMode := m.mode
-	m.mode = returnMode
-	m.activeFlowsReturnMode = 0
-	m = m.rememberGitSubview()
-	m = m.rememberBeadsSubview()
-	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
-	if m.mode == ui.ModeFlows {
+	m.activeFlowSurface = false
+	returnMode := m.focusedMode()
+	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
+	if returnMode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()
 	}
-	return m.startFetchMode(m.mode)
+	return m.startFetchMode(returnMode)
 }

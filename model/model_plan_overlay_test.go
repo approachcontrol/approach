@@ -463,7 +463,7 @@ func TestModel_BackspaceAwayFromPlansAndTabBackKeepsSelectedPhaseCleared(t *test
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	if got := m.ActivePane(); got != 0 {
+	if got := m.ActivePane(); got != ui.PaneRepos {
 		t.Fatalf("backspace should move focus to repo pane, got active pane %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {
@@ -474,7 +474,7 @@ func TestModel_BackspaceAwayFromPlansAndTabBackKeepsSelectedPhaseCleared(t *test
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if got := m.ActivePane(); got != 1 {
+	if got := m.ActivePane(); got != ui.PaneBottom {
 		t.Fatalf("tab should return focus to plans pane, got active pane %d", got)
 	}
 	if got := m.SelectedPlanPhaseID(); got != "" {

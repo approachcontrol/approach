@@ -657,6 +657,23 @@ func TestModel_BootstrapFailureRefreshesWorktreesAndShowsStatus(t *testing.T) {
 	}
 }
 
+func TestModel_BootstrapFailureExitsActiveFlows(t *testing.T) {
+	m := inWorktreesMode(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("mode before bootstrap failure = %d, want active flows", m.Mode())
+	}
+
+	m, _ = update(m, model.WorktreeBootstrapFailedMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		Err:          "setup failed",
+	})
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode after bootstrap failure = %d, want worktrees", m.Mode())
+	}
+}
+
 func TestModel_StaleBootstrapFailureIsIgnored(t *testing.T) {
 	m := model.New(testRepos())
 	m, cmd := update(m, model.WorktreeBootstrapFailedMsg{

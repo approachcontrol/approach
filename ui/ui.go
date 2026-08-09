@@ -153,6 +153,32 @@ func IsBeadsMode(mode Mode) bool {
 	return mode >= ModeBeadsReady && mode <= ModeBeadsClosed
 }
 
+// Pane identifies the logical focus owner. The renderer still draws a single
+// content pane; PaneTop and PaneBottom preserve which stored mode owns it for
+// the later stacked-pane layout.
+type Pane int
+
+const (
+	PaneRepos Pane = iota
+	PaneTop
+	PaneBottom
+)
+
+// PaneForMode reports which stored content pane owns mode. Active Flows is a
+// full-surface takeover rather than a stored pane mode, and repositories own
+// no mode, so neither has an ownership mapping.
+func PaneForMode(mode Mode) (Pane, bool) {
+	if IsGitMode(mode) || IsBeadsMode(mode) {
+		return PaneTop, true
+	}
+	switch mode {
+	case ModeSessions, ModePlans, ModeFlows:
+		return PaneBottom, true
+	default:
+		return PaneRepos, false
+	}
+}
+
 const LeftPaneWidth = 30
 
 // CollapsedRepoPaneWidth is the total width of the collapsed repos strip,
@@ -297,7 +323,7 @@ type RenderParams struct {
 	BranchScroll                 int
 	RepoScroll                   int
 	StashScroll                  int
-	ActivePane                   int
+	ActivePane                   Pane
 	RepoPaneCollapsed            bool
 	Destructive                  bool
 	Worktrees                    []gitquery.Worktree
@@ -658,10 +684,10 @@ func renderApplication(p RenderParams) string {
 	rightBorderColor := inactiveBorderColor
 	if p.Destructive {
 		rightBorderColor = destructiveBorderColor
-	} else if p.ActivePane == 1 && !p.EmbeddedTerminalFocused {
+	} else if p.ActivePane != PaneRepos && !p.EmbeddedTerminalFocused {
 		rightBorderColor = activeBorderColor
 	}
-	if p.ActivePane == 0 && !p.RepoPaneCollapsed {
+	if p.ActivePane == PaneRepos && !p.RepoPaneCollapsed {
 		leftBorderColor = activeBorderColor
 	}
 
@@ -706,7 +732,7 @@ func renderApplication(p RenderParams) string {
 	planSel := p.PlanSelected
 	flowSel := p.FlowSelected
 	beadSel := p.BeadsOpenSelected
-	if p.ActivePane == 0 {
+	if p.ActivePane == PaneRepos {
 		branchSel = -1
 		stashSel = -1
 		commitSel = -1
@@ -969,9 +995,10 @@ func activeHeaderItemFirst(items []modeHeaderItem) []modeHeaderItem {
 }
 
 // RenderStatusBar produces the bottom status bar (hints only, no mode tabs).
-func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int, destructive, staleSelected, dirtySelected bool) string {
-	fetchAvailable := activePane == 1 && (mode == ModeWorktrees || mode == ModeBranches)
-	pullAvailable := activePane == 1 && mode == ModeWorktrees
+func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane Pane, destructive, staleSelected, dirtySelected bool) string {
+	contentFocused := activePane != PaneRepos
+	fetchAvailable := contentFocused && (mode == ModeWorktrees || mode == ModeBranches)
+	pullAvailable := contentFocused && mode == ModeWorktrees
 	newAgentAvailable := false
 	if mode == ModeWorktrees && staleSelected {
 		fetchAvailable = false
@@ -987,13 +1014,13 @@ func RenderStatusBar(width int, mode Mode, overlay OverlayState, activePane int,
 		WorktreeSelected:          mode == ModeWorktrees,
 		StaleSelected:             staleSelected,
 		DirtySelected:             dirtySelected,
-		WorktreeDeletableSelected: activePane == 1 && mode == ModeWorktrees && !staleSelected,
-		WorktreeOpenableSelected:  activePane == 1 && mode == ModeWorktrees && !staleSelected,
-		BranchDeletableSelected:   activePane == 1 && mode == ModeBranches,
-		BranchOpenableSelected:    activePane == 1 && mode == ModeBranches,
-		StashSelected:             activePane == 1 && mode == ModeStashes,
-		CommitSelected:            activePane == 1 && mode == ModeHistory,
-		ReflogSelected:            activePane == 1 && mode == ModeReflog,
+		WorktreeDeletableSelected: contentFocused && mode == ModeWorktrees && !staleSelected,
+		WorktreeOpenableSelected:  contentFocused && mode == ModeWorktrees && !staleSelected,
+		BranchDeletableSelected:   contentFocused && mode == ModeBranches,
+		BranchOpenableSelected:    contentFocused && mode == ModeBranches,
+		StashSelected:             contentFocused && mode == ModeStashes,
+		CommitSelected:            contentFocused && mode == ModeHistory,
+		ReflogSelected:            contentFocused && mode == ModeReflog,
 		FetchAvailable:            fetchAvailable,
 		PullAvailable:             pullAvailable,
 		NewAgent:                  newAgentAvailable,
@@ -1011,7 +1038,7 @@ type statusBarParams struct {
 	FormHasMultiline             bool
 	WorktreeInputPrompt          string
 	SelectPrompt                 string
-	ActivePane                   int
+	ActivePane                   Pane
 	RepoPaneCollapsed            bool
 	Destructive                  bool
 	RepoSelected                 bool
@@ -1109,7 +1136,7 @@ func renderFooterStatusBar(sp statusBarParams, includeHints bool) string {
 		return renderStatusBarWithState(sp)
 	}
 	query := sp.ItemSearch
-	if sp.ActivePane == 0 {
+	if sp.ActivePane == PaneRepos {
 		query = sp.RepoSearch
 	}
 	if sp.TransientError != "" || sp.SearchActive || query != "" {
@@ -1138,7 +1165,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 
 	label := "items"
 	query := itemSearch
-	if activePane == 0 {
+	if activePane == PaneRepos {
 		label = "repos"
 		query = repoSearch
 	}
@@ -1342,10 +1369,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	navigation := []shortcutHint{
 		{Key: "↑/↓", Label: "select", Inline: true},
 	}
-	if sp.ActivePane == 0 && sp.RepoSelected {
+	if sp.ActivePane == PaneRepos && sp.RepoSelected {
 		navigation = append(navigation, shortcutHint{Key: "enter", Label: "pane", Inline: true})
 	}
-	if sp.ActivePane == 1 {
+	if sp.ActivePane != PaneRepos {
 		if sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
 			navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 		}
@@ -1380,10 +1407,10 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 
 	var actions []shortcutHint
-	if sp.ActivePane == 0 && sp.FetchVisibleAvailable {
+	if sp.ActivePane == PaneRepos && sp.FetchVisibleAvailable {
 		actions = append(actions, shortcutHint{Key: "f", Label: "fetch visible"})
 	}
-	if sp.ActivePane == 0 && sp.RepoCreateAvailable {
+	if sp.ActivePane == PaneRepos && sp.RepoCreateAvailable {
 		actions = append(actions, shortcutHint{Key: "n", Label: "new repo"})
 	}
 	if sp.Mode == ModeBeadsReady && sp.ReadyBeadFlowCreateAvailable {
@@ -1394,7 +1421,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	}
 	switch sp.Mode {
 	case ModeWorktrees:
-		if sp.ActivePane == 1 && sp.RepoSelected && !sp.StaleSelected {
+		if sp.ActivePane != PaneRepos && sp.RepoSelected && !sp.StaleSelected {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new worktree"})
 			if sp.NewAgent {
 				actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
@@ -1430,17 +1457,17 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 				}
 			}
 		}
-		if sp.ActivePane == 1 && sp.RepoSelected && sp.StaleSelected && sp.NewAgent {
+		if sp.ActivePane != PaneRepos && sp.RepoSelected && sp.StaleSelected && sp.NewAgent {
 			actions = append(actions, shortcutHint{Key: "N", Label: "new+agent"})
 		}
-		if sp.ActivePane == 1 && sp.StaleSelected && sp.Destructive && sp.WorktreeSelected && !sp.LockedSelected {
+		if sp.ActivePane != PaneRepos && sp.StaleSelected && sp.Destructive && sp.WorktreeSelected && !sp.LockedSelected {
 			actions = append(actions, shortcutHint{Key: "p", Label: "prune", Warning: true})
 		}
-		if sp.ActivePane == 1 && sp.WorktreeSelected && sp.LockedSelected {
+		if sp.ActivePane != PaneRepos && sp.WorktreeSelected && sp.LockedSelected {
 			actions = append(actions, shortcutHint{Key: "u", Label: "unlock"})
 		}
 	case ModeBranches:
-		if sp.ActivePane == 1 {
+		if sp.ActivePane != PaneRepos {
 			if sp.RepoSelected {
 				actions = append(actions, shortcutHint{Key: "n", Label: "new branch"})
 			}
@@ -1467,14 +1494,14 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 		}
 	case ModeStashes:
-		if sp.ActivePane == 1 && sp.StashSelected {
+		if sp.ActivePane != PaneRepos && sp.StashSelected {
 			actions = append(actions, shortcutHint{Key: "enter", Label: "diff"})
 			if sp.Destructive {
 				actions = append(actions, shortcutHint{Key: "d", Label: "drop", Warning: true})
 			}
 		}
 	case ModeHistory:
-		if sp.ActivePane == 1 {
+		if sp.ActivePane != PaneRepos {
 			if sp.CommitSelected {
 				actions = append(actions,
 					shortcutHint{Key: "enter", Label: "diff"},
@@ -1489,14 +1516,14 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			}
 		}
 	case ModeReflog:
-		if sp.ActivePane == 1 && sp.ReflogSelected {
+		if sp.ActivePane != PaneRepos && sp.ReflogSelected {
 			actions = append(actions,
 				shortcutHint{Key: "enter", Label: "diff"},
 				shortcutHint{Key: "y", Label: "copy hash"},
 			)
 		}
 	case ModeSessions:
-		if sp.ActivePane == 1 && sp.SessionSelected {
+		if sp.ActivePane != PaneRepos && sp.SessionSelected {
 			actions = append(actions,
 				shortcutHint{Key: "o", Label: "transcript"},
 				shortcutHint{Key: "r", Label: "resume"},
@@ -1505,7 +1532,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			)
 		}
 	case ModePlans:
-		if sp.ActivePane == 1 && sp.PlanSelected {
+		if sp.ActivePane != PaneRepos && sp.PlanSelected {
 			implementLabel := "implement"
 			if sp.PlanPhaseSelected {
 				implementLabel = "implement phase"
@@ -1519,7 +1546,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 			)
 		}
 	}
-	if sp.ActivePane == 1 && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches && !sp.ActiveFlows {
+	if sp.ActivePane != PaneRepos && sp.Mode != ModeWorktrees && sp.Mode != ModeBranches && !sp.ActiveFlows {
 		if sp.FetchAvailable {
 			actions = append(actions, shortcutHint{Key: "f", Label: "fetch"})
 		}
@@ -1561,7 +1588,7 @@ func flowAutoModeShortcutHint(enabled bool) shortcutHint {
 func flowShortcutSections(sp statusBarParams, actions, navigation, global []shortcutHint) []shortcutSection {
 	var flowModeControls []shortcutHint
 	var flowAgentControls []shortcutHint
-	if sp.ActivePane == 1 && sp.RepoSelected {
+	if sp.ActivePane != PaneRepos && sp.RepoSelected {
 		if !sp.ActiveFlows {
 			actions = append(actions, shortcutHint{Key: "n", Label: "new flow"})
 		}
@@ -1771,7 +1798,7 @@ func renderFooterShortcuts(sp statusBarParams, sections []shortcutSection) strin
 }
 
 func paneShortcutKeyForStatus(sp statusBarParams) string {
-	if sp.ActivePane == 0 {
+	if sp.ActivePane == PaneRepos {
 		return paneShortcutKey
 	}
 	return paneBackShortcutKey

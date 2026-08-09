@@ -887,7 +887,9 @@ func TestModel_AutoAdvanceTickDoesNotOverlapInFlightFetch(t *testing.T) {
 			return nil, nil
 		},
 	})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 
 	m, cmd := updateFlowRefreshTest(m, autoAdvanceTickMsg{})
 	if cmd == nil {
@@ -913,7 +915,9 @@ func TestModel_AutoAdvanceStaleResultDoesNotSpawnDuplicateTickChain(t *testing.T
 			return nil, nil
 		},
 	})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 	m, _ = updateFlowRefreshTest(m, autoAdvanceTickMsg{})
 	inFlight := m.autoAdvanceInFlight
 
@@ -934,7 +938,9 @@ func TestModel_AutoAdvanceTickRunsOffTheFlowSurface(t *testing.T) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
 	})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 
 	var tick tea.Msg
 	for _, msg := range collectMsgsFromCmd(t, m.Init()) {
@@ -997,7 +1003,9 @@ func TestModel_AutoAdvanceLaunchesOffViewForUnscopedFlowCompletion(t *testing.T)
 			return current, nil
 		},
 	})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 
 	m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{current})
@@ -1063,7 +1071,9 @@ func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.
 		"implementation": flowstore.PhaseReady,
 	})
 	m := NewWithOptions(flowRefreshTestRepos(), Options{})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 	m.status = statusError{Source: statusOther, Text: "keep this"}
 
@@ -1146,7 +1156,9 @@ func TestModel_AutoAdvancePreflightFailurePreservesCompletionEdge(t *testing.T) 
 
 func TestModel_AutoAdvanceActionFailureSetsStatusOffRepo(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 
 	m, cmd := updateFlowRefreshTest(m, ActionFailedMsg{
 		RepoPath:                "/dev/bravo",
@@ -1552,7 +1564,9 @@ func TestModel_AutoAdvanceDeferredLaunchResolvesFromPrivateSnapshotOffView(t *te
 			return current, nil
 		},
 	})
-	m.mode = ui.ModeWorktrees
+	m.topMode = ui.ModeWorktrees
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = false
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{previous}
 	m.embeddedTerminals = []embeddedTerminalSlot{{
 		Scope:       embeddedTerminalScopeFlow,

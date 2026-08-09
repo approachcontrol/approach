@@ -114,7 +114,7 @@ func TestRender_ShortcutRailListsGitSubviewKeys(t *testing.T) {
 		Width:      140,
 		Height:     20,
 		Mode:       ModeHistory,
-		ActivePane: 1,
+		ActivePane: PaneTop,
 	}
 	view := Render(params)
 	if !strings.Contains(view, "w/b/s/h/r") || !strings.Contains(view, "subview") {
