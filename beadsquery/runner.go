@@ -66,7 +66,10 @@ func (r execRunner) Run(dir string, args ...string) (string, error) {
 	commandArgs = append(commandArgs, args...)
 	cmd := exec.Command("bd", commandArgs...)
 	cmd.Dir = absDir
-	cmd.Env = withoutBeadsDatabaseSelectors(os.Environ())
+	cmd.Env, err = isolatedBeadsEnvironment(os.Environ())
+	if err != nil {
+		return "", err
+	}
 	limit := r.maxOutputBytes
 	if limit <= 0 {
 		limit = defaultBDOutputLimit
@@ -108,11 +111,11 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func withoutBeadsDatabaseSelectors(env []string) []string {
+func isolatedBeadsEnvironment(env []string) ([]string, error) {
 	filtered := make([]string, 0, len(env))
 	for _, entry := range env {
-		name, _, _ := strings.Cut(entry, "=")
-		name = strings.ToUpper(name)
+		originalName, value, _ := strings.Cut(entry, "=")
+		name := strings.ToUpper(originalName)
 		if strings.HasPrefix(name, "BEADS_") || strings.HasPrefix(name, "BD_") {
 			switch name {
 			case "BD_JSON_ENVELOPE",
@@ -121,6 +124,7 @@ func withoutBeadsDatabaseSelectors(env []string) []string {
 				"BD_OTEL_LOGS_URL",
 				"BD_OTEL_METRICS_URL",
 				"BD_OTEL_STDOUT",
+				"BEADS_CREDENTIALS_FILE",
 				"BEADS_DOLT_PASSWORD",
 				"BEADS_DOLT_SERVER_TLS",
 				"BEADS_DOLT_SERVER_USER":
@@ -129,7 +133,14 @@ func withoutBeadsDatabaseSelectors(env []string) []string {
 				continue
 			}
 		}
+		if name == "BEADS_CREDENTIALS_FILE" && value != "" && !filepath.IsAbs(value) {
+			absValue, err := filepath.Abs(value)
+			if err != nil {
+				return nil, fmt.Errorf("resolving BEADS_CREDENTIALS_FILE: %w", err)
+			}
+			entry = originalName + "=" + absValue
+		}
 		filtered = append(filtered, entry)
 	}
-	return filtered
+	return filtered, nil
 }

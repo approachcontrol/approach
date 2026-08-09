@@ -113,7 +113,9 @@ func TestExecRunnerRejectsOversizedOutput(t *testing.T) {
 	}
 }
 
-func TestWithoutBeadsDatabaseSelectorsRemovesTargetOverrides(t *testing.T) {
+func TestIsolatedBeadsEnvironmentRemovesTargetOverrides(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
 	targetOverrides := []string{
 		"BEADS_DIR=/other/.beads",
 		"BEADS_DB=/other/beads.db",
@@ -138,20 +140,25 @@ func TestWithoutBeadsDatabaseSelectorsRemovesTargetOverrides(t *testing.T) {
 	env := append(targetOverrides,
 		"BD_JSON_ENVELOPE=1",
 		"BD_DISABLE_METRICS=1",
+		"BEADS_CREDENTIALS_FILE=credentials.json",
 		"BEADS_DOLT_PASSWORD=secret",
 		"BEADS_DOLT_SERVER_TLS=1",
 		"BEADS_DOLT_SERVER_USER=reader",
 	)
 
-	got := withoutBeadsDatabaseSelectors(env)
+	got, err := isolatedBeadsEnvironment(env)
+	if err != nil {
+		t.Fatalf("isolatedBeadsEnvironment() error = %v", err)
+	}
 	want := []string{
 		"BD_JSON_ENVELOPE=1",
 		"BD_DISABLE_METRICS=1",
+		"BEADS_CREDENTIALS_FILE=" + filepath.Join(root, "credentials.json"),
 		"BEADS_DOLT_PASSWORD=secret",
 		"BEADS_DOLT_SERVER_TLS=1",
 		"BEADS_DOLT_SERVER_USER=reader",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("withoutBeadsDatabaseSelectors() = %#v, want %#v", got, want)
+		t.Fatalf("isolatedBeadsEnvironment() = %#v, want %#v", got, want)
 	}
 }
