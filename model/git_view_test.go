@@ -271,7 +271,7 @@ func TestGitSubview_ArrowsCycleSubviewsWithWrap(t *testing.T) {
 	}
 }
 
-func TestTopLevelArrows_CycleTopLevelViewsWithWrap(t *testing.T) {
+func TestTopLevelArrows_CycleTopLevelViewsThroughBeads(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, '2') // sessions
 
@@ -282,8 +282,8 @@ func TestTopLevelArrows_CycleTopLevelViewsWithWrap(t *testing.T) {
 
 	m = pressKey(m, '4') // flows
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("right from flows mode = %d, want wrap to Git (worktrees)", m.Mode())
+	if m.Mode() != ui.ModeBeadsOpen {
+		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
 	}
 }
 
@@ -364,14 +364,14 @@ func TestRetiredKeys_HLInertInSessionsAndPlans(t *testing.T) {
 	}
 }
 
-func TestRetiredKeys_LInFlowsAliasesRightArrowToGit(t *testing.T) {
+func TestRetiredKeys_LInFlowsAliasesRightArrowToBeads(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, '4') // flows
 
 	m = pressKey(m, 'l')
 
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("l in flows mode = %d, want wrap to ModeWorktrees (right alias)", m.Mode())
+	if m.Mode() != ui.ModeBeadsOpen {
+		t.Fatalf("l in flows mode = %d, want ModeBeadsOpen (right alias)", m.Mode())
 	}
 }
 

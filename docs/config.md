@@ -148,12 +148,13 @@ Stores user-interface preferences.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens the Git view, `2`–`4` open sessions/plans/flows outside Active Flows, keyboard `5` opens Beads at Open, `ctrl+a` toggles active flows, `6`–`9` are unbound, `w`/`b`/`s`/`h`/`r` pick Git subviews, and `r`/`b`/`o`/`i`/`c` pick Beads subviews only while Beads is active). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default; Beads does not add a startup number in this slice. |
+| `default_view` | integer | Optional startup view number. Valid values are `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, and `9` active flows. This vocabulary is frozen for compatibility and deliberately differs from the grouped keyboard keys (keyboard `1` opens Git at its last-used subview, `2`–`4` open sessions/plans/flows outside Active Flows, keyboard `5` opens Beads at its last-used subview with Open as the first-entry default, `ctrl+a` toggles active flows, `6`–`9` are unbound, `w`/`b`/`s`/`h`/`r` pick Git subviews, and `r`/`b`/`o`/`i`/`c` pick Beads subviews only while Beads is active). A git value (`1`–`5`) boots into that subview and seeds the Git view's sticky subview. Omitted keeps the built-in Flows startup default; Beads does not add a startup number in this slice. |
 
 Press `V` in Approach to choose and persist this value from a picker. The picker
 changes future launches only; use the keyboard keys `1`–`5`, `ctrl+a`, the
-scoped Git or Beads subview letters, or arrows among their existing non-Beads
-stops to switch the current view.
+scoped Git or Beads subview letters, or arrows within either group and among
+the top-level Git, sessions, plans, flows, and Beads stops to switch the current
+view.
 
 ### `[editor]`
 

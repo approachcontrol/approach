@@ -1249,7 +1249,7 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 		navigation = append(navigation, shortcutHint{Key: "enter", Label: "pane", Inline: true})
 	}
 	if sp.ActivePane == 1 {
-		if sp.Mode != ModeActiveFlows && !IsBeadsMode(sp.Mode) && !sp.ActiveFlows {
+		if sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
 			navigation = append(navigation, shortcutHint{Key: "←/→", Label: "view", Inline: true})
 		}
 		if IsGitMode(sp.Mode) {
@@ -1720,9 +1720,9 @@ func renderWorktreeFooterShortcuts(sp statusBarParams, sections []shortcutSectio
 }
 
 func renderGenericFooterShortcuts(sp statusBarParams, sections []shortcutSection) string {
-	// The git subview hint is rail-only; the space-constrained footer keeps
-	// its established hint set.
-	sections = withoutShortcutKeys(sections, "w/b/s/h/r")
+	// Group subview hints are rail-only; the space-constrained footer keeps its
+	// established hint set.
+	sections = withoutShortcutKeys(sections, "w/b/s/h/r", "r/b/o/i/c")
 	paneKey := paneShortcutKeyForStatus(sp)
 	for _, drop := range [][]string{
 		{},

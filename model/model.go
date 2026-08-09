@@ -41,6 +41,7 @@ type Model struct {
 	height                    int
 	mode                      ui.Mode
 	lastGitMode               ui.Mode
+	lastBeadsMode             ui.Mode
 	rows                      pane.Pane[gitquery.BranchRow]
 	stashes                   pane.Pane[gitquery.Stash]
 	worktrees                 pane.Pane[gitquery.Worktree]

@@ -72,9 +72,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "/" {
-		if m.activePane == 1 && ui.IsBeadsMode(m.mode) {
-			return m, nil
-		}
 		m = m.setSearchActive(true)
 		return m, nil
 	}
@@ -594,6 +591,7 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	previousMode := m.mode
 	m.mode = nextMode
 	m = m.rememberGitSubview()
+	m = m.rememberBeadsSubview()
 	m = m.resetModeCursorsForSwitch(previousMode, m.mode)
 	if m.mode == ui.ModeFlows {
 		return m.startFlowsModeFetchWithRefreshTick()
@@ -605,9 +603,9 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 }
 
 // modeAfterHorizontalNavigation steps the view for a left/right arrow press.
-// Inside the Git view the arrows cycle the five git subviews with wrap and
-// never spill into another top-level view; elsewhere they cycle the four
-// arrow-reachable top-level views with wrap, entering Git at its last-used
+// Inside the Git and Beads views the arrows cycle their five subviews with wrap
+// and never spill into another top-level view; elsewhere they step through the
+// five arrow-reachable top-level views, entering either group at its last-used
 // subview. Active Flows is intentionally outside this cycle.
 func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 	if ui.IsGitMode(m.mode) {
@@ -620,7 +618,17 @@ func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 		}
 		return next
 	}
-	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows}
+	if ui.IsBeadsMode(m.mode) {
+		next := m.mode + ui.Mode(direction)
+		if next < ui.ModeBeadsReady {
+			return ui.ModeBeadsClosed
+		}
+		if next > ui.ModeBeadsClosed {
+			return ui.ModeBeadsReady
+		}
+		return next
+	}
+	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows, m.lastBeadsSubview()}
 	for i, stop := range stops {
 		if stop == m.mode {
 			return stops[(i+direction+len(stops))%len(stops)]
@@ -2707,19 +2715,16 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resetModeCursors zeroes the cursor and scroll positions for the non-git
-// right-pane views without discarding loaded list data. The git subview
-// selections (worktrees, branches, stashes, history, reflog) are intentionally
-// preserved across view switches so users can inspect another view and return
-// to the same selected row; refetches clamp any stale index via SetItems.
+// resetModeCursors zeroes the cursor and scroll positions for the ungrouped
+// right-pane views without discarding loaded list data. Git and Beads subview
+// selections are intentionally preserved across view switches so users can
+// inspect another view and return to the same selected row; refetches clamp any
+// stale index via SetItems.
 func (m Model) resetModeCursors() Model {
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
 	m.activeFlows = m.activeFlows.ResetSelection()
-	for i := range m.beads {
-		m.beads[i].pane = m.beads[i].pane.ResetSelection()
-	}
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""

@@ -151,7 +151,6 @@ func beadsListFetchDescriptor(mode ui.Mode, paneName string) listFetchDescriptor
 		pane: paneName,
 		beforeStart: func(m Model) Model {
 			index, _ := beadSubviewIndex(mode)
-			m.beads[index].pane = m.beads[index].pane.SetItems(nil).ResetSelection()
 			m.beads[index].available = false
 			m.beads[index].pending = true
 			return m.reflowBeads(mode)

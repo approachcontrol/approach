@@ -31,9 +31,8 @@ visual warning.
 right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits
 it. Each filterable right-pane view keeps its own filter: filtering worktrees
 does not filter history, and returning to a view restores that view's previous
-query. In the current Beads slice, `/` in the focused content pane is a silent
-no-op in every Beads subview; repo filtering remains available from the left
-pane.
+query. Each Beads subview likewise keeps an independent filter over bead ID,
+title, and assignee; repo filtering remains available from the left pane.
 
 ## Key Reference
 
@@ -59,13 +58,13 @@ pane.
 |-----|--------|
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
-| `/` | Fuzzy filter the current item list; silent no-op in every Beads subview |
-| `1`/`2`/`3`/`4`/`5` | Switch to the Git view / sessions / plans / flows / Beads at Open outside Active Flows (`6`–`9` are unbound); `1` returns to the last-used git subview and is a no-op while already in the Git view |
+| `/` | Fuzzy filter the current item list, including the active Beads subview |
+| `1`/`2`/`3`/`4`/`5` | Switch to the Git view / sessions / plans / flows / Beads outside Active Flows (`6`–`9` are unbound); `1` and `5` return to their group's last-used subview and are no-ops while already inside that group; Beads defaults to Open before first use |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
-| `←`/`→` | Cycle git subviews with wrap inside the Git view (arrows never leave it); cycle Git, sessions, plans, and flows with wrap elsewhere, entering Git at its last-used subview. Active Flows is not in the arrow cycle. |
-| `l` | Alias for `→` in flows view; unbound elsewhere |
+| `←`/`→` | Cycle subviews with wrap inside either Git or Beads (arrows never leave a grouped view); elsewhere step through Git, sessions, plans, flows, and Beads, entering either group at its last-used subview. Active Flows is not in the arrow cycle. |
+| `l` | Alias for `→` in flows view, entering the last-used Beads subview; unbound elsewhere |
 | `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
@@ -115,7 +114,9 @@ default of Flows.
 While Beads is active, its second header row lists `r` ready, `b` blocked, `o`
 open, `i` in-progress, and `c` closed. The active top-level Beads entry and
 active subview are bracketed. This extra row comes out of the list viewport,
-so it does not increase the pane's outer height.
+so it does not increase the pane's outer height. Entering Beads lands on the
+last-used subview (Open before first use), arrows wrap within the five Beads
+subviews, and each subview keeps its own filter, cursor, and scroll position.
 
 ## Repo Pane Actions
 
@@ -296,10 +297,14 @@ plans. v1 has no TUI plan deletion.
 ## Beads View (`5`)
 
 With the content pane focused, press `5` to enter the selected repository's
-read-only Beads group at Open. While any Beads subview is active, press `r` for
-Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed.
-Pressing the already-active letter is a no-op. The five modes keep independent
-rows, cursor/scroll positions, availability, loading state, and request tokens.
+read-only Beads group at its last-used subview, defaulting to Open before first
+use. Pressing `5` while already in any Beads subview is a no-op. Press `r` for
+Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
+pressing the already-active letter is also a no-op. `←`/`→` step and wrap
+Ready ↔ Blocked ↔ Open ↔ In-Progress ↔ Closed without leaving the group. From
+Flows, `→` (or `l`) enters Beads at the remembered subview as the fifth
+top-level arrow stop. The five modes keep independent rows, filters,
+cursor/scroll positions, availability, loading state, and request tokens.
 
 The query sources and ordering are:
 
@@ -321,17 +326,22 @@ repository without a Beads database, or any command or JSON parsing failure
 shows exactly `beads not configured`; configured-versus-error classification
 remains deferred.
 
-Subview switches, repo-cursor changes, and `f5` start asynchronous queries.
+`/` filters only the active Beads pane by ID, title, and assignee. Subview
+switches and `f5` retain that pane's same-repo rows, query, cursor, and scroll
+internally while the loading UI hides old rows. An accepted replacement
+reapplies the filter and clamps selection and scroll for shorter, empty, or
+zero-match results. An unavailable result retains the query but clears that
+pane's rows and selection. Moving to another repo invalidates every Beads
+request, clears all old-repo rows and cursor/scroll positions, retains each
+subview's query, and starts only the active subview pending for the new repo.
 Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
 
-This slice intentionally keeps `5` as the direct Open entry rather than sticky
-Beads re-entry. Beads remains outside both horizontal-arrow cycles, `/` remains
-a silent content-pane no-op, and `enter` has no detail pager. The later Closed
-100-row cap/count, error classification, sticky/arrow/filter/pager parity, and
-`default_view` 10–14 additions remain deferred; keys `6`–`9` and the existing
-1–9 startup vocabulary are unchanged.
+`enter` still has no Beads detail pager. The later Closed 100-row cap/count,
+configured-versus-error classification, pager, and `default_view` 10–14
+additions remain deferred; keys `6`–`9` and the existing frozen 1–9 startup
+vocabulary are unchanged.
 
 ## Flows View (`4`)
 

@@ -53,11 +53,12 @@ Repos on the left, content on the right. The essentials:
 |-----|--------|
 | `↑`/`↓` or `k`/`j` | Move selection |
 | `enter`/`tab`, `bksp` | Focus the content pane / return to the repo pane |
-| `1`–`5` | Git view, sessions, plans, flows, Beads group at Open (`6`–`9` are unbound) |
+| `1`–`5` | Git view, sessions, plans, flows, Beads group at its last-used subview (Open on first entry); `6`–`9` are unbound |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |
+| `←`/`→` | Wrap within Git or Beads subviews; elsewhere step through Git, sessions, plans, flows, and Beads |
 | `ctrl+a` | Toggle Active Flows (all repos) |
-| `/` | Fuzzy filter the active pane (the Beads content pane is not filterable in this slice) |
+| `/` | Fuzzy filter the active pane |
 | `f5` | Rescan repositories and refresh the current view, including the active Beads subview |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent |
@@ -73,9 +74,13 @@ plans, Flows, embedded terminals, recovery states — is in
 ### Beads
 
 With the content pane focused, press `5` to enter the selected repository's
-read-only Beads group at Open. While Beads is active, `r`/`b`/`o`/`i`/`c`
-switch directly to Ready, Blocked, Open, In-Progress, and Closed; these letters
+read-only Beads group at its last-used subview, defaulting to Open on first
+entry. Pressing `5` again inside Beads is a no-op. While Beads is active,
+`r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
+Closed, and `←`/`→` step and wrap through those five subviews. The letters
 remain scoped to Beads, so Git and other views keep their existing meanings.
+From an ungrouped view, Beads is the fifth top-level arrow stop after Flows and
+opens at the remembered subview; arrows never spill out of either grouped view.
 
 Ready comes from `bd ready`; Blocked, Open, In-Progress, and Closed come from
 their respective `bd list -s ...` status queries. Ready, Blocked, Open, and
@@ -85,18 +90,22 @@ also appears in Open when its status is open; the subviews are independent and
 do not deduplicate across queries. Rows render as `<id>  P<n>  <title>`, with
 two spaces and the assignee appended when present.
 
-Switching subviews, moving the repo cursor, and pressing `f5` query
-asynchronously; request tokens prevent older repo, refresh, or subview results
-from replacing the active pane. Successful empty queries show `no ready beads`,
-`no blocked beads`, `no open beads`, `no in-progress beads`, or
-`no closed beads`. While a query is pending the corresponding message starts
-with `loading`; any unavailable or failed query still shows the shared
-`beads not configured` state in this slice.
+Each subview keeps independent rows, a fuzzy `/` filter over ID/title/assignee,
+and cursor/scroll state. Switching subviews and pressing `f5` query
+asynchronously while retaining that same-repo pane state internally; the UI
+shows only the subview's `loading` message until the accepted replacement
+arrives, then reapplies the filter and clamps selection and scroll to the new
+result. Moving to another repo invalidates all Beads requests, clears old-repo
+rows and selections, retains each subview's filter, and fetches only the active
+subview. Request tokens prevent older repo, refresh, or subview results from
+replacing the active pane.
 
-Beads remains outside horizontal-arrow cycling, `5` always targets Open, and
-the content pane has no filter or detail pager yet. Closed count/capping,
-configured-versus-error classification, sticky Beads re-entry, and
-`default_view` values beyond the existing 1–9 vocabulary remain deferred.
+Successful empty queries show `no ready beads`, `no blocked beads`, `no open
+beads`, `no in-progress beads`, or `no closed beads`; any unavailable or failed
+query still shows the shared `beads not configured` state in this slice. Beads
+has no detail pager yet. Closed count/capping, configured-versus-error
+classification, and `default_view` values beyond the existing frozen 1–9
+vocabulary remain deferred.
 
 ## Agents, Plans, and Flows
 
