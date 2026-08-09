@@ -57,6 +57,45 @@ func TestRender_FlowsModeShowsHeaderAndRows(t *testing.T) {
 	}
 }
 
+func TestRender_FlowTitleIsTerminalSafeSingleLine(t *testing.T) {
+	const unsafeTitle = "bd-1: \x1b]52;c;dGVzdA==\aUnsafe\nTitle"
+	for _, tt := range []struct {
+		name     string
+		selected int
+	}{
+		{name: "unselected", selected: -1},
+		{name: "selected", selected: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := renderFlowPane(
+				[]flowstore.FlowRecord{{FlowID: "flow-1", Title: unsafeTitle, Status: flowstore.StatusPending}},
+				tt.selected,
+				0,
+				200,
+				3,
+				"",
+				"",
+				nil,
+				false,
+				nil,
+			)
+			if len(rows) < 2 {
+				t.Fatalf("flow rows = %d, want header and record", len(rows))
+			}
+			row := rows[1]
+			if strings.Contains(row, "\x1b]52;") {
+				t.Fatalf("flow row retained OSC sequence: %q", row)
+			}
+			if strings.Contains(row, "\n") {
+				t.Fatalf("flow row retained embedded newline: %q", row)
+			}
+			if got := ansi.Strip(row); !strings.Contains(got, "bd-1: Unsafe Title") {
+				t.Fatalf("flow row text = %q, want sanitized single-line title", got)
+			}
+		})
+	}
+}
+
 func TestRender_FlowsModeShowsMissingIssueCell(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},

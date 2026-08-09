@@ -1129,6 +1129,7 @@ func renderStatusBarWithState(sp statusBarParams) string {
 	itemSearch := sp.ItemSearch
 
 	if transientError != "" {
+		transientError = terminalSafeSingleLine(transientError)
 		return statusStyle.Width(width).Render("  " + transientStatusStyle(sp.TransientErrorFadeStep).Render(transientError))
 	}
 
@@ -3017,7 +3018,8 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 		planCell := statusStyle.Render(fitSessionColumn(plan, flowPlanWidth))
 		prCell := statusStyle.Render(fitSessionColumn(pr, flowPRWidth))
 		updatedCell := stashDateStyle.Render(fitSessionColumn(updated, flowUpdatedWidth))
-		titleCell := stashMsgStyle.Render(record.Title)
+		title := terminalSafeSingleLine(record.Title)
+		titleCell := stashMsgStyle.Render(title)
 		line := formatFlowColumns(showRepo, flowRowPrefix(false, active.hasFlow(record.FlowID)),
 			statusCell,
 			repoCell,
@@ -3039,7 +3041,7 @@ func renderFlowPane(records []flowstore.FlowRecord, selected, scroll, width, hei
 				plan,
 				pr,
 				updated,
-				record.Title,
+				title,
 				width)
 		}
 		rows = append(rows, truncateToWidth(line, width))
@@ -3952,6 +3954,7 @@ func renderFormDialogOverApplication(p RenderParams, contentHeight int) []string
 }
 
 func renderConfirmDialog(prompt string, force bool, width, height int) []string {
+	prompt = terminalSafeSingleLine(prompt)
 	lines := make([]string, height)
 	mid := height / 2
 	if mid < len(lines) {
