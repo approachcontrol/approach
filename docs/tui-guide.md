@@ -8,10 +8,14 @@ session hooks and storage in `docs/agent-sessions.md`.
 ## Layout and Focus
 
 The UI has two panes: repos on the left, content on the right. Press `enter`
-or `tab` on a selected repo to focus the content pane; from the content pane,
-`tab` or `bksp` returns focus to the repo pane. When a Flow embedded terminal
-is open, `tab` cycles through the repo pane, Flow list, and terminal. The
-active pane is highlighted with a blue border.
+on a selected repo to collapse the repos pane to a narrow strip and give its
+width to the content pane; `ctrl+r` or `bksp` restores and focuses the full
+repos pane. Press `tab` from the repos pane to focus content without collapsing
+it. While collapsed, ordinary `tab` focus cycling skips the repos strip. With a
+Flow embedded terminal open, `tab` alternates between the Flow list and
+terminal; from a focused sessions terminal, `tab` restores and focuses the
+repos pane so terminal input cannot trap focus. The active pane is highlighted
+with a blue border.
 
 Press `f2` from normal TUI views to open the prompt-template editor for the
 `[agent].plan_prompt` and `[flow_prompts]` templates; Flow terminal input
@@ -44,7 +48,8 @@ filter history, and returning to a view restores that view's previous query.
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
-| `enter`/`tab` | Switch focus to right pane |
+| `enter` | Collapse the repos pane and focus the content pane |
+| `tab` | Focus the content pane without collapsing the repos pane |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Quit |
 
@@ -87,8 +92,9 @@ filter history, and returning to a view restores that view's previous query.
 | `e` | Edit selected plan Markdown (plans view) |
 | `i` | Alias for plan implementation launch, or open the linked GitHub issue (flows and active flows views, when issue metadata exists) |
 | `D` | Toggle destructive mode |
-| `tab` | Cycle pane focus forward; with a Flow terminal open, cycles repo pane → Flow list → terminal |
-| `bksp` | Switch focus to left pane |
+| `ctrl+r` | Restore and focus the full repos pane (outside search or embedded-terminal input focus) |
+| `tab` | Cycle pane focus forward; while the repos pane is collapsed, skip it and alternate only between a Flow list and terminal when present |
+| `bksp` | Restore and focus the full repos pane |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
@@ -228,8 +234,9 @@ runtime-only embedded terminal in the sessions pane. While embedded terminals
 exist, the saved-session table is hidden and the pane shows a compact numbered
 terminal header plus the active terminal screen. While the session terminal
 right pane is focused, all keys except `tab` go directly to the active PTY
-(including agent shortcuts like `ctrl+g`); after tabbing to the left pane,
-repo pane keys operate normally.
+(including agent shortcuts like `ctrl+g` and `ctrl+r`). `tab` returns to the
+repos pane; if it was collapsed, Approach expands it first. Repo pane keys then
+operate normally.
 
 Press `ctrl+]` for Approach commands:
 
@@ -371,9 +378,10 @@ answer streamed token-by-token, and a closing summary).
 ### Flow terminals
 
 While a Flow terminal is open, the Flow list uses a smaller top panel and the
-terminal uses a bottom panel; `tab` cycles focus through the repo pane, Flow
-list, and Flow terminal. Manually tabbing into Flow terminal focus starts in
-Approach command mode: `left`/`right` cycle Flow terminals, `1`–`9` switches by
+terminal uses a bottom panel. With the repos pane expanded, `tab` cycles focus
+through the repos pane, Flow list, and Flow terminal; with it collapsed, `tab`
+alternates only between the Flow list and terminal. Manually tabbing into Flow
+terminal focus starts in Approach command mode: `left`/`right` cycle Flow terminals, `1`–`9` switches by
 number, `x` closes, `d` detaches to tmux when available and opens the detached
 session in an external terminal, `q`/`esc` quits, unknown ordinary keys do not
 pass through to the PTY, `ctrl+]` sends a literal `ctrl+]`, and `i` enters

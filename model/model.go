@@ -73,6 +73,7 @@ type Model struct {
 	pendingRepoSelection      string
 	listRequests              [listRequestSlots]uint64
 	activePane                int // 0=left (repos), 1=right (content)
+	repoPaneCollapsed         bool
 	activeFlowsReturnMode     ui.Mode
 	destructive               bool
 	status                    statusError
@@ -631,6 +632,7 @@ func (m Model) BranchScroll() int               { return m.rows.Scroll() }
 func (m Model) RepoScroll() int                 { return m.repos.Scroll() }
 func (m Model) StashScroll() int                { return m.stashes.Scroll() }
 func (m Model) ActivePane() int                 { return m.activePane }
+func (m Model) RepoPaneCollapsed() bool         { return m.repoPaneCollapsed }
 func (m Model) Destructive() bool               { return m.destructive }
 func (m Model) TransientError() string          { return m.visibleStatusText() }
 func (m Model) TransientErrorFadeStep() int     { return m.visibleStatusFadeStep() }
@@ -840,6 +842,7 @@ func (m Model) View() string {
 		RepoScroll:                   repoScroll,
 		StashScroll:                  stashScroll,
 		ActivePane:                   m.activePane,
+		RepoPaneCollapsed:            m.repoPaneCollapsed,
 		Destructive:                  m.destructive,
 		Worktrees:                    worktrees,
 		WorktreeSelected:             worktreeSelected,
@@ -2059,8 +2062,7 @@ func (m Model) reflowStashes() Model {
 	if contentHeight <= 0 {
 		contentHeight = 1
 	}
-	rightContentWidth := m.width - ui.LeftPaneWidth - 2
-	m.stashes = m.stashes.Reflow(contentHeight, rightContentWidth)
+	m.stashes = m.stashes.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
@@ -2143,7 +2145,11 @@ func (m Model) reflowBranches() Model {
 }
 
 func (m Model) contentWidth() int {
-	width := m.width - ui.LeftPaneWidth - 2
+	repoPaneWidth := ui.LeftPaneWidth
+	if m.repoPaneCollapsed {
+		repoPaneWidth = ui.CollapsedRepoPaneWidth
+	}
+	width := m.width - repoPaneWidth - 2
 	if width < 0 {
 		return 0
 	}

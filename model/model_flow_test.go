@@ -659,6 +659,61 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 }
 
+func TestModel_CollapsedFlowPaneWithoutTerminalIgnoresTab(t *testing.T) {
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	for i := 0; i < 3; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+		if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+			t.Fatalf("tab %d collapsed=%t activePane=%d, want collapsed Flow list", i+1, m.RepoPaneCollapsed(), m.ActivePane())
+		}
+	}
+}
+
+func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *testing.T) {
+	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
+	m := model.NewWithOptions(testRepos(), model.Options{
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			return fakeTerm, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
+	m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:     "codex",
+		FlowID:      "flow-1",
+		FlowPhaseID: "implementation",
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed Flow list", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("tab to Flow terminal collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if len(fakeTerm.writes) != 1 || fakeTerm.writes[0] != "\x12" {
+		t.Fatalf("Flow terminal ctrl+r writes = %#v, want ctrl+r byte", fakeTerm.writes)
+	}
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("Flow terminal ctrl+r collapsed=%t activePane=%d, want unchanged collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("tab to Flow list collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.RepoPaneCollapsed() || m.ActivePane() != 1 {
+		t.Fatalf("second tab to Flow terminal collapsed=%t activePane=%d, want collapsed content pane", m.RepoPaneCollapsed(), m.ActivePane())
+	}
+}
+
 func TestModel_ActiveFlowsBackspaceClearsSelectedPhaseWhenLeavingRightPane(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
@@ -7739,7 +7794,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
 	_, terminalOuterHeight := ui.FlowSplitPanelHeights(18 - ui.BranchContentOverhead)
-	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false))
+	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false))
 	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
@@ -7754,7 +7809,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	}
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
 	_, terminalResizeOuterHeight := ui.FlowSplitPanelHeights(20 - ui.BranchContentOverhead)
-	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 20, false))
+	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 20, false, false))
 	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
@@ -8437,11 +8492,11 @@ func TestModel_FlowEmbeddedTerminalResizesWhenSearchTogglesShortcutPane(t *testi
 
 	wantHeight := flowTerminalPTYHeightForViewport(18)
 	wantSearchSize := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, true)),
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, true, false)),
 		wantHeight,
 	}
 	wantInactiveSize := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false)),
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false)),
 		wantHeight,
 	}
 
@@ -8524,7 +8579,7 @@ func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 
 	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
 	want := [2]int{
-		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false)),
+		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, false)),
 		ui.EmbeddedTerminalPTYHeight(terminalOuterHeight),
 	}
 	if started != want {

@@ -52,7 +52,8 @@ Repos on the left, content on the right. The essentials:
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `k`/`j` | Move selection |
-| `enter`/`tab`, `bksp` | Focus the content pane / return to the repo pane |
+| `enter` / `tab` | Collapse repos and focus content / focus content without collapsing |
+| `ctrl+r` / `bksp` | Restore and focus the full repo pane |
 | `1`–`4` | Git view, sessions, plans, flows |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `ctrl+a` | Toggle Active Flows (all repos) |
