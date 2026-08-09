@@ -181,6 +181,11 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 		mode:       ui.ModeFlows,
 		activePane: 1,
 		flowFocus:  flowFocusList,
+		// Seeded so the stable IDs handed out below (41, 42) cannot coincide
+		// with the Flow terminal numbers the same slots receive (1, 2). In a
+		// zero-valued model both counters start at 1, and activation keyed on
+		// slot.Number would satisfy every assertion in this test.
+		nextEmbeddedTerminalID: 40,
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			startCalls++
 			return term, nil
@@ -242,6 +247,9 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 		t.Fatalf("pending terminal slots = %#v, want one PrefillPending slot with stable ID", next.embeddedTerminals)
 	}
 	stableID := next.embeddedTerminals[0].ID
+	if int(stableID) == next.embeddedTerminals[0].Number {
+		t.Fatalf("stable ID %d collides with Flow terminal number %d; seed nextEmbeddedTerminalID so activation cannot key on the number", stableID, next.embeddedTerminals[0].Number)
+	}
 	if next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
 		t.Fatalf("pending terminal stole focus: active=%d focus=%v", next.activeFlowTerminalNum, next.flowFocus)
 	}
@@ -293,6 +301,9 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	secondID := next.embeddedTerminals[1].ID
 	if secondID == 0 || secondID == stableID || next.embeddedTerminals[1].Number != 2 || !next.embeddedTerminals[1].PrefillPending {
 		t.Fatalf("second pending slot = %#v, want distinct stable ID on Flow terminal number 2", next.embeddedTerminals[1])
+	}
+	if int(secondID) == next.embeddedTerminals[1].Number || int(stableID) == next.embeddedTerminals[1].Number || int(secondID) == next.embeddedTerminals[0].Number {
+		t.Fatalf("stable IDs (%d, %d) overlap Flow terminal numbers (%d, %d); activation keyed on the number would pass", stableID, secondID, next.embeddedTerminals[0].Number, next.embeddedTerminals[1].Number)
 	}
 	if next.embeddedTerminals[0].ID != stableID || !next.embeddedTerminals[0].PrefillPending || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
 		t.Fatalf("second launch disturbed the first pending slot: slots=%#v active=%d focus=%v", next.embeddedTerminals, next.activeFlowTerminalNum, next.flowFocus)
