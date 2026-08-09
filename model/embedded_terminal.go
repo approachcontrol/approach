@@ -382,6 +382,7 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		m = m.setStatus(statusOther, err.Error())
 		return m, false, err, nil
 	}
+	wasEmpty := len(m.embeddedTerminals) == 0
 	m.nextEmbeddedTerminalID++
 	id := embeddedTerminalID(m.nextEmbeddedTerminalID)
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
@@ -399,6 +400,9 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		ID:             id,
 		PrefillPending: actions.ShouldPrefillEmbeddedPrompt(ctx),
 	})
+	if wasEmpty {
+		m = m.reflowForTerminalDock()
+	}
 	if actions.ShouldPrefillEmbeddedPrompt(ctx) {
 		return m, true, nil, func() tea.Msg {
 			err := prefillEmbeddedPromptIfNeeded(term, ctx)
@@ -567,6 +571,25 @@ func (m Model) resizeEmbeddedTerminals() Model {
 		}
 	}
 	return m
+}
+
+func (m Model) focusEmbeddedTerminalInput() Model {
+	m.activePane = 1
+	m.terminalFocus = terminalFocusTerminal
+	m.terminalPrefixActive = false
+	if m.terminalDockVisible {
+		return m
+	}
+	m.terminalDockVisible = true
+	m = m.resizeEmbeddedTerminals()
+	return m.reflowForTerminalDock()
+}
+
+func (m Model) resizeEmbeddedTerminalsAfterModeChange(previousMode ui.Mode) Model {
+	if ui.IsGitMode(previousMode) == ui.IsGitMode(m.mode) {
+		return m
+	}
+	return m.resizeEmbeddedTerminals()
 }
 
 func embeddedTerminalIdentity(record sessions.SessionRecord) string {
@@ -903,10 +926,13 @@ func (m Model) dismissEmbeddedTerminal(id embeddedTerminalID) Model {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
 		m.embeddedTerminalTickGen++
-		return m
+		return m.reflowForTerminalDock()
 	}
 	m.activeTerminalNum = m.activeEmbeddedTerminalNumberAfterRenumber(activeID, id)
-	if terminalFocused && activeID == id {
+	if m.activeTerminalNum == 0 {
+		m.terminalFocus = terminalFocusList
+		m.terminalPrefixActive = false
+	} else if terminalFocused && activeID == id {
 		m.terminalPrefixActive = true
 	}
 	return m
@@ -1020,9 +1046,7 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 		return next.launchAgentWithContext(ctx)
 	}
 	if opened {
-		next.activePane = 1
-		next.terminalFocus = terminalFocusTerminal
-		next.terminalPrefixActive = false
+		next = next.focusEmbeddedTerminalInput()
 	}
 	if opened && needsTick {
 		return next.startEmbeddedTerminalTick()

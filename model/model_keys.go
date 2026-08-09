@@ -2308,10 +2308,7 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 		m.terminalPrefixActive = false
 		return m
 	}
-	m.activePane = 1
-	m.terminalFocus = terminalFocusTerminal
-	m.terminalPrefixActive = false
-	return m
+	return m.focusEmbeddedTerminalInput()
 }
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
@@ -2837,12 +2834,13 @@ func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
 	if isFlowMode(from) && isFlowMode(to) {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		return m.invalidateViewRequest()
+		m = m.invalidateViewRequest()
+	} else if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
+		m = m.invalidateViewRequest()
+	} else {
+		m = m.resetModeCursors()
 	}
-	if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
-		return m.invalidateViewRequest()
-	}
-	return m.resetModeCursors()
+	return m.resizeEmbeddedTerminalsAfterModeChange(from)
 }
 
 func isFlowMode(mode ui.Mode) bool {

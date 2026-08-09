@@ -107,6 +107,39 @@ func TestEmbeddedTerminalPresentationUsesOneActiveTerminalAcrossScopes(t *testin
 	}
 }
 
+func TestFirstAndLastEmbeddedTerminalReflowSessionSelection(t *testing.T) {
+	records := make([]sessions.SessionRecord, 14)
+	for i := range records {
+		records[i] = sessions.SessionRecord{SessionID: fmt.Sprintf("session-%02d", i)}
+	}
+	m := Model{
+		mode:                ui.ModeSessions,
+		width:               160,
+		height:              20,
+		terminalDockVisible: true,
+		sessions:            newSessionPane().SetItems(records).Move(13, 14, 80),
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+	if got := m.sessions.Scroll(); got != 0 {
+		t.Fatalf("session scroll before opening terminal = %d, want 0", got)
+	}
+
+	next, opened, err, _ := m.openEmbeddedTerminalWithLabel(actions.AgentLaunchContext{}, embeddedTerminalScopeSession, "codex", "session", "", "", 80, 20)
+	if err != nil || !opened {
+		t.Fatalf("open first terminal: opened=%v err=%v", opened, err)
+	}
+	if selected, scroll, height := next.sessions.SelectedIndex(), next.sessions.Scroll(), next.sessionContentHeight(); selected < scroll || selected >= scroll+height {
+		t.Fatalf("selected session %d is outside dock viewport [%d, %d)", selected, scroll, scroll+height)
+	}
+
+	next = next.dismissEmbeddedTerminal(next.embeddedTerminals[0].ID)
+	if got := next.sessions.Scroll(); got != 0 {
+		t.Fatalf("session scroll after closing last terminal = %d, want 0", got)
+	}
+}
+
 func TestContentHeightForModeAccountsForTerminalDockState(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -366,19 +399,101 @@ func TestTerminalCommandSessionPickerIsDockLevelAndGuardsEmptyRecords(t *testing
 	}
 }
 
-func TestSessionResumeFocusesTerminalInInputMode(t *testing.T) {
+func TestSessionResumeExpandsCollapsedDockAndFocusesTerminalInInputMode(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{}
 	m := Model{
 		mode:                ui.ModeSessions,
+		width:               160,
+		height:              20,
 		activePane:          1,
 		terminalFocus:       terminalFocusList,
-		terminalDockVisible: true,
+		terminalDockVisible: false,
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
-			return internalFakeEmbeddedTerminal{}, nil
+			return term, nil
 		},
 	}
 	next, _ := m.resumeSessionInEmbeddedTerminal(actions.AgentLaunchContext{}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"})
-	if next.activePane != 1 || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
-		t.Fatalf("session resume focus = pane %d focus %d prefix %v, want terminal input", next.activePane, next.terminalFocus, next.terminalPrefixActive)
+	if !next.terminalDockVisible || next.activePane != 1 || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
+		t.Fatalf("session resume state = visible %v pane %d focus %d prefix %v, want expanded terminal input", next.terminalDockVisible, next.activePane, next.terminalFocus, next.terminalPrefixActive)
+	}
+	if len(term.resizes) != 1 {
+		t.Fatalf("session resume resize calls = %#v, want one resize after expanding dock", term.resizes)
+	}
+}
+
+func TestInteractiveFlowLaunchFocusExpandsCollapsedDock(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{}
+	m := Model{
+		mode:                ui.ModeFlows,
+		width:               160,
+		height:              20,
+		activePane:          1,
+		terminalFocus:       terminalFocusList,
+		terminalDockVisible: false,
+		activeTerminalNum:   1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
+		}},
+	}
+
+	next := m.updateFlowTerminalFocusAfterLaunch(actions.AgentLaunchContext{})
+	if !next.terminalDockVisible || next.activePane != 1 || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
+		t.Fatalf("interactive Flow focus = visible %v pane %d focus %d prefix %v, want expanded terminal input", next.terminalDockVisible, next.activePane, next.terminalFocus, next.terminalPrefixActive)
+	}
+	if len(term.resizes) != 1 {
+		t.Fatalf("interactive Flow resize calls = %#v, want one resize after expanding dock", term.resizes)
+	}
+}
+
+func TestGitAndNonGitModeSwitchesResizeVisibleTerminalDock(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{}
+	m := Model{
+		mode:                ui.ModeSessions,
+		lastGitMode:         ui.ModeWorktrees,
+		width:               160,
+		height:              20,
+		activePane:          1,
+		terminalDockVisible: true,
+		activeTerminalNum:   1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+		}},
+	}
+
+	next, _, handled := m.switchModeFromKey("1")
+	if !handled || next.mode != ui.ModeWorktrees {
+		t.Fatalf("switch to Git = handled %v mode %d, want worktrees", handled, next.mode)
+	}
+	wantGit := [2]int{next.embeddedTerminalWidth(), next.embeddedTerminalContentHeight()}
+	if len(term.resizes) != 1 || term.resizes[0] != wantGit {
+		t.Fatalf("Git switch resize calls = %#v, want [%v]", term.resizes, wantGit)
+	}
+
+	next, _, handled = next.switchModeFromKey("2")
+	if !handled || next.mode != ui.ModeSessions {
+		t.Fatalf("switch from Git = handled %v mode %d, want sessions", handled, next.mode)
+	}
+	wantSessions := [2]int{next.embeddedTerminalWidth(), next.embeddedTerminalContentHeight()}
+	if len(term.resizes) != 2 || term.resizes[1] != wantSessions {
+		t.Fatalf("non-Git switch resize calls = %#v, want second resize %v", term.resizes, wantSessions)
+	}
+}
+
+func TestDismissActiveTerminalWithOnlyPendingSurvivorsReturnsToListFocus(t *testing.T) {
+	m := Model{
+		activePane:           1,
+		terminalFocus:        terminalFocusTerminal,
+		terminalPrefixActive: true,
+		activeTerminalNum:    1,
+		embeddedTerminals: []embeddedTerminalSlot{
+			{Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{}},
+			{Number: 2, ID: 2, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{}},
+		},
+	}
+
+	next := m.dismissEmbeddedTerminal(1)
+	if next.activeTerminalNum != 0 || next.terminalFocus != terminalFocusList || next.terminalPrefixActive {
+		t.Fatalf("pending survivor state = active %d focus %d prefix %v, want list focus with no active terminal", next.activeTerminalNum, next.terminalFocus, next.terminalPrefixActive)
 	}
 }
 
