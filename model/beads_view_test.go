@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -42,6 +43,7 @@ func TestBeadsSubviewLettersSwitchAndStartMatchingDeferredQuery(t *testing.T) {
 				ListOpenBeads:       query("open"),
 				ListInProgressBeads: query("in-progress"),
 				ListClosedBeads:     query("closed"),
+				CountClosedBeads:    func(string) (int, error) { return 1, nil },
 			}))
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
 			if tt.mode == ui.ModeBeadsOpen {
@@ -286,6 +288,7 @@ func beadQueryOptions() model.Options {
 	return model.Options{
 		ListReadyBeads: empty, ListBlockedBeads: empty, ListOpenBeads: empty,
 		ListInProgressBeads: empty, ListClosedBeads: empty,
+		CountClosedBeads: func(string) (int, error) { return 0, nil },
 	}
 }
 
@@ -396,6 +399,178 @@ func TestBeadsOpen_QueryFailureProducesUnavailableResult(t *testing.T) {
 	}
 	if got := m.TransientError(); got != "" {
 		t.Fatalf("TransientError() = %q before result application, want empty", got)
+	}
+}
+
+func TestBeadsClosed_FetchListsThenCountsAndReturnsTotal(t *testing.T) {
+	calls := []string{}
+	opts := beadQueryOptions()
+	opts.ListClosedBeads = func(repoPath string) ([]beadsquery.Bead, error) {
+		calls = append(calls, "list "+repoPath)
+		return []beadsquery.Bead{{ID: "bd-1", Priority: 1, Title: "Closed"}}, nil
+	}
+	opts.CountClosedBeads = func(repoPath string) (int, error) {
+		calls = append(calls, "count "+repoPath)
+		return 1432, nil
+	}
+	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("Closed switch returned nil fetch command")
+	}
+
+	rawMsg := cmd()
+	msg, ok := rawMsg.(model.BeadsClosedResultMsg)
+	if !ok {
+		t.Fatalf("fetch message = %T, want BeadsClosedResultMsg", rawMsg)
+	}
+	if got := strings.Join(calls, ", "); got != "list /dev/alpha, count /dev/alpha" {
+		t.Fatalf("Closed fetch calls = %q, want list then count", got)
+	}
+	if !msg.Available || msg.Total != 1432 || len(msg.Beads) != 1 || msg.Beads[0].ID != "bd-1" {
+		t.Fatalf("Closed fetch result = %#v, want available row and total 1432", msg)
+	}
+}
+
+func TestBeadsClosed_ListOrCountFailureReturnsNoPartialRows(t *testing.T) {
+	tests := []struct {
+		name           string
+		listErr        error
+		countErr       error
+		wantCountCalls int
+	}{
+		{name: "list failure skips count", listErr: errors.New("list failed")},
+		{name: "count failure discards rows", countErr: errors.New("count failed"), wantCountCalls: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			countCalls := 0
+			opts := beadQueryOptions()
+			opts.ListClosedBeads = func(string) ([]beadsquery.Bead, error) {
+				return []beadsquery.Bead{{ID: "bd-partial", Title: "Partial"}}, tt.listErr
+			}
+			opts.CountClosedBeads = func(string) (int, error) {
+				countCalls++
+				return 1432, tt.countErr
+			}
+			m := inRightPane(model.NewWithOptions(testRepos(), opts))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+			rawMsg := cmd()
+			msg, ok := rawMsg.(model.BeadsClosedResultMsg)
+			if !ok {
+				t.Fatalf("fetch message = %T, want BeadsClosedResultMsg", rawMsg)
+			}
+			if msg.Available || len(msg.Beads) != 0 || msg.Total != 0 {
+				t.Fatalf("failed Closed fetch = %#v, want unavailable without partial data", msg)
+			}
+			if countCalls != tt.wantCountCalls {
+				t.Fatalf("count calls = %d, want %d", countCalls, tt.wantCountCalls)
+			}
+		})
+	}
+}
+
+func TestBeadsClosed_CurrentSuccessRendersAcceptedTotal(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m, _ = update(m, model.BeadsClosedResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: m.ListRequest(ui.ModeBeadsClosed),
+		Available:   true,
+		Beads:       []beadsquery.Bead{{ID: "bd-1", Title: "Closed"}},
+		Total:       1432,
+	})
+
+	if view := m.View(); !strings.Contains(view, "closed 1 of 1432") {
+		t.Fatalf("current Closed result did not render accepted total:\n%s", view)
+	}
+}
+
+func TestBeadsClosed_StaleAndWrongRepoTotalsAreIgnored(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	request := m.ListRequest(ui.ModeBeadsClosed)
+	m, _ = update(m, model.BeadsClosedResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: request, Available: true,
+		Beads: []beadsquery.Bead{{ID: "bd-current", Title: "Current"}}, Total: 1432,
+	})
+
+	for _, msg := range []model.BeadsClosedResultMsg{
+		{RepoPath: "/dev/bravo", ListRequest: request, Available: true, Total: 9001},
+		{RepoPath: "/dev/alpha", ListRequest: request - 1, Available: true, Total: 9002},
+	} {
+		m, _ = update(m, msg)
+		if view := m.View(); !strings.Contains(view, "closed 1 of 1432") {
+			t.Fatalf("ignored result changed Closed count:\n%s", view)
+		}
+	}
+}
+
+func TestBeadsClosed_RefreshAndRepoChangeClearTotalWhilePending(t *testing.T) {
+	opts := beadQueryOptions()
+	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
+	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	request := m.ListRequest(ui.ModeBeadsClosed)
+	m, _ = update(m, model.BeadsClosedResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: request, Available: true,
+		Beads: []beadsquery.Bead{{ID: "bd-current", Title: "Current"}}, Total: 1432,
+	})
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyF5})
+	if view := m.View(); !m.BeadsPending(ui.ModeBeadsClosed) || !strings.Contains(view, "loading closed beads") || strings.Contains(view, "closed 1") {
+		t.Fatalf("refresh did not suppress the accepted Closed count:\n%s", view)
+	}
+	m, _ = update(m, model.BeadsClosedResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: request, Available: true, Total: 9001,
+	})
+	if view := m.View(); !strings.Contains(view, "loading closed beads") || strings.Contains(view, "closed 1") {
+		t.Fatalf("stale refresh result restored the Closed count:\n%s", view)
+	}
+
+	currentRequest := m.ListRequest(ui.ModeBeadsClosed)
+	m, _ = update(m, model.BeadsClosedResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: currentRequest, Available: true,
+		Beads: []beadsquery.Bead{{ID: "bd-refreshed", Title: "Refreshed"}}, Total: 1500,
+	})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if view := m.View(); !m.BeadsPending(ui.ModeBeadsClosed) || len(m.BeadsClosed()) != 0 || !strings.Contains(view, "loading closed beads") || strings.Contains(view, "of 1500") {
+		t.Fatalf("repo change did not clear and suppress the Closed result:\n%s", view)
+	}
+}
+
+func TestBeadsClosed_HeaderCountUsesUnfilteredAcceptedRows(t *testing.T) {
+	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 16})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	rows := make([]beadsquery.Bead, 100)
+	for i := range rows {
+		rows[i] = beadsquery.Bead{ID: fmt.Sprintf("bd-%d", i), Title: "Other"}
+	}
+	rows[0].Title = "Needle"
+	m, _ = update(m, model.BeadsClosedResultMsg{
+		RepoPath: "/dev/alpha", ListRequest: m.ListRequest(ui.ModeBeadsClosed),
+		Available: true, Beads: rows, Total: 1432,
+	})
+	if view := m.View(); !strings.Contains(view, "closed 100 of 1432") {
+		t.Fatalf("unfiltered Closed header has wrong count:\n%s", view)
+	}
+
+	m = setBeadsQuery(t, m, "needle")
+	if got := m.BeadsClosed(); len(got) != 1 || got[0].Title != "Needle" {
+		t.Fatalf("filtered Closed rows = %#v, want one matching row", got)
+	}
+	if view := m.View(); !strings.Contains(view, "closed 100 of 1432") {
+		t.Fatalf("filter changed Closed source count:\n%s", view)
 	}
 }
 

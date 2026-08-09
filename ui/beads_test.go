@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -157,9 +158,63 @@ func TestModeHeader_BeadsOpenKeepsActiveItemAtNarrowWidth(t *testing.T) {
 }
 
 func TestModeHeader_BeadsKeepsActiveSubviewAtConstrainedWidth(t *testing.T) {
-	lines := strings.Split(renderModeHeader(ModeBeadsClosed, 32), "\n")
-	if got := ansi.Strip(lines[1]); !strings.Contains(got, "[c] closed") {
+	lines := strings.Split(renderModeHeaderWithBeads(ModeBeadsClosed, 32, 100, 1432, true, false), "\n")
+	if got := ansi.Strip(lines[1]); !strings.Contains(got, "[c] closed 100 of 1432") {
 		t.Fatalf("constrained Beads subview row lost active item: %q", got)
+	}
+}
+
+func TestRender_BeadsClosedHeaderShowsAcceptedSourceCountAndTruncation(t *testing.T) {
+	tests := []struct {
+		name    string
+		fetched int
+		total   int
+		want    string
+	}{
+		{name: "truncated", fetched: 100, total: 1432, want: "[c] closed 100 of 1432"},
+		{name: "exact cap", fetched: 100, total: 100, want: "[c] closed 100"},
+		{name: "under cap", fetched: 42, total: 42, want: "[c] closed 42"},
+		{name: "zero", fetched: 0, total: 0, want: "[c] closed 0"},
+		{name: "count race below fetched", fetched: 100, total: 99, want: "[c] closed 100"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 180, Height: 12, Mode: ModeBeadsClosed,
+				BeadsOpenAvailable: true, BeadsSourceCount: tt.fetched, BeadsClosedTotal: tt.total,
+			}))
+			if !strings.Contains(view, tt.want) {
+				t.Fatalf("Closed header missing %q:\n%s", tt.want, view)
+			}
+			if tt.total <= tt.fetched && strings.Contains(view, fmt.Sprintf("%d of %d", tt.fetched, tt.total)) {
+				t.Fatalf("Closed header showed a false truncation marker:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestRender_BeadsClosedHeaderSuppressesCountWhileLoadingOrUnavailable(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		available bool
+		pending   bool
+	}{
+		{name: "loading", pending: true},
+		{name: "unavailable"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ansi.Strip(Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 180, Height: 12, Mode: ModeBeadsClosed,
+				BeadsOpenAvailable: tt.available, BeadsOpenPending: tt.pending,
+				BeadsSourceCount: 100, BeadsClosedTotal: 1432,
+			}))
+			if !strings.Contains(view, "[c] closed") || strings.Contains(view, "closed 100") {
+				t.Fatalf("%s Closed header exposed a count:\n%s", tt.name, view)
+			}
+		})
 	}
 }
 

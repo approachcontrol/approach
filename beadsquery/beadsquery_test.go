@@ -132,7 +132,7 @@ func TestQuerierListInProgressUsesUncappedReadonlyStatusQuery(t *testing.T) {
 	}
 }
 
-func TestQuerierListClosedUsesUncappedReadonlyCloseTimeQuery(t *testing.T) {
+func TestQuerierListClosedUsesBoundedNewestFirstReadonlyQuery(t *testing.T) {
 	t.Parallel()
 
 	runner := &fakeRunner{out: `[{"id":"bd-1","priority":1,"title":"Closed","closed_at":"2026-08-08T20:00:00Z"}]`}
@@ -140,9 +140,40 @@ func TestQuerierListClosedUsesUncappedReadonlyCloseTimeQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListClosed() error = %v", err)
 	}
-	wantArgs := []string{"list", "-s", "closed", "--json", "--limit", "0", "--sort", "closed", "--reverse", "--readonly"}
+	wantArgs := []string{"list", "-s", "closed", "--json", "--limit", "100", "--sort", "closed", "--reverse", "--readonly"}
 	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
 		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+}
+
+func TestQuerierCountClosedUsesReadonlyNoActivityStats(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{out: `{"summary":{"closed_issues":1432}}`}
+	got, err := beadsquery.NewQuerier(runner).CountClosed("/repo")
+	if err != nil {
+		t.Fatalf("CountClosed() error = %v", err)
+	}
+	wantArgs := []string{"stats", "--json", "--no-activity", "--readonly"}
+	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
+	}
+	if got != 1432 {
+		t.Fatalf("CountClosed() = %d, want 1432", got)
+	}
+}
+
+func TestQuerierCountClosedPreservesRunnerFailureCause(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("bd stats failed")
+	runner := &fakeRunner{out: `{"summary":{"closed_issues":1432}}`, err: cause}
+	got, err := beadsquery.NewQuerier(runner).CountClosed("/repo")
+	if !errors.Is(err, cause) {
+		t.Fatalf("CountClosed() error = %v, want wrapped cause %v", err, cause)
+	}
+	if got != 0 {
+		t.Fatalf("CountClosed() = %d, want no guessed count", got)
 	}
 }
 
