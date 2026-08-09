@@ -170,6 +170,9 @@ func (m Model) activeItemPaneQuery() string {
 		return m.plans.Query()
 	case ui.ModeFlows:
 		return m.flows.Query()
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		state, _ := m.activeBeadSubview()
+		return state.pane.Query()
 	default:
 		return ""
 	}
@@ -215,6 +218,10 @@ func (m Model) setActiveSearchQuery(query string) Model {
 	case ui.ModeFlows:
 		m.flows = m.flows.SetQuery(query)
 		m = m.setExpandedFlowID("")
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		index, _ := beadSubviewIndex(m.mode)
+		m.beads[index].pane = m.beads[index].pane.SetQuery(query)
+		m = m.reflowBeads(m.mode)
 	}
 	return m
 }

@@ -7,8 +7,8 @@ import (
 )
 
 // topLevelModeForNumberedKey maps the top-level number keys to their views.
-// 1 is the Git view, which resolves to the last-used git subview; 5 enters
-// Beads Open; 6-9 are unbound and report !ok so callers can treat them as
+// 1 is the Git view and 5 is the Beads view; each resolves to its last-used
+// subview. Keys 6-9 are unbound and report !ok so callers can treat them as
 // no-ops.
 func (m Model) topLevelModeForNumberedKey(key string) (ui.Mode, bool) {
 	switch key {
@@ -21,9 +21,27 @@ func (m Model) topLevelModeForNumberedKey(key string) (ui.Mode, bool) {
 	case "4":
 		return ui.ModeFlows, true
 	case "5":
-		return ui.ModeBeadsOpen, true
+		return m.lastBeadsSubview(), true
 	}
 	return ui.ModeWorktrees, false
+}
+
+// lastBeadsSubview is where entering the top-level Beads view lands: the
+// last-used Beads subview, defaulting to Open on first-ever entry.
+func (m Model) lastBeadsSubview() ui.Mode {
+	if ui.IsBeadsMode(m.lastBeadsMode) {
+		return m.lastBeadsMode
+	}
+	return ui.ModeBeadsOpen
+}
+
+// rememberBeadsSubview records the active Beads subview so Beads re-entry is
+// sticky.
+func (m Model) rememberBeadsSubview() Model {
+	if ui.IsBeadsMode(m.mode) {
+		m.lastBeadsMode = m.mode
+	}
+	return m
 }
 
 // lastGitSubview is where entering the top-level Git view lands: the
@@ -112,6 +130,7 @@ func (m Model) handleBeadsSubviewKey(key string) (Model, tea.Cmd, bool) {
 	}
 	previousMode := m.mode
 	m.mode = target
+	m = m.rememberBeadsSubview()
 	m = m.resetModeCursorsForSwitch(previousMode, target)
 	next, cmd := m.startFetchMode(target)
 	return next, cmd, true

@@ -109,6 +109,14 @@ func (m Model) invalidateListRequests() Model {
 	return m
 }
 
+func (m Model) invalidateBeadsListRequests() Model {
+	m.listRequestSeq++
+	for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
+		m.listRequests[int(mode)] = m.listRequestSeq
+	}
+	return m
+}
+
 func (m Model) nextWorktreeSessionRequest(repoPath, worktreePath string) (Model, uint64) {
 	m.worktreeSessionRequestSeq++
 	m.activeWorktreeSessionReq = m.worktreeSessionRequestSeq

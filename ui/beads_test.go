@@ -199,7 +199,7 @@ func TestRenderBeadsOpenPaneSanitizesTrackerText(t *testing.T) {
 	}
 }
 
-func TestRender_BeadsOpenShortcutsDoNotAdvertiseDeferredArrowNavigation(t *testing.T) {
+func TestRender_BeadsOpenShortcutsAdvertiseArrowAndSubviewNavigation(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
 		Selected:   0,
@@ -212,8 +212,11 @@ func TestRender_BeadsOpenShortcutsDoNotAdvertiseDeferredArrowNavigation(t *testi
 	if !strings.Contains(pane, "Beads Open") {
 		t.Fatalf("shortcut pane missing Beads Open title:\n%s", pane)
 	}
-	if strings.Contains(pane, "←/→") || strings.Contains(pane, "select/view") {
-		t.Fatalf("shortcut pane advertised deferred Beads arrow navigation:\n%s", pane)
+	if strings.Count(pane, "←/→") != 1 || !strings.Contains(pane, "view") {
+		t.Fatalf("shortcut pane did not advertise exactly one Beads arrow hint:\n%s", pane)
+	}
+	if strings.Count(pane, "r/b/o/i/c") != 1 || !strings.Contains(pane, "subview") {
+		t.Fatalf("shortcut pane did not advertise exactly one Beads subview hint:\n%s", pane)
 	}
 }
 
@@ -280,7 +283,7 @@ func TestRender_BeadsGroupedHeaderConsumesOneListRow(t *testing.T) {
 	}
 }
 
-func TestRender_AllBeadsShortcutTitlesExcludeDeferredArrowNavigation(t *testing.T) {
+func TestRender_AllBeadsShortcutNavigationRespectsPaneFocus(t *testing.T) {
 	for _, tt := range []struct {
 		mode  Mode
 		title string
@@ -291,13 +294,25 @@ func TestRender_AllBeadsShortcutTitlesExcludeDeferredArrowNavigation(t *testing.
 		{ModeBeadsInProgress, "Beads In-progr"},
 		{ModeBeadsClosed, "Beads Closed"},
 	} {
-		view := Render(RenderParams{
-			Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
-			Width: 140, Height: 20, Mode: tt.mode, ActivePane: 1,
+		t.Run(tt.title+"/right", func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 140, Height: 20, Mode: tt.mode, ActivePane: 1,
+			})
+			pane := ansi.Strip(shortcutPaneText(view))
+			if !strings.Contains(pane, tt.title) || strings.Count(pane, "r/b/o/i/c") != 1 || !strings.Contains(pane, "subview") || strings.Count(pane, "←/→") != 1 || !strings.Contains(pane, "view") {
+				t.Fatalf("right-focused shortcut pane for %v has wrong navigation:\n%s", tt.mode, pane)
+			}
 		})
-		pane := ansi.Strip(shortcutPaneText(view))
-		if !strings.Contains(pane, tt.title) || !strings.Contains(pane, "r/b/o/i/c") || !strings.Contains(pane, "subview") || strings.Contains(pane, "←/→") || strings.Contains(pane, "select/view") {
-			t.Fatalf("shortcut pane for %v has wrong title/navigation:\n%s", tt.mode, pane)
-		}
+		t.Run(tt.title+"/left", func(t *testing.T) {
+			view := Render(RenderParams{
+				Repos: []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}, Selected: 0,
+				Width: 140, Height: 20, Mode: tt.mode, ActivePane: 0,
+			})
+			pane := ansi.Strip(shortcutPaneText(view))
+			if strings.Contains(pane, "r/b/o/i/c") || strings.Contains(pane, "←/→") {
+				t.Fatalf("left-focused shortcut pane for %v advertised right-pane navigation:\n%s", tt.mode, pane)
+			}
+		})
 	}
 }
