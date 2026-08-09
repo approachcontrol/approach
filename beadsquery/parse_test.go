@@ -231,6 +231,72 @@ func TestParseClosedSortsCapturedRowsByDescendingCloseTimeThenNaturalID(t *testi
 	}
 }
 
+func TestParseClosedCountFromCapturedStats(t *testing.T) {
+	t.Parallel()
+
+	input, err := os.ReadFile("testdata/stats.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := beadsquery.ParseClosedCount(string(input))
+	if err != nil {
+		t.Fatalf("ParseClosedCount() error = %v", err)
+	}
+	if got != 1432 {
+		t.Fatalf("ParseClosedCount() = %d, want 1432", got)
+	}
+}
+
+func TestParseClosedCountAcceptsV1Envelope(t *testing.T) {
+	t.Parallel()
+
+	got, err := beadsquery.ParseClosedCount(`{
+		"schema_version": 1,
+		"data": {"summary": {"closed_issues": 0}}
+	}`)
+	if err != nil {
+		t.Fatalf("ParseClosedCount() error = %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("ParseClosedCount() = %d, want 0", got)
+	}
+}
+
+func TestParseClosedCountRejectsInvalidTotalsWithoutPartialData(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "malformed JSON", input: `{"summary":`},
+		{name: "missing summary", input: `{}`},
+		{name: "null summary", input: `{"summary":null}`},
+		{name: "missing closed issues", input: `{"summary":{}}`},
+		{name: "null closed issues", input: `{"summary":{"closed_issues":null}}`},
+		{name: "negative", input: `{"summary":{"closed_issues":-1}}`},
+		{name: "fractional", input: `{"summary":{"closed_issues":1.5}}`},
+		{name: "string", input: `{"summary":{"closed_issues":"1432"}}`},
+		{name: "boolean", input: `{"summary":{"closed_issues":true}}`},
+		{name: "integer overflow", input: `{"summary":{"closed_issues":18446744073709551616}}`},
+		{name: "missing envelope summary", input: `{"schema_version":1,"data":{}}`},
+		{name: "null envelope data", input: `{"schema_version":1,"data":null}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := beadsquery.ParseClosedCount(tt.input)
+			if err == nil {
+				t.Fatalf("ParseClosedCount(%s) error = nil, want validation error", tt.input)
+			}
+			if got != 0 {
+				t.Fatalf("ParseClosedCount(%s) = %d, want no partial count", tt.input, got)
+			}
+		})
+	}
+}
+
 func TestNewBeadParsersRejectStructurallyInvalidDisplayRows(t *testing.T) {
 	t.Parallel()
 

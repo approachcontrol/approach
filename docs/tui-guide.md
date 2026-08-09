@@ -312,12 +312,19 @@ The query sources and ordering are:
 - Blocked: `bd list -s blocked --json --limit 0 --readonly`, sorted by priority then natural ID.
 - Open: `bd list -s open --json --limit 0 --readonly`, sorted by priority then natural ID.
 - In-Progress: `bd list -s in_progress --json --limit 0 --readonly`, sorted by priority then natural ID.
-- Closed: `bd list -s closed --json --limit 0 --sort closed --reverse --readonly`, parsed and sorted by descending `closed_at`, then natural ID. Closed is uncapped in this slice.
+- Closed: `bd list -s closed --json --limit 100 --sort closed --readonly`, selecting the newest 100 before the result is parsed and sorted by descending `closed_at`, then natural ID. The full total comes from `bd stats --json --no-activity --readonly` at `summary.closed_issues` (or the v1 `data.summary.closed_issues` envelope).
 
 Ready is `bd`'s dependency-graph computation, not a status derived inside
 Approach. Ready and Open are independent results: an open bead with all
 blockers resolved intentionally appears in both. Rows render as
 `<id>  P<n>  <title>` and append two spaces plus the assignee when present.
+For a settled Closed result, the active header item shows the unfiltered
+accepted row count: plain `closed 0` through `closed 100` when the stats total
+is not larger, or `closed 100 of <total>` when more rows exist. The two queries
+are separate snapshots, so `total <= fetched` deliberately uses the plain
+fetched count. Loading and unavailable results show no count, and a fuzzy
+filter does not change it. Failure of either Closed query discards both rows
+and total and uses the shared unavailable state.
 
 Successful empty queries show exactly `no ready beads`, `no blocked beads`,
 `no open beads`, `no in-progress beads`, or `no closed beads`. Pending queries
@@ -341,10 +348,9 @@ Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
 
-`enter` still has no Beads detail pager. The later Closed 100-row cap/count,
-configured-versus-error classification, pager, and `default_view` 10–14
-additions remain deferred; keys `6`–`9` and the existing frozen 1–9 startup
-vocabulary are unchanged.
+`enter` still has no Beads detail pager. Configured-versus-error classification,
+pager, and `default_view` 10–14 additions remain deferred; keys `6`–`9` and the
+existing frozen 1–9 startup vocabulary are unchanged.
 
 ## Flows View (`4`)
 
