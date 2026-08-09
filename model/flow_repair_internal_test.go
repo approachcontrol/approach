@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
@@ -204,5 +205,59 @@ func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *test
 		if !m.selectedFlowRepairReady() {
 			t.Fatalf("selectedFlowRepairReady() = false in mode %v after terminal removal", mode)
 		}
+	}
+}
+
+func TestFlowPhaseResumePersistenceDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
+	const (
+		flowID   = "flow-1"
+		phaseID  = "implementation"
+		launchID = "resume-launch"
+	)
+	key := flowPhaseResumeKey{FlowID: flowID, PhaseID: phaseID}
+	starts := 0
+	var failureUpdate flowstore.PhaseUpdate
+	m := Model{
+		pendingFlowPhaseResumes: map[flowPhaseResumeKey]string{key: launchID},
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Scope:      embeddedTerminalScopeFlow,
+			FlowID:     flowID,
+			FlowRepair: true,
+			Terminal:   internalFakeEmbeddedTerminal{state: "running"},
+		}},
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			starts++
+			return internalFakeEmbeddedTerminal{state: "running"}, nil
+		},
+		setFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			failureUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:           "codex",
+		LaunchID:          launchID,
+		FlowID:            flowID,
+		FlowPhaseID:       phaseID,
+		ResumeSessionID:   "codex-session",
+		FlowLaunchTracked: true,
+		Embedded:          true,
+	}
+	next, cmd := m.handleFlowPhaseResumePersisted(flowPhaseResumePersistedMsg{
+		LaunchContext: ctx,
+		Flow: flowstore.FlowRecord{FlowID: flowID, Phases: []flowstore.FlowPhase{{
+			PhaseID: phaseID,
+			Status:  flowstore.PhaseRunning,
+		}}},
+	})
+	if starts != 0 || len(next.embeddedTerminals) != 1 {
+		t.Fatalf("resume opened alongside repair: starts=%d terminals=%d", starts, len(next.embeddedTerminals))
+	}
+	if cmd == nil {
+		t.Fatal("occupied resume should persist launch-failure state")
+	}
+	_ = cmd()
+	if failureUpdate.Status != flowstore.PhaseNeedsAttention || !strings.Contains(failureUpdate.Notes, "existing Flow terminal") {
+		t.Fatalf("failure update = %#v, want existing-terminal needs_attention guidance", failureUpdate)
 	}
 }

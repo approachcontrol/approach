@@ -6813,6 +6813,50 @@ func TestModel_RKeyOnSelectedFlowPhaseResumeIsSingleShotBeforePersistenceComplet
 	}
 }
 
+func TestModel_FlowRepairAndPhaseResumeReservationsAreMutuallyExclusive(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/repair-resume-race",
+		Status:       flowstore.StatusInProgress,
+		Phases: []flowstore.FlowPhase{{
+			PhaseID:   "implementation",
+			Status:    flowstore.PhaseBlocked,
+			LaunchIDs: []string{"launch-old"},
+			Sessions: []flowstore.Session{{
+				Provider: "codex", SessionID: "codex-session", LaunchID: "launch-old", Status: "ended",
+			}},
+		}},
+	}
+	newModel := func() model.Model {
+		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+		return selectFlowPhaseByID(t, m, "implementation")
+	}
+
+	t.Run("pending resume blocks repair", func(t *testing.T) {
+		pending, resumeCmd := update(newModel(), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		if resumeCmd == nil {
+			t.Fatal("resume should reserve a persistence command")
+		}
+		blocked, _ := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if got := blocked.TransientError(); !strings.Contains(got, "phase resume is already pending") {
+			t.Fatalf("repair status = %q, want pending phase-resume guidance", got)
+		}
+	})
+
+	t.Run("pending repair blocks resume", func(t *testing.T) {
+		pending, repairCmd := update(newModel(), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+		if repairCmd == nil {
+			t.Fatal("repair should reserve a validation command")
+		}
+		_, resumeCmd := update(pending, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+		if resumeCmd != nil {
+			t.Fatal("phase resume should not reserve persistence while a repair is pending")
+		}
+	})
+}
+
 func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *testing.T) {
 	record := flowstore.FlowRecord{
 		FlowID:       "flow-1",

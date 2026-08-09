@@ -2419,7 +2419,9 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 
 func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
 	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
+	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasPendingFlowRepairLaunch(key.FlowID) ||
+		m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) ||
+		m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
 		return m, nil
 	}
 	ctx.FlowID = key.FlowID
@@ -2455,6 +2457,9 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 	// persisted status.
 	if phase, ok := flowPhaseByID(msg.Flow, ctx.FlowPhaseID); ok {
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
+	}
+	if m.hasFlowEmbeddedTerminalForFlow(key.FlowID) {
+		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because an existing Flow terminal is open")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminal(ctx)
@@ -2508,6 +2513,19 @@ func (m Model) matchingPendingFlowPhaseResume(ctx actions.AgentLaunchContext) (f
 	}
 	launchID := strings.TrimSpace(ctx.LaunchID)
 	return key, launchID != "" && m.pendingFlowPhaseResumes[key] == launchID
+}
+
+func (m Model) hasPendingFlowPhaseResumeForFlow(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
+	for key, launchID := range m.pendingFlowPhaseResumes {
+		if key.FlowID == flowID && strings.TrimSpace(launchID) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) withPendingFlowPhaseResume(key flowPhaseResumeKey, launchID string) Model {

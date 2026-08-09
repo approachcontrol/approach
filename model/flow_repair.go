@@ -152,6 +152,7 @@ func (m Model) selectedFlowRepairReady() bool {
 	record, _, ok := m.selectedFlowRepairObstruction()
 	return ok &&
 		!m.hasFlowEmbeddedTerminalForFlow(record.FlowID) &&
+		!m.hasPendingFlowPhaseResumeForFlow(record.FlowID) &&
 		!m.hasPendingFlowRepairLaunch(record.FlowID)
 }
 
@@ -163,6 +164,9 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	if !m.selectedFlowRepairReady() {
 		if m.hasPendingFlowRepairLaunch(record.FlowID) {
 			return m.setStatus(statusOther, "A repair launch is already pending for this Flow"), nil
+		}
+		if m.hasPendingFlowPhaseResumeForFlow(record.FlowID) {
+			return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), nil
 		}
 		return m.setStatus(statusOther, "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"), nil
 	}
@@ -329,6 +333,9 @@ func (m Model) consumePendingFlowRepairLaunch(ctx actions.AgentLaunchContext, au
 	}
 	if _, repairable := flowRepairObstructionForRecord(record); !repairable {
 		return m.setStatus(statusOther, "Flow is no longer repairable"), false
+	}
+	if m.hasPendingFlowPhaseResumeForFlow(flowID) {
+		return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), false
 	}
 	if m.hasFlowEmbeddedTerminalForFlow(flowID) {
 		return m.setStatus(statusOther, "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"), false
