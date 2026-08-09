@@ -61,7 +61,7 @@ func ListClosed(repoPath string) ([]Bead, error) {
 
 // ListClosed returns the selected repository's closed beads newest-first.
 func (q *Querier) ListClosed(repoPath string) ([]Bead, error) {
-	out, err := q.runner.Run(repoPath, "list", "-s", "closed", "--json", "--limit", fmt.Sprint(closedLimit), "--sort", "closed", "--readonly")
+	out, err := q.runner.Run(repoPath, "list", "-s", "closed", "--json", "--limit", fmt.Sprint(closedLimit), "--sort", "closed", "--reverse", "--readonly")
 	if err != nil {
 		return nil, fmt.Errorf("listing closed beads: %w", err)
 	}

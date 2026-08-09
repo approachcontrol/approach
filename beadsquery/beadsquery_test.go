@@ -140,7 +140,7 @@ func TestQuerierListClosedUsesBoundedNewestFirstReadonlyQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListClosed() error = %v", err)
 	}
-	wantArgs := []string{"list", "-s", "closed", "--json", "--limit", "100", "--sort", "closed", "--readonly"}
+	wantArgs := []string{"list", "-s", "closed", "--json", "--limit", "100", "--sort", "closed", "--reverse", "--readonly"}
 	if runner.calls != 1 || runner.dir != "/repo" || !reflect.DeepEqual(runner.args, wantArgs) {
 		t.Fatalf("runner call = (%d, %q, %#v), want (1, %q, %#v)", runner.calls, runner.dir, runner.args, "/repo", wantArgs)
 	}

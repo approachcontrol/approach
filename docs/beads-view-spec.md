@@ -88,10 +88,11 @@ v1, with `enter` paging a bead's detail through the pager.
 - The Closed query is capped at the newest 100 (a constant in v1). The header
   shows the accepted unfiltered row count plainly when complete and
   "100 of `<total>`" when truncated. The bounded source is
-  `bd list -s closed --json --limit 100 --sort closed --readonly`; the separate
-  cheap total source is `bd stats --json --no-activity --readonly`, parsed from
-  `summary.closed_issues` or the v1 `data.summary.closed_issues` envelope. A
-  failure from either source discards both rows and count.
+  `bd list -s closed --json --limit 100 --sort closed --reverse --readonly`; the
+  separate cheap total source is `bd stats --json --no-activity --readonly`,
+  parsed from `summary.closed_issues` or the v1
+  `data.summary.closed_issues` envelope. A failure from either source discards
+  both rows and count.
 - Configured/not-configured/error classification: missing `bd` binary or a repo
   without a beads database → "beads not configured"; a configured repo where
   `bd` exits nonzero or emits unparseable output → an error state carrying

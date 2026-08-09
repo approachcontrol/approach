@@ -312,7 +312,7 @@ The query sources and ordering are:
 - Blocked: `bd list -s blocked --json --limit 0 --readonly`, sorted by priority then natural ID.
 - Open: `bd list -s open --json --limit 0 --readonly`, sorted by priority then natural ID.
 - In-Progress: `bd list -s in_progress --json --limit 0 --readonly`, sorted by priority then natural ID.
-- Closed: `bd list -s closed --json --limit 100 --sort closed --readonly`, selecting the newest 100 before the result is parsed and sorted by descending `closed_at`, then natural ID. The full total comes from `bd stats --json --no-activity --readonly` at `summary.closed_issues` (or the v1 `data.summary.closed_issues` envelope).
+- Closed: `bd list -s closed --json --limit 100 --sort closed --reverse --readonly`, selecting the newest 100 before the result is parsed and sorted by descending `closed_at`, then natural ID. The full total comes from `bd stats --json --no-activity --readonly` at `summary.closed_issues` (or the v1 `data.summary.closed_issues` envelope).
 
 Ready is `bd`'s dependency-graph computation, not a status derived inside
 Approach. Ready and Open are independent results: an open bead with all
