@@ -266,11 +266,13 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	default:
 	}
 
-	beforeReadyModel, keyCmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	beforeReadyModel, tabCmd := next.Update(tea.KeyMsg{Type: tea.KeyTab})
 	beforeReady := beforeReadyModel.(Model)
+	beforeReadyModel, keyCmd := beforeReady.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	beforeReady = beforeReadyModel.(Model)
 	_, writes = term.snapshot()
-	if keyCmd != nil || len(writes) != 0 || beforeReady.activePane != 1 || beforeReady.flowFocus != flowFocusList {
-		t.Fatalf("pending terminal accepted focus/input before prefill: cmd=%T writes=%#v pane=%d focus=%v", keyCmd, writes, beforeReady.activePane, beforeReady.flowFocus)
+	if tabCmd != nil || keyCmd != nil || len(writes) != 0 || beforeReady.activePane != 0 || beforeReady.flowFocus != flowFocusList {
+		t.Fatalf("pending terminal accepted focus/input before prefill: tab cmd=%T key cmd=%T writes=%#v pane=%d focus=%v", tabCmd, keyCmd, writes, beforeReady.activePane, beforeReady.flowFocus)
 	}
 
 	term.release()
