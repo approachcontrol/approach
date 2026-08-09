@@ -940,6 +940,7 @@ func (m Model) handleWorktreeCreated(msg WorktreeCreatedMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	m = m.clearWorktreeCreateRequest(msg.Request)
+	m.activeFlowSurface = false
 	m, _ = m.selectStoredMode(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.ResetSelection()
 	m, fetchCmd := m.startFetchMode(ui.ModeWorktrees)
@@ -961,6 +962,7 @@ func (m Model) handleWorktreeBootstrapFailed(msg WorktreeBootstrapFailedMsg) (te
 	} else {
 		errText = "bootstrap hook failed: " + errText
 	}
+	m.activeFlowSurface = false
 	m, _ = m.selectStoredMode(ui.ModeWorktrees)
 	m.worktrees = m.worktrees.ResetSelection()
 	m = m.setStatus(statusGitMutation, errText)
@@ -1204,6 +1206,7 @@ func (m Model) handleBranchDeleted(msg BranchDeletedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleBranchCreated(msg BranchCreatedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
+		m.activeFlowSurface = false
 		m, _ = m.selectStoredMode(ui.ModeBranches)
 		m.rows = m.rows.SetQuery("")
 		m.pendingBranchSelection = msg.Name

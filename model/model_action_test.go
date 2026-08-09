@@ -2498,6 +2498,19 @@ func TestModel_WorktreeCreatedRefetchesWorktrees(t *testing.T) {
 	}
 }
 
+func TestModel_WorktreeCreatedExitsActiveFlows(t *testing.T) {
+	m := inWorktreesMode(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("mode before create completion = %d, want active flows", m.Mode())
+	}
+
+	m, _ = update(m, model.WorktreeCreatedMsg{RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"})
+	if m.Mode() != ui.ModeWorktrees {
+		t.Fatalf("mode after create completion = %d, want worktrees", m.Mode())
+	}
+}
+
 func TestModel_WorktreeCreateFailedReopensInput(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, model.WorktreeCreateFailedMsg{RepoPath: "/dev/alpha", Input: "feat", Err: "boom"})
@@ -2678,6 +2691,19 @@ func TestModel_BranchCreatedRefetchesBranches(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected fetchBranches cmd after create")
+	}
+}
+
+func TestModel_BranchCreatedExitsActiveFlows(t *testing.T) {
+	m := inBranchesMode(model.New(testRepos()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	if m.Mode() != ui.ModeActiveFlows {
+		t.Fatalf("mode before branch creation = %d, want active flows", m.Mode())
+	}
+
+	m, _ = update(m, model.BranchCreatedMsg{RepoPath: "/dev/alpha", Name: "feature/one"})
+	if m.Mode() != ui.ModeBranches {
+		t.Fatalf("mode after branch creation = %d, want branches", m.Mode())
 	}
 }
 
