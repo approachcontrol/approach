@@ -178,14 +178,14 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 			},
 		}},
 		FlowSelected: 0,
-		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
 			Provider: "codex",
 			Identity: "implementation",
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{
+		EmbeddedTerminalLines: []string{
 			"terminal line 1",
 			"terminal line 2",
 			"terminal line 3",
@@ -195,7 +195,8 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 			"terminal line 7",
 			"terminal line 8",
 		},
-		ActivePane: 1,
+		EmbeddedTerminalVisible: true,
+		ActivePane:              1,
 	})
 
 	for _, want := range []string{
@@ -230,14 +231,15 @@ func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 			Branch:   "flow/split-repo",
 		}},
 		FlowSelected: 0,
-		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
 			Provider: "codex",
 			Identity: "implementation",
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{"terminal line"},
+		EmbeddedTerminalLines:   []string{"terminal line"},
+		EmbeddedTerminalVisible: true,
 	})
 
 	header := lineContaining(view, "Status")
@@ -271,15 +273,16 @@ func TestRender_FlowsModeSplitTerminalTinyViewportDoesNotPanic(t *testing.T) {
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning},
 			},
 		}},
-		FlowEmbeddedTerminals: []EmbeddedTerminalTab{{
+		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
 			Provider: "codex",
 			Identity: "implementation",
 			State:    "running",
 			Active:   true,
 		}},
-		FlowEmbeddedTerminalLines: []string{"terminal output"},
-		ActivePane:                1,
+		EmbeddedTerminalLines:   []string{"terminal output"},
+		EmbeddedTerminalVisible: true,
+		ActivePane:              1,
 	})
 
 	requireLinesWithinWidth(t, strippedLines(view), 120)
@@ -306,7 +309,7 @@ func TestRenderFlowSplitPaneWrapsOnlyTerminalPanelInBorder(t *testing.T) {
 
 	const width = 70
 	const height = 10
-	listHeight, terminalHeight := FlowSplitPanelHeights(height)
+	listHeight, terminalHeight := EmbeddedTerminalDockHeights(height, EmbeddedTerminalDockExpanded)
 	lines := stripLines(renderFlowSplitPane(records, 0, 0, width, height, "", "", nil, []EmbeddedTerminalTab{{
 		Number:   1,
 		Provider: "codex",
@@ -1564,8 +1567,9 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	}
 
 	terminalFocused := destructive
-	terminalFocused.FlowEmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
-	terminalFocused.FlowTerminalFocused = true
+	terminalFocused.EmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
+	terminalFocused.EmbeddedTerminalVisible = true
+	terminalFocused.EmbeddedTerminalFocused = true
 	if pane := shortcutPaneText(Render(terminalFocused)); strings.Contains(pane, "d      delete") {
 		t.Fatalf("focused Flow terminal should not expose delete shortcut:\n%s", pane)
 	}
@@ -1773,13 +1777,13 @@ func TestRender_FlowsEmbeddedTerminalShortcutsAreActiveByDefault(t *testing.T) {
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "i      input", "t      hide", "l      sessions", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "l          sessions") || strings.Contains(text, "ctrl+] commands") {
-		t.Fatalf("Flow terminal shortcut pane should not show sessions or muted command hints:\n%s", text)
+	if strings.Contains(text, "ctrl+] commands") {
+		t.Fatalf("Flow terminal shortcut pane should not show muted command hints:\n%s", text)
 	}
 }
 
@@ -1792,13 +1796,10 @@ func TestRender_ActiveFlowsOverSessionsUsesFlowTerminalPrefixShortcuts(t *testin
 		EmbeddedTerminalPrefix: true,
 	}, 34, 12)
 	text := ansi.Strip(pane)
-	for _, want := range []string{"ctrl+] send", "i      input", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
+	for _, want := range []string{"ctrl+] send", "i      input", "t      hide", "l      sessions", "left/right terminal", "d      detach", "x      close", "q/esc  quit", "1-9    switch"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("active Flow terminal shortcut pane missing %q:\n%s", want, text)
 		}
-	}
-	if strings.Contains(text, "l      sessions") {
-		t.Fatalf("active Flow terminal shortcut pane should not show session prefix command:\n%s", text)
 	}
 }
 
@@ -1829,10 +1830,11 @@ func TestRender_ActiveFlowsIgnoreHiddenSessionTerminalForShortcuts(t *testing.T)
 			State:    "running",
 			Active:   true,
 		}},
-		ActivePane:          1,
-		FlowSelected:        0,
-		FlowNextLaunchReady: true,
-		FlowHeadless:        true,
+		EmbeddedTerminalVisible: true,
+		ActivePane:              1,
+		FlowSelected:            0,
+		FlowNextLaunchReady:     true,
+		FlowHeadless:            true,
 	})
 
 	pane := shortcutPaneText(view)

@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,13 +25,16 @@ import (
 
 type internalFakeEmbeddedTerminal struct {
 	state string
+	lines []string
 }
 
-func (t internalFakeEmbeddedTerminal) VisibleLines(int, int) []string { return nil }
-func (t internalFakeEmbeddedTerminal) Write(p []byte) (int, error)    { return len(p), nil }
-func (t internalFakeEmbeddedTerminal) Resize(int, int) error          { return nil }
-func (t internalFakeEmbeddedTerminal) Terminate() error               { return nil }
-func (t internalFakeEmbeddedTerminal) Wait(context.Context) error     { return nil }
+func (t internalFakeEmbeddedTerminal) VisibleLines(int, int) []string {
+	return append([]string(nil), t.lines...)
+}
+func (t internalFakeEmbeddedTerminal) Write(p []byte) (int, error) { return len(p), nil }
+func (t internalFakeEmbeddedTerminal) Resize(int, int) error       { return nil }
+func (t internalFakeEmbeddedTerminal) Terminate() error            { return nil }
+func (t internalFakeEmbeddedTerminal) Wait(context.Context) error  { return nil }
 func (t internalFakeEmbeddedTerminal) State() string {
 	if t.state == "" {
 		return "running"
@@ -38,11 +42,389 @@ func (t internalFakeEmbeddedTerminal) State() string {
 	return t.state
 }
 
+func TestEmbeddedTerminalNumbersAreGlobalAcrossScopes(t *testing.T) {
+	m := Model{
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+
+	var opened bool
+	var err error
+	m, opened, err, _ = m.openEmbeddedTerminalWithLabel(actions.AgentLaunchContext{}, embeddedTerminalScopeSession, "codex", "session", "", "", 80, 20)
+	if err != nil || !opened {
+		t.Fatalf("open session terminal: opened=%v err=%v", opened, err)
+	}
+	m, opened, err, _ = m.openEmbeddedTerminalWithLabel(actions.AgentLaunchContext{}, embeddedTerminalScopeFlow, "claude", "implementation", "flow-1", "implementation", 80, 20)
+	if err != nil || !opened {
+		t.Fatalf("open Flow terminal: opened=%v err=%v", opened, err)
+	}
+
+	if len(m.embeddedTerminals) != 2 {
+		t.Fatalf("embedded terminals = %#v, want two slots", m.embeddedTerminals)
+	}
+	if got := []int{m.embeddedTerminals[0].Number, m.embeddedTerminals[1].Number}; got[0] != 1 || got[1] != 2 {
+		t.Fatalf("terminal numbers = %v, want global numbers [1 2]", got)
+	}
+}
+
+func TestDismissEmbeddedTerminalRenumbersGloballyAndPreservesActiveSlot(t *testing.T) {
+	m := Model{
+		activeTerminalNum: 3,
+		embeddedTerminals: []embeddedTerminalSlot{
+			{Number: 1, Scope: embeddedTerminalScopeSession, Identity: "session-one", ID: 1, Terminal: internalFakeEmbeddedTerminal{}},
+			{Number: 2, Scope: embeddedTerminalScopeFlow, Identity: "implementation", ID: 2, Terminal: internalFakeEmbeddedTerminal{}},
+			{Number: 3, Scope: embeddedTerminalScopeSession, Identity: "session-two", ID: 3, Terminal: internalFakeEmbeddedTerminal{}},
+		},
+	}
+
+	m = m.dismissEmbeddedTerminal(2)
+
+	if got := []int{m.embeddedTerminals[0].Number, m.embeddedTerminals[1].Number}; got[0] != 1 || got[1] != 2 {
+		t.Fatalf("terminal numbers after dismiss = %v, want [1 2]", got)
+	}
+	active, _, ok := m.activeTerminal()
+	if !ok || active.ID != 3 || active.Number != 2 {
+		t.Fatalf("active terminal after dismiss = %#v, %v; want surviving ID 3 renumbered to 2", active, ok)
+	}
+}
+
+func TestEmbeddedTerminalPresentationUsesOneActiveTerminalAcrossScopes(t *testing.T) {
+	m := Model{
+		activeTerminalNum: 2,
+		embeddedTerminals: []embeddedTerminalSlot{
+			{Number: 1, Scope: embeddedTerminalScopeSession, Identity: "session", ID: 1, Terminal: internalFakeEmbeddedTerminal{lines: []string{"session output"}}},
+			{Number: 2, Scope: embeddedTerminalScopeFlow, Identity: "implementation", ID: 2, Terminal: internalFakeEmbeddedTerminal{lines: []string{"flow output"}}},
+		},
+	}
+
+	tabs := m.embeddedTerminalTabs()
+	if len(tabs) != 2 || tabs[0].Active || !tabs[1].Active {
+		t.Fatalf("unified tabs = %#v, want only Flow terminal 2 active", tabs)
+	}
+	if lines := m.embeddedTerminalLines(); len(lines) != 1 || lines[0] != "flow output" {
+		t.Fatalf("unified lines = %#v, want active Flow output", lines)
+	}
+}
+
+func TestContentHeightForModeAccountsForTerminalDockState(t *testing.T) {
+	tests := []struct {
+		name          string
+		mode          ui.Mode
+		wantNoDock    int
+		wantExpanded  int
+		wantCollapsed int
+	}{
+		{name: "worktrees", mode: ui.ModeWorktrees, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
+		{name: "branches", mode: ui.ModeBranches, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
+		{name: "stashes", mode: ui.ModeStashes, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
+		{name: "history", mode: ui.ModeHistory, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
+		{name: "reflog", mode: ui.ModeReflog, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 13},
+		{name: "sessions", mode: ui.ModeSessions, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
+		{name: "plans", mode: ui.ModePlans, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
+		{name: "flows", mode: ui.ModeFlows, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
+		{name: "active flows", mode: ui.ModeActiveFlows, wantNoDock: 14, wantExpanded: 3, wantCollapsed: 13},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{height: 20, mode: tt.mode, terminalDockVisible: true}
+			if got := m.contentHeightForMode(); got != tt.wantNoDock {
+				t.Fatalf("no-dock content height = %d, want %d", got, tt.wantNoDock)
+			}
+			m.embeddedTerminals = []embeddedTerminalSlot{{Number: 1, Scope: embeddedTerminalScopeSession, Terminal: internalFakeEmbeddedTerminal{}}}
+			if got := m.contentHeightForMode(); got != tt.wantExpanded {
+				t.Fatalf("expanded content height = %d, want %d", got, tt.wantExpanded)
+			}
+			m.terminalDockVisible = false
+			if got := m.contentHeightForMode(); got != tt.wantCollapsed {
+				t.Fatalf("collapsed content height = %d, want %d", got, tt.wantCollapsed)
+			}
+		})
+	}
+}
+
+func TestCyclePaneFocusIncludesExpandedTerminalDockInEveryMode(t *testing.T) {
+	for _, mode := range []ui.Mode{ui.ModeWorktrees, ui.ModeSessions, ui.ModePlans, ui.ModeFlows} {
+		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
+			m := Model{
+				mode:                mode,
+				activePane:          0,
+				terminalFocus:       terminalFocusList,
+				terminalDockVisible: true,
+				activeTerminalNum:   1,
+				embeddedTerminals: []embeddedTerminalSlot{{
+					Number: 1, Scope: embeddedTerminalScopeSession, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+				}},
+			}
+
+			m = m.cyclePaneFocusForward()
+			if m.activePane != 1 || m.terminalFocus != terminalFocusList {
+				t.Fatalf("repo -> list focus = pane %d focus %d, want pane 1/list", m.activePane, m.terminalFocus)
+			}
+			m = m.cyclePaneFocusForward()
+			if m.activePane != 1 || m.terminalFocus != terminalFocusTerminal || !m.terminalPrefixActive {
+				t.Fatalf("list -> terminal focus = pane %d focus %d prefix %v, want pane 1/terminal/command", m.activePane, m.terminalFocus, m.terminalPrefixActive)
+			}
+			m = m.cyclePaneFocusForward()
+			if m.activePane != 0 || m.terminalFocus != terminalFocusList || m.terminalPrefixActive {
+				t.Fatalf("terminal -> repo focus = pane %d focus %d prefix %v, want pane 0/list/input", m.activePane, m.terminalFocus, m.terminalPrefixActive)
+			}
+		})
+	}
+}
+
+func TestCyclePaneFocusSkipsCollapsedOrEmptyTerminalDock(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		terminals []embeddedTerminalSlot
+		visible   bool
+	}{
+		{name: "collapsed", terminals: []embeddedTerminalSlot{{Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{}}}},
+		{name: "empty", visible: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{mode: ui.ModePlans, activePane: 0, terminalDockVisible: tt.visible, embeddedTerminals: tt.terminals}
+			m = m.cyclePaneFocusForward()
+			m = m.cyclePaneFocusForward()
+			if m.activePane != 0 || m.terminalFocus != terminalFocusList {
+				t.Fatalf("second tab = pane %d focus %d, want repo/list", m.activePane, m.terminalFocus)
+			}
+		})
+	}
+}
+
+func TestCtrlTTogglesTerminalDockOutsideInputMode(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		activePane   int
+		focus        terminalFocus
+		prefixActive bool
+	}{
+		{name: "repo pane", activePane: 0, focus: terminalFocusList},
+		{name: "middle list", activePane: 1, focus: terminalFocusList},
+		{name: "terminal command mode", activePane: 1, focus: terminalFocusTerminal, prefixActive: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			term := &internalFakeDetachableEmbeddedTerminal{}
+			m := Model{
+				mode:                 ui.ModePlans,
+				width:                160,
+				height:               20,
+				activePane:           tt.activePane,
+				terminalFocus:        tt.focus,
+				terminalPrefixActive: tt.prefixActive,
+				terminalDockVisible:  true,
+				activeTerminalNum:    1,
+				embeddedTerminals: []embeddedTerminalSlot{{
+					Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+				}},
+			}
+
+			nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+			next := nextModel.(Model)
+			if cmd != nil {
+				t.Fatalf("ctrl+t returned command %T, want nil", cmd)
+			}
+			if next.terminalDockVisible {
+				t.Fatal("ctrl+t should collapse the expanded dock")
+			}
+			if tt.focus == terminalFocusTerminal && (next.activePane != 1 || next.terminalFocus != terminalFocusList || next.terminalPrefixActive) {
+				t.Fatalf("collapse from terminal focus = pane %d focus %d prefix %v, want middle list/input", next.activePane, next.terminalFocus, next.terminalPrefixActive)
+			}
+			if len(term.resizes) != 0 {
+				t.Fatalf("collapse resized terminal: %#v", term.resizes)
+			}
+		})
+	}
+}
+
+func TestCtrlTInTerminalInputModePassesThroughToPTY(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{}
+	m := Model{
+		mode:                ui.ModePlans,
+		activePane:          1,
+		terminalFocus:       terminalFocusTerminal,
+		terminalDockVisible: true,
+		activeTerminalNum:   1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+		}},
+	}
+
+	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := nextModel.(Model)
+	if cmd != nil || !next.terminalDockVisible {
+		t.Fatalf("ctrl+t input passthrough changed dock or returned command: visible=%v cmd=%T", next.terminalDockVisible, cmd)
+	}
+	if len(term.writes) != 1 || string(term.writes[0]) != "\x14" {
+		t.Fatalf("ctrl+t writes = %#v, want PTY byte 0x14", term.writes)
+	}
+}
+
+func TestTerminalCommandTogglesDockFromInputMode(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{}
+	m := Model{
+		mode:                ui.ModeFlows,
+		activePane:          1,
+		terminalFocus:       terminalFocusTerminal,
+		terminalDockVisible: true,
+		activeTerminalNum:   1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: term,
+		}},
+	}
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	next := nextModel.(Model)
+	if !next.terminalPrefixActive {
+		t.Fatal("ctrl+] should enter terminal command mode")
+	}
+	nextModel, cmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	next = nextModel.(Model)
+	if cmd != nil || next.terminalDockVisible || next.terminalFocus != terminalFocusList || next.terminalPrefixActive {
+		t.Fatalf("ctrl+] t result = visible %v focus %d prefix %v cmd %T, want collapsed list focus", next.terminalDockVisible, next.terminalFocus, next.terminalPrefixActive, cmd)
+	}
+	if len(term.writes) != 0 {
+		t.Fatalf("ctrl+] t should not write to PTY: %#v", term.writes)
+	}
+}
+
+func TestShowingTerminalDockResizesLiveTerminals(t *testing.T) {
+	term := &internalFakeDetachableEmbeddedTerminal{}
+	m := Model{
+		mode:                ui.ModeWorktrees,
+		width:               160,
+		height:              20,
+		activePane:          1,
+		terminalFocus:       terminalFocusList,
+		terminalDockVisible: false,
+		activeTerminalNum:   1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: term,
+		}},
+	}
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := nextModel.(Model)
+	if !next.terminalDockVisible {
+		t.Fatal("ctrl+t should expand the collapsed dock")
+	}
+	want := [2]int{next.embeddedTerminalWidth(), next.embeddedTerminalContentHeight()}
+	if len(term.resizes) != 1 || term.resizes[0] != want {
+		t.Fatalf("show resize calls = %#v, want [%v]", term.resizes, want)
+	}
+}
+
+func TestCtrlTWithNoTerminalsReportsStatusAndSearchDoesNotToggle(t *testing.T) {
+	m := Model{terminalDockVisible: true}
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := nextModel.(Model)
+	if !next.terminalDockVisible || !strings.Contains(next.status.Text, "No embedded terminals") {
+		t.Fatalf("no-terminal ctrl+t = visible %v status %q", next.terminalDockVisible, next.status.Text)
+	}
+
+	next = Model{
+		mode:                ui.ModeSessions,
+		activePane:          1,
+		searchActive:        true,
+		terminalDockVisible: true,
+		activeTerminalNum:   1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Terminal: internalFakeEmbeddedTerminal{},
+		}},
+	}
+	nextModel, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next = nextModel.(Model)
+	if !next.terminalDockVisible {
+		t.Fatal("ctrl+t should not toggle while list search is active")
+	}
+}
+
+func TestTerminalCommandSessionPickerIsDockLevelAndGuardsEmptyRecords(t *testing.T) {
+	base := Model{
+		mode:                 ui.ModeFlows,
+		activePane:           1,
+		terminalFocus:        terminalFocusTerminal,
+		terminalPrefixActive: true,
+		terminalDockVisible:  true,
+		activeTerminalNum:    1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, Scope: embeddedTerminalScopeFlow, Terminal: internalFakeEmbeddedTerminal{},
+		}},
+	}
+
+	next, _, consumed := base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !consumed || next.modal.IsOpen() || !strings.Contains(next.status.Text, "No saved sessions available") {
+		t.Fatalf("empty picker result = consumed %v modal %v status %q", consumed, next.modal.IsOpen(), next.status.Text)
+	}
+
+	base.sessions = newSessionPane().SetItems([]sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: "session-1", Branch: "feature/dock"}})
+	next, _, consumed = base.handleFocusedEmbeddedTerminalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !consumed || !next.modal.IsOpen() || next.modal.View().Kind != modal.Select {
+		t.Fatalf("Flow-terminal picker result = consumed %v modal %#v", consumed, next.modal.View())
+	}
+}
+
+func TestSessionResumeFocusesTerminalInInputMode(t *testing.T) {
+	m := Model{
+		mode:                ui.ModeSessions,
+		activePane:          1,
+		terminalFocus:       terminalFocusList,
+		terminalDockVisible: true,
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+	next, _ := m.resumeSessionInEmbeddedTerminal(actions.AgentLaunchContext{}, sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1"})
+	if next.activePane != 1 || next.terminalFocus != terminalFocusTerminal || next.terminalPrefixActive {
+		t.Fatalf("session resume focus = pane %d focus %d prefix %v, want terminal input", next.activePane, next.terminalFocus, next.terminalPrefixActive)
+	}
+}
+
+func TestNumberedModeKeysRemainAvailableWithSessionTerminalListFocused(t *testing.T) {
+	for _, tt := range []struct {
+		key      rune
+		wantMode ui.Mode
+	}{
+		{key: '1', wantMode: ui.ModeWorktrees},
+		{key: '2', wantMode: ui.ModeSessions},
+		{key: '3', wantMode: ui.ModePlans},
+		{key: '4', wantMode: ui.ModeFlows},
+	} {
+		t.Run(string(tt.key), func(t *testing.T) {
+			m := Model{
+				mode:                ui.ModeSessions,
+				lastGitMode:         ui.ModeWorktrees,
+				activePane:          1,
+				terminalFocus:       terminalFocusList,
+				terminalDockVisible: true,
+				activeTerminalNum:   1,
+				embeddedTerminals: []embeddedTerminalSlot{{
+					Number: 1, ID: 1, Scope: embeddedTerminalScopeSession, Terminal: internalFakeEmbeddedTerminal{},
+				}},
+			}
+			nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+			next := nextModel.(Model)
+			if next.mode != tt.wantMode {
+				t.Fatalf("key %q mode = %d, want %d", tt.key, next.mode, tt.wantMode)
+			}
+		})
+	}
+
+	m := Model{mode: ui.ModeSessions, activePane: 0, terminalDockVisible: true, embeddedTerminals: []embeddedTerminalSlot{{Number: 1, Terminal: internalFakeEmbeddedTerminal{}}}}
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	if next := nextModel.(Model); next.mode != ui.ModeSessions {
+		t.Fatalf("repo-pane numbered key changed mode to %d, want sessions", next.mode)
+	}
+}
+
 type internalFakeDetachableEmbeddedTerminal struct {
 	internalFakeEmbeddedTerminal
 	target   string
 	detached bool
 	writes   [][]byte
+	resizes  [][2]int
 }
 
 func (t *internalFakeDetachableEmbeddedTerminal) Write(p []byte) (int, error) {
@@ -57,6 +439,11 @@ func (t *internalFakeDetachableEmbeddedTerminal) Detach() error {
 }
 
 func (t *internalFakeDetachableEmbeddedTerminal) DetachTarget() string { return t.target }
+
+func (t *internalFakeDetachableEmbeddedTerminal) Resize(width, height int) error {
+	t.resizes = append(t.resizes, [2]int{width, height})
+	return nil
+}
 
 type prefillReadyFakeEmbeddedTerminal struct {
 	lines       [][]string
@@ -178,9 +565,9 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	t.Cleanup(term.release)
 	startCalls := 0
 	m := Model{
-		mode:       ui.ModeFlows,
-		activePane: 1,
-		flowFocus:  flowFocusList,
+		mode:          ui.ModeFlows,
+		activePane:    1,
+		terminalFocus: terminalFocusList,
 		// Seeded so the stable IDs handed out below (41, 42) cannot coincide
 		// with the Flow terminal numbers the same slots receive (1, 2). In a
 		// zero-valued model both counters start at 1, and activation keyed on
@@ -250,10 +637,10 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	if int(stableID) == next.embeddedTerminals[0].Number {
 		t.Fatalf("stable ID %d collides with Flow terminal number %d; seed nextEmbeddedTerminalID so activation cannot key on the number", stableID, next.embeddedTerminals[0].Number)
 	}
-	if next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
-		t.Fatalf("pending terminal stole focus: active=%d focus=%v", next.activeFlowTerminalNum, next.flowFocus)
+	if next.activeTerminalNum != 0 || next.terminalFocus != terminalFocusList {
+		t.Fatalf("pending terminal stole focus: active=%d focus=%v", next.activeTerminalNum, next.terminalFocus)
 	}
-	if number, ok := next.nextEmbeddedTerminalNumber(embeddedTerminalScopeFlow); !ok || number != 2 {
+	if number, ok := next.nextEmbeddedTerminalNumber(); !ok || number != 2 {
 		t.Fatalf("next Flow terminal number = %d, %v; want reserved slot 1 and next number 2", number, ok)
 	}
 
@@ -279,8 +666,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	beforeReadyModel, keyCmd := beforeReady.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	beforeReady = beforeReadyModel.(Model)
 	_, writes = term.snapshot()
-	if tabCmd != nil || keyCmd != nil || len(writes) != 0 || beforeReady.activePane != 0 || beforeReady.flowFocus != flowFocusList {
-		t.Fatalf("pending terminal accepted focus/input before prefill: tab cmd=%T key cmd=%T writes=%#v pane=%d focus=%v", tabCmd, keyCmd, writes, beforeReady.activePane, beforeReady.flowFocus)
+	if tabCmd != nil || keyCmd != nil || len(writes) != 0 || beforeReady.activePane != 0 || beforeReady.terminalFocus != terminalFocusList {
+		t.Fatalf("pending terminal accepted focus/input before prefill: tab cmd=%T key cmd=%T writes=%#v pane=%d focus=%v", tabCmd, keyCmd, writes, beforeReady.activePane, beforeReady.terminalFocus)
 	}
 
 	// A lone pending slot cannot separate activation by stable ID from
@@ -305,8 +692,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	if int(secondID) == next.embeddedTerminals[1].Number || int(stableID) == next.embeddedTerminals[1].Number || int(secondID) == next.embeddedTerminals[0].Number {
 		t.Fatalf("stable IDs (%d, %d) overlap Flow terminal numbers (%d, %d); activation keyed on the number would pass", stableID, secondID, next.embeddedTerminals[0].Number, next.embeddedTerminals[1].Number)
 	}
-	if next.embeddedTerminals[0].ID != stableID || !next.embeddedTerminals[0].PrefillPending || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
-		t.Fatalf("second launch disturbed the first pending slot: slots=%#v active=%d focus=%v", next.embeddedTerminals, next.activeFlowTerminalNum, next.flowFocus)
+	if next.embeddedTerminals[0].ID != stableID || !next.embeddedTerminals[0].PrefillPending || next.activeTerminalNum != 0 || next.terminalFocus != terminalFocusList {
+		t.Fatalf("second launch disturbed the first pending slot: slots=%#v active=%d focus=%v", next.embeddedTerminals, next.activeTerminalNum, next.terminalFocus)
 	}
 
 	// The second prefill completes while the first is still withheld, so its
@@ -318,8 +705,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	}
 	outOfOrderModel, _ := next.Update(secondMsg)
 	outOfOrder := outOfOrderModel.(Model)
-	if outOfOrder.activeFlowTerminalNum != 2 || outOfOrder.flowFocus != flowFocusTerminal {
-		t.Fatalf("out-of-order prefill activated the wrong terminal: active=%d focus=%v", outOfOrder.activeFlowTerminalNum, outOfOrder.flowFocus)
+	if outOfOrder.activeTerminalNum != 2 || outOfOrder.terminalFocus != terminalFocusTerminal {
+		t.Fatalf("out-of-order prefill activated the wrong terminal: active=%d focus=%v", outOfOrder.activeTerminalNum, outOfOrder.terminalFocus)
 	}
 	if outOfOrder.embeddedTerminals[1].ID != secondID || outOfOrder.embeddedTerminals[1].PrefillPending || !outOfOrder.embeddedTerminals[0].PrefillPending {
 		t.Fatalf("out-of-order prefill cleared the wrong pending slot: slots=%#v", outOfOrder.embeddedTerminals)
@@ -347,8 +734,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	if msg.ID != stableID || msg.Err != nil {
 		t.Fatalf("prefill result = %#v, want successful result for stable terminal ID %d", msg, stableID)
 	}
-	if outOfOrder.activeFlowTerminalNum != 2 || !outOfOrder.embeddedTerminals[0].PrefillPending {
-		t.Fatalf("prefill command activated terminal before result Update: active=%d pending=%v", outOfOrder.activeFlowTerminalNum, outOfOrder.embeddedTerminals[0].PrefillPending)
+	if outOfOrder.activeTerminalNum != 2 || !outOfOrder.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("prefill command activated terminal before result Update: active=%d pending=%v", outOfOrder.activeTerminalNum, outOfOrder.embeddedTerminals[0].PrefillPending)
 	}
 
 	activatedModel, _ := outOfOrder.Update(msg)
@@ -358,8 +745,8 @@ func TestFlowEmbeddedInteractivePrefillRunsAfterUpdateAndActivatesByStableID(t *
 	if startCalls != 2 || visibleHits != 1 || len(writes) != 1 || writes[0] != wantWrite {
 		t.Fatalf("async prefill starts=%d calls=%d writes=%#v, want two starts, one probe, and %q", startCalls, visibleHits, writes, wantWrite)
 	}
-	if len(activated.embeddedTerminals) != 2 || activated.embeddedTerminals[0].ID != stableID || activated.embeddedTerminals[0].PrefillPending || activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
-		t.Fatalf("late prefill did not activate its own stable terminal: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeFlowTerminalNum, activated.flowFocus)
+	if len(activated.embeddedTerminals) != 2 || activated.embeddedTerminals[0].ID != stableID || activated.embeddedTerminals[0].PrefillPending || activated.activeTerminalNum != 1 || activated.terminalFocus != terminalFocusTerminal {
+		t.Fatalf("late prefill did not activate its own stable terminal: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeTerminalNum, activated.terminalFocus)
 	}
 	if activated.embeddedTerminals[1].ID != secondID || activated.embeddedTerminals[1].PrefillPending {
 		t.Fatalf("late prefill disturbed the already-activated slot: slots=%#v", activated.embeddedTerminals)
@@ -379,9 +766,9 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 	term := &prefillReadyFakeEmbeddedTerminal{lines: [][]string{{"", "   "}}}
 	startCalls := 0
 	m := Model{
-		mode:       ui.ModeFlows,
-		activePane: 1,
-		flowFocus:  flowFocusList,
+		mode:          ui.ModeFlows,
+		activePane:    1,
+		terminalFocus: terminalFocusList,
 		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
 			startCalls++
 			return term, nil
@@ -406,8 +793,8 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 	if msg.Err != nil {
 		t.Fatalf("readiness timeout returned launch error: %v", msg.Err)
 	}
-	if startCalls != 1 || len(next.embeddedTerminals) != 1 || !next.embeddedTerminals[0].PrefillPending || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
-		t.Fatalf("timeout prefill activated before result Update: starts=%d slots=%#v active=%d focus=%v", startCalls, next.embeddedTerminals, next.activeFlowTerminalNum, next.flowFocus)
+	if startCalls != 1 || len(next.embeddedTerminals) != 1 || !next.embeddedTerminals[0].PrefillPending || next.activeTerminalNum != 0 || next.terminalFocus != terminalFocusList {
+		t.Fatalf("timeout prefill activated before result Update: starts=%d slots=%#v active=%d focus=%v", startCalls, next.embeddedTerminals, next.activeTerminalNum, next.terminalFocus)
 	}
 	wantWrite := embeddedPromptPasteStart + "Build it" + embeddedPromptPasteEnd
 	if term.visibleHits == 0 || len(term.writes) != 1 || term.writes[0] != wantWrite {
@@ -416,17 +803,17 @@ func TestFlowEmbeddedInteractivePrefillWritesAfterReadinessTimeout(t *testing.T)
 
 	activatedModel, _ := next.Update(msg)
 	activated := activatedModel.(Model)
-	if len(activated.embeddedTerminals) != 1 || activated.embeddedTerminals[0].PrefillPending || activated.activeFlowTerminalNum != 1 || activated.flowFocus != flowFocusTerminal {
-		t.Fatalf("successful timeout prefill did not activate terminal on result Update: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeFlowTerminalNum, activated.flowFocus)
+	if len(activated.embeddedTerminals) != 1 || activated.embeddedTerminals[0].PrefillPending || activated.activeTerminalNum != 1 || activated.terminalFocus != terminalFocusTerminal {
+		t.Fatalf("successful timeout prefill did not activate terminal on result Update: slots=%#v active=%d focus=%v", activated.embeddedTerminals, activated.activeTerminalNum, activated.terminalFocus)
 	}
 }
 
 func TestStaleEmbeddedPromptPrefillResultIsIgnoredAfterSlotRemoval(t *testing.T) {
 	phaseMutationRan := false
 	m := Model{
-		mode:       ui.ModeFlows,
-		activePane: 1,
-		flowFocus:  flowFocusList,
+		mode:          ui.ModeFlows,
+		activePane:    1,
+		terminalFocus: terminalFocusList,
 		setFlowPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseMutationRan = true
 			return flowstore.FlowRecord{}, nil
@@ -439,8 +826,8 @@ func TestStaleEmbeddedPromptPrefillResultIsIgnoredAfterSlotRemoval(t *testing.T)
 		Err:           errors.New("late failure"),
 	})
 	next := nextModel.(Model)
-	if cmd != nil || phaseMutationRan || next.activeFlowTerminalNum != 0 || next.flowFocus != flowFocusList {
-		t.Fatalf("stale prefill result changed model: cmd=%T mutation=%v active=%d focus=%v", cmd, phaseMutationRan, next.activeFlowTerminalNum, next.flowFocus)
+	if cmd != nil || phaseMutationRan || next.activeTerminalNum != 0 || next.terminalFocus != terminalFocusList {
+		t.Fatalf("stale prefill result changed model: cmd=%T mutation=%v active=%d focus=%v", cmd, phaseMutationRan, next.activeTerminalNum, next.terminalFocus)
 	}
 }
 
@@ -793,7 +1180,7 @@ func TestSyncActiveFlowTerminalToSelectedFlowSelectsNewestMatchingTerminal(t *te
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
 	)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -818,8 +1205,8 @@ func TestSyncActiveFlowTerminalToSelectedFlowSelectsNewestMatchingTerminal(t *te
 
 	m = m.syncActiveFlowTerminalToSelectedFlow()
 
-	if m.activeFlowTerminalNum != 3 {
-		t.Fatalf("active Flow terminal = %d, want newest matching terminal 3", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 3 {
+		t.Fatalf("active Flow terminal = %d, want newest matching terminal 3", m.activeTerminalNum)
 	}
 }
 
@@ -828,7 +1215,7 @@ func TestSyncActiveFlowTerminalToSelectedFlowPreservesActiveTerminalWhenSelected
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
 	)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -847,8 +1234,8 @@ func TestSyncActiveFlowTerminalToSelectedFlowPreservesActiveTerminalWhenSelected
 
 	m = m.syncActiveFlowTerminalToSelectedFlow()
 
-	if m.activeFlowTerminalNum != 1 {
-		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1", m.activeTerminalNum)
 	}
 }
 
@@ -856,7 +1243,7 @@ func TestSyncActiveFlowTerminalToSelectedFlowPreservesCurrentMatchingTerminal(t 
 	m := internalFlowsModel(
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
 	)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -874,8 +1261,8 @@ func TestSyncActiveFlowTerminalToSelectedFlowPreservesCurrentMatchingTerminal(t 
 
 	m = m.syncActiveFlowTerminalToSelectedFlow()
 
-	if m.activeFlowTerminalNum != 1 {
-		t.Fatalf("active Flow terminal = %d, want current matching terminal 1", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want current matching terminal 1", m.activeTerminalNum)
 	}
 }
 
@@ -884,7 +1271,7 @@ func TestMoveCursorSyncsActiveFlowTerminalToSelectedFlow(t *testing.T) {
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
 	)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -902,11 +1289,11 @@ func TestMoveCursorSyncsActiveFlowTerminalToSelectedFlow(t *testing.T) {
 
 	m = m.moveCursor(1)
 
-	if m.activeFlowTerminalNum != 2 {
-		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeTerminalNum)
 	}
-	if m.flowFocus != flowFocusList {
-		t.Fatalf("flow focus = %d, want list focus", m.flowFocus)
+	if m.terminalFocus != terminalFocusList {
+		t.Fatalf("flow focus = %d, want list focus", m.terminalFocus)
 	}
 	if m.terminalPrefixActive {
 		t.Fatal("list navigation should not enable terminal command mode")
@@ -918,7 +1305,7 @@ func TestFlowFilterSyncsActiveTerminalToSelectedFlow(t *testing.T) {
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Alpha"},
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Bravo"},
 	)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -941,11 +1328,11 @@ func TestFlowFilterSyncsActiveTerminalToSelectedFlow(t *testing.T) {
 	if got := m.selectedFlowID(); got != "flow-2" {
 		t.Fatalf("selected Flow = %q, want flow-2", got)
 	}
-	if m.activeFlowTerminalNum != 2 {
-		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeTerminalNum)
 	}
-	if m.flowFocus != flowFocusList {
-		t.Fatalf("flow focus = %d, want list focus", m.flowFocus)
+	if m.terminalFocus != terminalFocusList {
+		t.Fatalf("flow focus = %d, want list focus", m.terminalFocus)
 	}
 }
 
@@ -963,7 +1350,7 @@ func TestMoveSelectedFlowPhaseSyncsTerminalWhenCrossingToNextFlow(t *testing.T) 
 	)
 	m.expandedFlowID = "flow-1"
 	m.selectedFlowPhaseID = "implementation"
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:      1,
@@ -985,8 +1372,8 @@ func TestMoveSelectedFlowPhaseSyncsTerminalWhenCrossingToNextFlow(t *testing.T) 
 	if got := m.selectedFlowID(); got != "flow-2" {
 		t.Fatalf("selected Flow = %q, want flow-2", got)
 	}
-	if m.activeFlowTerminalNum != 2 {
-		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeTerminalNum)
 	}
 }
 
@@ -996,7 +1383,7 @@ func TestHandleFlowResultSyncsTerminalAfterPreservingSelectedFlow(t *testing.T) 
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
 	)
 	m.flows = m.flows.Move(1, 20, 80)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -1026,8 +1413,8 @@ func TestHandleFlowResultSyncsTerminalAfterPreservingSelectedFlow(t *testing.T) 
 	if got := m.selectedFlowID(); got != "flow-2" {
 		t.Fatalf("selected Flow = %q, want flow-2", got)
 	}
-	if m.activeFlowTerminalNum != 2 {
-		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want selected Flow terminal 2", m.activeTerminalNum)
 	}
 }
 
@@ -1036,8 +1423,8 @@ func TestHandleFlowResultPreservesActiveTerminalWhileTerminalFocused(t *testing.
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
 	)
-	m.activeFlowTerminalNum = 2
-	m.flowFocus = flowFocusTerminal
+	m.activeTerminalNum = 2
+	m.terminalFocus = terminalFocusTerminal
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -1067,8 +1454,8 @@ func TestHandleFlowResultPreservesActiveTerminalWhileTerminalFocused(t *testing.
 	if got := m.selectedFlowID(); got != "flow-1" {
 		t.Fatalf("selected Flow = %q, want flow-1", got)
 	}
-	if m.activeFlowTerminalNum != 2 {
-		t.Fatalf("active Flow terminal = %d, want explicitly selected terminal 2", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want explicitly selected terminal 2", m.activeTerminalNum)
 	}
 }
 
@@ -1079,7 +1466,7 @@ func TestHandleFlowResultOffFlowsModeDoesNotRetargetActiveTerminal(t *testing.T)
 	)
 	m.flows = m.flows.Move(1, 20, 80)
 	m.mode = ui.ModeWorktrees
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -1109,8 +1496,8 @@ func TestHandleFlowResultOffFlowsModeDoesNotRetargetActiveTerminal(t *testing.T)
 	if got := m.selectedFlowID(); got != "flow-2" {
 		t.Fatalf("selected Flow = %q, want flow-2", got)
 	}
-	if m.activeFlowTerminalNum != 1 {
-		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1 off flows mode", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1 off flows mode", m.activeTerminalNum)
 	}
 }
 
@@ -1120,7 +1507,7 @@ func TestHandleFlowResultPreservesActiveTerminalWhenClampedSelectionHasNoMatch(t
 		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
 	)
 	m.flows = m.flows.Move(1, 20, 80)
-	m.activeFlowTerminalNum = 1
+	m.activeTerminalNum = 1
 	m.embeddedTerminals = []embeddedTerminalSlot{
 		{
 			Number:   1,
@@ -1143,19 +1530,18 @@ func TestHandleFlowResultPreservesActiveTerminalWhenClampedSelectionHasNoMatch(t
 	if got := m.selectedFlowID(); got != "flow-3" {
 		t.Fatalf("selected Flow = %q, want clamped flow-3", got)
 	}
-	if m.activeFlowTerminalNum != 1 {
-		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1", m.activeFlowTerminalNum)
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("active Flow terminal = %d, want unchanged terminal 1", m.activeTerminalNum)
 	}
 }
 
-func TestDismissLastFlowTerminalClearsFlowCommandStateOnly(t *testing.T) {
+func TestDismissActiveFlowTerminalKeepsUnifiedDockFocusedOnSurvivor(t *testing.T) {
 	m := Model{
-		mode:                      ui.ModeFlows,
-		activePane:                1,
-		activeEmbeddedTerminalNum: 1,
-		activeFlowTerminalNum:     1,
-		flowFocus:                 flowFocusTerminal,
-		terminalPrefixActive:      true,
+		mode:                 ui.ModeFlows,
+		activePane:           1,
+		activeTerminalNum:    2,
+		terminalFocus:        terminalFocusTerminal,
+		terminalPrefixActive: true,
 		embeddedTerminals: []embeddedTerminalSlot{
 			{
 				Number:   1,
@@ -1166,7 +1552,7 @@ func TestDismissLastFlowTerminalClearsFlowCommandStateOnly(t *testing.T) {
 				ID:       1,
 			},
 			{
-				Number:      1,
+				Number:      2,
 				Scope:       embeddedTerminalScopeFlow,
 				Provider:    "codex",
 				Identity:    "implementation",
@@ -1183,27 +1569,23 @@ func TestDismissLastFlowTerminalClearsFlowCommandStateOnly(t *testing.T) {
 	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].Scope != embeddedTerminalScopeSession {
 		t.Fatalf("remaining terminals = %#v, want only session terminal", m.embeddedTerminals)
 	}
-	if m.activeEmbeddedTerminalNum != 1 {
-		t.Fatalf("active session terminal = %d, want 1", m.activeEmbeddedTerminalNum)
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("active session terminal = %d, want 1", m.activeTerminalNum)
 	}
-	if m.activeFlowTerminalNum != 0 {
-		t.Fatalf("active Flow terminal = %d, want 0", m.activeFlowTerminalNum)
+	if m.terminalFocus != terminalFocusTerminal {
+		t.Fatalf("terminal focus = %d, want terminal", m.terminalFocus)
 	}
-	if m.flowFocus != flowFocusList {
-		t.Fatalf("flow focus = %d, want list", m.flowFocus)
-	}
-	if m.terminalPrefixActive {
-		t.Fatal("terminal command state should clear after the last Flow terminal is dismissed")
+	if !m.terminalPrefixActive {
+		t.Fatal("terminal command state should remain active on the surviving session terminal")
 	}
 }
 
 func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 	m := Model{
-		mode:                      ui.ModeSessions,
-		activeEmbeddedTerminalNum: 1,
-		activeFlowTerminalNum:     1,
-		flowFocus:                 flowFocusTerminal,
-		terminalPrefixActive:      true,
+		mode:                 ui.ModeSessions,
+		activeTerminalNum:    1,
+		terminalFocus:        terminalFocusTerminal,
+		terminalPrefixActive: true,
 		embeddedTerminals: []embeddedTerminalSlot{
 			{
 				Number:   1,
@@ -1214,7 +1596,7 @@ func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 				ID:       1,
 			},
 			{
-				Number:      1,
+				Number:      2,
 				Scope:       embeddedTerminalScopeFlow,
 				Provider:    "codex",
 				Identity:    "implementation",
@@ -1231,8 +1613,8 @@ func TestDismissLastFlowTerminalPreservesSessionCommandState(t *testing.T) {
 	if len(m.embeddedTerminals) != 1 || m.embeddedTerminals[0].Scope != embeddedTerminalScopeSession {
 		t.Fatalf("remaining terminals = %#v, want only session terminal", m.embeddedTerminals)
 	}
-	if m.activeEmbeddedTerminalNum != 1 {
-		t.Fatalf("active session terminal = %d, want 1", m.activeEmbeddedTerminalNum)
+	if m.activeTerminalNum != 1 {
+		t.Fatalf("active session terminal = %d, want 1", m.activeTerminalNum)
 	}
 	if !m.terminalPrefixActive {
 		t.Fatal("session terminal command state should survive background Flow terminal dismissal")
@@ -1243,9 +1625,9 @@ func TestSessionTerminalPrefixDDetachesActiveTerminal(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	var gotTarget, gotCWD string
 	m := Model{
-		mode:                      ui.ModeSessions,
-		activeEmbeddedTerminalNum: 1,
-		terminalPrefixActive:      true,
+		mode:                 ui.ModeSessions,
+		activeTerminalNum:    1,
+		terminalPrefixActive: true,
 		launchDetachedTerminal: func(target, cwd string) (actions.TerminalLaunchSpec, error) {
 			gotTarget = target
 			gotCWD = cwd
@@ -1309,14 +1691,13 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-flow-agent"}
 	var gotTarget, gotCWD string
 	m := Model{
-		mode:                  ui.ModeFlows,
-		activePane:            1,
-		flowFocus:             flowFocusTerminal,
-		activeFlowTerminalNum: 1,
-		terminalPrefixActive:  true,
-		terminalConfirmID:     1,
-		terminalConfirmScope:  embeddedTerminalScopeFlow,
-		modal:                 modal.OpenConfirm(embeddedTerminalTerminatePrompt, nil),
+		mode:                 ui.ModeFlows,
+		activePane:           1,
+		terminalFocus:        terminalFocusTerminal,
+		activeTerminalNum:    1,
+		terminalPrefixActive: true,
+		terminalConfirmID:    1,
+		modal:                modal.OpenConfirm(embeddedTerminalTerminatePrompt, nil),
 		launchDetachedTerminal: func(target, cwd string) (actions.TerminalLaunchSpec, error) {
 			gotTarget = target
 			gotCWD = cwd
@@ -1350,7 +1731,7 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 				ID:          2,
 			},
 			{
-				Number:   1,
+				Number:   3,
 				Scope:    embeddedTerminalScopeSession,
 				Provider: "codex",
 				Identity: "session",
@@ -1374,7 +1755,7 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 	if next.embeddedTerminals[0].Scope != embeddedTerminalScopeFlow || next.embeddedTerminals[0].Number != 1 {
 		t.Fatalf("remaining Flow terminal not renumbered to 1: %#v", next.embeddedTerminals)
 	}
-	if next.embeddedTerminals[1].Scope != embeddedTerminalScopeSession || next.embeddedTerminals[1].Number != 1 {
+	if next.embeddedTerminals[1].Scope != embeddedTerminalScopeSession || next.embeddedTerminals[1].Number != 2 {
 		t.Fatalf("session terminal should be preserved: %#v", next.embeddedTerminals)
 	}
 	if next.terminalConfirmID != 0 || next.modal.View().Kind != modal.None {
@@ -1397,9 +1778,9 @@ func TestFlowTerminalPrefixDDetachesActiveTerminalAndRenumbers(t *testing.T) {
 func TestTerminalPrefixDReportsHandoffConstructionFailureAfterDetach(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	m := Model{
-		mode:                      ui.ModeSessions,
-		activeEmbeddedTerminalNum: 1,
-		terminalPrefixActive:      true,
+		mode:                 ui.ModeSessions,
+		activeTerminalNum:    1,
+		terminalPrefixActive: true,
 		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{}, errors.New("no external terminal")
 		},
@@ -1436,9 +1817,9 @@ func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-agent-session"}
 	cleaned := false
 	m := Model{
-		mode:                      ui.ModeSessions,
-		activeEmbeddedTerminalNum: 1,
-		terminalPrefixActive:      true,
+		mode:                 ui.ModeSessions,
+		activeTerminalNum:    1,
+		terminalPrefixActive: true,
 		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{
 				Cmd:     exec.Command("sh", "-c", "exit 7"),
@@ -1485,9 +1866,9 @@ func TestTerminalPrefixDReportsHandoffRunFailureAfterDetach(t *testing.T) {
 
 func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
 	m := Model{
-		mode:                      ui.ModeSessions,
-		activeEmbeddedTerminalNum: 1,
-		terminalPrefixActive:      true,
+		mode:                 ui.ModeSessions,
+		activeTerminalNum:    1,
+		terminalPrefixActive: true,
 		embeddedTerminals: []embeddedTerminalSlot{{
 			Number:   1,
 			Scope:    embeddedTerminalScopeSession,
@@ -1514,11 +1895,11 @@ func TestTerminalPrefixDReportsUnavailableForDirectPTY(t *testing.T) {
 func TestFlowTerminalInputModeDPassesThrough(t *testing.T) {
 	term := &internalFakeDetachableEmbeddedTerminal{target: "approach-flow-agent"}
 	m := Model{
-		mode:                  ui.ModeFlows,
-		activePane:            1,
-		flowFocus:             flowFocusTerminal,
-		activeFlowTerminalNum: 1,
-		terminalPrefixActive:  false,
+		mode:                 ui.ModeFlows,
+		activePane:           1,
+		terminalFocus:        terminalFocusTerminal,
+		activeTerminalNum:    1,
+		terminalPrefixActive: false,
 		embeddedTerminals: []embeddedTerminalSlot{{
 			Number:   1,
 			Scope:    embeddedTerminalScopeFlow,

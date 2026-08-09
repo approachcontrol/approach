@@ -12,14 +12,15 @@ on a selected repo to collapse the repos pane to a narrow strip and give its
 width to the content pane. When global key handling is active, `ctrl+r` or
 `bksp` restores and focuses the full repos pane. Press `tab` from the repos pane
 to focus content without collapsing it. While collapsed, ordinary `tab` focus
-cycling skips the repos strip. With a Flow embedded terminal open, `tab`
-alternates between the Flow list and terminal; from a focused sessions
-terminal, `tab` restores and focuses the repos pane so terminal input cannot
-trap focus. While either embedded terminal owns input, `ctrl+r` and `bksp` are
-passed to the agent. The active pane is highlighted with a blue border.
+cycling skips the repos strip. When the shared embedded terminal dock is
+expanded, `tab` cycles through the repo pane, the current content list, and
+the terminal — or alternates between just the list and the terminal while the
+repos pane is collapsed — so terminal input cannot trap focus. While the
+embedded terminal owns input, `ctrl+r` and `bksp` are passed to the agent. The
+active pane is highlighted with a blue border.
 
 Press `f2` from normal TUI views to open the prompt-template editor for the
-`[agent].plan_prompt` and `[flow_prompts]` templates; Flow terminal input
+`[agent].plan_prompt` and `[flow_prompts]` templates; embedded terminal input
 focus passes F2 through to the embedded agent.
 
 Empty panes explain why they are empty: no data for the selected repo, no
@@ -101,7 +102,8 @@ title, and assignee; repo filtering remains available from the left pane.
 | `D` | Toggle destructive mode |
 | `ctrl+r` | Restore and focus the full repos pane (outside search or embedded-terminal input focus) |
 | `f5` | Rescan repositories and refetch the current view, including the active Beads subview |
-| `tab` | Cycle pane focus forward; with a Flow terminal open, cycles repo pane → Flow list → terminal, and while the repos pane is collapsed skips it and alternates between the Flow list and terminal |
+| `ctrl+t` | Hide or show the shared embedded terminal dock (outside search and terminal input); when input is focused, use `ctrl+] t` |
+| `tab` | Cycle pane focus forward; with the terminal dock expanded, cycles repo pane → current list → terminal, and while the repos pane is collapsed skips it and alternates between the current list and terminal |
 | `bksp` | Restore and focus the full repos pane (outside embedded-terminal input focus) |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
@@ -246,25 +248,38 @@ working directory are covered in `docs/agent-sessions.md`.
 
 ## Embedded Terminals
 
-Resuming a CLI `codex` or `claude` session from the full sessions view opens a
-runtime-only embedded terminal in the sessions pane. While embedded terminals
-exist, the saved-session table is hidden and the pane shows a compact numbered
-terminal header plus the active terminal screen. While the session terminal
-right pane is focused, all keys except `tab` go directly to the active PTY
-(including agent shortcuts like `ctrl+g` and `ctrl+r`). `tab` returns to the
-repos pane; if it was collapsed, Approach expands it first. Repo pane keys then
-operate normally.
+Resuming a CLI `codex` or `claude` session or launching a CLI Flow phase opens
+a runtime-only terminal in one shared dock below the current content list.
+The dock persists while switching among Git, sessions, plans, flows, and
+Active Flows. Its terminal numbers and active selection are global, so a
+session resume and a Flow launch appear in the same numbered header. The
+current list remains usable above the dock; in particular, the saved-session
+table is never replaced by the terminal surface.
 
-Press `ctrl+]` for Approach commands:
+Press `ctrl+t` from repo or list focus to collapse or expand the dock. A
+collapsed dock reserves one bottom row for a narrow-safe chip showing the
+terminal count, active terminal, and `ctrl+t` hint when space permits. From
+terminal input, `ctrl+t` is sent to the PTY; use `ctrl+] t` to hide the dock.
+Hiding it returns terminal focus to the current list without stopping or
+resizing any terminal.
+
+Tabbing from the current list into terminal focus enters terminal command
+mode. Commands remain in Approach until `i` returns to terminal input mode; in
+input mode, keys pass through to the PTY (including agent shortcuts such as
+`ctrl+g`) except `tab`, which cycles focus, and `ctrl+]`, which enters command
+mode. The command-mode keys are the same in every view:
 
 | Command | Action |
 |---------|--------|
-| `ctrl+] 1`–`9` | Switch terminals |
-| `ctrl+] l` | Open a saved-session picker |
-| `ctrl+] d` | Detach a tmux-backed terminal and open a new external terminal attached to that tmux session |
-| `ctrl+] x` | Dismiss an exited terminal or confirm termination of a running one |
-| `ctrl+] q` / `ctrl+] esc` | Quit with cleanup |
-| `ctrl+] ctrl+]` | Send a literal `ctrl+]` to the agent |
+| `1`–`9` | Switch terminals |
+| `left` / `right` | Cycle terminals with wrap |
+| `i` | Return to terminal input mode |
+| `t` | Hide the terminal dock |
+| `l` | Open a saved-session picker |
+| `d` | Detach a tmux-backed terminal and open a new external terminal attached to that tmux session |
+| `x` | Dismiss an exited terminal or confirm termination of a running one |
+| `q` / `esc` | Quit with cleanup |
+| `ctrl+]` | Send a literal `ctrl+]` to the agent |
 
 When `tmux` is available at launch time, embedded CLI terminals start inside a
 per-launch tmux session so detach can close Approach's embedded client while the
@@ -435,11 +450,11 @@ becomes ready, Approach keeps auto mode on and requires the manual Merge launch.
 ### Headless mode, model, and effort
 
 Flow headless mode is on by default: selected CLI `codex` and `claude` phase
-launches run in a runtime-only embedded terminal inside the flows pane. Press
+launches run in the shared runtime-only embedded terminal dock. Press
 `h` to choose the CLI command mode: headless runs `codex exec` or
 `claude --print`, while headless off runs interactive `codex` or `claude` in
-the same embedded Flow terminal. Headless-off launches prefill the phase
-prompt without submitting it, then focus the Flow terminal in input mode so
+the same dock. Headless-off launches prefill the phase prompt without
+submitting it, then focus the terminal in input mode so
 you can review or edit it before pressing enter. Headless launches keep focus
 on the Flow list. Creating a new Flow has its own default-on Headless checkbox
 for the initial Plan launch; that checkbox is ignored when Plan Now is off and
@@ -461,17 +476,12 @@ answer streamed token-by-token, and a closing summary).
 
 ### Flow terminals
 
-While a Flow terminal is open, the Flow list uses a smaller top panel and the
-terminal uses a bottom panel. With the repos pane expanded, `tab` cycles focus
-through the repos pane, Flow list, and Flow terminal; with it collapsed, `tab`
-alternates only between the Flow list and terminal. Manually tabbing into Flow
-terminal focus starts in Approach command mode: `left`/`right` cycle Flow terminals, `1`–`9` switches by
-number, `x` closes, `d` detaches to tmux when available and opens the detached
-session in an external terminal, `q`/`esc` quits, unknown ordinary keys do not
-pass through to the PTY, `ctrl+]` sends a literal `ctrl+]`, and `i` enters
-terminal input mode. In input mode, keys pass through to the PTY (including
-agent shortcuts like `ctrl+g`) except `tab`, which cycles pane focus, and
-`ctrl+]`, which returns to command mode.
+Flow terminals share the persistent dock, global numbering, focus cycle, and
+command set described in [Embedded Terminals](#embedded-terminals). Selecting
+a Flow or phase still synchronizes the active dock terminal to its attached
+Flow terminal when one exists. Flow scope remains lifecycle metadata for
+launch tracking, auto-mode gating, and recovery; it no longer creates a
+separate terminal surface or command path.
 
 ### Recovery labels
 
@@ -514,5 +524,5 @@ records; moving focus to the left repo pane temporarily filters the visible
 active rows to the selected repo, and returning focus to the middle pane
 restores the global list. Normal Flow actions — phase launches,
 attached-session resumes, auto-mode toggles, `i` issue and `p` PR opening,
-`c`/`y` copies, and embedded Flow terminals — work from the visible active
-Flow rows and their expanded phase rows.
+`c`/`y` copies, and embedded Flow terminals in the shared dock — work from the
+visible active Flow rows and their expanded phase rows.

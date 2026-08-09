@@ -1412,7 +1412,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if m.mode == ui.ModeFlows && m.flowFocus != flowFocusTerminal {
+	if m.mode == ui.ModeFlows && m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m, nil
@@ -1428,7 +1428,7 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
-	if m.flowFocus != flowFocusTerminal {
+	if m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m, nil

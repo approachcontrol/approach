@@ -246,7 +246,7 @@ func (m Model) clampSelectionsAfterFilter() Model {
 	m = m.reflowFlows()
 	m = m.reflowActiveFlows()
 	m = m.reflowAllBeads()
-	if m.flowSurfaceVisible() && m.activePane == 1 && m.flowFocus != flowFocusTerminal {
+	if m.flowSurfaceVisible() && m.activePane == 1 && m.terminalFocus != terminalFocusTerminal {
 		m = m.syncActiveFlowTerminalToSelectedFlow()
 	}
 	return m

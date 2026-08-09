@@ -7793,7 +7793,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
-	_, terminalOuterHeight := ui.FlowSplitPanelHeights(18 - ui.BranchContentOverhead)
+	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(18-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	wantStartWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(140, 18, false, false))
 	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
@@ -7808,7 +7808,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
 	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
-	_, terminalResizeOuterHeight := ui.FlowSplitPanelHeights(20 - ui.BranchContentOverhead)
+	_, terminalResizeOuterHeight := ui.EmbeddedTerminalDockHeights(20-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(160, 20, false, false))
 	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
@@ -8540,7 +8540,7 @@ func requireLatestResize(t *testing.T, fakeTerm *fakeEmbeddedTerminal, want [2]i
 }
 
 func flowTerminalPTYHeightForViewport(height int) int {
-	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
+	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	return ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
 }
 
@@ -8577,7 +8577,7 @@ func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
 	}
 	m, _ = update(m, cmd())
 
-	_, terminalOuterHeight := ui.FlowSplitPanelHeights(height - ui.BranchContentOverhead)
+	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	want := [2]int{
 		ui.EmbeddedTerminalPTYWidth(ui.RightContentWidth(width, height, false, false)),
 		ui.EmbeddedTerminalPTYHeight(terminalOuterHeight),
@@ -9599,7 +9599,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	}
 	m, _ = update(m, cmd())
 	if view := m.View(); !strings.Contains(view, "1 codex implementation running") {
-		t.Fatalf("Flow terminal should start with scope-local tab 1:\n%s", view)
+		t.Fatalf("Flow terminal should start with global tab 1:\n%s", view)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -9607,8 +9607,8 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	if view := m.View(); !strings.Contains(view, "1 codex feature/session exited") {
-		t.Fatalf("session terminal should also use scope-local tab 1:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "2 codex feature/session exited") {
+		t.Fatalf("session terminal should use the next global tab number:\n%s", view)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
@@ -9622,7 +9622,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	view := m.View()
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("Flow terminal with matching display number should survive session close, missing %q:\n%s", want, view)
+			t.Fatalf("Flow terminal should survive session close and global renumbering, missing %q:\n%s", want, view)
 		}
 	}
 }
