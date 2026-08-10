@@ -138,6 +138,12 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		phaseID = phase.PhaseID
 	}
 	result := FlowStartResult{Flow: flow}
+	if phaseOK {
+		if err := validateInitialFlowLaunchPhase(flow, phase); err != nil {
+			notes := "Initial phase validation failed: " + err.Error()
+			return result, s.blockStartupFailurePhases(flow, phaseID, notes, err.Error())
+		}
+	}
 	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
 	if err != nil {
 		return result, s.blockStartupFailurePhases(flow, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
@@ -161,9 +167,6 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		return result, nil
 	}
 
-	if err := validateInitialFlowLaunchPhase(flow, phase); err != nil {
-		return result, err
-	}
 	launchID := strings.TrimSpace(req.LaunchToken)
 	if launchID == "" {
 		launchID = s.newLaunchID()

@@ -376,6 +376,51 @@ func TestSavedSessionResumeRefreshesFlowAssociationBeforeRouting(t *testing.T) {
 	}
 }
 
+func TestFlowAssociatedSavedSessionResumeReservesLeaseAndFencesRefreshReplay(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", CWD: t.TempDir(), FlowID: "flow-1",
+	}
+	var launched actions.AgentLaunchContext
+	m := Model{
+		agentCommand: "codex",
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: record.FlowID}}, nil
+		},
+		listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{record}, nil
+		},
+		startEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+			launched = ctx
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+
+	reserved, refreshCmd := m.handleEmbeddedSessionPickerSelected(embeddedSessionPickerSelectedMsg{Record: record, OK: true})
+	lease, ok := reserved.flowLaunchLease(record.FlowID)
+	if !ok || lease.Source != flowLaunchSourceSessionResume || lease.Token == "" {
+		t.Fatalf("saved-session refresh lease = %#v, present %v", lease, ok)
+	}
+	refreshResult := refreshCmd()
+	refreshedModel, preflightCmd := reserved.Update(refreshResult)
+	refreshed := refreshedModel.(Model)
+	if preflightCmd == nil {
+		t.Fatal("owned refresh did not queue Flow preflight")
+	}
+	replayedModel, replayCmd := refreshed.Update(refreshResult)
+	if replayCmd != nil {
+		t.Fatal("replayed saved-session refresh queued another launch")
+	}
+	if replayed := replayedModel.(Model); !replayed.matchingFlowLaunchLease(record.FlowID, lease.Token, flowLaunchSourceSessionResume) {
+		t.Fatal("replayed refresh disturbed the owned Flow lease")
+	}
+
+	finalModel, _ := refreshed.Update(preflightCmd())
+	final := finalModel.(Model)
+	if len(final.embeddedTerminals) != 1 || launched.LaunchID != lease.Token {
+		t.Fatalf("owned saved-session launch = slots %#v context %#v", final.embeddedTerminals, launched)
+	}
+}
+
 func TestFlowAssociatedSavedSessionResumeRejectsRecordMovedToAnotherFlow(t *testing.T) {
 	selected := sessions.SessionRecord{
 		Provider: sessions.ProviderCodex, SessionID: "session-1", LaunchID: "launch-a", Status: "ended", FlowID: "flow-a", CWD: t.TempDir(),

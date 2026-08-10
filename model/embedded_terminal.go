@@ -132,10 +132,21 @@ type embeddedSessionPickerLoadedMsg struct {
 }
 
 type savedSessionResumeRefreshedMsg struct {
-	Record sessions.SessionRecord
-	Found  bool
-	Err    error
+	Key          string
+	Token        string
+	ReservedFlow string
+	Origin       savedSessionResumeOrigin
+	Record       sessions.SessionRecord
+	Found        bool
+	Err          error
 }
+
+type savedSessionResumeOrigin uint8
+
+const (
+	savedSessionResumeEmbedded savedSessionResumeOrigin = iota
+	savedSessionResumeInlineExternal
+)
 
 type terminateEmbeddedTerminalMsg struct {
 	ID embeddedTerminalID
@@ -1181,20 +1192,43 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if !msg.OK {
 		return m.setStatus(statusOther, "Selected session is unavailable"), nil
 	}
-	return m.resumeSavedSession(msg.Record)
+	return m.resumeSavedSession(msg.Record, savedSessionResumeEmbedded)
 }
 
 // resumeSavedSession refreshes the selected record before routing it. Flow
 // association can change after a picker or list is rendered, and launch policy
 // must be based on the authoritative record rather than that cached snapshot.
-func (m Model) resumeSavedSession(record sessions.SessionRecord) (Model, tea.Cmd) {
+func (m Model) resumeSavedSession(record sessions.SessionRecord, origin savedSessionResumeOrigin) (Model, tea.Cmd) {
 	if m.listSessions == nil {
 		return m.setStatus(statusOther, "Session storage is unavailable"), nil
 	}
+	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	if !ok {
+		return next, nil
+	}
+	token := ctx.LaunchID
+	reservedFlow := strings.TrimSpace(ctx.FlowID)
+	if reservedFlow != "" {
+		if m.hasFlowEmbeddedTerminalForFlow(reservedFlow) {
+			return m.setStatus(statusOther, "An embedded terminal already occupies this Flow"), nil
+		}
+		var acquired bool
+		m, acquired = m.acquireFlowLaunchLease(reservedFlow, token, flowLaunchSourceSessionResume)
+		if !acquired {
+			return m.setStatus(statusOther, "Another launch or session already occupies this Flow"), nil
+		}
+	}
+	key := savedSessionResumeKey(record)
+	pending := make(map[string]string, len(m.pendingSavedSessionResumes)+1)
+	for pendingKey, pendingToken := range m.pendingSavedSessionResumes {
+		pending[pendingKey] = pendingToken
+	}
+	pending[key] = token
+	m.pendingSavedSessionResumes = pending
 	listSessions := m.listSessions
 	authoritative := m.listSessionsAuthoritative
 	return m, func() tea.Msg {
-		msg := savedSessionResumeRefreshedMsg{}
+		msg := savedSessionResumeRefreshedMsg{Key: key, Token: token, ReservedFlow: reservedFlow, Origin: origin}
 		records, err := listSessions(sessions.SessionFilter{Provider: record.Provider})
 		if err != nil {
 			msg.Err = fmt.Errorf("refresh selected session before resuming: %w", err)
@@ -1216,20 +1250,74 @@ func (m Model) resumeSavedSession(record sessions.SessionRecord) (Model, tea.Cmd
 }
 
 func (m Model) handleSavedSessionResumeRefreshed(msg savedSessionResumeRefreshedMsg) (Model, tea.Cmd) {
+	if m.pendingSavedSessionResumes[msg.Key] != msg.Token {
+		return m, nil
+	}
+	finish := func() Model {
+		pending := make(map[string]string, len(m.pendingSavedSessionResumes)-1)
+		for key, token := range m.pendingSavedSessionResumes {
+			if key != msg.Key {
+				pending[key] = token
+			}
+		}
+		if len(pending) == 0 {
+			pending = nil
+		}
+		m.pendingSavedSessionResumes = pending
+		return m
+	}
+	fail := func(text string) (Model, tea.Cmd) {
+		m = finish()
+		m = m.releaseFlowLaunchLease(msg.ReservedFlow, msg.Token)
+		return m.setStatus(statusOther, text), nil
+	}
 	if msg.Err != nil {
-		return m.setStatus(statusOther, msg.Err.Error()), nil
+		return fail(msg.Err.Error())
 	}
 	if !msg.Found {
-		return m.setStatus(statusOther, "Selected session is no longer available"), nil
+		return fail("Selected session is no longer available")
 	}
 	ctx, ok, next := m.sessionResumeLaunchContext(msg.Record)
 	if !ok {
-		return next, nil
+		m = next
+		m = finish()
+		m = m.releaseFlowLaunchLease(msg.ReservedFlow, msg.Token)
+		return m, nil
+	}
+	ctx.LaunchID = msg.Token
+	currentFlow := strings.TrimSpace(ctx.FlowID)
+	if currentFlow != msg.ReservedFlow {
+		m = m.releaseFlowLaunchLease(msg.ReservedFlow, msg.Token)
 	}
 	if ctx.Command == agent.CommandCodexApp {
-		return next.launchAgentWithContext(ctx)
+		m = finish()
+		return m.launchAgentWithContext(ctx)
 	}
-	return next.resumeSessionInEmbeddedTerminal(ctx, msg.Record)
+	if currentFlow != "" {
+		if m.hasFlowEmbeddedTerminalForFlow(currentFlow) {
+			return fail("An embedded terminal already occupies this Flow")
+		}
+		if currentFlow != msg.ReservedFlow {
+			var acquired bool
+			m, acquired = m.acquireFlowLaunchLease(currentFlow, msg.Token, flowLaunchSourceSessionResume)
+			if !acquired {
+				return fail("Another launch or session already occupies this Flow")
+			}
+		} else if !m.matchingFlowLaunchLease(currentFlow, msg.Token, flowLaunchSourceSessionResume) {
+			return fail("Saved-session resume no longer owns this Flow")
+		}
+		m = finish()
+		return m, m.flowSessionResumePreflightCmd(ctx, msg.Record)
+	}
+	m = finish()
+	if msg.Origin == savedSessionResumeInlineExternal {
+		return m.launchAgentWithContext(ctx)
+	}
+	return m.resumeSessionInEmbeddedTerminalNow(ctx, msg.Record, true)
+}
+
+func savedSessionResumeKey(record sessions.SessionRecord) string {
+	return string(record.Provider) + "\x00" + strings.TrimSpace(record.SessionID)
 }
 
 func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
@@ -1242,50 +1330,54 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 		if !acquired {
 			return m.setStatus(statusOther, "Another launch or session already occupies this Flow"), nil
 		}
-		listFlows := m.listFlows
-		listSessions := m.listSessions
-		return m, func() tea.Msg {
-			msg := flowSessionResumePreflightMsg{Context: ctx, Record: record}
-			currentRecords, err := listSessions(sessions.SessionFilter{Provider: record.Provider})
-			if err != nil {
-				msg.Err = fmt.Errorf("refresh selected session before resuming: %w", err)
-				return msg
-			}
-			for _, current := range currentRecords {
-				if current.Provider == record.Provider && strings.TrimSpace(current.SessionID) == strings.TrimSpace(record.SessionID) {
-					msg.CurrentRecord = current
-					msg.CurrentRecordFound = true
-					break
-				}
-			}
-			if !msg.CurrentRecordFound {
-				msg.Err = fmt.Errorf("selected session %s no longer exists", record.SessionID)
-				return msg
-			}
-			msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
-			if err != nil {
-				msg.Err = fmt.Errorf("list sessions for Flow %s: %w", ctx.FlowID, err)
-				return msg
-			}
-			flows, err := listFlows(flowstore.FlowFilter{})
-			if err != nil {
-				msg.Err = fmt.Errorf("refresh Flow before resuming session: %w", err)
-				return msg
-			}
-			for _, flow := range flows {
-				if strings.TrimSpace(flow.FlowID) == strings.TrimSpace(ctx.FlowID) {
-					msg.Flow = flow
-					break
-				}
-			}
-			if msg.Flow.FlowID == "" {
-				msg.Err = fmt.Errorf("Flow %s no longer exists", ctx.FlowID)
-				return msg
-			}
-			return msg
-		}
+		return m, m.flowSessionResumePreflightCmd(ctx, record)
 	}
 	return m.resumeSessionInEmbeddedTerminalNow(ctx, record, true)
+}
+
+func (m Model) flowSessionResumePreflightCmd(ctx actions.AgentLaunchContext, record sessions.SessionRecord) tea.Cmd {
+	listFlows := m.listFlows
+	listSessions := m.listSessions
+	return func() tea.Msg {
+		msg := flowSessionResumePreflightMsg{Context: ctx, Record: record}
+		currentRecords, err := listSessions(sessions.SessionFilter{Provider: record.Provider})
+		if err != nil {
+			msg.Err = fmt.Errorf("refresh selected session before resuming: %w", err)
+			return msg
+		}
+		for _, current := range currentRecords {
+			if current.Provider == record.Provider && strings.TrimSpace(current.SessionID) == strings.TrimSpace(record.SessionID) {
+				msg.CurrentRecord = current
+				msg.CurrentRecordFound = true
+				break
+			}
+		}
+		if !msg.CurrentRecordFound {
+			msg.Err = fmt.Errorf("selected session %s no longer exists", record.SessionID)
+			return msg
+		}
+		msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
+		if err != nil {
+			msg.Err = fmt.Errorf("list sessions for Flow %s: %w", ctx.FlowID, err)
+			return msg
+		}
+		flows, err := listFlows(flowstore.FlowFilter{})
+		if err != nil {
+			msg.Err = fmt.Errorf("refresh Flow before resuming session: %w", err)
+			return msg
+		}
+		for _, flow := range flows {
+			if strings.TrimSpace(flow.FlowID) == strings.TrimSpace(ctx.FlowID) {
+				msg.Flow = flow
+				break
+			}
+		}
+		if msg.Flow.FlowID == "" {
+			msg.Err = fmt.Errorf("Flow %s no longer exists", ctx.FlowID)
+			return msg
+		}
+		return msg
+	}
 }
 
 type flowSessionResumePreflightMsg struct {

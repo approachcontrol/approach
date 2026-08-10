@@ -900,7 +900,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
-			return m.resumeSavedSession(record)
+			return m.resumeSavedSession(record, savedSessionResumeInlineExternal)
 		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
@@ -2075,7 +2075,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	return m.resumeSavedSession(record)
+	return m.resumeSavedSession(record, savedSessionResumeEmbedded)
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {

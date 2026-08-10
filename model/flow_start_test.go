@@ -231,6 +231,8 @@ func TestFlowStarterStartPlanUsesGenericPromptForNonPlanRoot(t *testing.T) {
 }
 
 func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T) {
+	worktreeCreated := false
+	var phaseUpdate flowstore.PhaseUpdate
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
 		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
@@ -240,7 +242,12 @@ func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T
 			return record, nil
 		},
 		CreateWorktree: func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error) {
+			worktreeCreated = true
 			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/review", Branch: "flow/review"}, nil
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{
@@ -269,6 +276,15 @@ func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "Plan Review needs a linked plan before launch") {
 		t.Fatalf("StartPlan() error = %q, want linked plan requirement", err)
+	}
+	if worktreeCreated {
+		t.Fatal("invalid initial phase created an orphan worktree")
+	}
+	if phaseUpdate.FlowID != "flow-1" || phaseUpdate.PhaseID != "review" || phaseUpdate.Status != flowstore.PhaseBlocked {
+		t.Fatalf("initial validation phase update = %#v", phaseUpdate)
+	}
+	if !strings.Contains(phaseUpdate.Notes, "Plan Review needs a linked plan") {
+		t.Fatalf("initial validation phase notes = %q", phaseUpdate.Notes)
 	}
 }
 

@@ -164,6 +164,7 @@ type Model struct {
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	pendingFlowRepairLaunchIDs    map[string]string
 	flowLaunchLeases              map[string]flowLaunchLease
+	pendingSavedSessionResumes    map[string]string
 
 	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen   uint64

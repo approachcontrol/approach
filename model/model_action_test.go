@@ -6192,7 +6192,7 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for missing resume path")
 	}
@@ -6218,7 +6218,7 @@ func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 		{Provider: sessions.ProviderClaude, SessionID: "   ", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blank session id")
 	}
@@ -6258,7 +6258,6 @@ func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blank inline session id")
 	}
-	m, cmd = update(m, cmd())
 	if called {
 		t.Fatal("expected blank inline session id not to call launcher")
 	}
@@ -6407,6 +6406,45 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	}
 	if got.LaunchID == "" || got.LaunchID == "old-launch" {
 		t.Fatalf("expected fresh launch id, got %#v", got)
+	}
+}
+
+func TestModel_EnterResumesNonFlowInlineSessionExternally(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderClaude, SessionID: "claude-inline-1", RepoPath: "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/inline", Branch: "feature/inline", Status: "ended",
+	}
+	var launched actions.AgentLaunchContext
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{record}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			t.Fatal("non-Flow inline resume should not open an embedded terminal")
+			return nil, nil
+		},
+		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launched = ctx
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: record.WorktreePath, BranchName: record.Branch},
+	}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m, _ = update(m, cmd())
+
+	m, refreshCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if refreshCmd == nil {
+		t.Fatal("inline resume did not queue authoritative refresh")
+	}
+	_, launchCmd := update(m, refreshCmd())
+	if launchCmd == nil {
+		t.Fatal("non-Flow inline resume did not queue external launch")
+	}
+	if launched.ResumeSessionID != record.SessionID || launched.WorkingDir != record.WorktreePath || launched.Embedded {
+		t.Fatalf("non-Flow inline external context = %#v", launched)
 	}
 }
 
