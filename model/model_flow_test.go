@@ -1754,6 +1754,34 @@ func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) 
 		}
 	})
 
+	t.Run("repository Flow list after Active Flows toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), nil)
+		m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older repository Flow list replaced newer Active Flows result: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list after repository Flow toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m = enterActiveFlowsWithRecords(t, m, nil)
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older Active Flows list replaced newer repository Flow result: %#v", got)
+		}
+	})
+
 	t.Run("auto-mode result", func(t *testing.T) {
 		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
 		m, _ = update(m, model.FlowHeadlessSetMsg{

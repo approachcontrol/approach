@@ -60,6 +60,7 @@ type Model struct {
 	plans                     pane.Pane[planstore.PlanRecord]
 	flows                     pane.Pane[flowstore.FlowRecord]
 	activeFlowRecords         []flowstore.FlowRecord
+	latestFlowMutations       []flowstore.FlowRecord
 	activeFlows               pane.Pane[flowstore.FlowRecord]
 	beads                     [beadSubviewCount]beadSubviewState
 	expandedPlanID            string

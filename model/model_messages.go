@@ -1415,7 +1415,7 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	flows := preferNewerCachedFlowRecords(msg.Flows, m.flows.Items())
+	flows := preferNewerCachedFlowRecords(msg.Flows, m.flows.Items(), m.latestFlowMutations)
 	m = m.seedAutoAdvanceSnapshot(flows)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
@@ -1444,7 +1444,7 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
-	flows := preferNewerCachedFlowRecords(msg.Flows, m.activeFlowRecords)
+	flows := preferNewerCachedFlowRecords(msg.Flows, m.activeFlowRecords, m.latestFlowMutations)
 	m = m.seedAutoAdvanceSnapshot(flows)
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), flows...)
 	m = m.syncActiveFlowsFromCache()
@@ -1498,6 +1498,7 @@ func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
 }
 
 func (m Model) replaceFlowHeadlessRecord(flow flowstore.FlowRecord) Model {
+	m = m.rememberFlowMutation(flow)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1567,6 +1568,7 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	if flow.FlowID == "" {
 		return m
 	}
+	m = m.rememberFlowMutation(flow)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
@@ -1614,19 +1616,40 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	return m.clampSelectionsAfterFilter()
 }
 
-func preferNewerCachedFlowRecords(incoming, cached []flowstore.FlowRecord) []flowstore.FlowRecord {
-	newestByID := make(map[string]flowstore.FlowRecord, len(cached))
-	for _, record := range cached {
-		newestByID[record.FlowID] = record
-	}
+func preferNewerCachedFlowRecords(incoming []flowstore.FlowRecord, cachedSets ...[]flowstore.FlowRecord) []flowstore.FlowRecord {
 	merged := append([]flowstore.FlowRecord(nil), incoming...)
 	for i, record := range merged {
-		cachedRecord, ok := newestByID[record.FlowID]
-		if ok && record.UpdatedAt.Before(cachedRecord.UpdatedAt) {
-			merged[i] = cachedRecord
+		for _, cached := range cachedSets {
+			for _, cachedRecord := range cached {
+				if cachedRecord.FlowID != record.FlowID || !sameRepoPath(cachedRecord.RepoPath, record.RepoPath) {
+					continue
+				}
+				if merged[i].UpdatedAt.Before(cachedRecord.UpdatedAt) {
+					merged[i] = cachedRecord
+				}
+			}
 		}
 	}
 	return merged
+}
+
+func (m Model) rememberFlowMutation(flow flowstore.FlowRecord) Model {
+	if flow.FlowID == "" || strings.TrimSpace(flow.RepoPath) == "" {
+		return m
+	}
+	records := append([]flowstore.FlowRecord(nil), m.latestFlowMutations...)
+	for i, record := range records {
+		if record.FlowID != flow.FlowID || !sameRepoPath(record.RepoPath, flow.RepoPath) {
+			continue
+		}
+		if !flow.UpdatedAt.Before(record.UpdatedAt) {
+			records[i] = flow
+		}
+		m.latestFlowMutations = records
+		return m
+	}
+	m.latestFlowMutations = append(records, flow)
+	return m
 }
 
 func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {
