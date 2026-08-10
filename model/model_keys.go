@@ -2696,17 +2696,35 @@ func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText st
 		m = m.releaseFlowLaunchLease(ctx.FlowID, ctx.LaunchID)
 		return m.setStatus(statusOther, errText), nil
 	}
+	leaseTracked := false
+	if strings.TrimSpace(ctx.FlowID) != "" && strings.TrimSpace(ctx.LaunchID) != "" {
+		if _, exists := m.flowLaunchLease(ctx.FlowID); exists {
+			var began bool
+			m, began = m.beginFlowLaunchFailure(ctx.FlowID, ctx.LaunchID)
+			if !began {
+				return m, nil
+			}
+			leaseTracked = true
+		}
+	}
 	return m, func() tea.Msg {
 		_, err := m.setFlowPhase(update)
 		return flowLaunchFailurePersistedMsg{
 			LaunchContext: ctx,
 			OriginalErr:   errText,
 			PersistErr:    err,
+			LeaseTracked:  leaseTracked,
 		}
 	}
 }
 
 func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMsg) (Model, tea.Cmd) {
+	if msg.LeaseTracked {
+		lease, ok := m.flowLaunchLease(msg.LaunchContext.FlowID)
+		if !ok || lease.Token != strings.TrimSpace(msg.LaunchContext.LaunchID) || !lease.FailurePending {
+			return m, nil
+		}
+	}
 	m = m.releaseFlowLaunchLease(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID)
 	errText := msg.OriginalErr
 	if msg.PersistErr != nil {

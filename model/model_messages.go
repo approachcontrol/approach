@@ -457,6 +457,7 @@ type flowLaunchFailurePersistedMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	OriginalErr   string
 	PersistErr    error
+	LeaseTracked  bool
 }
 
 type PlanLaunchRequestedMsg struct {

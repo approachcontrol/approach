@@ -119,6 +119,56 @@ func TestExternalFlowLaunchFailureHoldsLeaseUntilFailurePersistence(t *testing.T
 	}
 }
 
+func TestExternalFlowLaunchFailureReplayCannotQueueStalePhasePersistence(t *testing.T) {
+	phaseUpdates := 0
+	m := NewWithOptions(nil, Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates++
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	})
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease("flow-1", "launch-a", flowLaunchSourcePhase)
+	if !acquired {
+		t.Fatal("failed to acquire initial Flow launch lease")
+	}
+	result := AgentResultMsg{
+		LaunchContext: actions.AgentLaunchContext{
+			Command: "codex-app", FlowID: "flow-1", FlowPhaseID: "plan", LaunchID: "launch-a",
+		},
+		Err:      "handoff failed",
+		Detached: true,
+	}
+
+	failingModel, persistCmd := m.Update(result)
+	failing := failingModel.(Model)
+	if persistCmd == nil {
+		t.Fatal("failed external handoff returned nil failure-persistence command")
+	}
+	if _, replayCmd := failing.Update(result); replayCmd != nil {
+		t.Fatalf("replayed external failure queued duplicate persistence: cmd=%T", replayCmd)
+	}
+
+	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, persistCmd)
+	finalModel, _ := failing.Update(persisted)
+	final := finalModel.(Model)
+	if phaseUpdates != 1 {
+		t.Fatalf("phase updates = %d, want exactly one", phaseUpdates)
+	}
+	final, acquired = final.acquireFlowLaunchLease("flow-1", "launch-b", flowLaunchSourcePhase)
+	if !acquired {
+		t.Fatal("failed to acquire newer Flow launch lease")
+	}
+	replayedModel, replayCmd := final.Update(persisted)
+	replayed := replayedModel.(Model)
+	if replayCmd != nil || phaseUpdates != 1 {
+		t.Fatalf("replayed persistence result changed state: cmd=%T phase updates=%d", replayCmd, phaseUpdates)
+	}
+	if !replayed.matchingFlowLaunchLease("flow-1", "launch-b", flowLaunchSourcePhase) {
+		t.Fatal("replayed persistence result disturbed newer Flow launch lease")
+	}
+}
+
 func TestEmbeddedFlowLaunchFailureHoldsLeaseUntilFailurePersistence(t *testing.T) {
 	m := NewWithOptions(nil, Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {

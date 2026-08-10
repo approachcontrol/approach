@@ -354,10 +354,17 @@ func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) er
 }
 
 func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes, resultErr string) error {
+	if err := s.fenceStartupFailurePhases(flow, fallbackPhaseID, notes); err != nil {
+		return fmt.Errorf("%s; %v", resultErr, err)
+	}
+	return fmt.Errorf("%s", resultErr)
+}
+
+func (s FlowStarter) fenceStartupFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes string) error {
 	phases := launchablePhases(flow)
 	if len(phases) == 0 {
 		if fallbackPhaseID == "" {
-			return fmt.Errorf("%s", resultErr)
+			return nil
 		}
 		if phase, ok := findFlowPhaseByID(flow, fallbackPhaseID); ok {
 			phases = []flowstore.FlowPhase{phase}
@@ -367,10 +374,10 @@ func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallba
 	}
 	for _, phase := range phases {
 		if _, err := s.setPhase(blockedPhaseUpdate(flow.FlowID, phase, notes)); err != nil {
-			return fmt.Errorf("%s; mark flow blocked: %v", resultErr, err)
+			return fmt.Errorf("mark flow blocked: %v", err)
 		}
 	}
-	return fmt.Errorf("%s", resultErr)
+	return nil
 }
 
 func (s FlowStarter) blockStartupFailurePhasesWithMetadata(
@@ -379,7 +386,9 @@ func (s FlowStarter) blockStartupFailurePhasesWithMetadata(
 	worktree actions.FlowWorktreeCreateResult,
 	baseRef, commit string,
 ) (flowstore.FlowRecord, error) {
-	failureErr := s.blockStartupFailurePhases(flow, fallbackPhaseID, notes, resultErr)
+	if err := s.fenceStartupFailurePhases(flow, fallbackPhaseID, notes); err != nil {
+		return flow, fmt.Errorf("%s; %v", resultErr, err)
+	}
 	startedFlow, metadataErr := s.setStartMetadata(flowstore.StartMetadataUpdate{
 		FlowID:       flow.FlowID,
 		WorktreePath: worktree.WorktreePath,
@@ -388,9 +397,9 @@ func (s FlowStarter) blockStartupFailurePhasesWithMetadata(
 		Commit:       commit,
 	})
 	if metadataErr != nil {
-		return flow, fmt.Errorf("%v; persist failed Flow worktree metadata: %w", failureErr, metadataErr)
+		return flow, fmt.Errorf("%s; persist failed Flow worktree metadata: %w", resultErr, metadataErr)
 	}
-	return startedFlow, failureErr
+	return startedFlow, fmt.Errorf("%s", resultErr)
 }
 
 func launchablePhases(flow flowstore.FlowRecord) []flowstore.FlowPhase {

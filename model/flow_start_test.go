@@ -813,6 +813,50 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanBootstrapFailureDoesNotPublishMetadataWhenBlockingFails(t *testing.T) {
+	metadataPersisted := false
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(flow flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			flow.FlowID = "flow-1"
+			flow.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}}
+			return flow, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{
+				WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode",
+				Branch:       "flow/add-flow-mode",
+			}, nil
+		},
+		SetPhase: func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("state root locked")
+		},
+		SetStartMetadata: func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			metadataPersisted = true
+			return flowstore.FlowRecord{}, nil
+		},
+		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
+			return actions.BootstrapHook{Script: ".approach/bootstrap"}, true
+		},
+		RunBootstrapHook: func(actions.BootstrapContext, actions.BootstrapHook) error {
+			return errors.New("missing env file")
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{
+		RepoPath: "/dev/alpha",
+		Title:    "Add Flow Mode",
+	})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want bootstrap and phase persistence failure")
+	}
+	if !strings.Contains(err.Error(), "missing env file") || !strings.Contains(err.Error(), "state root locked") {
+		t.Fatalf("error = %q, want bootstrap and phase persistence failures", err)
+	}
+	if metadataPersisted {
+		t.Fatal("startup failure published worktree metadata without durably blocking the launchable phase")
+	}
+}
+
 func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
 

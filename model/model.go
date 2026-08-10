@@ -1783,7 +1783,7 @@ func (m Model) currentExternalFlowLaunchResult(msg AgentResultMsg) bool {
 		return true
 	}
 	lease, ok := m.flowLaunchLease(ctx.FlowID)
-	return ok && lease.Token == strings.TrimSpace(ctx.LaunchID)
+	return ok && lease.Token == strings.TrimSpace(ctx.LaunchID) && !lease.FailurePending
 }
 
 func (m Model) cancelStaleFlowCreateLaunch(ctx actions.AgentLaunchContext, flowID, token string, source flowLaunchSource) (Model, tea.Cmd) {
