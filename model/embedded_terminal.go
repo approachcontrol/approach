@@ -1238,9 +1238,11 @@ func (m Model) resumeSavedSession(record sessions.SessionRecord, origin savedSes
 		return m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed"), nil
 	}
 	token := newLaunchID()
-	reservedFlow := strings.TrimSpace(record.FlowID)
+	reservedFlow := record.FlowID
 	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
 		reservedFlow = ""
+	} else if reservedFlow != strings.TrimSpace(reservedFlow) {
+		return m.setStatus(statusOther, "Session has a noncanonical Flow ID and cannot be resumed"), nil
 	}
 	if reservedFlow != "" {
 		if m.hasFlowEmbeddedTerminalForFlow(reservedFlow) {
@@ -1318,7 +1320,7 @@ func (m Model) handleSavedSessionResumeRefreshed(msg savedSessionResumeRefreshed
 		return m, nil
 	}
 	ctx.LaunchID = msg.Token
-	currentFlow := strings.TrimSpace(ctx.FlowID)
+	currentFlow := ctx.FlowID
 	if currentFlow != msg.ReservedFlow {
 		m = m.releaseFlowLaunchLease(msg.ReservedFlow, msg.Token)
 	}
@@ -1354,7 +1356,7 @@ func savedSessionResumeKey(record sessions.SessionRecord) string {
 }
 
 func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
-	if strings.TrimSpace(ctx.FlowID) != "" {
+	if ctx.FlowID != "" {
 		if m.hasFlowEmbeddedTerminalForFlow(ctx.FlowID) {
 			return m.setStatus(statusOther, "An embedded terminal already occupies this Flow"), nil
 		}
@@ -1399,8 +1401,7 @@ func (m Model) flowSessionResumePreflightCmd(ctx actions.AgentLaunchContext, rec
 			if current.Provider != record.Provider || current.SessionID != record.SessionID {
 				continue
 			}
-			if strings.TrimSpace(current.FlowID) != strings.TrimSpace(ctx.FlowID) ||
-				strings.TrimSpace(current.LaunchID) != strings.TrimSpace(msg.CurrentRecord.LaunchID) {
+			if current.FlowID != ctx.FlowID || current.LaunchID != msg.CurrentRecord.LaunchID {
 				msg.Err = fmt.Errorf("selected session changed while the resume was pending")
 				return msg
 			}
@@ -1418,7 +1419,7 @@ func (m Model) flowSessionResumePreflightCmd(ctx actions.AgentLaunchContext, rec
 			return msg
 		}
 		for _, flow := range flows {
-			if strings.TrimSpace(flow.FlowID) == strings.TrimSpace(ctx.FlowID) {
+			if flow.FlowID == ctx.FlowID {
 				msg.Flow = flow
 				break
 			}
@@ -1456,8 +1457,7 @@ func (m Model) handleFlowSessionResumePreflight(msg flowSessionResumePreflightMs
 	if !msg.CurrentRecordFound {
 		return fail("Selected session is no longer available")
 	}
-	if strings.TrimSpace(msg.CurrentRecord.FlowID) != strings.TrimSpace(ctx.FlowID) ||
-		strings.TrimSpace(msg.CurrentRecord.LaunchID) != strings.TrimSpace(msg.Record.LaunchID) {
+	if msg.CurrentRecord.FlowID != ctx.FlowID || msg.CurrentRecord.LaunchID != msg.Record.LaunchID {
 		return fail("Selected session changed while the resume was pending; refresh and try again")
 	}
 	refreshedCtx, ok, next := m.sessionResumeLaunchContext(msg.CurrentRecord)

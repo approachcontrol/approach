@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -487,6 +488,30 @@ func TestSavedSessionResumePreservesExactSessionIdentityAcrossRefreshes(t *testi
 	if preflight.Err != nil || !preflight.CurrentRecordFound ||
 		preflight.CurrentRecord.SessionID != exact.SessionID || preflight.CurrentRecord.LaunchID != exact.LaunchID {
 		t.Fatalf("second authoritative refresh = %#v, want exact session identity", preflight)
+	}
+}
+
+func TestSavedSessionResumeRejectsNoncanonicalFlowIdentityBeforeReservation(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", FlowID: "flow-1 ", CWD: t.TempDir(),
+	}
+	m := Model{
+		agentCommand: "codex",
+		listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			t.Fatal("noncanonical Flow identity reached authoritative refresh")
+			return nil, nil
+		},
+	}
+
+	next, cmd := m.resumeSavedSession(record, savedSessionResumeEmbedded)
+	if cmd != nil {
+		t.Fatalf("noncanonical Flow identity queued resume command %T", cmd)
+	}
+	if next.flowLaunchLeaseOccupied("flow-1") || next.flowLaunchLeaseOccupied(record.FlowID) {
+		t.Fatal("noncanonical Flow identity acquired a launch lease")
+	}
+	if !strings.Contains(next.visibleStatusText(), "noncanonical Flow ID") {
+		t.Fatalf("noncanonical Flow identity status = %q", next.visibleStatusText())
 	}
 }
 

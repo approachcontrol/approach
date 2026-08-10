@@ -2188,7 +2188,11 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanPath:         record.PlanPath,
 	}
 	if command != agent.CommandCodexApp {
-		ctx.FlowID = strings.TrimSpace(record.FlowID)
+		if record.FlowID != strings.TrimSpace(record.FlowID) {
+			m = m.setStatus(statusOther, "Session has a noncanonical Flow ID and cannot be resumed")
+			return actions.AgentLaunchContext{}, false, m
+		}
+		ctx.FlowID = record.FlowID
 	}
 	return ctx, true, m
 }
