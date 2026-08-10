@@ -237,3 +237,26 @@ func TestStaleExternalFlowLaunchResultCannotMutateNewerLease(t *testing.T) {
 		t.Fatalf("newer Flow lease = %#v, present %v", lease, ok)
 	}
 }
+
+func TestStaleActionFailureCannotArmAutoAdvanceOrReleaseNewerLease(t *testing.T) {
+	m := Model{}
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease("flow-1", "launch-b", flowLaunchSourceAutoPhase)
+	if !acquired {
+		t.Fatal("failed to acquire newer Flow lease")
+	}
+
+	next, cmd := m.handleActionFailed(ActionFailedMsg{
+		Err: "stale preflight failure", AutoAdvanceRetryFlowID: "flow-1", AutoAdvanceRetryPhaseID: "implementation",
+		FlowLeaseID: "flow-1", FlowLeaseToken: "launch-a",
+	})
+	if cmd != nil || next.status.Text != "" {
+		t.Fatalf("stale action failure produced cmd/status = %T/%q", cmd, next.status.Text)
+	}
+	if len(next.autoAdvanceDrainFlows) != 0 {
+		t.Fatalf("stale action failure armed auto-advance drain %#v", next.autoAdvanceDrainFlows)
+	}
+	if !next.matchingFlowLaunchLease("flow-1", "launch-b", flowLaunchSourceAutoPhase) {
+		t.Fatal("stale action failure disturbed newer Flow lease")
+	}
+}

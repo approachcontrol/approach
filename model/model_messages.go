@@ -1312,6 +1312,12 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	if strings.TrimSpace(msg.FlowLeaseID) != "" || strings.TrimSpace(msg.FlowLeaseToken) != "" {
+		lease, ok := m.flowLaunchLease(msg.FlowLeaseID)
+		if !ok || lease.Token != strings.TrimSpace(msg.FlowLeaseToken) {
+			return m, nil
+		}
+	}
 	m = m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry

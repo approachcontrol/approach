@@ -89,10 +89,15 @@ type SessionFilter struct {
 // provider's explicit status is authoritative; legacy blank-status records
 // fall back to EndedAt.
 func IsActive(record SessionRecord) bool {
-	if strings.TrimSpace(record.Status) != "" {
-		return record.Status != "ended"
+	return StatusIsActive(record.Status, record.EndedAt)
+}
+
+// StatusIsActive applies the shared exact persisted-session occupancy rule.
+func StatusIsActive(status string, endedAt time.Time) bool {
+	if strings.TrimSpace(status) != "" {
+		return status != "ended"
 	}
-	return record.EndedAt.IsZero()
+	return endedAt.IsZero()
 }
 
 type TranscriptEvent struct {

@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
@@ -54,6 +55,10 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 		{
 			name:   "blocked phase with live session",
 			record: repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseBlocked, LaunchIDs: []string{"launch-1"}, Sessions: []flowstore.Session{liveSession}}),
+		},
+		{
+			name:   "non-exact ended status remains live",
+			record: repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseBlocked, LaunchIDs: []string{"launch-1"}, Sessions: []flowstore.Session{{SessionID: "session-1", LaunchID: "launch-1", Status: " ended ", EndedAt: time.Now()}}}),
 		},
 		{
 			name:   "needs attention phase with live session",

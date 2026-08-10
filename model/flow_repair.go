@@ -124,14 +124,7 @@ func phaseHasMatchingLiveSession(phase flowstore.FlowPhase) bool {
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {
 			continue
 		}
-		status := strings.TrimSpace(session.Status)
-		if status != "" {
-			if status != "ended" {
-				return true
-			}
-			continue
-		}
-		if session.EndedAt.IsZero() {
+		if sessions.StatusIsActive(session.Status, session.EndedAt) {
 			return true
 		}
 	}
