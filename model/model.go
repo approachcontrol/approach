@@ -1669,7 +1669,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
 		if msg.FlowLeaseSource != "" {
-			if !m.matchingFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource) {
+			var began bool
+			m, began = m.beginExternalFlowHandoff(msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource)
+			if !began {
 				return m, nil
 			}
 		}

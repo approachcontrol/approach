@@ -68,6 +68,41 @@ func TestExternalFlowLaunchLeaseHeldUntilHandoffResult(t *testing.T) {
 	}
 }
 
+func TestExternalFlowLaunchRequestReplayCannotStartSecondHandoff(t *testing.T) {
+	launches := 0
+	m := NewWithOptions(nil, Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			launches++
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease("flow-1", "launch-1", flowLaunchSourcePhase)
+	if !acquired {
+		t.Fatal("failed to acquire initial Flow launch lease")
+	}
+	request := PlanLaunchRequestedMsg{
+		LaunchContext: actions.AgentLaunchContext{
+			Command: "codex-app", FlowID: "flow-1", FlowPhaseID: "plan", LaunchID: "launch-1",
+		},
+		FlowLeaseSource: flowLaunchSourcePhase,
+		FlowLeaseID:     "flow-1",
+		FlowLeaseToken:  "launch-1",
+	}
+
+	pendingModel, launchCmd := m.Update(request)
+	pending := pendingModel.(Model)
+	if launchCmd == nil || launches != 1 {
+		t.Fatalf("first external handoff: cmd=%T launches=%d", launchCmd, launches)
+	}
+	if _, replayCmd := pending.Update(request); replayCmd != nil || launches != 1 {
+		t.Fatalf("replayed external handoff: cmd=%T launches=%d", replayCmd, launches)
+	}
+	if !pending.flowLaunchLeaseOccupied("flow-1") {
+		t.Fatal("pending external handoff did not retain Flow occupancy")
+	}
+}
+
 func TestExternalFlowLaunchFailureHoldsLeaseUntilFailurePersistence(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 	m := NewWithOptions(nil, Options{

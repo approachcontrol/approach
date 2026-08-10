@@ -17,6 +17,7 @@ const (
 type flowLaunchLease struct {
 	Token          string
 	Source         flowLaunchSource
+	HandoffPending bool
 	FailurePending bool
 }
 
@@ -45,7 +46,24 @@ func (m Model) flowLaunchLease(flowID string) (flowLaunchLease, bool) {
 
 func (m Model) matchingFlowLaunchLease(flowID, token string, source flowLaunchSource) bool {
 	lease, ok := m.flowLaunchLease(flowID)
-	return ok && lease.Token == strings.TrimSpace(token) && lease.Source == source && !lease.FailurePending
+	return ok && lease.Token == strings.TrimSpace(token) && lease.Source == source && !lease.HandoffPending && !lease.FailurePending
+}
+
+func (m Model) beginExternalFlowHandoff(flowID, token string, source flowLaunchSource) (Model, bool) {
+	flowID = strings.TrimSpace(flowID)
+	token = strings.TrimSpace(token)
+	lease, ok := m.flowLaunchLeases[flowID]
+	if !ok || token == "" || lease.Token != token || lease.Source != source || lease.HandoffPending || lease.FailurePending {
+		return m, false
+	}
+	leases := make(map[string]flowLaunchLease, len(m.flowLaunchLeases))
+	for id, existing := range m.flowLaunchLeases {
+		leases[id] = existing
+	}
+	lease.HandoffPending = true
+	leases[flowID] = lease
+	m.flowLaunchLeases = leases
+	return m, true
 }
 
 func (m Model) beginFlowLaunchFailure(flowID, token string) (Model, bool) {
