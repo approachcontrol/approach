@@ -162,6 +162,11 @@ func (m Model) toggleEmbeddedTerminalDock() Model {
 
 func (m Model) reflowForTerminalDock() Model {
 	m = m.reflowRepos()
+	m = m.reflowStoredPanes()
+	return m.reflowActiveFlows()
+}
+
+func (m Model) reflowStoredPanes() Model {
 	m = m.reflowWorktrees()
 	m = m.reflowBranches()
 	m = m.reflowStashes()
@@ -170,8 +175,7 @@ func (m Model) reflowForTerminalDock() Model {
 	m = m.reflowSessions()
 	m = m.reflowPlans()
 	m = m.reflowFlows()
-	m = m.reflowAllBeads()
-	return m.reflowActiveFlows()
+	return m.reflowAllBeads()
 }
 
 func isPaneBackKey(key string) bool {
@@ -655,6 +659,7 @@ func (m Model) cyclePaneFocusBackward() Model {
 			return m.focusRepoPane()
 		}
 		if terminalEligible {
+			m = m.focusContentPane(m.contentPane)
 			return m.focusTerminalCommand()
 		}
 		return m.focusContentPane(m.contentPane)
@@ -683,7 +688,8 @@ func (m Model) cyclePaneFocusBackward() Model {
 }
 
 func (m Model) focusContentPane(pane ui.Pane) Model {
-	if m.contentPane != pane {
+	changed := m.contentPane != pane
+	if changed {
 		m = m.invalidateViewRequest()
 	}
 	m.activePane = pane
@@ -692,6 +698,9 @@ func (m Model) focusContentPane(pane ui.Pane) Model {
 	m.terminalPrefixActive = false
 	if m.activeFlowSurfaceVisible() {
 		return m.syncActiveFlowsFromCache()
+	}
+	if changed {
+		m = m.reflowStoredPanes()
 	}
 	if m.flowSurfaceVisible() {
 		return m.syncActiveFlowTerminalToSelectedFlow()
@@ -2917,47 +2926,44 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resetModeCursors zeroes the cursor and scroll positions for the ungrouped
-// right-pane views without discarding loaded list data. Git and Beads subview
-// selections are intentionally preserved across view switches so users can
-// inspect another view and return to the same selected row; refetches clamp any
-// stale index via SetItems.
-func (m Model) resetModeCursors() Model {
+// resetBottomPaneCursors zeroes cursor and expansion state owned by the
+// bottom pane without disturbing the top pane's sticky Git/Beads state.
+func (m Model) resetBottomPaneCursors() Model {
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
-	m.activeFlows = m.activeFlows.ResetSelection()
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
 	m.flows = m.flows.SetItemHeight(flowItemHeight(""))
-	m.expandedActiveFlowID = ""
-	m.selectedActiveFlowPhaseID = ""
-	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
 	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
-	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
 	return m
 }
 
 func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
-	if isFlowMode(from) && isFlowMode(to) {
+	if from == ui.ModeActiveFlows || to == ui.ModeActiveFlows {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		m = m.invalidateViewRequest()
-	} else if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
-		m = m.invalidateViewRequest()
-	} else {
-		m = m.resetModeCursors()
+		return m.invalidateViewRequest()
 	}
+	pane, ok := ui.PaneForMode(to)
+	if !ok {
+		return m.invalidateViewRequest()
+	}
+	if pane == ui.PaneBottom {
+		return m.resetBottomPaneCursors()
+	}
+	if from == ui.ModeWorktrees && to != ui.ModeWorktrees {
+		m = m.clearInlineWorktreeSessions()
+	}
+	m.terminalFocus = terminalFocusList
+	m.terminalPrefixActive = false
+	m = m.invalidateViewRequest()
 	// Terminal dimensions are mode-independent, so mode switches need no
 	// PTY resize.
 	return m
-}
-
-func isFlowMode(mode ui.Mode) bool {
-	return mode == ui.ModeFlows || mode == ui.ModeActiveFlows
 }
 
 func (m Model) clearBeadsRepoOwnedState() Model {

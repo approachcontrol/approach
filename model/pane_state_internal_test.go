@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,6 +9,7 @@ import (
 	"github.com/approachcontrol/approach/beadsquery"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/gitquery"
+	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -147,6 +149,97 @@ func TestPaneFocusCyclesSkipReposWhenCollapsed(t *testing.T) {
 		if m.activePane != want {
 			t.Fatalf("collapsed backward step %d focus = %d, want %d", i, m.activePane, want)
 		}
+	}
+}
+
+func TestPaneModeSwitchPreservesOtherPaneState(t *testing.T) {
+	t.Run("top switch preserves bottom Flow state", func(t *testing.T) {
+		m := New([]scanner.Repo{{Path: "/repo"}})
+		m.topMode = ui.ModeWorktrees
+		m.bottomMode = ui.ModeFlows
+		m.activePane = ui.PaneTop
+		m.contentPane = ui.PaneTop
+		m.flows = newFlowPane().SetItems([]flowstore.FlowRecord{{FlowID: "one"}, {FlowID: "two"}}).Move(1, 1, 80)
+		m.expandedFlowID = "two"
+		m.selectedFlowPhaseID = "implementation"
+
+		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+
+		if m.FlowSelected() != 1 || m.expandedFlowID != "two" || m.selectedFlowPhaseID != "implementation" {
+			t.Fatalf("top switch reset bottom Flow state: selected=%d expanded=%q phase=%q", m.FlowSelected(), m.expandedFlowID, m.selectedFlowPhaseID)
+		}
+	})
+
+	t.Run("bottom switch preserves top inline sessions", func(t *testing.T) {
+		m := New([]scanner.Repo{{Path: "/repo"}})
+		m.topMode = ui.ModeWorktrees
+		m.bottomMode = ui.ModeFlows
+		m.activePane = ui.PaneBottom
+		m.contentPane = ui.PaneBottom
+		m.inlineWorktreeSessionPath = "/repo-worktree"
+
+		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+
+		if m.inlineWorktreeSessionPath != "/repo-worktree" {
+			t.Fatalf("bottom switch cleared top inline session path: %q", m.inlineWorktreeSessionPath)
+		}
+	})
+
+	t.Run("Active Flows preserves both stored panes", func(t *testing.T) {
+		m := New([]scanner.Repo{{Path: "/repo"}})
+		m.topMode = ui.ModeWorktrees
+		m.bottomMode = ui.ModePlans
+		m.activePane = ui.PaneBottom
+		m.contentPane = ui.PaneBottom
+		m.inlineWorktreeSessionPath = "/repo-worktree"
+		m.plans = newPlanPane().SetItems([]planstore.PlanRecord{{PlanID: "one"}, {PlanID: "two"}}).Move(1, 1, 80)
+
+		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+		if m.inlineWorktreeSessionPath != "/repo-worktree" || m.PlanSelected() != 1 {
+			t.Fatalf("Active Flows reset stored state: inline=%q plan selected=%d", m.inlineWorktreeSessionPath, m.PlanSelected())
+		}
+	})
+}
+
+func TestActiveFlowsReverseCycleActivatesContentBeforeTerminal(t *testing.T) {
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m.activeFlowSurface = true
+	m.activePane = ui.PaneRepos
+	m.contentPane = ui.PaneBottom
+	m.terminalDockVisible = true
+	m.embeddedTerminals = []embeddedTerminalSlot{{Number: 1, Terminal: internalFakeEmbeddedTerminal{state: "running"}}}
+
+	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.activePane != ui.PaneBottom || m.terminalFocus != terminalFocusTerminal || !m.terminalPrefixActive {
+		t.Fatalf("reverse terminal focus = pane %d focus %d prefix %t, want bottom/terminal/true", m.activePane, m.terminalFocus, m.terminalPrefixActive)
+	}
+}
+
+func TestDegradedPaneFocusSwapReflowsNewlyVisibleList(t *testing.T) {
+	records := make([]sessions.SessionRecord, 20)
+	for i := range records {
+		records[i].SessionID = fmt.Sprintf("session-%02d", i)
+	}
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m.width = 120
+	m.height = 19
+	m.topMode = ui.ModeWorktrees
+	m.bottomMode = ui.ModeSessions
+	m.activePane = ui.PaneTop
+	m.contentPane = ui.PaneTop
+	m.sessions = newSessionPane().SetItems(records).Move(15, 1, 80)
+	if m.sessions.Scroll() != 15 {
+		t.Fatalf("precondition hidden Session scroll = %d, want 15", m.sessions.Scroll())
+	}
+
+	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+
+	wantScroll := len(records) - m.paneContentHeight(ui.ModeSessions)
+	if m.sessions.SelectedIndex() != 15 || m.sessions.Scroll() != wantScroll {
+		t.Fatalf("focused Session geometry = selected %d scroll %d, want 15/%d", m.sessions.SelectedIndex(), m.sessions.Scroll(), wantScroll)
 	}
 }
 

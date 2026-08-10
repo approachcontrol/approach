@@ -58,6 +58,48 @@ func TestRender_BeadsOpenAvailableEmptyShowsExactQuietMessage(t *testing.T) {
 	}
 }
 
+func TestRender_BackgroundBeadsEmptyDoesNotReuseFocusedBottomMessage(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos:              []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:           0,
+		Width:              100,
+		Height:             21,
+		Mode:               ModeFlows,
+		TopMode:            ModeBeadsOpen,
+		BottomMode:         ModeFlows,
+		ActivePane:         PaneBottom,
+		ContentPane:        PaneBottom,
+		BeadsOpenAvailable: true,
+		RightEmptyMessage:  "No flows",
+	}))
+
+	if !strings.Contains(view, "no open beads") {
+		t.Fatalf("background Beads pane reused focused bottom empty message:\n%s", view)
+	}
+}
+
+func TestRender_BackgroundBeadsFilterUsesPaneLocalQuery(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Repos:              []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
+		Selected:           0,
+		Width:              100,
+		Height:             21,
+		Mode:               ModeFlows,
+		TopMode:            ModeBeadsOpen,
+		BottomMode:         ModeFlows,
+		ActivePane:         PaneBottom,
+		ContentPane:        PaneBottom,
+		BeadsOpenAvailable: true,
+		BeadsQuery:         "zzz",
+		BeadsSourceCount:   1,
+		RightEmptyMessage:  "No flows",
+	}))
+
+	if !strings.Contains(view, "No bead results for zzz") {
+		t.Fatalf("background Beads pane did not use its own filter query:\n%s", view)
+	}
+}
+
 func TestRender_BeadsOpenUnavailableShowsExactBlanketMessage(t *testing.T) {
 	view := ansi.Strip(Render(RenderParams{
 		Repos:    []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},

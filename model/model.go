@@ -907,13 +907,14 @@ func (m Model) View() string {
 	flows, flowSelected, flowScroll := m.flows.View()
 	var beadsActive []beadsquery.Bead
 	beadsSelected, beadsScroll := 0, 0
-	beadsAvailable, beadsPending, beadsError := false, false, ""
+	beadsAvailable, beadsPending, beadsError, beadsQuery := false, false, "", ""
 	beadsSourceCount, beadsClosedTotal := 0, 0
 	if state, ok := m.beadSubview(m.topMode); ok {
 		beadsActive, beadsSelected, beadsScroll = state.pane.View()
 		beadsAvailable = state.available
 		beadsPending = state.pending
 		beadsError = state.error
+		beadsQuery = state.pane.Query()
 		beadsSourceCount = state.pane.ItemCount()
 		if m.topMode == ui.ModeBeadsClosed {
 			beadsClosedTotal = state.total
@@ -1024,6 +1025,7 @@ func (m Model) View() string {
 		BeadsOpenPending:             beadsPending,
 		ReadyBeadFlowCreateAvailable: m.canCreateReadyBeadFlow(),
 		BeadsError:                   beadsError,
+		BeadsQuery:                   beadsQuery,
 		BeadsSourceCount:             beadsSourceCount,
 		BeadsClosedTotal:             beadsClosedTotal,
 		FlowTerminalActivity:         m.flowTerminalActivity(),

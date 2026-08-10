@@ -405,6 +405,7 @@ type RenderParams struct {
 	BeadsOpenPending             bool
 	ReadyBeadFlowCreateAvailable bool
 	BeadsError                   string
+	BeadsQuery                   string
 	BeadsSourceCount             int
 	BeadsClosedTotal             int
 	FlowTerminalActivity         []FlowTerminalActivity
@@ -1014,6 +1015,15 @@ func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
 			return "No matching repo"
 		}
 		return "No selected repo"
+	}
+	if IsBeadsMode(mode) {
+		if strings.TrimSpace(p.BeadsQuery) != "" && p.BeadsSourceCount > 0 && len(p.BeadsOpen) == 0 {
+			return "No bead results for " + p.BeadsQuery
+		}
+		if p.BeadsOpenAvailable {
+			return "no " + beadsModeLabel(mode) + " beads"
+		}
+		return "beads not configured"
 	}
 	switch mode {
 	case ModeWorktrees:
