@@ -164,6 +164,13 @@ func (m Model) activeItemPaneQuery() string {
 	return m.itemPaneQuery(m.focusedMode())
 }
 
+func (m Model) activeItemPaneSourceCount() int {
+	if m.activeFlowSurfaceVisible() {
+		return m.activeFlows.ItemCount()
+	}
+	return m.itemPaneSourceCount(m.focusedMode())
+}
+
 func (m Model) itemPaneQuery(mode ui.Mode) string {
 	switch mode {
 	case ui.ModeWorktrees:

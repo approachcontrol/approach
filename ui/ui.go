@@ -431,6 +431,7 @@ type RenderParams struct {
 	SearchActive                 bool
 	RepoSearch                   string
 	ItemSearch                   string
+	ItemSourceCount              int
 	TopItemSearch                string
 	BottomItemSearch             string
 	TopItemSourceCount           int
@@ -936,8 +937,10 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	repoDisplayNames := repoDisplayNamesByPath(p.Repos)
 	var body []string
 	hasRows := stackedModePaneHasRows(p, mode, takeover)
+	_, sourceCount := paneItemFilterState(p, mode)
+	showCachedWarning := paneListError(p, mode) != "" && (hasRows || sourceCount > 0)
 	bodyRows := listRows
-	if hasRows && paneListError(p, mode) != "" && bodyRows > 0 {
+	if showCachedWarning && bodyRows > 0 {
 		bodyRows--
 	}
 	switch {
@@ -978,7 +981,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	default:
 		body = renderPlaceholderPane(width, bodyRows, paneEmptyMessage(p, mode, repoPath))
 	}
-	if hasRows && paneListError(p, mode) != "" {
+	if showCachedWarning {
 		warning := " Could not refresh " + modeDataLabel(mode) + "; showing cached data"
 		body = append([]string{truncateToWidth(dirtyRedStyle.Render(warning), width)}, body...)
 	}
@@ -1103,6 +1106,9 @@ func paneListError(p RenderParams, mode Mode) string {
 }
 
 func paneItemFilterState(p RenderParams, mode Mode) (string, int) {
+	if mode == ModeActiveFlows {
+		return p.ItemSearch, p.ItemSourceCount
+	}
 	pane, ok := PaneForMode(mode)
 	if !ok {
 		return "", 0

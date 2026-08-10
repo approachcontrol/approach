@@ -1054,6 +1054,7 @@ func (m Model) View() string {
 		SearchActive:                 m.searchActive,
 		RepoSearch:                   m.repos.Query(),
 		ItemSearch:                   m.activeItemPaneQuery(),
+		ItemSourceCount:              m.activeItemPaneSourceCount(),
 		TopItemSearch:                m.itemPaneQuery(m.topMode),
 		BottomItemSearch:             m.itemPaneQuery(m.bottomMode),
 		TopItemSourceCount:           m.itemPaneSourceCount(m.topMode),

@@ -1570,7 +1570,7 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 		errText = "Unable to create flow"
 	}
 	m = m.setStatus(statusOther, errText)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1586,7 +1586,7 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 		title = "Flow"
 	}
 	m = m.setStatus(statusOther, "Created flow: "+title)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1607,7 +1607,7 @@ func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, t
 		title = "Flow"
 	}
 	m = m.setStatus(statusOther, "Created flow: "+title)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1626,7 +1626,7 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 		errText = "Unable to create flow"
 	}
 	m = m.setStatus(statusOther, errText)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil

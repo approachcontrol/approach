@@ -555,16 +555,17 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 	}
 }
 
-func TestBeadsReadyCreateFlowCompletionRefreshesOnlyVisibleFlowSurface(t *testing.T) {
+func TestBeadsReadyCreateFlowCompletionRefreshesVisibleFlowSurface(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		keys        []tea.KeyMsg
+		height      int
 		wantRefresh int
 	}{
-		{name: "beads ready", wantRefresh: 0},
-		{name: "selected repo flows", keys: []tea.KeyMsg{{Type: tea.KeyTab}, {Type: tea.KeyRunes, Runes: []rune{'3'}}}, wantRefresh: 1},
-		{name: "active flows", keys: []tea.KeyMsg{{Type: tea.KeyCtrlA}}, wantRefresh: 1},
-		{name: "other surface", keys: []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune{'1'}}}, wantRefresh: 0},
+		{name: "beads ready with background flows visible", height: 30, wantRefresh: 1},
+		{name: "selected repo flows", height: 30, keys: []tea.KeyMsg{{Type: tea.KeyTab}, {Type: tea.KeyRunes, Runes: []rune{'3'}}}, wantRefresh: 1},
+		{name: "active flows", height: 30, keys: []tea.KeyMsg{{Type: tea.KeyCtrlA}}, wantRefresh: 1},
+		{name: "other surface with background flows hidden", height: 20, keys: []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune{'1'}}}, wantRefresh: 0},
 	} {
 		for _, failed := range []bool{false, true} {
 			outcome := "success"
@@ -589,6 +590,7 @@ func TestBeadsReadyCreateFlowCompletionRefreshesOnlyVisibleFlowSurface(t *testin
 						return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
 					},
 				}))
+				m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: tt.height})
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 				m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 				m, _ = update(m, readyCmd())

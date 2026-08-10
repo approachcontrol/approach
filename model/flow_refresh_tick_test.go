@@ -753,6 +753,57 @@ func TestModel_ActiveFlowsExitCancelsRefreshOwnershipWithoutRefreshingHiddenStor
 	}
 }
 
+func TestModel_FlowCreationCompletionRefreshesVisibleBackgroundFlowsPane(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(Model) (Model, tea.Msg)
+	}{
+		{
+			name: "ordinary flow creation",
+			prepare: func(m Model) (Model, tea.Msg) {
+				m, request := m.nextFlowCreateRequest()
+				return m, FlowCreatedMsg{RepoPath: "/dev/alpha", FlowID: "flow-new", Title: "New", Request: request}
+			},
+		},
+		{
+			name: "ready bead flow creation",
+			prepare: func(m Model) (Model, tea.Msg) {
+				m, request := m.nextReadyBeadFlowCreateRequest()
+				return m, ReadyBeadFlowCreatedMsg{RepoPath: "/dev/alpha", FlowID: "flow-new", Title: "New", Request: request}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewWithOptions(flowRefreshTestRepos(), Options{
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{flowForRefreshTest("flow-new")}, nil
+				},
+			})
+			m.height = 30
+			m.topMode = ui.ModeWorktrees
+			m.bottomMode = ui.ModeFlows
+			m.activePane = ui.PaneTop
+			m.contentPane = ui.PaneTop
+			m, msg := tt.prepare(m)
+			beforeRequest := m.ListRequest(ui.ModeFlows)
+
+			m, cmd := updateFlowRefreshTest(m, msg)
+
+			if cmd == nil {
+				t.Fatal("visible background Flows completion returned nil refresh command")
+			}
+			if got := m.ListRequest(ui.ModeFlows); got == beforeRequest {
+				t.Fatalf("Flows request = %d, want changed from %d", got, beforeRequest)
+			}
+			if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
+				t.Fatalf("refresh in-flight request = %d, want %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+			}
+		})
+	}
+}
+
 func TestModel_HiddenStoredFlowsCompletionDoesNotScheduleTick(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{})
 	m.height = 20

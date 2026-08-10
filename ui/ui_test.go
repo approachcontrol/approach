@@ -5014,6 +5014,28 @@ func TestRender_StackedPaneRetainedRowsShowPersistentFetchWarning(t *testing.T) 
 	}
 }
 
+func TestRender_StackedPaneFilterEmptyKeepsPersistentFetchWarning(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:              160,
+		Height:             26,
+		Repos:              []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:           0,
+		Mode:               ModeWorktrees,
+		TopMode:            ModeWorktrees,
+		BottomMode:         ModePlans,
+		ContentPane:        PaneTop,
+		ActivePane:         PaneTop,
+		TopItemSearch:      "zzz",
+		TopItemSourceCount: 1,
+		TopListError:       "worktrees failed",
+	}))
+	for _, want := range []string{"Could not refresh worktrees; showing cached data", "No worktree results for zzz"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("filter-empty refresh-error view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestRender_StackedBackgroundFiltersUsePaneLocalState(t *testing.T) {
 	tests := []struct {
 		name   string
