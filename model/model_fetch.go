@@ -26,6 +26,28 @@ func (m Model) startFetchForMode() (Model, tea.Cmd) {
 	return m.startFetchMode(m.focusedMode())
 }
 
+// fetchStoredModes starts the already-tokened repository-scoped requests for
+// both stable content panes. It is used by Init, where the model cannot retain
+// newly allocated request tokens after returning the command.
+func (m Model) fetchStoredModes() tea.Cmd {
+	return batchNonNil(
+		m.fetchMode(m.topMode, m.currentListRequest(m.topMode)),
+		m.fetchMode(m.bottomMode, m.currentListRequest(m.bottomMode)),
+	)
+}
+
+// startStoredModeFetches allocates independent request tokens and starts one
+// repository-scoped request for each stable pane.
+func (m Model) startStoredModeFetches() (Model, tea.Cmd) {
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
+	var topCmd, bottomCmd tea.Cmd
+	m, topCmd = m.startFetchMode(m.topMode)
+	m, bottomCmd = m.startFetchMode(m.bottomMode)
+	return m, batchNonNil(topCmd, bottomCmd)
+}
+
 func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 	if m.scanRepos == nil {
 		m = m.setStatus(statusOther, "refresh unavailable")
@@ -46,29 +68,27 @@ func (m Model) startGlobalRefresh() (Model, tea.Cmd) {
 	}
 
 	cmds := []tea.Cmd{scanCmd}
-	fetchMode := m.activeContentFetchMode()
-	if fetchMode == ui.ModeActiveFlows {
-		var fetchCmd tea.Cmd
-		m, fetchCmd = m.startFetchForMode()
-		if fetchCmd != nil {
-			cmds = append(cmds, fetchCmd)
+	if repoPath, ok := m.currentRepoPath(); ok {
+		inlineWorktreePath := ""
+		if m.topMode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
+			inlineWorktreePath = m.inlineWorktreeSessionPath
 		}
-	} else if repoPath, ok := m.currentRepoPath(); ok {
-		if _, ok := listFetchDescriptorForMode(fetchMode); ok {
-			inlineWorktreePath := ""
-			if fetchMode == ui.ModeWorktrees && m.inlineWorktreeSessionPath != "" {
-				inlineWorktreePath = m.inlineWorktreeSessionPath
-			}
-			var fetchCmd tea.Cmd
-			m, fetchCmd = m.startFetchForMode()
-			if inlineWorktreePath != "" && fetchCmd != nil {
-				m.pendingInlineSessionRepo = repoPath
-				m.pendingInlineSessionPath = inlineWorktreePath
-				m.pendingInlineSessionList = m.currentListRequest(ui.ModeWorktrees)
-			}
-			if fetchCmd != nil {
-				cmds = append(cmds, fetchCmd)
-			}
+		var storedCmd tea.Cmd
+		m, storedCmd = m.startStoredModeFetches()
+		if inlineWorktreePath != "" && storedCmd != nil {
+			m.pendingInlineSessionRepo = repoPath
+			m.pendingInlineSessionPath = inlineWorktreePath
+			m.pendingInlineSessionList = m.currentListRequest(ui.ModeWorktrees)
+		}
+		if storedCmd != nil {
+			cmds = append(cmds, storedCmd)
+		}
+	}
+	if m.activeFlowSurfaceVisible() {
+		var activeCmd tea.Cmd
+		m, activeCmd = m.startActiveFlowsFetchWithRefreshTick()
+		if activeCmd != nil {
+			cmds = append(cmds, activeCmd)
 		}
 	}
 	if len(cmds) == 1 {
@@ -97,14 +117,80 @@ func (m Model) nextListFetchRequest(mode ui.Mode) (Model, uint64) {
 	request := m.listRequestSeq
 	if int(mode) >= 0 && int(mode) < len(m.listRequests) {
 		m.listRequests[int(mode)] = request
+		m = m.setCurrentListError(mode, "")
 	}
 	return m, request
+}
+
+func (m Model) currentListError(mode ui.Mode) string {
+	if int(mode) < 0 || int(mode) >= len(m.listErrors) {
+		return ""
+	}
+	return m.listErrors[int(mode)]
+}
+
+func (m Model) setCurrentListError(mode ui.Mode, detail string) Model {
+	if int(mode) < 0 || int(mode) >= len(m.listErrors) {
+		return m
+	}
+	if m.listErrors[int(mode)] == detail {
+		return m
+	}
+	warningRows := m.paneCachedWarningRows(mode)
+	m.listErrors[int(mode)] = detail
+	if m.paneCachedWarningRows(mode) != warningRows {
+		// Showing or clearing the cached-data banner resizes the list, so the
+		// pane has to re-clamp its scroll against the new viewport.
+		m = m.reflowMode(mode)
+	}
+	return m
+}
+
+func (m Model) reflowMode(mode ui.Mode) Model {
+	switch mode {
+	case ui.ModeActiveFlows:
+		return m.reflowActiveFlows()
+	case ui.ModeFlows:
+		return m.reflowFlows()
+	case ui.ModeWorktrees:
+		return m.reflowWorktrees()
+	case ui.ModeBranches:
+		return m.reflowBranches()
+	case ui.ModeStashes:
+		return m.reflowStashes()
+	case ui.ModeHistory:
+		return m.reflowCommits()
+	case ui.ModeReflog:
+		return m.reflowReflogs()
+	case ui.ModeSessions:
+		return m.reflowSessions()
+	case ui.ModePlans:
+		return m.reflowPlans()
+	default:
+		if ui.IsBeadsMode(mode) {
+			return m.reflowBeads(mode)
+		}
+		return m
+	}
 }
 
 func (m Model) invalidateListRequests() Model {
 	m.listRequestSeq++
 	for i := range m.listRequests {
 		m.listRequests[i] = m.listRequestSeq
+		m = m.setCurrentListError(ui.Mode(i), "")
+	}
+	return m
+}
+
+func (m Model) invalidateStoredListRequests() Model {
+	m.listRequestSeq++
+	for mode := ui.ModeWorktrees; mode <= ui.ModeBeadsClosed; mode++ {
+		if mode == ui.ModeActiveFlows {
+			continue
+		}
+		m.listRequests[int(mode)] = m.listRequestSeq
+		m = m.setCurrentListError(mode, "")
 	}
 	return m
 }

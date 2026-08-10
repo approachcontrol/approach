@@ -429,15 +429,6 @@ type AgentReasoningEffortSetFailedMsg struct {
 	Err     string
 }
 
-type DefaultViewSetMsg struct {
-	Mode ui.Mode
-}
-
-type DefaultViewSetFailedMsg struct {
-	Mode ui.Mode
-	Err  string
-}
-
 type AgentResultMsg struct {
 	LaunchContext actions.AgentLaunchContext
 	Err           string
@@ -642,6 +633,7 @@ func (m Model) acceptListResult(repoPath string, mode ui.Mode, request uint64) (
 	if !m.isCurrentRepo(repoPath) || !m.isCurrentListRequest(mode, request) {
 		return m, false
 	}
+	m = m.setCurrentListError(mode, "")
 	return m.clearFetchListStatus(mode), true
 }
 
@@ -649,6 +641,7 @@ func (m Model) acceptActiveFlowResult(request uint64) (Model, bool) {
 	if !m.activeFlowSurfaceVisible() || !m.isCurrentListRequest(ui.ModeActiveFlows, request) {
 		return m, false
 	}
+	m = m.setCurrentListError(ui.ModeActiveFlows, "")
 	return m.clearFetchListStatus(ui.ModeActiveFlows), true
 }
 
@@ -758,7 +751,7 @@ func (m Model) handleWorktreeUnlockFailed(msg WorktreeUnlockFailedMsg) Model {
 func (m Model) handleGitFetched(msg GitFetchedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m = m.clearStatus(statusGitMutation)
-		return m.startFetchForMode()
+		return m.startFetchMode(m.topMode)
 	}
 	return m, nil
 }
@@ -798,7 +791,7 @@ func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.
 	m = m.setVisibleRepoFetchSummaryStatus(finalStatus)
 	if currentOK && shouldRefresh {
 		var fetchCmd tea.Cmd
-		m, fetchCmd = m.startFetchForMode()
+		m, fetchCmd = m.startFetchMode(m.topMode)
 		return m, fetchCmd
 	}
 	return m, nil
@@ -822,8 +815,8 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 			})
 			m.pendingRepoSelection = ""
 			m = m.reflowRepos()
-			m = m.resetRightPaneCursors()
-			return m.startFetchForMode()
+			m = m.resetStoredPanesForRepoRefresh()
+			return m.startStoredModeFetches()
 		}
 		m.pendingRepoSelection = ""
 	}
@@ -832,7 +825,7 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 	var selectedChanged, hasSelection bool
 	m, selectedChanged, hasSelection = m.replaceReposPreservingVisibleSelection(msg.Repos, oldPath)
 	if !hasSelection {
-		m = m.resetRightPaneCursors()
+		m = m.resetStoredPanesForRepoRefresh()
 		if len(msg.Repos) == 0 {
 			m = m.setStatus(statusOther, "No repositories found")
 		} else {
@@ -841,10 +834,18 @@ func (m Model) handleRepoRefreshResult(msg RepoRefreshResultMsg) (tea.Model, tea
 		return m, nil
 	}
 	if selectedChanged || !oldOK {
-		m = m.resetRightPaneCursors()
-		return m.startFetchForMode()
+		m = m.resetStoredPanesForRepoRefresh()
+		return m.startStoredModeFetches()
 	}
 	return m.clearStatus(statusOther), nil
+}
+
+func (m Model) resetStoredPanesForRepoRefresh() Model {
+	if !m.activeFlowSurfaceVisible() {
+		return m.resetRightPaneCursors()
+	}
+	m = m.resetStoredPaneCursors()
+	return m.syncActiveFlowsFromCache()
 }
 
 func sameRepoPath(a, b string) bool {
@@ -923,7 +924,7 @@ func (m Model) handleRepoCreateFailed(msg RepoCreateFailedMsg) (tea.Model, tea.C
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m = m.clearStatus(statusGitMutation)
-		return m.startFetchForMode()
+		return m.startFetchMode(m.topMode)
 	}
 	return m, nil
 }
@@ -1072,23 +1073,6 @@ func (m Model) handleAgentReasoningEffortSetFailed(msg AgentReasoningEffortSetFa
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to persist reasoning effort"
-	}
-	m = m.setStatus(statusOther, errText)
-	return m
-}
-
-func (m Model) handleDefaultViewSet(msg DefaultViewSetMsg) Model {
-	m.defaultView = msg.Mode
-	m = m.clearStatus(statusOther)
-	return m
-}
-
-func (m Model) handleDefaultViewSetFailed(msg DefaultViewSetFailedMsg) Model {
-	// Keep the selection usable for this session even when persistence fails.
-	m.defaultView = msg.Mode
-	errText := msg.Err
-	if errText == "" {
-		errText = "Unable to persist default view"
 	}
 	m = m.setStatus(statusOther, errText)
 	return m
@@ -1271,6 +1255,7 @@ func (m Model) handleForceDeleteFailed(msg ForceDeleteFailedMsg) Model {
 func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 	if m.activeFlowSurfaceVisible() && msg.Kind == FetchList && msg.Mode == ui.ModeActiveFlows && msg.Pane == "active-flows" {
 		if next, ok := m.acceptActiveFlowResult(msg.ListRequest); ok {
+			next = next.setCurrentListError(ui.ModeActiveFlows, msg.Err)
 			return next.setFetchStatus(msg)
 		}
 		return m
@@ -1280,6 +1265,9 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 	}
 	if !m.fetchErrorMatchesCurrentTarget(msg) {
 		return m
+	}
+	if msg.Kind == FetchList && msg.Pane != "worktree sessions" {
+		m = m.setCurrentListError(msg.Mode, msg.Err)
 	}
 	m = m.setFetchStatus(msg)
 	return m
@@ -1353,7 +1341,7 @@ func (m Model) handleBeadsClosedResult(msg BeadsClosedResultMsg) Model {
 }
 
 func (m Model) handleBeadsResultWithTotal(mode ui.Mode, repoPath string, beads []beadsquery.Bead, request uint64, available bool, errorDetail string, total int) Model {
-	if m.focusedMode() != mode {
+	if !m.modeStored(mode) {
 		return m
 	}
 	var ok bool
@@ -1731,7 +1719,8 @@ func (m Model) fetchErrorMatchesCurrentTarget(msg FetchErrorMsg) bool {
 				msg.ListRequest == m.activeWorktreeSessionReq &&
 				msg.WorktreePath == m.inlineWorktreeSessionPath
 		}
-		return msg.Mode == m.activeContentFetchMode() && m.isCurrentListRequest(msg.Mode, msg.ListRequest)
+		return (m.modeStored(msg.Mode) || msg.Mode == m.activeContentFetchMode()) &&
+			m.isCurrentListRequest(msg.Mode, msg.ListRequest)
 	case FetchWorktreeDiff:
 		if !m.activeViewMatches(FetchWorktreeDiff, ui.ModeWorktrees, msg.DiffRequest) {
 			return false

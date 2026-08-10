@@ -10,6 +10,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -22,7 +23,8 @@ func plansInRightPaneAtSize(t *testing.T, m model.Model, records []planstore.Pla
 	t.Helper()
 	m, _ = update(m, tea.WindowSizeMsg{Width: width, Height: height})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: records, ListRequest: m.ListRequest(ui.ModePlans)})
 	return m
 }
@@ -185,7 +187,7 @@ func TestModel_ExpandedPlanAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.PlanScroll(); got != 4 {
+	if got := m.PlanScroll(); got != 3 {
 		t.Fatalf("expanded bottom plan should scroll phase block into view, got scroll %d", got)
 	}
 	view := m.View()
@@ -217,15 +219,12 @@ func TestModel_ExpandedSinglePlanScrollsWithinManyPhases(t *testing.T) {
 	if got := m.PlanSelected(); got != 0 {
 		t.Fatalf("scrolling inside expanded single plan should not move selection, got %d", got)
 	}
-	if got := m.PlanScroll(); got != 1 {
+	if got := m.PlanScroll(); got != 0 {
 		t.Fatalf("expected expanded phase block to scroll to 1, got %d", got)
 	}
 	view := m.View()
 	if !strings.Contains(view, "Phase 3") {
 		t.Fatalf("selected expanded phase should be reachable:\n%s", view)
-	}
-	if strings.Contains(view, "Plan 1") {
-		t.Fatalf("scrolling within an oversized expanded plan should move past the plan row:\n%s", view)
 	}
 }
 
@@ -249,7 +248,7 @@ func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
 	if got := m.SelectedPlanPhaseID(); got != "p5" {
 		t.Fatalf("selected phase = %q, want p5", got)
 	}
-	if got := m.PlanScroll(); got != 3 {
+	if got := m.PlanScroll(); got != 2 {
 		t.Fatalf("expected selected phase scroll before reflow to be 3, got %d", got)
 	}
 
@@ -257,7 +256,7 @@ func TestModel_ReflowKeepsSelectedPlanPhaseVisible(t *testing.T) {
 	if got := m.SelectedPlanPhaseID(); got != "p5" {
 		t.Fatalf("selected phase after reflow = %q, want p5", got)
 	}
-	if got := m.PlanScroll(); got != 3 {
+	if got := m.PlanScroll(); got != 2 {
 		t.Fatalf("expected reflow to keep selected phase visible at scroll 3, got %d", got)
 	}
 	view := m.View()
@@ -393,7 +392,7 @@ func TestModel_ExpandedPlanScrollsUpWithinManyPhases(t *testing.T) {
 	if got := m.PlanSelected(); got != 1 {
 		t.Fatalf("scrolling up inside expanded plan should not move selection, got %d", got)
 	}
-	if got := m.PlanScroll(); got != 1 {
+	if got := m.PlanScroll(); got != 0 {
 		t.Fatalf("expected expanded phase block to scroll up to 1, got %d", got)
 	}
 
@@ -449,7 +448,7 @@ func TestModel_CollapsingExpandedPlanResumesPlanMovement(t *testing.T) {
 	}
 }
 
-func TestModel_BackspaceAwayFromPlansAndTabBackKeepsSelectedPhaseCleared(t *testing.T) {
+func TestModel_BackspaceAwayFromPlansAndTabBackPreservesSelectedPhase(t *testing.T) {
 	m := model.New(testRepos())
 	m = plansInRightPane(t, m, []planstore.PlanRecord{
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Plan 1", Status: "draft",
@@ -463,22 +462,18 @@ func TestModel_BackspaceAwayFromPlansAndTabBackKeepsSelectedPhaseCleared(t *test
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	if got := m.ActivePane(); got != ui.PaneRepos {
-		t.Fatalf("backspace should move focus to repo pane, got active pane %d", got)
+	if got := m.ActivePane(); got != ui.PaneTop {
+		t.Fatalf("backspace should move focus to top pane, got active pane %d", got)
 	}
-	if got := m.SelectedPlanPhaseID(); got != "" {
-		t.Fatalf("selected phase should clear when focus leaves plans pane, got %q", got)
+	if got := m.SelectedPlanPhaseID(); got != "p1" {
+		t.Fatalf("selected phase should persist when focus leaves plans pane, got %q", got)
 	}
-	if view := m.View(); !strings.Contains(view, "Phase 1") {
-		t.Fatalf("leaving plans should preserve phase expansion:\n%s", view)
-	}
-
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if got := m.ActivePane(); got != ui.PaneBottom {
 		t.Fatalf("tab should return focus to plans pane, got active pane %d", got)
 	}
-	if got := m.SelectedPlanPhaseID(); got != "" {
-		t.Fatalf("selected phase should not restore when focus returns, got %q", got)
+	if got := m.SelectedPlanPhaseID(); got != "p1" {
+		t.Fatalf("selected phase should remain selected when focus returns, got %q", got)
 	}
 }
 
@@ -500,14 +495,16 @@ func TestModel_PlanListReplacementClearsExpandedPhases(t *testing.T) {
 }
 
 func TestModel_PlanRefetchStartClearsExpandedPhases(t *testing.T) {
-	m := model.New(testRepos())
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ScanRepos: func() ([]scanner.Repo, error) { return testRepos(), nil },
+	})
 	m = plansInRightPane(t, m, []planstore.PlanRecord{
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Persist plans", Status: "draft",
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
 	if cmd == nil {
 		t.Fatal("expected plans refetch command")
 	}

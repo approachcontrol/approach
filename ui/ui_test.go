@@ -779,6 +779,63 @@ func TestRenderNeverOverflowsViewportHeight(t *testing.T) {
 	}
 }
 
+func TestRenderStackedStoredPanesUsesPaneLocalHeaders(t *testing.T) {
+	p := RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:    0,
+		Width:       120,
+		Height:      30,
+		Mode:        ModeBeadsOpen,
+		TopMode:     ModeBeadsOpen,
+		BottomMode:  ModeFlows,
+		ContentPane: PaneTop,
+		ActivePane:  PaneTop,
+		BeadsOpen:   nil,
+		Flows:       []flowstore.FlowRecord{{FlowID: "flow-1", Title: "Bottom flow", RepoPath: "/dev/approach", Branch: "flow/bottom"}},
+	}
+	view := Render(p)
+	if got := len(strippedLines(view)); got != p.Height {
+		t.Fatalf("stacked view line count = %d, want %d:\n%s", got, p.Height, view)
+	}
+	plain := ansi.Strip(view)
+	for _, want := range []string{"1 git", "[2] beads", "1 sessions", "2 plans", "[3] flows", "flow/bottom"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("stacked view missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "4 flows") || strings.Contains(plain, "5 beads") {
+		t.Fatalf("stacked view retained global numbering:\n%s", plain)
+	}
+}
+
+func TestRenderActiveFlowsTakesOverCombinedStackedColumn(t *testing.T) {
+	p := RenderParams{
+		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:    0,
+		Width:       120,
+		Height:      30,
+		Mode:        ModeActiveFlows,
+		TopMode:     ModeBeadsOpen,
+		BottomMode:  ModeFlows,
+		ContentPane: PaneTop,
+		ActivePane:  PaneRepos,
+		ActiveFlows: true,
+		Flows:       []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/dev/approach", Branch: "flow/takeover"}},
+	}
+	plain := ansi.Strip(Render(p))
+	if strings.Count(plain, "[^a] active flows") != 1 || !strings.Contains(plain, "flow/takeover") {
+		t.Fatalf("Active Flows did not render once across the content column:\n%s", plain)
+	}
+	for _, hidden := range []string{"1 git", "2 beads", "1 sessions", "3 flows"} {
+		if strings.Contains(plain, hidden) {
+			t.Fatalf("Active Flows takeover retained stored header %q:\n%s", hidden, plain)
+		}
+	}
+	if strings.Contains(plain, "│>") {
+		t.Fatalf("repository-focused takeover rendered a content cursor:\n%s", plain)
+	}
+}
+
 func TestRender_ShortcutRailSurvivesExpandedDock(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:      []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
@@ -1616,75 +1673,14 @@ func TestRender_BranchesModeShowsAgentHintOnlyWhenTargetAvailable(t *testing.T) 
 	}
 }
 
-func TestRender_ShortcutPaneShowsDefaultViewSetting(t *testing.T) {
-	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
-		Selected:         0,
-		Width:            140,
-		Height:           28,
-		Mode:             ModeWorktrees,
-		ActivePane:       PaneTop,
-		DefaultViewLabel: "8 flows",
-		Worktrees:        []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
-		WorktreeSelected: 0,
-	})
-	pane := shortcutPaneText(view)
-	if !strings.Contains(pane, "V      default view") {
-		t.Fatalf("shortcut pane should advertise default view setting:\n%s", pane)
-	}
-}
-
-func TestRender_FlowShortcutPaneShowsDefaultViewSetting(t *testing.T) {
-	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
-		Selected:         0,
-		Width:            160,
-		Height:           28,
-		Mode:             ModeFlows,
-		ActivePane:       PaneTop,
-		DefaultViewLabel: "2 branches",
-		Flows:            []flowstore.FlowRecord{{FlowID: "flow-1", RepoPath: "/a", Status: flowstore.StatusInProgress}},
-		FlowSelected:     0,
-	})
-	pane := shortcutPaneText(view)
-	global := strings.Index(pane, "Global")
-	defaultView := strings.Index(pane, "V      default view")
-	if global < 0 || defaultView < 0 || defaultView < global {
-		t.Fatalf("flow shortcut pane should advertise default view setting in Global section:\n%s", pane)
-	}
-}
-
-func TestRender_DefaultViewFooterHintFitsNarrowWidth(t *testing.T) {
-	view := Render(RenderParams{
-		Repos:            []scanner.Repo{{Path: "/a", DisplayName: "alpha"}},
-		Selected:         0,
-		Width:            80,
-		Height:           10,
-		Mode:             ModeWorktrees,
-		ActivePane:       PaneTop,
-		DefaultViewLabel: "8 flows",
-		Worktrees:        []gitquery.Worktree{{Path: "/a", BranchName: "main", IsMain: true}},
-		WorktreeSelected: 0,
-	})
-	lines := strings.Split(ansi.Strip(view), "\n")
-	status := lines[len(lines)-1]
-	if strings.Contains(status, "\n") {
-		t.Fatalf("status footer should stay on one line, got %q", status)
-	}
-	if got := lipgloss.Width(status); got > 80 {
-		t.Fatalf("status footer width = %d, want <= 80: %q", got, status)
-	}
-}
-
-func TestRender_TerminalFocusedShortcutPaneOmitsDefaultViewSetting(t *testing.T) {
+func TestRender_OmitsDefaultViewSetting(t *testing.T) {
 	pane := shortcutPaneText(renderShortcutPane(statusBarParams{
 		Mode:                   ModeFlows,
 		ActivePane:             PaneTop,
 		EmbeddedTerminalActive: true,
-		DefaultViewLabel:       "8 flows",
 	}, 26, 12))
-	if strings.Contains(pane, "default 8 flows") || strings.Contains(pane, "V      ") {
-		t.Fatalf("terminal-focused shortcuts should not advertise default-view key:\n%s", pane)
+	if strings.Contains(pane, "default view") || strings.Contains(pane, "V      ") {
+		t.Fatalf("shortcuts should not advertise removed default-view control:\n%s", pane)
 	}
 	if !strings.Contains(pane, "ctrl+] commands") {
 		t.Fatalf("terminal-focused shortcuts should advertise terminal command prefix:\n%s", pane)
@@ -4954,7 +4950,6 @@ func TestRender_CollapsedRepoPaneShowsRestoreHintInFooterAndShortcutRail(t *test
 		RepoPaneCollapsed:   true,
 		RightEmptyMessage:   "No worktrees",
 		NewAgentAvailable:   true,
-		DefaultViewLabel:    "flows",
 		RepoEmptyMessage:    "No repos",
 		FetchAvailable:      false,
 		PullAvailable:       false,
@@ -4972,6 +4967,129 @@ func TestRender_CollapsedRepoPaneShowsRestoreHintInFooterAndShortcutRail(t *test
 	rail := shortcutPaneText(Render(params))
 	if !strings.Contains(rail, "^r     repos") {
 		t.Fatalf("collapsed shortcut rail missing restore hint:\n%s", rail)
+	}
+}
+
+func TestRender_StackedPaneListErrorsRenderIndependently(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:             160,
+		Height:            26,
+		Repos:             []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:          0,
+		Mode:              ModeWorktrees,
+		TopMode:           ModeWorktrees,
+		BottomMode:        ModePlans,
+		ContentPane:       PaneTop,
+		ActivePane:        PaneRepos,
+		TopListError:      "worktrees failed",
+		BottomListError:   "plans failed",
+		RightEmptyMessage: "No worktrees",
+		RepoEmptyMessage:  "No repos",
+	}))
+	for _, want := range []string{"Could not load worktrees", "Could not load plans"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("stacked error view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_StackedPaneRetainedRowsShowPersistentFetchWarning(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:        160,
+		Height:       26,
+		Repos:        []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:     0,
+		Mode:         ModeWorktrees,
+		TopMode:      ModeWorktrees,
+		BottomMode:   ModePlans,
+		ContentPane:  PaneTop,
+		ActivePane:   PaneTop,
+		Worktrees:    []gitquery.Worktree{{Path: "/repo", BranchName: "main"}},
+		TopListError: "worktrees failed",
+	}))
+	for _, want := range []string{"Could not refresh worktrees; showing cached data", "main"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("retained-row error view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_StackedPaneFilterEmptyKeepsPersistentFetchWarning(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:              160,
+		Height:             26,
+		Repos:              []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:           0,
+		Mode:               ModeWorktrees,
+		TopMode:            ModeWorktrees,
+		BottomMode:         ModePlans,
+		ContentPane:        PaneTop,
+		ActivePane:         PaneTop,
+		TopItemSearch:      "zzz",
+		TopItemSourceCount: 1,
+		TopListError:       "worktrees failed",
+	}))
+	for _, want := range []string{"Could not refresh worktrees; showing cached data", "No worktree results for zzz"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("filter-empty refresh-error view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_StackedBackgroundFiltersUsePaneLocalState(t *testing.T) {
+	tests := []struct {
+		name   string
+		params RenderParams
+		want   string
+	}{
+		{
+			name: "top Worktrees while bottom focused",
+			params: RenderParams{
+				Mode: ModeFlows, TopMode: ModeWorktrees, BottomMode: ModeFlows,
+				ActivePane: PaneBottom, ContentPane: PaneBottom,
+				TopItemSearch: "zzz", TopItemSourceCount: 1,
+			},
+			want: "No worktree results for zzz",
+		},
+		{
+			name: "bottom Plans while top focused",
+			params: RenderParams{
+				Mode: ModeWorktrees, TopMode: ModeWorktrees, BottomMode: ModePlans,
+				ActivePane: PaneTop, ContentPane: PaneTop,
+				BottomItemSearch: "zzz", BottomItemSourceCount: 1,
+			},
+			want: "No plan results for zzz",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.params.Width = 160
+			tt.params.Height = 26
+			tt.params.Repos = []scanner.Repo{{Path: "/repo", DisplayName: "repo"}}
+			tt.params.Selected = 0
+			view := ansi.Strip(Render(tt.params))
+			if !strings.Contains(view, tt.want) {
+				t.Fatalf("background filter view missing %q:\n%s", tt.want, view)
+			}
+		})
+	}
+}
+
+func TestRender_ActiveFlowsTakeoverPreservesFilterEmptyMessage(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:             160,
+		Height:            26,
+		Mode:              ModeActiveFlows,
+		TopMode:           ModeWorktrees,
+		BottomMode:        ModeFlows,
+		ActiveFlows:       true,
+		ActivePane:        PaneBottom,
+		ContentPane:       PaneBottom,
+		ItemSearch:        "zzz",
+		RightEmptyMessage: "No flow results for zzz",
+	}))
+	if !strings.Contains(view, "No flow results for zzz") {
+		t.Fatalf("Active Flows filter-empty view lost query-specific message:\n%s", view)
 	}
 }
 

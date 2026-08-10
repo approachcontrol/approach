@@ -26,7 +26,6 @@ type Config struct {
 	Terminal    TerminalConfig   `toml:"terminal"`
 	Provider    ProviderConfig   `toml:"provider"`
 	Launch      LaunchConfig     `toml:"launch"`
-	UI          UIConfig         `toml:"ui"`
 	Agent       AgentConfig      `toml:"agent"`
 	FlowPrompts FlowPromptConfig `toml:"flow_prompts"`
 	Flow        FlowConfig       `toml:"flow"`
@@ -58,11 +57,6 @@ type ProviderConfig struct {
 // LaunchConfig is parsed now so launch behavior can be wired in later.
 type LaunchConfig struct {
 	PreferMultiplexer bool `toml:"prefer_multiplexer"`
-}
-
-// UIConfig stores user-interface preferences.
-type UIConfig struct {
-	DefaultView *int `toml:"default_view"`
 }
 
 // AgentConfig stores the user's preferred interactive coding agent.
@@ -205,12 +199,6 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 		cfg.Scan.Root = root
 	}
 
-	if cfg.UI.DefaultView != nil {
-		if err := validateDefaultView(*cfg.UI.DefaultView); err != nil {
-			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
-		}
-	}
-
 	if cfg.Agent.Command != "" {
 		cfg.Agent.Command = agent.Normalize(cfg.Agent.Command)
 		if err := agent.Validate(cfg.Agent.Command); err != nil {
@@ -266,13 +254,6 @@ func parseConfigData(path string, data []byte, opts loadOptions) (Config, error)
 
 func defaultConfig() Config {
 	return Config{}
-}
-
-func validateDefaultView(view int) error {
-	if view < 1 || view > 14 {
-		return fmt.Errorf("ui.default_view must be between 1 and 14")
-	}
-	return nil
 }
 
 func normalizeFlowConfig(path string, cfg *FlowConfig) error {
@@ -425,21 +406,6 @@ func SaveAgentModel(command, model string, options ...Option) error {
 	return saveAgentModelTo(path, command, model, options...)
 }
 
-// SaveDefaultView persists the startup default view number to approach's default
-// config file, creating the config directory when needed.
-func SaveDefaultView(view int, options ...Option) error {
-	if err := validateDefaultView(view); err != nil {
-		return err
-	}
-
-	opts := defaultOptions(options...)
-	path, err := writableDefaultPath(opts)
-	if err != nil {
-		return err
-	}
-	return saveDefaultViewTo(path, view, options...)
-}
-
 // SavePromptTemplate persists a configurable prompt template to approach's default
 // config file. plan_prompt is stored under [agent]; Flow phase prompt keys are
 // stored under [flow_prompts].
@@ -530,12 +496,6 @@ func saveAgentModelTo(path, command, model string, options ...Option) error {
 	}
 	return saveAgentConfigTo(path, options, func(data []byte) []byte {
 		return patchAgentModel(data, key, model)
-	})
-}
-
-func saveDefaultViewTo(path string, view int, options ...Option) error {
-	return saveAgentConfigTo(path, options, func(data []byte) []byte {
-		return patchSectionAssignment(data, "ui", "default_view", fmt.Sprintf("default_view = %d\n", view))
 	})
 }
 

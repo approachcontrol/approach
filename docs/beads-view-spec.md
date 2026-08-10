@@ -1,19 +1,21 @@
 # Spec: Beads View
 
-Status: forward-looking full-v1 draft, partially implemented. The Open tracer,
+Status: historical PR1 design record. The Open tracer,
 five visible query/header subviews, sticky group re-entry, arrow navigation, and
 per-subview filter/cursor preservation with refetch clamping, plus
 configured/not-configured/error classification are shipped, as are the
-newest-100 Closed cap with its plain/truncated header count and `default_view`
-10–14 startup routing, read-only detail paging, and parked-Flow creation (record
+newest-100 Closed cap with its plain/truncated header count, read-only detail
+paging, and parked-Flow creation (record
 plus worktree) from a settled Ready selection. Companion docs:
 `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
 
-> **Scope:** The Solution, User Stories, and Implementation Decisions below
-> describe the target full-v1 design. For current shipped behavior, use the
-> status above and the linked README/config documentation.
+> **Historical scope:** The Solution, User Stories, and Implementation Decisions
+> below preserve the pre-stacked-pane requirements, including global key `5`,
+> the old arrow cycle, and configurable startup-view stories. Those navigation
+> and config details were intentionally superseded by the stacked-pane design.
+> For current behavior, use `docs/tui-guide.md` and `docs/config.md`.
 
 ## Problem Statement
 

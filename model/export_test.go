@@ -21,7 +21,7 @@ func FormForTest(m Model) ui.FormView {
 }
 
 func modelWithModeForTest(m Model, mode ui.Mode) Model {
-	m.topMode, m.bottomMode, m.contentPane, m.activeFlowSurface = startupPaneState(startupMode(mode))
+	m.topMode, m.bottomMode, m.contentPane, m.activeFlowSurface = startupPaneState(mode)
 	return m
 }
 

@@ -22,8 +22,52 @@ func (m Model) focusedMode() ui.Mode {
 	return m.topMode
 }
 
+// modeStored reports whether a repository-scoped mode currently belongs to
+// either stable pane. Stored background panes continue accepting their own
+// current results even while focus is elsewhere.
+func (m Model) modeStored(mode ui.Mode) bool {
+	pane, ok := ui.PaneForMode(mode)
+	if !ok {
+		return false
+	}
+	if pane == ui.PaneTop {
+		return m.topMode == mode
+	}
+	return m.bottomMode == mode
+}
+
+// storedModeVisible reports whether a stored mode currently receives rows in
+// the stacked content layout. Before the first window-size message, the layout
+// is unknown, so stored modes remain provisionally visible for startup fetch
+// and refresh bookkeeping.
+func (m Model) storedModeVisible(mode ui.Mode) bool {
+	if m.activeFlowSurfaceVisible() || !m.modeStored(mode) {
+		return false
+	}
+	if m.height <= 0 {
+		return true
+	}
+	sharedOuterRows := m.height - 1 - m.embeddedTerminalDockRows()
+	layout := ui.StackedContentLayout(sharedOuterRows, m.activePane, m.contentPane)
+	pane, _ := ui.PaneForMode(mode)
+	if pane == ui.PaneTop {
+		return layout.TopRows > 0
+	}
+	return layout.BottomRows > 0
+}
+
 func (m Model) flowSurfaceVisible() bool {
 	return m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible()
+}
+
+func (m Model) flowRefreshSurfaceVisible() bool {
+	if m.activeFlowSurfaceVisible() {
+		return true
+	}
+	if _, ok := m.currentRepoPath(); !ok {
+		return false
+	}
+	return m.storedModeVisible(ui.ModeFlows)
 }
 
 func (m Model) activeContentFetchMode() ui.Mode {
@@ -167,7 +211,10 @@ func (m Model) currentFilteredFlows() []flowstore.FlowRecord {
 }
 
 func (m Model) flowSurfaceContentHeight() int {
-	return m.flowContentHeight()
+	if m.activeFlowSurfaceVisible() {
+		return m.paneContentHeight(ui.ModeActiveFlows)
+	}
+	return m.paneContentHeight(ui.ModeFlows)
 }
 
 func (m Model) flowSurfaceItemHeight(expandedFlowID string) pane.ItemHeight[flowstore.FlowRecord] {
@@ -214,7 +261,7 @@ func (m Model) restoreActiveExpandedFlowSelection(flowID, phaseID string) Model 
 }
 
 func (m Model) reflowActiveFlows() Model {
-	m.activeFlows = m.activeFlows.Reflow(m.flowContentHeight(), m.contentWidth())
+	m.activeFlows = m.activeFlows.Reflow(m.paneContentHeight(ui.ModeActiveFlows), m.contentWidth())
 	if m.activeFlowSurfaceVisible() {
 		if m.selectedActiveFlowPhaseID != "" {
 			return m.ensureSelectedFlowPhaseVisible()
@@ -230,10 +277,7 @@ func isNumberedModeKey(key string) bool {
 	return key >= "1" && key <= "9"
 }
 
-// switchModeFromKey routes the top-level number keys: 1 selects the Git view
-// (landing on its last-used subview), 2-4 select the remaining top-level
-// views, 5 selects Beads at its last-used subview, and 6-9 are silent no-ops
-// kept reserved for the future.
+// switchModeFromKey routes a number only within the focused stored pane.
 func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	if !isNumberedModeKey(key) {
 		return m, nil, false
@@ -261,16 +305,35 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	if !m.activeFlowSurfaceVisible() {
 		previousMode := m.focusedMode()
+		m.activeFlowReturnPane = m.activePane
+		m.activeFlowReturnContent = m.contentPane
+		m.activeFlowReturnSet = true
 		m.activeFlowSurface = true
 		m = m.resetModeCursorsForSwitch(previousMode, ui.ModeActiveFlows)
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
 
 	m.activeFlowSurface = false
+	// Active Flows owns the shared refresh slot while its takeover is visible.
+	// Clear that ownership before deciding whether the restored Flows pane is
+	// visible, otherwise a hidden takeover request can block its next refresh.
+	hadFlowRefreshOwnership := m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0
+	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
+	if m.activeFlowReturnSet {
+		m.activePane = m.activeFlowReturnPane
+		m.contentPane = m.activeFlowReturnContent
+		m.activeFlowReturnSet = false
+	}
 	returnMode := m.focusedMode()
 	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
-	if returnMode == ui.ModeFlows {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowsModeFetchWithRefreshTick()
 	}
-	return m.startFetchMode(returnMode)
+	// No replacement refresh will advance the generation for a hidden stored
+	// pane, so invalidate the takeover's outstanding tick explicitly.
+	if hadFlowRefreshOwnership {
+		m.flowRefreshTickGen++
+	}
+	return m, nil
 }
