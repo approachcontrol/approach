@@ -1449,6 +1449,18 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				m = m.activateEmbeddedTerminal(msg.ID)
 				return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
 			}
+			if _, needsPersistence := m.flowLaunchFailureUpdate(msg.LaunchContext, msg.Err.Error()); needsPersistence {
+				var acquired bool
+				m, acquired = m.acquireFlowLaunchLease(
+					msg.LaunchContext.FlowID,
+					msg.LaunchContext.LaunchID,
+					flowLaunchSourceFailure,
+				)
+				if !acquired {
+					m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+					return m.setStatus(statusOther, msg.Err.Error()), nil
+				}
+			}
 			m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
 			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
 		}

@@ -12,6 +12,7 @@ const (
 	flowLaunchSourceRepair        flowLaunchSource = "repair"
 	flowLaunchSourceSessionResume flowLaunchSource = "session-resume"
 	flowLaunchSourceWorktreeAgent flowLaunchSource = "worktree-agent"
+	flowLaunchSourceFailure       flowLaunchSource = "failure-persistence"
 )
 
 type flowLaunchLease struct {

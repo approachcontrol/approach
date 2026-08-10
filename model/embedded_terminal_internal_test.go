@@ -1223,6 +1223,47 @@ func TestPromptPrefillTerminationFailureRetainsFlowOccupancy(t *testing.T) {
 	}
 }
 
+func TestPromptPrefillFailureTransfersTerminalOccupancyToFailurePersistence(t *testing.T) {
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", FlowID: "flow-1", FlowPhaseID: "implementation", LaunchID: "launch-a", FlowLaunchTracked: true,
+	}
+	m := NewWithOptions(nil, Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	})
+	m.embeddedTerminals = []embeddedTerminalSlot{{
+		Number: 1, ID: 42, Scope: embeddedTerminalScopeFlow, FlowID: ctx.FlowID, FlowPhaseID: ctx.FlowPhaseID,
+		FlowLaunchTracked: true, LaunchID: ctx.LaunchID, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{state: "terminated"},
+	}}
+
+	nextModel, persistCmd := m.Update(embeddedPromptPrefillResultMsg{
+		ID:            42,
+		LaunchContext: ctx,
+		Err:           errors.New("prefill failed"),
+	})
+	next := nextModel.(Model)
+	if persistCmd == nil {
+		t.Fatal("prefill failure returned nil failure-persistence command")
+	}
+	if len(next.embeddedTerminals) != 0 {
+		t.Fatalf("prefill failure retained terminated slot: %#v", next.embeddedTerminals)
+	}
+	lease, ok := next.flowLaunchLease(ctx.FlowID)
+	if !ok || lease.Token != ctx.LaunchID || !lease.FailurePending {
+		t.Fatalf("prefill failure lease = %#v, present %v", lease, ok)
+	}
+	if _, acquired := next.acquireFlowLaunchLease(ctx.FlowID, "launch-b", flowLaunchSourcePhase); acquired {
+		t.Fatal("prefill failure persistence allowed a newer Flow launch")
+	}
+
+	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, persistCmd)
+	finalModel, _ := next.Update(persisted)
+	if final := finalModel.(Model); final.flowLaunchLeaseOccupied(ctx.FlowID) {
+		t.Fatal("persisted prefill failure retained Flow launch lease")
+	}
+}
+
 func commandMessageOfType[T any](t *testing.T, cmd tea.Cmd) T {
 	t.Helper()
 	var zero T
