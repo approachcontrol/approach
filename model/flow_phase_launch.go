@@ -173,6 +173,11 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		ctx.FlowLaunchTracked = true
 		ctx.Embedded = true
 		ctx.Headless = req.Headless
+		// Persisted reservations carry UpdatedAt. A zero-time partial result from
+		// an injected launcher seam cannot authoritatively replace preferences.
+		if !req.AutoLaunch && !updated.UpdatedAt.IsZero() {
+			ctx.Headless = updated.Headless
+		}
 	}
 	return FlowPhaseLaunchResult{Context: ctx, Route: route}, nil
 }
