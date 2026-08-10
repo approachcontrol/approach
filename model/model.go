@@ -1592,7 +1592,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m = m.setStatus(statusOther, msg.Err)
 			return m, nil
 		}
-		if m.focusedMode() == ui.ModePlans {
+		if m.modeStored(ui.ModePlans) {
 			return m.startFetchMode(ui.ModePlans)
 		}
 		return m, nil

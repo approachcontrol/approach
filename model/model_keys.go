@@ -606,6 +606,9 @@ func (m Model) cyclePaneFocusForward() Model {
 	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
+		if m.activeFlowSurfaceVisible() && m.repoPaneCollapsed {
+			return m.focusContentPane(m.contentPane)
+		}
 		if m.repoPaneCollapsed {
 			return m.focusContentPane(ui.PaneTop)
 		}
@@ -646,6 +649,9 @@ func (m Model) cyclePaneFocusBackward() Model {
 	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
+		if m.activeFlowSurfaceVisible() {
+			return m.focusContentPane(m.contentPane)
+		}
 		return m.focusContentPane(ui.PaneBottom)
 	}
 	if m.activeFlowSurfaceVisible() {

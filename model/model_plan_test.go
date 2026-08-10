@@ -883,6 +883,23 @@ func TestModel_StalePlanEditResultDoesNotShowStatusOrRefresh(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 }
 
+func TestModel_PlanEditResultRefreshesStoredPlansWhileTopPaneFocused(t *testing.T) {
+	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
+		PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Plan",
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	before := m.ListRequest(ui.ModePlans)
+
+	m, cmd := update(m, model.PlanEditResultMsg{RepoPath: "/dev/alpha"})
+
+	if cmd == nil {
+		t.Fatal("expected stored Plans refresh after successful edit")
+	}
+	if got := m.ListRequest(ui.ModePlans); got == before {
+		t.Fatalf("Plans request = %d, want changed from %d", got, before)
+	}
+}
+
 func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 	root := t.TempDir()
 	var copied string

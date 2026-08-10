@@ -218,6 +218,34 @@ func TestActiveFlowsReverseCycleActivatesContentBeforeTerminal(t *testing.T) {
 	}
 }
 
+func TestActiveFlowsTerminalReturnPreservesRememberedContentPane(t *testing.T) {
+	tests := []struct {
+		name       string
+		key        tea.KeyType
+		remembered ui.Pane
+	}{
+		{name: "forward returns to remembered bottom", key: tea.KeyTab, remembered: ui.PaneBottom},
+		{name: "backward returns to remembered top", key: tea.KeyBackspace, remembered: ui.PaneTop},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New([]scanner.Repo{{Path: "/repo"}})
+			m.activeFlowSurface = true
+			m.repoPaneCollapsed = true
+			m.activePane = tt.remembered
+			m.contentPane = tt.remembered
+			m.terminalFocus = terminalFocusTerminal
+			m.terminalPrefixActive = true
+
+			m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tt.key})
+
+			if m.activePane != tt.remembered || m.contentPane != tt.remembered || m.terminalFocus != terminalFocusList || m.terminalPrefixActive {
+				t.Fatalf("terminal return = active %d remembered %d focus %d prefix %t, want %d/%d/list/false", m.activePane, m.contentPane, m.terminalFocus, m.terminalPrefixActive, tt.remembered, tt.remembered)
+			}
+		})
+	}
+}
+
 func TestDegradedPaneFocusSwapReflowsNewlyVisibleList(t *testing.T) {
 	records := make([]sessions.SessionRecord, 20)
 	for i := range records {
