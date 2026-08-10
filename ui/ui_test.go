@@ -5053,6 +5053,24 @@ func TestRender_StackedBackgroundFiltersUsePaneLocalState(t *testing.T) {
 	}
 }
 
+func TestRender_ActiveFlowsTakeoverPreservesFilterEmptyMessage(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:             160,
+		Height:            26,
+		Mode:              ModeActiveFlows,
+		TopMode:           ModeWorktrees,
+		BottomMode:        ModeFlows,
+		ActiveFlows:       true,
+		ActivePane:        PaneBottom,
+		ContentPane:       PaneBottom,
+		ItemSearch:        "zzz",
+		RightEmptyMessage: "No flow results for zzz",
+	}))
+	if !strings.Contains(view, "No flow results for zzz") {
+		t.Fatalf("Active Flows filter-empty view lost query-specific message:\n%s", view)
+	}
+}
+
 func TestRender_CollapsedRepoPaneHidesRestoreHintWhileTerminalOwnsInput(t *testing.T) {
 	tests := []struct {
 		name   string

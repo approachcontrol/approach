@@ -945,7 +945,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 		body = renderFlowPane(p.Flows, flowSel, p.FlowScroll, width, bodyRows, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, takeover, repoDisplayNames)
 	case mode == ModeFlows || takeover:
 		message := paneEmptyMessage(p, mode, repoPath)
-		if takeover && p.ActiveFlowsListError == "" {
+		if takeover && message == "" {
 			message = "No active flows"
 		}
 		body = renderPlaceholderPane(width, bodyRows, message)
