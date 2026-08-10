@@ -596,15 +596,24 @@ func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	for _, launchID := range []string{"launch-1", "launch-2"} {
-		flow, err = flowStore.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-			FlowID:   flow.FlowID,
-			PhaseID:  "plan",
-			LaunchID: launchID,
-		})
-		if err != nil {
-			t.Fatalf("AddPhaseLaunchID(%s) error = %v", launchID, err)
-		}
+	flow, err = flowStore.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: flow.FlowID, PhaseID: "plan", LaunchID: "launch-1",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(launch-1) error = %v", err)
+	}
+	flow, err = flowStore.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID: flow.FlowID, PhaseID: "plan",
+		Session: flowstore.Session{Provider: "codex", SessionID: "ended-session", LaunchID: "launch-1", Status: "ended"},
+	})
+	if err != nil {
+		t.Fatalf("AttachSession(launch-1) error = %v", err)
+	}
+	flow, err = flowStore.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: flow.FlowID, PhaseID: "plan", LaunchID: "launch-2",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(launch-2) error = %v", err)
 	}
 	envForLaunch := func(launchID string) map[string]string {
 		return map[string]string{
@@ -645,7 +654,14 @@ func TestIngestHookUsesFlowLaunchOrderToRejectStaleSessionUpdate(t *testing.T) {
 		t.Fatalf("Read() error = %v", err)
 	}
 	phase := flowPhaseByID(t, flow, "plan")
-	if len(phase.Sessions) != 1 || phase.Sessions[0].LaunchID != "launch-2" || phase.Sessions[0].Status != "last_seen" {
+	var current flowstore.Session
+	for _, session := range phase.Sessions {
+		if session.SessionID == "shared-session" {
+			current = session
+			break
+		}
+	}
+	if current.LaunchID != "launch-2" || current.Status != "last_seen" {
 		t.Fatalf("Flow session regressed after stale hook: %#v", phase.Sessions)
 	}
 }

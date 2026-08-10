@@ -37,12 +37,30 @@ func (m Model) selectedFlowWorktreeAgentReady() bool {
 	if _, occupied := m.flowLaunchLease(record.FlowID); occupied || m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
 		return false
 	}
+	if m.hasKnownActiveFlowSession(record.FlowID) {
+		return false
+	}
 	for _, phase := range record.Phases {
 		if phase.Status == flowstore.PhaseRunning || phaseHasMatchingLiveSession(phase) {
 			return false
 		}
 	}
 	return true
+}
+
+func (m Model) hasKnownActiveFlowSession(flowID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return false
+	}
+	for _, records := range [][]sessions.SessionRecord{m.sessions.Items(), m.worktreeSessions.Items()} {
+		for _, record := range records {
+			if strings.TrimSpace(record.FlowID) == flowID && sessions.IsActive(record) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m Model) handleStartSelectedFlowWorktreeAgent() (tea.Model, tea.Cmd) {

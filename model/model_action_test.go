@@ -5963,13 +5963,28 @@ func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 
 func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
+	record := sessions.SessionRecord{
+		Provider:     sessions.ProviderClaude,
+		SessionID:    "claude-session-1",
+		LaunchID:     "old-launch",
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat",
+		CWD:          "/dev/alpha-worktrees/feat/subdir",
+		Branch:       "feat",
+		Commit:       "abc123",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/approach/plans/plan-1/plan.md",
+		FlowID:       "flow-1",
+		FlowPhaseID:  "review-loop",
+		Status:       "ended",
+	}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SessionStateRoot: "/state/approach/sessions/v1",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{{FlowID: "flow-1"}}, nil
 		},
 		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
-			return nil, nil
+			return []sessions.SessionRecord{record}, nil
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
@@ -5978,23 +5993,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
-		{
-			Provider:     sessions.ProviderClaude,
-			SessionID:    "claude-session-1",
-			LaunchID:     "old-launch",
-			RepoPath:     "/dev/alpha",
-			WorktreePath: "/dev/alpha-worktrees/feat",
-			CWD:          "/dev/alpha-worktrees/feat/subdir",
-			Branch:       "feat",
-			Commit:       "abc123",
-			PlanID:       "plan-1",
-			PlanPath:     "/state/approach/plans/plan-1/plan.md",
-			FlowID:       "flow-1",
-			FlowPhaseID:  "review-loop",
-			Status:       "ended",
-		},
-	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{record}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
@@ -6025,12 +6024,16 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 
 func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha",
+		WorktreePath: "/dev/alpha-worktrees/feat", FlowID: "flow-1", FlowPhaseID: "review-loop", Status: "ended",
+	}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{{FlowID: "flow-1"}}, nil
 		},
 		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
-			return nil, nil
+			return []sessions.SessionRecord{record}, nil
 		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
@@ -6042,17 +6045,7 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
-		{
-			Provider:     sessions.ProviderCodex,
-			SessionID:    "codex-session-1",
-			RepoPath:     "/dev/alpha",
-			WorktreePath: "/dev/alpha-worktrees/feat",
-			FlowID:       "flow-1",
-			FlowPhaseID:  "review-loop",
-			Status:       "ended",
-		},
-	}, ListRequest: m.ListRequest(ui.ModeSessions)})
+	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{record}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
@@ -6357,9 +6350,9 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 				Provider:     sessions.ProviderClaude,
 				SessionID:    "claude-inline-1",
 				LaunchID:     "old-launch",
-				RepoPath:     filter.RepoPath,
-				WorktreePath: filter.WorktreePath,
-				CWD:          filter.WorktreePath + "/subdir",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: "/dev/alpha-worktrees/inline",
+				CWD:          "/dev/alpha-worktrees/inline/subdir",
 				Branch:       "feature/inline",
 				Commit:       "abc123",
 				PlanID:       "plan-1",

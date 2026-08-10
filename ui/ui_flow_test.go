@@ -720,6 +720,10 @@ func TestFlowShortcutsShowStartAgentOnlyWhenReady(t *testing.T) {
 	if got := ansi.Strip(renderStatusBarWithState(base)); strings.Contains(got, "s: start agent") {
 		t.Fatalf("ineligible Flow footer exposed start-agent hint: %q", got)
 	}
+	ready.Width = 120
+	if got := ansi.Strip(renderStatusBarWithState(ready)); !strings.Contains(got, "s: start agent") {
+		t.Fatalf("compact ready Flow footer missing start-agent hint: %q", got)
+	}
 }
 
 func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {

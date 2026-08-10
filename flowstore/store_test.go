@@ -978,6 +978,47 @@ func TestStoreAddPhaseLaunchIDMarksPhaseRunning(t *testing.T) {
 	}
 }
 
+func TestStoreAddPhaseLaunchIDRejectsSecondLaunchWhilePhaseAwaitsSession(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Reject duplicate launch",
+		Instructions: "keep one launch in flight",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	record, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-1",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(first) error = %v", err)
+	}
+	if !flowstore.PhaseAwaitingSession(phaseByID(t, record, "plan")) {
+		t.Fatal("first launch should leave the running phase awaiting session capture")
+	}
+
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-2",
+	}); err == nil || !strings.Contains(err.Error(), "already awaiting session") {
+		t.Fatalf("AddPhaseLaunchID(second) error = %v, want awaiting-session rejection", err)
+	}
+
+	replayed, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: record.FlowID, PhaseID: "plan", LaunchID: "launch-1",
+	})
+	if err != nil {
+		t.Fatalf("AddPhaseLaunchID(replay) error = %v", err)
+	}
+	if got := phaseByID(t, replayed, "plan").LaunchIDs; len(got) != 1 || got[0] != "launch-1" {
+		t.Fatalf("replayed launch IDs = %#v, want one launch-1", got)
+	}
+}
+
 func TestStoreResetAwaitingSessionPhaseReturnsRunningOrphanToReady(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

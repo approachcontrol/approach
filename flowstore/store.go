@@ -943,6 +943,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 				return FlowRecord{}, err
 			}
 		}
+		if phase.Status == PhaseRunning && PhaseAwaitingSession(phase) && !slices.Contains(phase.LaunchIDs, launchID) {
+			return FlowRecord{}, fmt.Errorf("phase %q in flow %q is already awaiting session capture", update.PhaseID, update.FlowID)
+		}
 		if update.Resume && PhaseStatusTerminal(phase.Status) {
 			// Resuming a finished phase's session is read-back, not new work:
 			// record the launch so the session can re-link, but leave the

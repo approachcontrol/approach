@@ -103,6 +103,22 @@ func TestFlowWorktreeAgentRejectsActivePersistedSessionAndReleasesLease(t *testi
 	}
 }
 
+func TestFlowWorktreeAgentReadinessUsesKnownActiveSessionSnapshot(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree}
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{StartupMode: ui.ModeFlows, AgentCommand: "codex"})
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+	m.activePane = ui.PaneBottom
+	m.sessions = m.sessions.SetItems([]sessions.SessionRecord{{FlowID: record.FlowID, Status: "active"}})
+	if m.selectedFlowWorktreeAgentReady() {
+		t.Fatal("known active saved session should hide the worktree-agent shortcut")
+	}
+	m.sessions = m.sessions.SetItems([]sessions.SessionRecord{{FlowID: record.FlowID, Status: "ended"}})
+	if !m.selectedFlowWorktreeAgentReady() {
+		t.Fatal("known ended saved session should not hide the worktree-agent shortcut")
+	}
+}
+
 func TestFlowDetachBlockedSlotRejectsBeforeCallingTerminal(t *testing.T) {
 	terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t flow"}
 	m := Model{
@@ -223,6 +239,75 @@ func TestFlowAssociatedSavedSessionResumeRetainsFlowOccupancy(t *testing.T) {
 	}
 	if launched.FlowID != "flow-1" || launched.FlowLaunchTracked || launched.FlowPhaseID != "" {
 		t.Fatalf("resumed launch context = %#v", launched)
+	}
+}
+
+func TestFlowAssociatedSavedSessionResumeRejectsRecordMovedToAnotherFlow(t *testing.T) {
+	selected := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", LaunchID: "launch-a", Status: "ended", FlowID: "flow-a", CWD: t.TempDir(),
+	}
+	current := selected
+	current.FlowID = "flow-b"
+	current.LaunchID = "launch-b"
+	started := false
+	m := Model{
+		agentCommand: "codex",
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-a"}, {FlowID: "flow-b"}}, nil
+		},
+		listSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.Provider == sessions.ProviderCodex {
+				return []sessions.SessionRecord{current}, nil
+			}
+			return nil, nil
+		},
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+	ctx, ok, next := m.sessionResumeLaunchContext(selected)
+	if !ok {
+		t.Fatal("selected record did not produce a resume context")
+	}
+	next, cmd := next.resumeSessionInEmbeddedTerminal(ctx, selected)
+	if cmd == nil || !next.flowLaunchLeaseOccupied("flow-a") {
+		t.Fatal("stale selection did not reserve and queue preflight")
+	}
+	next, _ = next.handleFlowSessionResumePreflight(cmd().(flowSessionResumePreflightMsg))
+	if started {
+		t.Fatal("session moved to another Flow but resume still started")
+	}
+	if next.flowLaunchLeaseOccupied("flow-a") {
+		t.Fatal("stale resume rejection retained the old Flow lease")
+	}
+}
+
+func TestTrackedPhaseResumeDetachPolicyUsesPersistedPhaseDurability(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		phaseTerminal bool
+		wantBlocked   bool
+	}{
+		{name: "running phase uses fresh validation"},
+		{name: "terminal phase is blocked", phaseTerminal: true, wantBlocked: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				return internalFakeEmbeddedTerminal{}, nil
+			}}
+			ctx := actions.AgentLaunchContext{
+				Command: "codex", LaunchID: "launch-1", FlowID: "flow-1", FlowPhaseID: "implementation",
+				ResumeSessionID: "session-1", FlowLaunchTracked: true, FlowPhaseTerminal: tt.phaseTerminal,
+			}
+			next, opened, err, _ := m.openFlowEmbeddedTerminal(ctx)
+			if err != nil || !opened {
+				t.Fatalf("openFlowEmbeddedTerminal() opened/error = %v/%v", opened, err)
+			}
+			if got := next.embeddedTerminals[0].FlowDetachBlocked; got != tt.wantBlocked {
+				t.Fatalf("FlowDetachBlocked = %v, want %v", got, tt.wantBlocked)
+			}
+		})
 	}
 }
 

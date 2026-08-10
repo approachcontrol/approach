@@ -426,7 +426,7 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 		FlowRepair:        ctx.FlowRepair,
 		FlowWorktreeAgent: ctx.FlowWorktreeAgent,
 		FlowLaunchTracked: ctx.FlowLaunchTracked,
-		FlowDetachBlocked: ctx.FlowWorktreeAgent || ctx.FlowRepair || (ctx.ResumeSessionID != "" && ctx.FlowID != "") || ctx.FlowPhaseTerminal,
+		FlowDetachBlocked: ctx.FlowWorktreeAgent || ctx.FlowRepair || (ctx.ResumeSessionID != "" && ctx.FlowID != "" && !ctx.FlowLaunchTracked) || ctx.FlowPhaseTerminal,
 		LaunchID:          strings.TrimSpace(ctx.LaunchID),
 		Terminal:          term,
 		ID:                id,
@@ -1197,6 +1197,22 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 		listSessions := m.listSessions
 		return m, func() tea.Msg {
 			msg := flowSessionResumePreflightMsg{Context: ctx, Record: record}
+			currentRecords, err := listSessions(sessions.SessionFilter{Provider: record.Provider})
+			if err != nil {
+				msg.Err = fmt.Errorf("refresh selected session before resuming: %w", err)
+				return msg
+			}
+			for _, current := range currentRecords {
+				if current.Provider == record.Provider && strings.TrimSpace(current.SessionID) == strings.TrimSpace(record.SessionID) {
+					msg.CurrentRecord = current
+					msg.CurrentRecordFound = true
+					break
+				}
+			}
+			if !msg.CurrentRecordFound {
+				msg.Err = fmt.Errorf("selected session %s no longer exists", record.SessionID)
+				return msg
+			}
 			flows, err := listFlows(flowstore.FlowFilter{})
 			if err != nil {
 				msg.Err = fmt.Errorf("refresh Flow before resuming session: %w", err)
@@ -1223,11 +1239,13 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 }
 
 type flowSessionResumePreflightMsg struct {
-	Context  actions.AgentLaunchContext
-	Record   sessions.SessionRecord
-	Flow     flowstore.FlowRecord
-	Sessions []sessions.SessionRecord
-	Err      error
+	Context            actions.AgentLaunchContext
+	Record             sessions.SessionRecord
+	CurrentRecord      sessions.SessionRecord
+	CurrentRecordFound bool
+	Flow               flowstore.FlowRecord
+	Sessions           []sessions.SessionRecord
+	Err                error
 }
 
 func (m Model) handleFlowSessionResumePreflight(msg flowSessionResumePreflightMsg) (Model, tea.Cmd) {
@@ -1242,6 +1260,23 @@ func (m Model) handleFlowSessionResumePreflight(msg flowSessionResumePreflightMs
 	if msg.Err != nil {
 		return fail(msg.Err.Error())
 	}
+	if !msg.CurrentRecordFound {
+		return fail("Selected session is no longer available")
+	}
+	if strings.TrimSpace(msg.CurrentRecord.FlowID) != strings.TrimSpace(ctx.FlowID) ||
+		strings.TrimSpace(msg.CurrentRecord.LaunchID) != strings.TrimSpace(msg.Record.LaunchID) {
+		return fail("Selected session changed while the resume was pending; refresh and try again")
+	}
+	refreshedCtx, ok, next := m.sessionResumeLaunchContext(msg.CurrentRecord)
+	if !ok {
+		next = next.releaseFlowLaunchLease(ctx.FlowID, ctx.LaunchID)
+		return next, nil
+	}
+	if refreshedCtx.Command != ctx.Command {
+		return fail("Configured agent changed while the session resume was pending; try again")
+	}
+	refreshedCtx.LaunchID = ctx.LaunchID
+	ctx = refreshedCtx
 	for _, record := range msg.Sessions {
 		if sessions.IsActive(record) {
 			return fail("An active persisted session already occupies this Flow")
@@ -1255,7 +1290,7 @@ func (m Model) handleFlowSessionResumePreflight(msg flowSessionResumePreflightMs
 	if m.hasFlowEmbeddedTerminalForFlow(ctx.FlowID) {
 		return fail("An embedded terminal already occupies this Flow")
 	}
-	next, cmd := m.resumeSessionInEmbeddedTerminalNow(ctx, msg.Record, false)
+	next, cmd := m.resumeSessionInEmbeddedTerminalNow(ctx, msg.CurrentRecord, false)
 	next = next.releaseFlowLaunchLease(ctx.FlowID, ctx.LaunchID)
 	return next, cmd
 }
