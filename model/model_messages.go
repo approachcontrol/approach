@@ -460,8 +460,11 @@ type flowLaunchFailurePersistedMsg struct {
 }
 
 type PlanLaunchRequestedMsg struct {
-	LaunchContext actions.AgentLaunchContext
-	Request       uint64
+	LaunchContext   actions.AgentLaunchContext
+	Request         uint64
+	FlowLeaseSource flowLaunchSource
+	FlowLeaseID     string
+	FlowLeaseToken  string
 }
 
 type FlowEmbeddedLaunchRequestedMsg struct {
@@ -469,6 +472,23 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	Request             uint64
 	RepairRecord        flowstore.FlowRecord
 	RepairValidationErr string
+	FlowLeaseSource     flowLaunchSource
+	FlowLeaseID         string
+	FlowLeaseToken      string
+}
+
+type flowStartRequestedMsg struct {
+	RepoPath     string
+	Title        string
+	Instructions string
+	BaseRef      string
+	Headless     bool
+	Request      uint64
+}
+
+type flowLaunchLeaseReleaseMsg struct {
+	FlowID string
+	Token  string
 }
 
 type flowPhaseResumePersistedMsg struct {
@@ -482,18 +502,22 @@ type flowPhaseResumePersistFailedMsg struct {
 }
 
 type FlowCreatedMsg struct {
-	RepoPath string
-	FlowID   string
-	Title    string
-	Request  uint64
+	RepoPath       string
+	FlowID         string
+	Title          string
+	Request        uint64
+	FlowLeaseID    string
+	FlowLeaseToken string
 }
 
 type FlowCreateFailedMsg struct {
-	RepoPath string
-	FlowID   string
-	Title    string
-	Err      string
-	Request  uint64
+	RepoPath       string
+	FlowID         string
+	Title          string
+	Err            string
+	Request        uint64
+	FlowLeaseID    string
+	FlowLeaseToken string
 }
 
 type ReadyBeadFlowCreatedMsg struct {
@@ -603,6 +627,8 @@ type ActionFailedMsg struct {
 	Err                     string
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
+	FlowLeaseID             string
+	FlowLeaseToken          string
 }
 
 // --- Message handlers ---
@@ -1286,6 +1312,7 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	m = m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {

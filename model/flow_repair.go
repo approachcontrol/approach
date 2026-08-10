@@ -10,6 +10,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 // flowRepairObstruction describes the persisted condition an untracked repair
@@ -154,7 +155,8 @@ func (m Model) selectedFlowRepairReady() bool {
 	return ok &&
 		!m.hasFlowEmbeddedTerminalForFlow(record.FlowID) &&
 		!m.hasPendingFlowPhaseResumeForFlow(record.FlowID) &&
-		!m.hasPendingFlowRepairLaunch(record.FlowID)
+		!m.hasPendingFlowRepairLaunch(record.FlowID) &&
+		!m.flowLaunchLeaseOccupied(record.FlowID)
 }
 
 func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
@@ -219,16 +221,33 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		ReasoningEffort:  reasoningEffort,
 		InitialPrompt:    flowRepairPrompt(record, obstruction),
 	}
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease(record.FlowID, ctx.LaunchID, flowLaunchSourceRepair)
+	if !acquired {
+		return m.setStatus(statusOther, "Another launch or session already occupies this Flow"), nil
+	}
 	m = m.withPendingFlowRepairLaunch(record.FlowID, ctx.LaunchID)
 	listFlows := m.listFlows
+	listSessions := m.listSessions
 	return m, func() tea.Msg {
-		msg := FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-		records, err := listFlows(flowstore.FlowFilter{})
+		msg := FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx, FlowLeaseSource: flowLaunchSourceRepair, FlowLeaseID: ctx.FlowID, FlowLeaseToken: ctx.LaunchID}
+		records, err := listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
+		if err != nil {
+			msg.RepairValidationErr = "List persisted Flow sessions before repair: " + err.Error()
+			return msg
+		}
+		for _, record := range records {
+			if sessions.IsActive(record) {
+				msg.RepairValidationErr = "An active persisted session already occupies this Flow"
+				return msg
+			}
+		}
+		flows, err := listFlows(flowstore.FlowFilter{})
 		if err != nil {
 			msg.RepairValidationErr = "Refresh persisted Flow before repair: " + err.Error()
 			return msg
 		}
-		for _, current := range records {
+		for _, current := range flows {
 			if strings.TrimSpace(current.FlowID) == strings.TrimSpace(ctx.FlowID) {
 				msg.RepairRecord = current
 				return msg

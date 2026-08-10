@@ -18,6 +18,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/claudestream"
 	"github.com/approachcontrol/approach/embeddedterm"
+	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model/modal"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
@@ -92,20 +93,31 @@ const (
 )
 
 type embeddedTerminalSlot struct {
-	Number         int
-	Scope          embeddedTerminalScope
-	Provider       string
-	Identity       string
-	RepoPath       string
-	WorktreePath   string
-	WorkingDir     string
-	FlowID         string
-	FlowPhaseID    string
-	FlowRepair     bool
-	LaunchID       string
-	Terminal       EmbeddedTerminal
-	ID             embeddedTerminalID
-	PrefillPending bool
+	Number             int
+	Scope              embeddedTerminalScope
+	Provider           string
+	Identity           string
+	RepoPath           string
+	WorktreePath       string
+	WorkingDir         string
+	FlowID             string
+	FlowPhaseID        string
+	FlowRepair         bool
+	FlowWorktreeAgent  bool
+	FlowLaunchTracked  bool
+	FlowDetachBlocked  bool
+	DetachRequestToken string
+	LaunchID           string
+	Terminal           EmbeddedTerminal
+	ID                 embeddedTerminalID
+	PrefillPending     bool
+}
+
+type embeddedTerminalDetachValidatedMsg struct {
+	SlotID embeddedTerminalID
+	Token  string
+	Flow   flowstore.FlowRecord
+	Err    error
 }
 
 type embeddedSessionPickerSelectedMsg struct {
@@ -373,7 +385,7 @@ func (m Model) nextEmbeddedTerminalNumber() (int, bool) {
 }
 
 func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, bool, error) {
-	next, opened, err, _ := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), "", "", m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
+	next, opened, err, _ := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
 	return next, opened, err
 }
 
@@ -402,20 +414,23 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 	m.nextEmbeddedTerminalID++
 	id := embeddedTerminalID(m.nextEmbeddedTerminalID)
 	m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
-		Number:         number,
-		Scope:          scope,
-		Provider:       provider,
-		Identity:       identity,
-		RepoPath:       cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
-		WorktreePath:   cleanEmbeddedTerminalPath(ctx.WorktreePath),
-		WorkingDir:     cleanEmbeddedTerminalPath(ctx.WorkingDir),
-		FlowID:         flowID,
-		FlowPhaseID:    flowPhaseID,
-		FlowRepair:     ctx.FlowRepair,
-		LaunchID:       strings.TrimSpace(ctx.LaunchID),
-		Terminal:       term,
-		ID:             id,
-		PrefillPending: actions.ShouldPrefillEmbeddedPrompt(ctx),
+		Number:            number,
+		Scope:             scope,
+		Provider:          provider,
+		Identity:          identity,
+		RepoPath:          cleanEmbeddedTerminalRepoPath(ctx.RepoPath),
+		WorktreePath:      cleanEmbeddedTerminalPath(ctx.WorktreePath),
+		WorkingDir:        cleanEmbeddedTerminalPath(ctx.WorkingDir),
+		FlowID:            flowID,
+		FlowPhaseID:       flowPhaseID,
+		FlowRepair:        ctx.FlowRepair,
+		FlowWorktreeAgent: ctx.FlowWorktreeAgent,
+		FlowLaunchTracked: ctx.FlowLaunchTracked,
+		FlowDetachBlocked: ctx.FlowWorktreeAgent || ctx.FlowRepair || (ctx.ResumeSessionID != "" && ctx.FlowID != "") || ctx.FlowPhaseTerminal,
+		LaunchID:          strings.TrimSpace(ctx.LaunchID),
+		Terminal:          term,
+		ID:                id,
+		PrefillPending:    actions.ShouldPrefillEmbeddedPrompt(ctx),
 	})
 	if wasEmpty {
 		m = m.reflowForTerminalDock()
@@ -620,6 +635,9 @@ func flowEmbeddedTerminalIdentity(ctx actions.AgentLaunchContext) string {
 	if ctx.FlowRepair {
 		return "repair"
 	}
+	if ctx.FlowWorktreeAgent {
+		return "agent"
+	}
 	for _, value := range []string{
 		ctx.FlowPhaseID,
 		ctx.FlowID,
@@ -812,6 +830,73 @@ func (m Model) handleEmbeddedTerminalDetachPrefix() (Model, tea.Cmd) {
 	if !ok || slot.Terminal == nil {
 		return m, nil
 	}
+	if slot.FlowDetachBlocked {
+		return m.setStatus(statusOther, "Detach unavailable: this Flow terminal must remain attached to preserve occupancy"), nil
+	}
+	if slot.FlowID != "" && slot.FlowLaunchTracked && slot.FlowPhaseID != "" {
+		token := newLaunchID()
+		for i := range m.embeddedTerminals {
+			if m.embeddedTerminals[i].ID == slot.ID {
+				m.embeddedTerminals[i].DetachRequestToken = token
+				break
+			}
+		}
+		listFlows := m.listFlows
+		return m, func() tea.Msg {
+			msg := embeddedTerminalDetachValidatedMsg{SlotID: slot.ID, Token: token}
+			records, err := listFlows(flowstore.FlowFilter{})
+			if err != nil {
+				msg.Err = fmt.Errorf("refresh Flow before detach: %w", err)
+				return msg
+			}
+			for _, record := range records {
+				if strings.TrimSpace(record.FlowID) == strings.TrimSpace(slot.FlowID) {
+					msg.Flow = record
+					return msg
+				}
+			}
+			msg.Err = fmt.Errorf("Flow %s no longer exists", slot.FlowID)
+			return msg
+		}
+	}
+	return m.detachEmbeddedTerminal(slot)
+}
+
+func (m Model) handleEmbeddedTerminalDetachValidated(msg embeddedTerminalDetachValidatedMsg) (Model, tea.Cmd) {
+	var slot embeddedTerminalSlot
+	found := false
+	for i := range m.embeddedTerminals {
+		candidate := &m.embeddedTerminals[i]
+		if candidate.ID != msg.SlotID || candidate.DetachRequestToken != msg.Token {
+			continue
+		}
+		candidate.DetachRequestToken = ""
+		slot = *candidate
+		found = true
+		break
+	}
+	if !found {
+		return m, nil
+	}
+	if msg.Err != nil {
+		return m.setStatus(statusOther, msg.Err.Error()), nil
+	}
+	if strings.TrimSpace(msg.Flow.FlowID) != strings.TrimSpace(slot.FlowID) {
+		return m.setStatus(statusOther, "Detach unavailable: Flow validation is stale"), nil
+	}
+	phase, ok := flowPhaseByID(msg.Flow, slot.FlowPhaseID)
+	if !ok || phase.Status != flowstore.PhaseRunning {
+		return m.setStatus(statusOther, "Detach unavailable: the matching Flow phase is no longer running"), nil
+	}
+	for _, current := range m.embeddedTerminals {
+		if current.ID == slot.ID && current.FlowID == slot.FlowID && current.FlowPhaseID == slot.FlowPhaseID {
+			return m.detachEmbeddedTerminal(current)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) detachEmbeddedTerminal(slot embeddedTerminalSlot) (Model, tea.Cmd) {
 	detachable, ok := slot.Terminal.(detachableEmbeddedTerminal)
 	if !ok {
 		return m.setStatus(statusOther, "Detach unavailable: this terminal is not tmux-backed"), nil
@@ -875,7 +960,7 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 	ids := make([]embeddedTerminalID, 0)
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+		if (slot.Scope != embeddedTerminalScopeFlow && slot.FlowID == "") || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -890,7 +975,7 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 
 func (m Model) hasExitedFlowEmbeddedTerminalAutoClose() bool {
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
+		if (slot.Scope != embeddedTerminalScopeFlow && slot.FlowID == "") || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -1099,10 +1184,90 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 }
 
 func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
+	if strings.TrimSpace(ctx.FlowID) != "" {
+		if m.hasFlowEmbeddedTerminalForFlow(ctx.FlowID) {
+			return m.setStatus(statusOther, "An embedded terminal already occupies this Flow"), nil
+		}
+		var acquired bool
+		m, acquired = m.acquireFlowLaunchLease(ctx.FlowID, ctx.LaunchID, flowLaunchSourceSessionResume)
+		if !acquired {
+			return m.setStatus(statusOther, "Another launch or session already occupies this Flow"), nil
+		}
+		listFlows := m.listFlows
+		listSessions := m.listSessions
+		return m, func() tea.Msg {
+			msg := flowSessionResumePreflightMsg{Context: ctx, Record: record}
+			flows, err := listFlows(flowstore.FlowFilter{})
+			if err != nil {
+				msg.Err = fmt.Errorf("refresh Flow before resuming session: %w", err)
+				return msg
+			}
+			for _, flow := range flows {
+				if strings.TrimSpace(flow.FlowID) == strings.TrimSpace(ctx.FlowID) {
+					msg.Flow = flow
+					break
+				}
+			}
+			if msg.Flow.FlowID == "" {
+				msg.Err = fmt.Errorf("Flow %s no longer exists", ctx.FlowID)
+				return msg
+			}
+			msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
+			if err != nil {
+				msg.Err = fmt.Errorf("list sessions for Flow %s: %w", ctx.FlowID, err)
+			}
+			return msg
+		}
+	}
+	return m.resumeSessionInEmbeddedTerminalNow(ctx, record, true)
+}
+
+type flowSessionResumePreflightMsg struct {
+	Context  actions.AgentLaunchContext
+	Record   sessions.SessionRecord
+	Flow     flowstore.FlowRecord
+	Sessions []sessions.SessionRecord
+	Err      error
+}
+
+func (m Model) handleFlowSessionResumePreflight(msg flowSessionResumePreflightMsg) (Model, tea.Cmd) {
+	ctx := msg.Context
+	if !m.matchingFlowLaunchLease(ctx.FlowID, ctx.LaunchID, flowLaunchSourceSessionResume) {
+		return m, nil
+	}
+	fail := func(text string) (Model, tea.Cmd) {
+		m = m.releaseFlowLaunchLease(ctx.FlowID, ctx.LaunchID)
+		return m.setStatus(statusOther, text), nil
+	}
+	if msg.Err != nil {
+		return fail(msg.Err.Error())
+	}
+	for _, record := range msg.Sessions {
+		if sessions.IsActive(record) {
+			return fail("An active persisted session already occupies this Flow")
+		}
+	}
+	for _, phase := range msg.Flow.Phases {
+		if phase.Status == flowstore.PhaseRunning {
+			return fail("A running phase already occupies this Flow")
+		}
+	}
+	if m.hasFlowEmbeddedTerminalForFlow(ctx.FlowID) {
+		return fail("An embedded terminal already occupies this Flow")
+	}
+	next, cmd := m.resumeSessionInEmbeddedTerminalNow(ctx, msg.Record, false)
+	next = next.releaseFlowLaunchLease(ctx.FlowID, ctx.LaunchID)
+	return next, cmd
+}
+
+func (m Model) resumeSessionInEmbeddedTerminalNow(ctx actions.AgentLaunchContext, record sessions.SessionRecord, allowExternalFallback bool) (Model, tea.Cmd) {
 	needsTick := !m.hasRunningEmbeddedTerminal()
 	next, opened, err := m.openEmbeddedTerminal(ctx, record)
 	if err != nil && embeddedterm.IsUnsupported(err) {
-		return next.launchAgentWithContext(ctx)
+		if allowExternalFallback {
+			return next.launchAgentWithContext(ctx)
+		}
+		return next.setStatus(statusOther, "Flow-associated session resume requires embedded terminal support"), nil
 	}
 	if opened {
 		next = next.focusEmbeddedTerminalInput()

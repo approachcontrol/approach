@@ -10,6 +10,7 @@ import (
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
+	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -242,6 +243,9 @@ func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstor
 	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
+	if _, occupied := m.flowLaunchLease(record.FlowID); occupied || m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
+		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
+	}
 	ordered := flowstore.OrderedPhases(record.Phases)
 	orderedRecord := record
 	orderedRecord.Phases = ordered
@@ -257,6 +261,7 @@ type flowPhaseLaunchTarget struct {
 	FlowPhaseLaunchPreparedRequest
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
+	LeaseSource             flowLaunchSource
 }
 
 type repairAutoDrainMarker struct {
@@ -293,11 +298,42 @@ func (m Model) flowPhaseLaunchTarget(req FlowPhaseLaunchRequest) (flowPhaseLaunc
 		m, statusCmd = m.setAutoAdvanceStatus("Flow " + flowTitleForStatus(req.Record) + ": " + err.Error())
 		return flowPhaseLaunchTarget{}, false, m, statusCmd
 	}
-	return flowPhaseLaunchTarget{FlowPhaseLaunchPreparedRequest: prepared}, true, m, nil
+	source := flowLaunchSourcePhase
+	if req.AutoLaunch {
+		source = flowLaunchSourceAutoPhase
+	}
+	if m.hasFlowEmbeddedTerminalForFlow(req.Record.FlowID) {
+		message := "An embedded terminal already occupies this Flow"
+		if !req.AutoLaunch {
+			return flowPhaseLaunchTarget{}, false, m.setStatus(statusOther, message), nil
+		}
+		m, statusCmd := m.setAutoAdvanceStatus("Flow " + flowTitleForStatus(req.Record) + ": " + message)
+		return flowPhaseLaunchTarget{}, false, m, statusCmd
+	}
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease(req.Record.FlowID, prepared.LaunchID, source)
+	if !acquired {
+		message := "Another launch or session already occupies this Flow"
+		if !req.AutoLaunch {
+			return flowPhaseLaunchTarget{}, false, m.setStatus(statusOther, message), nil
+		}
+		m, statusCmd := m.setAutoAdvanceStatus("Flow " + flowTitleForStatus(req.Record) + ": " + message)
+		return flowPhaseLaunchTarget{}, false, m, statusCmd
+	}
+	return flowPhaseLaunchTarget{FlowPhaseLaunchPreparedRequest: prepared, LeaseSource: source}, true, m, nil
 }
 
 func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 	return func() tea.Msg {
+		records, err := m.listSessions(sessions.SessionFilter{FlowID: target.Record.FlowID})
+		if err != nil {
+			return ActionFailedMsg{RepoPath: target.RepoPath, Err: "failed to list Flow sessions: " + err.Error(), FlowLeaseID: target.Record.FlowID, FlowLeaseToken: target.LaunchID}
+		}
+		for _, record := range records {
+			if sessions.IsActive(record) {
+				return ActionFailedMsg{RepoPath: target.RepoPath, Err: "an active persisted session already occupies this Flow", FlowLeaseID: target.Record.FlowID, FlowLeaseToken: target.LaunchID}
+			}
+		}
 		result, err := m.flowPhaseLauncher().Prepare(target.FlowPhaseLaunchPreparedRequest)
 		if err != nil {
 			return ActionFailedMsg{
@@ -305,20 +341,22 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 				Err:                     err.Error(),
 				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
 				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+				FlowLeaseID:             target.Record.FlowID,
+				FlowLeaseToken:          target.LaunchID,
 			}
 		}
 		if result.Skipped {
-			return nil
+			return flowLaunchLeaseReleaseMsg{FlowID: target.Record.FlowID, Token: target.LaunchID}
 		}
-		return m.flowPhaseLaunchMessage(result)
+		return m.flowPhaseLaunchMessage(result, target.LeaseSource)
 	}
 }
 
-func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult) tea.Msg {
+func (m Model) flowPhaseLaunchMessage(result FlowPhaseLaunchResult, source flowLaunchSource) tea.Msg {
 	if result.Route == FlowPhaseLaunchEmbedded {
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: result.Context}
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: result.Context, FlowLeaseSource: source, FlowLeaseID: result.Context.FlowID, FlowLeaseToken: result.Context.LaunchID}
 	}
-	return PlanLaunchRequestedMsg{LaunchContext: result.Context}
+	return PlanLaunchRequestedMsg{LaunchContext: result.Context, FlowLeaseSource: source, FlowLeaseID: result.Context.FlowID, FlowLeaseToken: result.Context.LaunchID}
 }
 
 func (m Model) prepareAutoFlowPhaseLaunch(previousFlows, currentFlows []flowstore.FlowRecord) (Model, tea.Cmd, []string) {
@@ -574,6 +612,9 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
+	if _, occupied := m.flowLaunchLease(record.FlowID); occupied {
+		return true
+	}
 	if m.hasPendingFlowRepairLaunch(record.FlowID) {
 		return true
 	}
@@ -590,7 +631,7 @@ func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
 		return false
 	}
 	for _, slot := range m.embeddedTerminals {
-		if slot.Scope == embeddedTerminalScopeFlow && slot.FlowID == flowID && slot.Terminal != nil {
+		if slot.FlowID == flowID {
 			return true
 		}
 	}

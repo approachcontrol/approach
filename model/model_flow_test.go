@@ -1470,6 +1470,18 @@ func prepareSelectedFlowPhaseEmbeddedLaunch(t *testing.T, m model.Model, phaseID
 	return m, cmd
 }
 
+func openFlowTerminalForLifecycleTest(t *testing.T, m model.Model, flowID string) (model.Model, tea.Cmd) {
+	t.Helper()
+	return update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+		Command:           "codex",
+		FlowID:            flowID,
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		Embedded:          true,
+		Headless:          true,
+	}})
+}
+
 func flowLaunchKey() tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}
 }
@@ -2548,7 +2560,7 @@ func TestModel_FlowAutoModeLaunchesImplementationAfterPlanReviewCompletes(t *tes
 	}
 }
 
-func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
+func TestModel_PendingTrackedResumeOccupiesFlowAutoAdvance(t *testing.T) {
 	previous := autoFlowWithPhaseStatuses(map[string]string{
 		"plan":           flowstore.PhaseCompleted,
 		"plan-review":    flowstore.PhaseRunning,
@@ -2588,19 +2600,18 @@ func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
 	}
 
 	_, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
-	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
-	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
-		t.Fatalf("auto launch while manual resume pending = %#v, want headless implementation", launches)
+	if autoCmd != nil {
+		t.Fatalf("auto launch while manual resume pending = %T, want nil", autoCmd)
 	}
-	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
-		t.Fatalf("persistence updates = %#v, want only auto successor", updates)
+	if len(updates) != 0 {
+		t.Fatalf("persistence updates = %#v, want none while resume owns the Flow lease", updates)
 	}
 	if model.HasRunningFlowEmbeddedTerminalForPhaseForTest(pending, current.FlowID, "plan-review") {
 		t.Fatal("pending persistence registered a source terminal")
 	}
 }
 
-func TestModel_TrackedResumeAndAutoAdvanceRaceStartsEachTerminalOnce(t *testing.T) {
+func TestModel_TrackedResumeAndAutoAdvanceRaceSerializesOnResumeLease(t *testing.T) {
 	mutationOrders := []string{"manual-then-auto", "auto-then-manual"}
 	resultOrders := []string{"manual-then-auto", "auto-then-manual"}
 	for _, mutationOrder := range mutationOrders {
@@ -2668,9 +2679,20 @@ func TestModel_TrackedResumeAndAutoAdvanceRaceStartsEachTerminalOnce(t *testing.
 					t.Fatal("manual resume should return a persistence command")
 				}
 				scheduled, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
-				if autoCmd == nil {
-					t.Fatal("pending manual persistence should not suppress auto scheduling")
+				if autoCmd != nil {
+					t.Fatalf("pending manual persistence returned auto command %T, want nil", autoCmd)
 				}
+				serializedResult := manualCmd()
+				scheduled, _ = update(scheduled, serializedResult)
+				if len(terminalStarts) != 1 || terminalStarts[0].FlowPhaseID != "plan-review" {
+					t.Fatalf("terminal starts = %#v, want only the resumed phase", terminalStarts)
+				}
+				scheduled = model.ClearFlowEmbeddedTerminalsForTest(scheduled)
+				scheduled, autoCmd = model.AutoAdvanceLaunchCommandForTest(scheduled, []flowstore.FlowRecord{current})
+				if autoCmd == nil {
+					t.Fatal("auto launch should become eligible after the resumed terminal exits")
+				}
+				manualCmd = func() tea.Msg { return serializedResult }
 
 				var manualResult tea.Msg
 				var autoResult model.FlowEmbeddedLaunchRequestedMsg
@@ -3725,8 +3747,10 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 		t.Fatalf("SetAutoMode(false) error = %v", err)
 	}
 
-	if msg := cmd(); msg != nil {
-		t.Fatalf("stale auto launch command returned %T, want nil", msg)
+	if msg := cmd(); msg == nil {
+		t.Fatal("stale auto launch command should return a lease-release message")
+	} else {
+		m, _ = update(m, msg)
 	}
 	read, err := store.Read(current.FlowID)
 	if err != nil {
@@ -8445,13 +8469,8 @@ func TestModel_FlowEmbeddedTerminalAutoCloseRenumbersAndKeepsActiveFlowTerminal(
 
 	var firstTick tea.Cmd
 	for i := 0; i < len(terms); i++ {
-		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
-		if cmd == nil {
-			t.Fatal("g should prepare an embedded launch")
-		}
 		var tickBatch tea.Cmd
-		m, tickBatch = update(m, cmd())
+		m, tickBatch = openFlowTerminalForLifecycleTest(t, m, fmt.Sprintf("flow-lifecycle-%d", i))
 		if i == 0 {
 			firstTick = tickBatch
 		}
@@ -8518,14 +8537,9 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsCommandModeForPromotedTerminal(
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
 	var tickBatch tea.Cmd
-	for range terms {
-		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
-		if cmd == nil {
-			t.Fatal("g should prepare an embedded launch")
-		}
+	for i := range terms {
 		var nextTick tea.Cmd
-		m, nextTick = update(m, cmd())
+		m, nextTick = openFlowTerminalForLifecycleTest(t, m, fmt.Sprintf("flow-command-mode-%d", i))
 		if tickBatch == nil {
 			tickBatch = nextTick
 		}
@@ -8593,14 +8607,9 @@ func TestModel_FlowEmbeddedTerminalAutoCloseClearsStaleTerminateConfirm(t *testi
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	var tickBatch tea.Cmd
-	for range terms {
-		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
-		if cmd == nil {
-			t.Fatal("g should prepare an embedded launch")
-		}
+	for i := range terms {
 		var nextTick tea.Cmd
-		m, nextTick = update(m, cmd())
+		m, nextTick = openFlowTerminalForLifecycleTest(t, m, fmt.Sprintf("flow-confirm-%d", i))
 		if tickBatch == nil {
 			tickBatch = nextTick
 		}
@@ -9956,18 +9965,11 @@ func TestModel_FlowEmbeddedTerminalDismissRenumbersTabs(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 
-	launch := func() {
-		t.Helper()
-		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
-		if cmd == nil {
-			t.Fatal("g should prepare an embedded launch")
-		}
-		m, _ = update(m, cmd())
+	for _, flowID := range []string{"flow-1", "flow-2", "flow-3"} {
+		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
+			Command: "codex", FlowID: flowID, FlowPhaseID: "implementation", WorktreePath: "/dev/alpha", Headless: true,
+		}})
 	}
-	launch()
-	launch()
-	launch()
 	if starts != 3 {
 		t.Fatalf("embedded terminal starts = %d, want 3", starts)
 	}
@@ -10195,12 +10197,7 @@ func TestModel_GOnFlowPhaseAtEmbeddedTerminalCapMarksPhaseNeedsAttention(t *test
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	for i := 0; i < 9; i++ {
-		var cmd tea.Cmd
-		m, cmd = update(m, flowLaunchKey())
-		if cmd == nil {
-			t.Fatalf("launch %d should prepare an embedded launch", i+1)
-		}
-		m, _ = update(m, cmd())
+		m, _ = openFlowTerminalForLifecycleTest(t, m, fmt.Sprintf("flow-cap-fill-%d", i))
 	}
 	if starts != 9 {
 		t.Fatalf("embedded terminal starts = %d, want 9", starts)
@@ -10246,12 +10243,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flowWithPhaseDetails()})
 	for i := 0; i < 4; i++ {
-		var cmd tea.Cmd
-		m, cmd = prepareSelectedFlowPhaseEmbeddedLaunch(t, m, "implementation")
-		if cmd == nil {
-			t.Fatalf("flow launch %d should prepare an embedded launch", i+1)
-		}
-		m, _ = update(m, cmd())
+		m, _ = openFlowTerminalForLifecycleTest(t, m, fmt.Sprintf("flow-mixed-cap-%d", i))
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})

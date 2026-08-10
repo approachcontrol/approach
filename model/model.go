@@ -128,6 +128,7 @@ type Model struct {
 	countClosedBeads          func(string) (int, error)
 	createFlow                func(FlowStartRequest) (FlowStartResult, error)
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
+	allocateFlowID            func(string) (string, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
@@ -161,6 +162,7 @@ type Model struct {
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	pendingFlowRepairLaunchIDs    map[string]string
+	flowLaunchLeases              map[string]flowLaunchLease
 
 	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen   uint64
@@ -244,6 +246,7 @@ type Options struct {
 	CountClosedBeads         func(repoPath string) (int, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
+	AllocateFlowID           func(title string) (string, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	LookupPRMerge            func(int, string) (actions.PullRequestMerge, error)
@@ -486,6 +489,20 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	}
 	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
+	allocateFlowID := opts.AllocateFlowID
+	if allocateFlowID == nil {
+		root := strings.TrimSpace(opts.SessionStateRoot)
+		var rootErr error
+		if root == "" {
+			root, rootErr = sessions.DefaultRoot()
+		}
+		allocateFlowID = func(title string) (string, error) {
+			if rootErr != nil {
+				return "", rootErr
+			}
+			return artifacts.AllocateTimestampedID(artifacts.IDOptions{Root: root, Collection: "flows", Title: title, FallbackSlug: "flow", Kind: "flow"})
+		}
+	}
 	if createFlowForRepo == nil || startFlowPlan == nil {
 		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
@@ -573,6 +590,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		countClosedBeads:         countClosedBeads,
 		createFlow:               createFlowForRepo,
 		startFlowPlan:            startFlowPlan,
+		allocateFlowID:           allocateFlowID,
 		setFlowPhase:             setFlowPhase,
 		setFlowAutoMode:          setFlowAutoMode,
 		lookupPRMerge:            lookupPRMerge,
@@ -1063,6 +1081,7 @@ func (m Model) View() string {
 		FlowReasoningEffort:          m.flowReasoningEffortLabel(),
 		DefaultViewLabel:             ViewChoiceLabel(m.defaultView),
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
+		FlowWorktreeAgentReady:       m.selectedFlowWorktreeAgentReady(),
 		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
 		FlowPhaseResetReadySelected:  m.selectedFlowPhaseResettable(),
@@ -1637,9 +1656,15 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
-			return m, nil
+			return m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken), nil
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
+		if msg.FlowLeaseSource != "" {
+			if !m.matchingFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource) {
+				return m, nil
+			}
+			m = m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
+		}
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
@@ -1649,16 +1674,32 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case FlowEmbeddedLaunchRequestedMsg:
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
-				return m, nil
+				return m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken), nil
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
+		if msg.FlowLeaseSource != "" && !m.matchingFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource) {
+			return m, nil
+		}
 		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
+		if msg.FlowLeaseSource != "" {
+			next = next.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
+		}
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
 			next, fetchCmd := next.startFlowSurfaceFetch()
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
+	case flowStartRequestedMsg:
+		return m.handleFlowStartRequested(msg)
+	case flowLaunchLeaseReleaseMsg:
+		return m.releaseFlowLaunchLease(msg.FlowID, msg.Token), nil
+	case flowWorktreeAgentPreflightMsg:
+		return m.handleFlowWorktreeAgentPreflight(msg)
+	case embeddedTerminalDetachValidatedMsg:
+		return m.handleEmbeddedTerminalDetachValidated(msg)
+	case flowSessionResumePreflightMsg:
+		return m.handleFlowSessionResumePreflight(msg)
 	case flowPhaseResumePersistedMsg:
 		return m.handleFlowPhaseResumePersisted(msg)
 	case flowPhaseResumePersistFailedMsg:

@@ -28,6 +28,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		view := m.modal.View()
+		flowPlanNow := flowCreatePlanNowChecked(view)
 		var outcome modal.Outcome
 		terminalConfirmOpen := m.terminalConfirmID != 0
 		m.modal, outcome, cmd = m.modal.Update(msg)
@@ -46,6 +47,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var request uint64
 			m, request = m.nextFlowCreateRequest()
 			cmd = tagFlowCreateRequest(cmd, request)
+			if flowPlanNow {
+				requested, ok := cmd().(flowStartRequestedMsg)
+				if !ok {
+					m = m.clearFlowCreateRequest(request)
+					return m.setStatus(statusOther, "Unable to prepare Flow start request"), nil
+				}
+				return m.handleFlowStartRequested(requested)
+			}
 		}
 		return m, cmd
 	}
@@ -146,6 +155,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLeftPaneKey(key)
 	}
 	return m.handleRightPaneKey(key)
+}
+
+func flowCreatePlanNowChecked(view modal.View) bool {
+	if !isFlowCreateForm(view) {
+		return false
+	}
+	for _, field := range view.Form.Fields {
+		if field.ID == flowCreatePlanNowField {
+			return field.Checked
+		}
+	}
+	return false
 }
 
 func (m Model) toggleEmbeddedTerminalDock() Model {
@@ -267,6 +288,11 @@ func tagFlowCreateRequest(cmd tea.Cmd, request uint64) tea.Cmd {
 			}
 			return msg
 		case FlowCreateFailedMsg:
+			if msg.Request == 0 {
+				msg.Request = request
+			}
+			return msg
+		case flowStartRequestedMsg:
 			if msg.Request == 0 {
 				msg.Request = request
 			}
@@ -420,6 +446,9 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.handleCopyHash()
 	case "s":
+		if m.flowSurfaceVisible() {
+			return m.handleStartSelectedFlowWorktreeAgent()
+		}
 		return m.handleShowSessionSummary()
 	case "r":
 		if m.flowSurfaceVisible() {
@@ -668,6 +697,8 @@ func (m Model) handleActiveFlowSurfaceKey(key string) (tea.Model, tea.Cmd) {
 		return m.handleToggleFlowHeadless()
 	case "g":
 		return m.handleLaunchNextFlowPhase()
+	case "s":
+		return m.handleStartSelectedFlowWorktreeAgent()
 	case "R":
 		return m.handleRepairSelectedFlow()
 	case "enter":
@@ -872,6 +903,9 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			ctx, ok, next := m.sessionResumeLaunchContext(record)
 			if !ok {
 				return next, nil
+			}
+			if ctx.Command != agent.CommandCodexApp && ctx.FlowID != "" {
+				return next.resumeSessionInEmbeddedTerminal(ctx, record)
 			}
 			return next.launchAgentWithContext(ctx)
 		}
@@ -1556,23 +1590,43 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 					values.Text[flowCreateBaseRefField],
 				)
 			}
-			return m.createFlowAndLaunchPlanForRepo(
-				repoPath,
-				values.Text[flowCreateTitleField],
-				values.Text[flowCreateInstructionsField],
-				values.Text[flowCreateBaseRefField],
-				values.Checked[flowCreateHeadlessField],
-			)
+			return func() tea.Msg {
+				return flowStartRequestedMsg{
+					RepoPath: repoPath, Title: values.Text[flowCreateTitleField], Instructions: values.Text[flowCreateInstructionsField],
+					BaseRef: values.Text[flowCreateBaseRefField], Headless: values.Checked[flowCreateHeadlessField],
+				}
+			}
 		},
 	})
 	return m, nil
 }
 
-func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
-	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+func (m Model) handleFlowStartRequested(msg flowStartRequestedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
 		return m, nil
 	}
+	flowID, err := m.allocateFlowID(msg.Title)
+	if err != nil {
+		m = m.clearFlowCreateRequest(msg.Request)
+		return m.setStatus(statusOther, "Unable to allocate Flow ID: "+err.Error()), nil
+	}
+	token := newLaunchID()
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease(flowID, token, flowLaunchSourceCreatePhase)
+	if !acquired {
+		m = m.clearFlowCreateRequest(msg.Request)
+		return m.setStatus(statusOther, "Unable to reserve the new Flow launch"), nil
+	}
+	cmd := m.createFlowAndLaunchPlanForRepoWithIdentity(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, msg.Headless, flowID, token)
+	return m, tagFlowCreateRequest(cmd, msg.Request)
+}
+
+func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) {
+	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
+		return m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken), nil
+	}
 	m = m.clearFlowCreateRequest(msg.Request)
+	m = m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
 	errText := msg.Err
 	if errText == "" {
 		errText = "Unable to create flow"
@@ -1586,9 +1640,10 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 
 func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 	if !m.isCurrentRepo(msg.RepoPath) || (msg.Request != 0 && !m.isCurrentFlowCreateRequest(msg.Request)) {
-		return m, nil
+		return m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken), nil
 	}
 	m = m.clearFlowCreateRequest(msg.Request)
+	m = m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
 	title := strings.TrimSpace(msg.Title)
 	if title == "" {
 		title = "Flow"
@@ -2120,6 +2175,9 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanID:           record.PlanID,
 		PlanPath:         record.PlanPath,
 	}
+	if command != agent.CommandCodexApp {
+		ctx.FlowID = strings.TrimSpace(record.FlowID)
+	}
 	return ctx, true, m
 }
 
@@ -2430,6 +2488,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
 	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasPendingFlowRepairLaunch(key.FlowID) ||
 		m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) ||
+		m.hasFlowEmbeddedTerminalForFlow(key.FlowID) ||
 		m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
 		return m, nil
 	}
@@ -2438,8 +2497,22 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	ctx.FlowLaunchTracked = true
 	ctx.Embedded = true
 	ctx.Headless = false
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease(key.FlowID, ctx.LaunchID, flowLaunchSourcePhaseResume)
+	if !acquired {
+		return m.setStatus(statusOther, "Another launch or session already occupies this Flow"), nil
+	}
 	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
 	return m, func() tea.Msg {
+		records, err := m.listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
+		if err != nil {
+			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: fmt.Errorf("list Flow sessions: %w", err)}
+		}
+		for _, record := range records {
+			if sessions.IsActive(record) {
+				return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: fmt.Errorf("an active persisted session already occupies this Flow")}
+			}
+		}
 		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 			FlowID:   ctx.FlowID,
 			PhaseID:  ctx.FlowPhaseID,
@@ -2459,6 +2532,9 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		return m, nil
 	}
 	m = m.withoutPendingFlowPhaseResume(key)
+	if !m.matchingFlowLaunchLease(key.FlowID, msg.LaunchContext.LaunchID, flowLaunchSourcePhaseResume) {
+		return m, nil
+	}
 	ctx := msg.LaunchContext
 	// The store decided from the persisted record whether this resume preserved
 	// a terminal phase or reopened a running one; the snapshot the launch
@@ -2468,6 +2544,7 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
 	if m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) {
+		m = m.releaseFlowLaunchLease(key.FlowID, ctx.LaunchID)
 		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
@@ -2477,8 +2554,10 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		if err != nil {
 			errText = err.Error()
 		}
+		next = next.releaseFlowLaunchLease(key.FlowID, ctx.LaunchID)
 		return next.startFlowLaunchFailure(ctx, errText)
 	}
+	next = next.releaseFlowLaunchLease(key.FlowID, ctx.LaunchID)
 	if prefillCmd == nil {
 		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
 	}
@@ -2500,6 +2579,7 @@ func (m Model) handleFlowPhaseResumePersistFailed(msg flowPhaseResumePersistFail
 		return m, nil
 	}
 	m = m.withoutPendingFlowPhaseResume(key)
+	m = m.releaseFlowLaunchLease(key.FlowID, msg.LaunchContext.LaunchID)
 	m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", msg.Err))
 	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
 		return m.startFlowSurfaceFetch()

@@ -131,6 +131,7 @@ func TestAutoModeFanOutDrainsSequentially(t *testing.T) {
 	if len(updates) != 1 || updates[0].PhaseID != "branch-a" {
 		t.Fatalf("updates = %#v, want branch-a launch", updates)
 	}
+	m = m.releaseFlowLaunchLease(launch.LaunchContext.FlowID, launch.LaunchContext.LaunchID)
 
 	branchARunning := autoAdvanceCustomFlow(map[string]string{
 		"root":     flowstore.PhaseCompleted,

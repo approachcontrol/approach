@@ -78,7 +78,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 		t.Fatalf("StartPlan returned error: %v", err)
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,resolve-commit,set-start,add-launch" {
+	if strings.Join(calls, ",") != "create-flow,create-worktree,resolve-commit,add-launch,set-start" {
 		t.Fatalf("call order = %#v", calls)
 	}
 	if created.Title != "Add Flow Mode" || created.Instructions != "Build the thing" || created.RepoPath != "/dev/alpha" || created.BaseRef != "main" {
@@ -662,7 +662,7 @@ func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 		t.Fatalf("StartPlan returned error: %v", err)
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,add-launch" {
+	if strings.Join(calls, ",") != "create-flow,create-worktree,bootstrap,add-launch,set-start" {
 		t.Fatalf("call order = %#v", calls)
 	}
 	if gotCtx.RepoPath != "/dev/alpha" ||
@@ -717,7 +717,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 		t.Fatal("StartPlan returned nil error, want bootstrap failure")
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,set-start,bootstrap,set-phase" {
+	if strings.Join(calls, ",") != "create-flow,create-worktree,bootstrap,set-phase" {
 		t.Fatalf("call order = %#v", calls)
 	}
 	if !strings.Contains(err.Error(), "Bootstrap hook failed") || !strings.Contains(err.Error(), "missing env file") {

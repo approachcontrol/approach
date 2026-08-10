@@ -73,6 +73,51 @@ func TestStoreSavesAndListsSessionsByRepoPath(t *testing.T) {
 	}
 }
 
+func TestStoreListsSessionsByExactFlowID(t *testing.T) {
+	store, err := sessions.NewStore(sessions.StoreOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	for _, record := range []sessions.SessionRecord{
+		{Provider: sessions.ProviderCodex, SessionID: "exact", FlowID: "flow-1"},
+		{Provider: sessions.ProviderClaude, SessionID: "prefixed", FlowID: "flow-10"},
+		{Provider: sessions.ProviderCodex, SessionID: "other", FlowID: "flow-2"},
+	} {
+		if err := store.Upsert(record); err != nil {
+			t.Fatalf("Upsert(%q) error = %v", record.SessionID, err)
+		}
+	}
+
+	records, err := store.List(sessions.SessionFilter{FlowID: "flow-1"})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(records) != 1 || records[0].SessionID != "exact" {
+		t.Fatalf("List() = %#v, want only exact Flow ID match", records)
+	}
+}
+
+func TestSessionRecordIsActiveUsesStatusBeforeEndedAt(t *testing.T) {
+	endedAt := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		record sessions.SessionRecord
+		want   bool
+	}{
+		{name: "ended status without end time", record: sessions.SessionRecord{Status: "ended"}},
+		{name: "nonblank active status with end time", record: sessions.SessionRecord{Status: "active", EndedAt: endedAt}, want: true},
+		{name: "blank status with end time", record: sessions.SessionRecord{EndedAt: endedAt}},
+		{name: "blank status without end time", record: sessions.SessionRecord{}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sessions.IsActive(tt.record); got != tt.want {
+				t.Fatalf("IsActive(%#v) = %v, want %v", tt.record, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStoreUpsertUpdatesExistingSession(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")

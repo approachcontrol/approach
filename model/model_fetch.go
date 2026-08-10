@@ -493,9 +493,15 @@ func (m Model) createFlowAndLaunchPlan(title, instructions, baseRef string, head
 }
 
 func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, baseRef string, headless bool) tea.Cmd {
+	return m.createFlowAndLaunchPlanForRepoWithIdentity(repoPath, title, instructions, baseRef, headless, "", "")
+}
+
+func (m Model) createFlowAndLaunchPlanForRepoWithIdentity(repoPath, title, instructions, baseRef string, headless bool, flowID, token string) tea.Cmd {
 	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.startFlowPlan(FlowStartRequest{
+			FlowID:                      flowID,
+			LaunchToken:                 token,
 			RepoPath:                    repoPath,
 			Title:                       title,
 			Instructions:                instructions,
@@ -508,12 +514,16 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 			FlowPromptTemplatesProvided: true,
 		})
 		if err != nil {
-			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
+			failedFlowID := result.Flow.FlowID
+			if failedFlowID == "" {
+				failedFlowID = flowID
+			}
+			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: failedFlowID, Title: title, Err: err.Error(), FlowLeaseID: flowID, FlowLeaseToken: token}
 		}
 		if result.LaunchSkipped {
-			return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title}
+			return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, FlowLeaseID: flowID, FlowLeaseToken: token}
 		}
-		return flowPlanLaunchMessage(result.LaunchContext, headless)
+		return flowPlanLaunchMessage(result.LaunchContext, headless, flowLaunchSourceCreatePhase, flowID, token)
 	}
 }
 
@@ -546,15 +556,15 @@ func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request
 	}
 }
 
-func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, headless bool) tea.Msg {
+func flowPlanLaunchMessage(ctx actions.AgentLaunchContext, headless bool, source flowLaunchSource, flowID, token string) tea.Msg {
 	switch agent.Normalize(ctx.Command) {
 	case agent.CommandCodex, agent.CommandClaude:
 		ctx.Embedded = true
 		ctx.Headless = headless
 		ctx.FlowLaunchTracked = true
-		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
+		return FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx, FlowLeaseSource: source, FlowLeaseID: flowID, FlowLeaseToken: token}
 	default:
-		return PlanLaunchRequestedMsg{LaunchContext: ctx}
+		return PlanLaunchRequestedMsg{LaunchContext: ctx, FlowLeaseSource: source, FlowLeaseID: flowID, FlowLeaseToken: token}
 	}
 }
 

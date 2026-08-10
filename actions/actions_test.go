@@ -2413,6 +2413,29 @@ func TestAgentCommandBuildsUntrackedEmbeddedFlowRepair(t *testing.T) {
 	}
 }
 
+func TestAgentCommandBuildsUntrackedEmbeddedFlowWorktreeAgent(t *testing.T) {
+	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
+		Command:           "codex",
+		LaunchID:          "worktree-launch-1",
+		RepoPath:          "/repo",
+		WorktreePath:      "/repo/worktree",
+		SessionStateRoot:  "/state/approach/sessions/v1",
+		FlowID:            "flow-1",
+		FlowWorktreeAgent: true,
+		Embedded:          true,
+	})
+	if err != nil {
+		t.Fatalf("AgentCommand returned error: %v", err)
+	}
+	env := envMap(cmd.Env)
+	if env["APPROACH_FLOW_ID"] != "flow-1" || env["APPROACH_FLOW_PHASE_ID"] != "" {
+		t.Fatalf("Flow environment = %q/%q, want flow-1/empty", env["APPROACH_FLOW_ID"], env["APPROACH_FLOW_PHASE_ID"])
+	}
+	if slices.Contains(cmd.Args, "") {
+		t.Fatalf("generic Flow worktree launch should not add an empty prompt argument: %#v", cmd.Args)
+	}
+}
+
 func TestAgentCommandCodexAddsPlanEnvironmentAndPrompt(t *testing.T) {
 	cmd, err := actions.AgentCommand(actions.AgentLaunchContext{
 		Command:          "codex",

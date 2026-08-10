@@ -13,6 +13,8 @@ const flowPlanPhaseID = "plan"
 // FlowStartRequest contains the user operation inputs needed to create a Flow
 // and optionally prepare the initial plan-phase agent launch.
 type FlowStartRequest struct {
+	FlowID              string
+	LaunchToken         string
 	RepoPath            string
 	Title               string
 	Instructions        string
@@ -120,24 +122,52 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 }
 
 func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
-	result, err := s.PrepareFlow(req)
+	flow, err := s.createFlow(flowstore.FlowRecord{
+		FlowID:       req.FlowID,
+		Title:        req.Title,
+		Instructions: req.Instructions,
+		RepoPath:     req.RepoPath,
+		BaseRef:      req.BaseRef,
+	})
 	if err != nil {
-		return result, err
+		return FlowStartResult{}, err
 	}
-	flow := result.Flow
-	worktree := result.Worktree
-	commit := result.Commit
-	phase, ok := initialFlowLaunchPhase(flow, req.PlanPhaseID)
-	if !ok {
+	phase, phaseOK := initialFlowLaunchPhase(flow, req.PlanPhaseID)
+	phaseID := ""
+	if phaseOK {
+		phaseID = phase.PhaseID
+	}
+	result := FlowStartResult{Flow: flow}
+	worktree, err := s.createWorktree(req.RepoPath, req.Title, req.BaseRef)
+	if err != nil {
+		return result, s.blockStartupFailurePhases(flow, phaseID, "Worktree creation failed: "+err.Error(), err.Error())
+	}
+	result.Worktree = worktree
+	commit := s.resolveCommit(worktree.WorktreePath)
+	result.Commit = commit
+	if err := s.runBootstrap(req.RepoPath, worktree); err != nil {
+		errText := "Bootstrap hook failed: " + err.Error()
+		return result, s.blockStartupFailurePhases(flow, phaseID, errText, errText)
+	}
+	if !phaseOK {
+		startedFlow, err := s.setStartMetadata(flowstore.StartMetadataUpdate{
+			FlowID: flow.FlowID, WorktreePath: worktree.WorktreePath, Branch: worktree.Branch, BaseRef: req.BaseRef, Commit: commit,
+		})
+		if err != nil {
+			return result, err
+		}
+		result.Flow = startedFlow
 		result.LaunchSkipped = true
 		return result, nil
 	}
-	phaseID := phase.PhaseID
 
 	if err := validateInitialFlowLaunchPhase(flow, phase); err != nil {
 		return result, err
 	}
-	launchID := s.newLaunchID()
+	launchID := strings.TrimSpace(req.LaunchToken)
+	if launchID == "" {
+		launchID = s.newLaunchID()
+	}
 	launchedFlow, err := s.addPhaseLaunchID(flowstore.PhaseLaunchUpdate{
 		FlowID:   flow.FlowID,
 		PhaseID:  phaseID,
@@ -149,6 +179,22 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	flow = launchedFlow
 	result.Flow = flow
 	result.LaunchID = launchID
+	startedFlow, err := s.setStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID:       flow.FlowID,
+		WorktreePath: worktree.WorktreePath,
+		Branch:       worktree.Branch,
+		BaseRef:      req.BaseRef,
+		Commit:       commit,
+	})
+	if err != nil {
+		notes := "Flow start metadata failed after the initial phase was marked running: " + err.Error()
+		return result, s.blockPlanPhase(flow.FlowID, phaseID, notes, err.Error())
+	}
+	if len(startedFlow.Phases) == 0 {
+		startedFlow.Phases = flow.Phases
+	}
+	flow = startedFlow
+	result.Flow = flow
 
 	phaseTitle := req.PlanPhaseTitle
 	if phaseTitle == "" {
@@ -198,6 +244,7 @@ func (s FlowStarter) promptTemplatesForRequest(req FlowStartRequest) FlowPromptT
 
 func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) {
 	flow, err := s.createFlow(flowstore.FlowRecord{
+		FlowID:       req.FlowID,
 		Title:        req.Title,
 		Instructions: req.Instructions,
 		RepoPath:     req.RepoPath,

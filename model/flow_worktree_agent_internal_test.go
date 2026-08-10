@@ -1,0 +1,279 @@
+package model
+
+import (
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
+	"github.com/approachcontrol/approach/ui"
+)
+
+func TestFlowWorktreeAgentStartsFromParentFlowWithoutPhaseTracking(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/repo",
+		WorktreePath: worktree,
+		Branch:       "flow/one",
+		Commit:       "abc123",
+		PlanID:       "plan-1",
+		PlanPath:     "/state/plan.md",
+		Phases:       []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseCompleted}},
+	}
+	var filter sessions.SessionFilter
+	var launched actions.AgentLaunchContext
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+		StartupMode:  ui.ModeFlows,
+		AgentCommand: "codex",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{record}, nil
+		},
+		ListSessions: func(got sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			filter = got
+			return nil, nil
+		},
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+			launched = ctx
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	})
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+	m.activePane = ui.PaneBottom
+	m.expandedFlowID = record.FlowID
+	m.selectedFlowPhaseID = "implementation"
+
+	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next := nextModel.(Model)
+	if cmd == nil {
+		t.Fatal("s did not queue Flow worktree preflight")
+	}
+	if _, ok := next.flowLaunchLease(record.FlowID); !ok {
+		t.Fatal("s did not synchronously acquire Flow lease")
+	}
+	msg := cmd()
+	if filter.FlowID != record.FlowID {
+		t.Fatalf("session filter FlowID = %q, want %q", filter.FlowID, record.FlowID)
+	}
+	nextModel, _ = next.Update(msg)
+	next = nextModel.(Model)
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminals = %d, want 1", len(next.embeddedTerminals))
+	}
+	slot := next.embeddedTerminals[0]
+	if !slot.FlowWorktreeAgent || !slot.FlowDetachBlocked || slot.FlowID != record.FlowID || slot.FlowPhaseID != "" || slot.FlowLaunchTracked || slot.FlowRepair {
+		t.Fatalf("generic Flow slot metadata = %#v", slot)
+	}
+	if !launched.FlowWorktreeAgent || launched.FlowID != record.FlowID || launched.FlowPhaseID != "" || launched.FlowLaunchTracked || launched.FlowRepair || launched.InitialPrompt != "" || launched.WorktreePath != worktree {
+		t.Fatalf("launch context = %#v", launched)
+	}
+	if _, ok := next.flowLaunchLease(record.FlowID); ok {
+		t.Fatal("lease was not transferred to retained terminal")
+	}
+}
+
+func TestFlowWorktreeAgentRejectsActivePersistedSessionAndReleasesLease(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree}
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+		StartupMode:  ui.ModeFlows,
+		AgentCommand: "claude",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{record}, nil
+		},
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{{FlowID: record.FlowID, Status: "active"}}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			t.Fatal("active session must block terminal startup")
+			return nil, nil
+		},
+	})
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+	m.activePane = ui.PaneBottom
+	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next := nextModel.(Model)
+	nextModel, _ = next.Update(cmd())
+	next = nextModel.(Model)
+	if _, ok := next.flowLaunchLease(record.FlowID); ok {
+		t.Fatal("rejected preflight retained lease")
+	}
+}
+
+func TestFlowDetachBlockedSlotRejectsBeforeCallingTerminal(t *testing.T) {
+	terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t flow"}
+	m := Model{
+		activeTerminalNum: 1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:            1,
+			ID:                1,
+			FlowID:            "flow-1",
+			FlowWorktreeAgent: true,
+			FlowDetachBlocked: true,
+			Terminal:          terminal,
+		}},
+	}
+	next, cmd := m.handleEmbeddedTerminalDetachPrefix()
+	if cmd != nil {
+		t.Fatal("detach-blocked slot returned a handoff command")
+	}
+	if terminal.detached {
+		t.Fatal("detach-blocked slot called Detach")
+	}
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatal("detach-blocked slot was removed")
+	}
+}
+
+func TestTrackedFlowDetachRequiresFreshRunningPhase(t *testing.T) {
+	for _, status := range []string{
+		flowstore.PhaseCompleted,
+		flowstore.PhaseSkipped,
+		flowstore.PhaseBlocked,
+		flowstore.PhaseNeedsAttention,
+	} {
+		t.Run(status, func(t *testing.T) {
+			terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t flow"}
+			m := Model{
+				activeTerminalNum: 1,
+				listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{{FlowID: "flow-1", Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Status: status}}}}, nil
+				},
+				embeddedTerminals: []embeddedTerminalSlot{{
+					Number:            1,
+					ID:                1,
+					FlowID:            "flow-1",
+					FlowPhaseID:       "implementation",
+					FlowLaunchTracked: true,
+					Terminal:          terminal,
+				}},
+			}
+			next, cmd := m.handleEmbeddedTerminalDetachPrefix()
+			if cmd == nil || terminal.detached {
+				t.Fatalf("detach preflight cmd/detached = %v/%v, want cmd/false", cmd != nil, terminal.detached)
+			}
+			next, _ = next.handleEmbeddedTerminalDetachValidated(cmd().(embeddedTerminalDetachValidatedMsg))
+			if terminal.detached {
+				t.Fatalf("phase status %s allowed detach", status)
+			}
+		})
+	}
+}
+
+func TestTrackedFlowDetachSucceedsAfterFreshRunningPhase(t *testing.T) {
+	terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t flow"}
+	m := Model{
+		activeTerminalNum: 1,
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-1", Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Status: flowstore.PhaseRunning}}}}, nil
+		},
+		launchDetachedTerminal: func(string, string) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{}, nil
+		},
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, FlowID: "flow-1", FlowPhaseID: "implementation", FlowLaunchTracked: true, Terminal: terminal,
+		}},
+	}
+	next, cmd := m.handleEmbeddedTerminalDetachPrefix()
+	if cmd == nil || terminal.detached {
+		t.Fatalf("detach preflight cmd/detached = %v/%v, want cmd/false", cmd != nil, terminal.detached)
+	}
+	next, _ = next.handleEmbeddedTerminalDetachValidated(cmd().(embeddedTerminalDetachValidatedMsg))
+	if !terminal.detached || len(next.embeddedTerminals) != 0 {
+		t.Fatalf("validated detach detached/slots = %v/%d, want true/0", terminal.detached, len(next.embeddedTerminals))
+	}
+}
+
+func TestFlowAssociatedSavedSessionResumeRetainsFlowOccupancy(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", FlowID: "flow-1", CWD: t.TempDir(),
+	}
+	var launched actions.AgentLaunchContext
+	m := Model{
+		agentCommand: "codex",
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-1", Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseCompleted}}}}, nil
+		},
+		listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{record}, nil
+		},
+		startEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+			launched = ctx
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	if !ok || ctx.FlowID != "flow-1" || ctx.FlowPhaseID != "" {
+		t.Fatalf("resume context = %#v, ok %v", ctx, ok)
+	}
+	next, cmd := next.resumeSessionInEmbeddedTerminal(ctx, record)
+	if cmd == nil || !next.flowLaunchLeaseOccupied("flow-1") {
+		t.Fatal("Flow session resume did not reserve and queue preflight")
+	}
+	next, _ = next.handleFlowSessionResumePreflight(cmd().(flowSessionResumePreflightMsg))
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("embedded terminals = %d, want 1", len(next.embeddedTerminals))
+	}
+	slot := next.embeddedTerminals[0]
+	if slot.Scope != embeddedTerminalScopeSession || slot.FlowID != "flow-1" || !slot.FlowDetachBlocked || slot.FlowPhaseID != "" {
+		t.Fatalf("Flow-associated resumed slot = %#v", slot)
+	}
+	if launched.FlowID != "flow-1" || launched.FlowLaunchTracked || launched.FlowPhaseID != "" {
+		t.Fatalf("resumed launch context = %#v", launched)
+	}
+}
+
+func TestFlowWorktreeAgentUsesActiveFlowsSurface(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{FlowID: "flow-active", RepoPath: "/repo", WorktreePath: worktree}
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{AgentCommand: "codex"})
+	m.activeFlowSurface = true
+	m.activePane = ui.PaneBottom
+	m.activeFlows = m.activeFlows.SetItems([]flowstore.FlowRecord{record})
+	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd == nil {
+		t.Fatal("Active Flows s did not queue a worktree-agent preflight")
+	}
+	if !nextModel.(Model).flowLaunchLeaseOccupied(record.FlowID) {
+		t.Fatal("Active Flows s did not reserve the selected Flow")
+	}
+}
+
+func TestFlowWorktreeAndPhaseLaunchesSerializeInBothOrders(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{
+		FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree,
+		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}},
+	}
+	newModel := func() Model {
+		m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{StartupMode: ui.ModeFlows, AgentCommand: "codex"})
+		m.activePane = ui.PaneBottom
+		m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+		return m
+	}
+
+	m := newModel()
+	nextModel, worktreeCmd := m.handleStartSelectedFlowWorktreeAgent()
+	m = nextModel.(Model)
+	nextModel, phaseCmd := m.handleLaunchNextFlowPhase()
+	if worktreeCmd == nil || phaseCmd != nil {
+		t.Fatalf("s then g commands = %v/%v, want command/nil", worktreeCmd != nil, phaseCmd != nil)
+	}
+	if lease, _ := nextModel.(Model).flowLaunchLease(record.FlowID); lease.Source != flowLaunchSourceWorktreeAgent {
+		t.Fatalf("s then g lease = %#v", lease)
+	}
+
+	m = newModel()
+	nextModel, phaseCmd = m.handleLaunchNextFlowPhase()
+	m = nextModel.(Model)
+	nextModel, worktreeCmd = m.handleStartSelectedFlowWorktreeAgent()
+	if phaseCmd == nil || worktreeCmd != nil {
+		t.Fatalf("g then s commands = %v/%v, want command/nil", phaseCmd != nil, worktreeCmd != nil)
+	}
+	if lease, _ := nextModel.(Model).flowLaunchLease(record.FlowID); lease.Source != flowLaunchSourcePhase {
+		t.Fatalf("g then s lease = %#v", lease)
+	}
+}

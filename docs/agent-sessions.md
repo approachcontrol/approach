@@ -6,14 +6,18 @@ state-root precedence are in `docs/config.md`.
 
 ## Automatic Wiring
 
-CLI agents launched from Approach (worktree `a`/`N`, Flow `g`, or session resume
-`r`) are wired automatically: Approach passes Claude Code or Codex a session-end
+CLI agents launched from Approach (worktree `a`/`N`, Flow `g`/`s`, repair, or
+session resume `r`) are wired automatically: Approach passes Claude Code or Codex a session-end
 hook that calls the current Approach binary, and it exports `APPROACH_*` metadata
 so hook records can be associated with the repo, worktree, branch, and launch.
 The exported metadata includes `APPROACH_AGENT`, `APPROACH_LAUNCH_ID`,
 `APPROACH_REPO_PATH`, `APPROACH_WORKTREE_PATH`, `APPROACH_BRANCH`,
 `APPROACH_COMMIT`, the three `APPROACH_*_STATE_ROOT` roots, and plan or flow
 IDs, paths, and phase fields when available.
+
+The Flow-worktree `s` source exports the Flow ID and exact worktree metadata
+with an empty Flow phase ID. It is deliberately phase-untracked, so its hook
+record remains discoverable by Flow without attaching to phase history.
 
 `codex-app` opens via macOS deep link instead; Approach scrubs inherited
 `APPROACH_*` from `open` and includes prompt-only launch metadata with copyable
@@ -118,7 +122,21 @@ IDs are rejected, so a resume command never carries a blank ID. Approach runs th
 resume command from the recorded session `cwd` when present, falling back to
 the captured worktree path, while preserving the stored worktree metadata for
 subsequent hooks.
+When a stored CLI session has a Flow ID, all three resume entry points—the
+Sessions pane, the global embedded-session picker, and an inline Worktree
+session—retain that Flow ID in the embedded runtime and hook metadata while
+keeping the phase ID empty. They share the per-Flow launch lease and do not
+fall back to an external terminal when embedded startup is unsupported,
+because that would lose synchronous Flow occupancy.
+
+Flow preflights filter sessions by exact Flow ID (never a prefix) and use one
+active predicate: explicit `status == "ended"` is inactive; any other nonblank
+status is active even when `ended_at` is present; a blank status is inactive
+only when `ended_at` is nonzero. Thus legacy blank-status/no-end records remain
+conservatively active.
 `codex-app` resumes use the existing macOS deep-link path rather than an
-embedded terminal. Sessions missing a provider session ID cannot be resumed;
+embedded terminal and deliberately drop Flow identity for that navigation.
+Such navigation is outside the embedded-runtime lease, but a persisted active
+`codex-app` session record still blocks competing local Flow launches. Sessions missing a provider session ID cannot be resumed;
 Approach reports this in the status line instead of starting a fresh provider
 session.

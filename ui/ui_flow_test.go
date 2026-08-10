@@ -704,6 +704,24 @@ func TestStatusBar_ActiveFlowsHidesNewFlowHint(t *testing.T) {
 	}
 }
 
+func TestFlowShortcutsShowStartAgentOnlyWhenReady(t *testing.T) {
+	base := statusBarParams{
+		Width:        180,
+		Mode:         ModeFlows,
+		ActivePane:   PaneBottom,
+		RepoSelected: true,
+		FlowSelected: true,
+	}
+	ready := base
+	ready.FlowWorktreeAgentReady = true
+	if got := ansi.Strip(renderStatusBarWithState(ready)); !strings.Contains(got, "s: start agent") {
+		t.Fatalf("ready Flow footer missing start-agent hint: %q", got)
+	}
+	if got := ansi.Strip(renderStatusBarWithState(base)); strings.Contains(got, "s: start agent") {
+		t.Fatalf("ineligible Flow footer exposed start-agent hint: %q", got)
+	}
+}
+
 func TestRender_FlowsModeShowsReasoningEffortShortcut(t *testing.T) {
 	view := Render(RenderParams{
 		Repos:               []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},

@@ -5965,6 +5965,12 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SessionStateRoot: "/state/approach/sessions/v1",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-1"}}, nil
+		},
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
 			return &fakeEmbeddedTerminal{}, nil
@@ -5986,13 +5992,15 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 			PlanPath:     "/state/approach/plans/plan-1/plan.md",
 			FlowID:       "flow-1",
 			FlowPhaseID:  "review-loop",
+			Status:       "ended",
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
-		t.Fatal("embedded session resume should schedule terminal repaint ticks")
+		t.Fatal("Flow-associated session resume should schedule a preflight")
 	}
+	m, cmd = update(m, cmd())
 
 	if got.Command != "claude" ||
 		got.ResumeSessionID != "claude-session-1" ||
@@ -6007,8 +6015,8 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 		!got.Embedded {
 		t.Fatalf("unexpected resume launch context: %#v", got)
 	}
-	if got.FlowID != "" || got.FlowPhaseID != "" {
-		t.Fatalf("ordinary session resume should not export Flow metadata: %#v", got)
+	if got.FlowID != "flow-1" || got.FlowPhaseID != "" || got.FlowLaunchTracked {
+		t.Fatalf("Flow-associated session resume metadata = %#v", got)
 	}
 	if got.LaunchID == "" || got.LaunchID == "old-launch" {
 		t.Fatalf("expected fresh launch id, got %#v", got)
@@ -6018,6 +6026,12 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
 	m := model.NewWithOptions(testRepos(), model.Options{
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-1"}}, nil
+		},
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
@@ -6036,13 +6050,15 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 			WorktreePath: "/dev/alpha-worktrees/feat",
 			FlowID:       "flow-1",
 			FlowPhaseID:  "review-loop",
+			Status:       "ended",
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
-		t.Fatal("expected status expiry command for embedded start failure")
+		t.Fatal("expected Flow-associated resume preflight")
 	}
+	m, cmd = update(m, cmd())
 	if !strings.Contains(m.View(), "embedded start failed") {
 		t.Fatalf("expected embedded start failure in status:\n%s", m.View())
 	}
@@ -6333,6 +6349,9 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	var got actions.AgentLaunchContext
 	m := model.NewWithOptions(testRepos(), model.Options{
 		SessionStateRoot: "/state/approach/sessions/v1",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: "flow-1"}}, nil
+		},
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{{
 				Provider:     sessions.ProviderClaude,
@@ -6347,11 +6366,12 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 				PlanPath:     "/state/approach/plans/plan-1/plan.md",
 				FlowID:       "flow-1",
 				FlowPhaseID:  "implementation",
+				Status:       "ended",
 			}}, nil
 		},
-		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
 			got = ctx
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+			return &fakeEmbeddedTerminal{}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -6361,17 +6381,11 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	m, _ = update(m, cmd())
 
-	_, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected inline session resume command")
 	}
-	msg, ok := cmd().(model.AgentResultMsg)
-	if !ok {
-		t.Fatalf("expected AgentResultMsg from inline resume command, got %T", msg)
-	}
-	if msg.Err != "" {
-		t.Fatalf("expected successful inline resume command, got %q", msg.Err)
-	}
+	m, _ = update(m, cmd())
 	if got.Command != "claude" ||
 		got.ResumeSessionID != "claude-inline-1" ||
 		got.RepoPath != "/dev/alpha" ||
@@ -6384,8 +6398,8 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 		got.PlanPath != "/state/approach/plans/plan-1/plan.md" {
 		t.Fatalf("unexpected inline resume launch context: %#v", got)
 	}
-	if got.FlowID != "" || got.FlowPhaseID != "" {
-		t.Fatalf("inline session resume should not export Flow metadata: %#v", got)
+	if got.FlowID != "flow-1" || got.FlowPhaseID != "" || got.FlowLaunchTracked {
+		t.Fatalf("Flow-associated inline resume metadata = %#v", got)
 	}
 	if got.LaunchID == "" || got.LaunchID == "old-launch" {
 		t.Fatalf("expected fresh launch id, got %#v", got)

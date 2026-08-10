@@ -243,6 +243,15 @@ func TestFlowPhaseResumePersistenceDoesNotOpenAlongsideRepairTerminal(t *testing
 		FlowLaunchTracked: true,
 		Embedded:          true,
 	}
+	key, ok := newFlowPhaseResumeKey(flowID, phaseID)
+	if !ok {
+		t.Fatal("expected valid Flow phase resume key")
+	}
+	m = m.withPendingFlowPhaseResume(key, launchID)
+	m, ok = m.acquireFlowLaunchLease(flowID, launchID, flowLaunchSourcePhaseResume)
+	if !ok {
+		t.Fatal("expected phase-resume lease acquisition")
+	}
 	next, cmd := m.handleFlowPhaseResumePersisted(flowPhaseResumePersistedMsg{
 		LaunchContext: ctx,
 		Flow: flowstore.FlowRecord{FlowID: flowID, Phases: []flowstore.FlowPhase{{

@@ -78,6 +78,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
 | `g` | Launch the next launchable phase for the selected Flow in flows view |
+| `s` | Start the selected CLI agent in the selected Flow's exact worktree (flows and Active Flows); in sessions view, page the selected summary |
 | `R` | Launch an embedded repair agent for a genuinely stalled selected Flow in flows or Active Flows view |
 | `n` | Create a new worktree in worktrees view, a new branch in branches view, or a new Flow in flows view |
 | `P` | Create a review worktree from a GitHub PR number or URL |
@@ -249,8 +250,8 @@ working directory are covered in `docs/agent-sessions.md`.
 
 ## Embedded Terminals
 
-Resuming a CLI `codex` or `claude` session, launching a CLI Flow phase, or
-repairing a stalled Flow opens
+Resuming a CLI `codex` or `claude` session, launching a CLI Flow phase,
+starting a Flow-worktree agent, or repairing a stalled Flow opens
 a runtime-only terminal in one shared full-width dock — a top-level pane below
 the repo, content, and shortcut panes, directly above the status bar.
 The dock persists while switching among Git, sessions, plans, flows, and
@@ -280,7 +281,7 @@ mode. The command-mode keys are the same in every view:
 | `i` | Return to terminal input mode |
 | `t` | Hide the terminal dock |
 | `l` | Open a saved-session picker for the selected repo, loading its sessions on demand when the sessions view has not populated them |
-| `d` | Detach a tmux-backed terminal and open a new external terminal attached to that tmux session |
+| `d` | Detach an eligible tmux-backed terminal and open a new external terminal attached to that tmux session |
 | `x` | Dismiss an exited terminal or confirm termination of a running one |
 | `q` / `esc` | Quit with cleanup |
 | `ctrl+]` | Send a literal `ctrl+]` to the agent |
@@ -292,6 +293,15 @@ is documented in `docs/config.md` (terminal settings). If no external terminal
 transport is available, Approach still leaves the agent detached in tmux and
 reports the handoff error. If `tmux` is unavailable, Approach keeps the direct
 embedded PTY behavior and `ctrl+] d` reports that detach is unavailable.
+
+Detach is also unavailable when removing the slot would erase the only
+synchronous occupancy for a Flow while its agent keeps running. This includes
+Flow-worktree agents, repairs, completed/skipped-phase resumes, and any
+Flow-associated saved-session resume. A tracked phase terminal is detachable
+only after a token-fenced fresh Flow read confirms that its matching phase is
+still persisted `running`; completed, skipped, blocked, needs-attention,
+missing, stale, and read-error results leave the terminal attached. Normal
+close, terminate, and exited-terminal cleanup remain available.
 
 Quitting Approach from anywhere while embedded terminals are still running asks
 for confirmation and terminates them first. Terminate/quit cleanup kills tmux
@@ -432,6 +442,11 @@ checkboxes. New Flows use the built-in default phase graph unless
 default and immediately launches the first ready root phase after creating the
 Flow; uncheck it to create a parked Flow whose ready root phase can be
 launched later from the Flow row.
+For Plan Now, Approach allocates the Flow ID and reserves its launch before the
+async operation begins. It creates the worktree, persists the initial phase as
+`running`, and only then publishes worktree, branch, and commit metadata, so a
+partially refreshed Flow cannot expose a usable worktree while its initial
+launch is still unreserved.
 
 On a Flow row or an expanded phase row:
 
@@ -442,6 +457,17 @@ On a Flow row or an expanded phase row:
   phase order. This uses the selected Flow, so a highlighted pending phase row
   can still launch an earlier ready sibling; nothing is persisted when no
   phase is launchable.
+- `s` starts one interactive `codex` or `claude` agent in the selected parent
+  Flow's exact `WorktreePath`, whether a top-level row or expanded phase row is
+  highlighted. The path must be nonblank and still be a directory; Approach
+  never falls back to `RepoPath`. The launch has an empty prompt and carries
+  Flow, repo, worktree, branch, commit, shared-root, and linked-plan metadata,
+  but no Flow phase ID: it adds no phase launch history and cannot finalize or
+  regress a phase. An unset agent, `codex-app`, or unknown provider produces
+  status-line guidance because this action requires an embedded CLI runtime.
+  Shortcut visibility is advisory; Approach fresh-reads the Flow and its exact
+  Flow sessions immediately before terminal allocation, so a visible `s` may
+  still reject safely when state changed after rendering.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal
@@ -468,6 +494,17 @@ On a Flow row or an expanded phase row:
 
 Expanded phase rows group child implementation phases directly under
 Implementation.
+
+Every Approach-managed local launch source shares one token-owned lease per
+Flow: Plan Now, manual and AutoMode phase launches, phase resumes, repairs,
+`s`, and CLI saved-session resumes from the Sessions pane, global terminal
+picker, or inline Worktree session. Any retained terminal carrying that Flow
+ID occupies it regardless of UI scope or terminal state. Before crossing a
+local launch boundary, Approach also rejects active persisted sessions for the
+exact Flow ID. Repeated keys and stale or out-of-order results cannot release a
+newer token. Existing `codex-app` resume navigation remains outside the
+embedded-runtime lease because it drops Flow identity, although an already
+persisted active `codex-app` session still blocks local Flow launches.
 
 ### Repair
 
@@ -505,8 +542,9 @@ When auto mode is on, Approach runs an always-on, all-repos advance poll that
 detects live completed-phase transitions and drains the Flow by launching the
 first ready non-merge phase in display order. Auto-launched CLI phases are
 always headless and do not change the current view or focus. Approach launches
-at most one phase per Flow at a time: if any phase is running or any
-Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
+at most one phase per Flow at a time: if any phase is running, a launch lease
+is held, or any embedded terminal carrying that Flow ID is retained or
+auto-closing, the drain waits.
 A 3 s status message announces auto-launches, `needs_attention`, and
 merge-ready transitions unless another status message is active. Skipped,
 blocked, needs-attention, failed-launch, or missing-PR-metadata states do not

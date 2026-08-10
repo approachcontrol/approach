@@ -736,6 +736,10 @@ type AgentLaunchContext struct {
 	// deliberately carry no phase ID so provider hooks retain Flow
 	// discoverability without attaching the session to a phase attempt.
 	FlowRepair bool
+	// FlowWorktreeAgent marks an interactive Flow-scoped agent that is not
+	// attached to any phase. It preserves Flow discoverability without phase
+	// launch history or completion semantics.
+	FlowWorktreeAgent bool
 	// FlowPhaseTerminal records that the persisted phase kept a terminal
 	// status (completed, skipped) when the launch was recorded, so launch
 	// failures must not regress the phase to needs_attention.

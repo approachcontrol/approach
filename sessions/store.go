@@ -82,6 +82,18 @@ type SessionFilter struct {
 	WorktreePath string
 	Branch       string
 	Provider     Provider
+	FlowID       string
+}
+
+// IsActive reports whether a persisted session still occupies its Flow. A
+// provider's explicit status is authoritative; legacy blank-status records
+// fall back to EndedAt.
+func IsActive(record SessionRecord) bool {
+	status := strings.TrimSpace(record.Status)
+	if status != "" {
+		return status != "ended"
+	}
+	return record.EndedAt.IsZero()
 }
 
 type TranscriptEvent struct {
@@ -456,6 +468,9 @@ func matchesFilter(record SessionRecord, filter SessionFilter) bool {
 		return false
 	}
 	if filter.Provider != "" && record.Provider != filter.Provider {
+		return false
+	}
+	if filter.FlowID != "" && record.FlowID != filter.FlowID {
 		return false
 	}
 	return true
