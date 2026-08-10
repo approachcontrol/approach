@@ -979,11 +979,36 @@ func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
-	if !m.flowSurfaceVisible() {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
 		return m, nil
 	}
-	m.flowHeadless = !m.flowHeadless
-	return m, nil
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return m, nil
+	}
+	return m, m.setFlowHeadlessCmd(repoPath, record.FlowID, !record.Headless, m.activeFlowSurfaceVisible())
+}
+
+func (m Model) setFlowHeadlessCmd(repoPath, flowID string, enabled, allRepositories bool) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowHeadless(flowstore.HeadlessUpdate{FlowID: flowID, Enabled: enabled})
+		if err != nil {
+			return FlowHeadlessSetFailedMsg{
+				RepoPath: repoPath, FlowID: flowID, AllRepositories: allRepositories,
+				Err: fmt.Sprintf("failed to set Flow headless mode: %v", err),
+			}
+		}
+		return FlowHeadlessSetMsg{
+			RepoPath: repoPath, FlowID: flowID, Flow: flow, Enabled: enabled, AllRepositories: allRepositories,
+		}
+	}
 }
 
 func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
@@ -1546,6 +1571,7 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 					values.Text[flowCreateTitleField],
 					values.Text[flowCreateInstructionsField],
 					values.Text[flowCreateBaseRefField],
+					values.Checked[flowCreateHeadlessField],
 				)
 			}
 			return m.createFlowAndLaunchPlanForRepo(

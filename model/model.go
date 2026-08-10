@@ -68,7 +68,6 @@ type Model struct {
 	selectedPlanPhaseID       string
 	selectedFlowPhaseID       string
 	selectedActiveFlowPhaseID string
-	flowHeadless              bool
 	modal                     modal.Modal
 	diffRequestSeq            uint64
 	activeViewRequest         uint64
@@ -133,6 +132,7 @@ type Model struct {
 	startFlowPlan             func(FlowStartRequest) (FlowStartResult, error)
 	setFlowPhase              func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	setFlowAutoMode           func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	setFlowHeadless           func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	lookupPRMerge             func(int, string) (actions.PullRequestMerge, error)
 	markFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
@@ -247,6 +247,7 @@ type Options struct {
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
+	SetFlowHeadless          func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
 	LookupPRMerge            func(int, string) (actions.PullRequestMerge, error)
 	MarkFlowManualMerge      func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
@@ -379,6 +380,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return store.SetAutoMode(update)
 		}
 	}
+	setFlowHeadless := opts.SetFlowHeadless
+	if setFlowHeadless == nil {
+		setFlowHeadless = func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.SetHeadless(update)
+		}
+	}
 	lookupPRMerge := opts.LookupPRMerge
 	if lookupPRMerge == nil {
 		lookupPRMerge = actions.LookupGitHubPRMerge
@@ -483,12 +494,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
 	if createFlowForRepo == nil || startFlowPlan == nil {
-		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		createFlow := func(record flowstore.FlowRecord, createOpts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
 			if err != nil {
 				return flowstore.FlowRecord{}, err
 			}
-			return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
+			createOpts.Preset = opts.FlowPreset
+			return store.CreateWithOptions(record, createOpts)
 		}
 		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
@@ -534,7 +546,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		flows:                 newFlowPane(),
 		activeFlows:           newFlowPane(),
 		beads:                 newBeadSubviews(),
-		flowHeadless:          true,
 		terminalDockVisible:   true,
 		flowRefreshTickGen:    1,
 		topMode:               topMode,
@@ -569,6 +580,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		startFlowPlan:            startFlowPlan,
 		setFlowPhase:             setFlowPhase,
 		setFlowAutoMode:          setFlowAutoMode,
+		setFlowHeadless:          setFlowHeadless,
 		lookupPRMerge:            lookupPRMerge,
 		markFlowManualMerge:      markFlowManualMerge,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
@@ -1036,7 +1048,7 @@ func (m Model) View() string {
 		ExpandedFlowID:               m.currentExpandedFlowID(),
 		SelectedPlanPhaseID:          m.selectedPlanPhaseID,
 		SelectedFlowPhaseID:          m.currentSelectedFlowPhaseID(),
-		FlowHeadless:                 m.flowHeadless,
+		FlowHeadless:                 m.selectedFlowHeadless(),
 		FlowAutoModeSelected:         flowAutoModeSelected,
 		FlowIssueTargetSelected:      flowIssueTargetSelected,
 		FlowPRTargetSelected:         flowPRTargetSelected,
@@ -1542,6 +1554,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleFlowAutoModeSet(msg), nil
 	case FlowAutoModeSetFailedMsg:
 		return m.handleFlowAutoModeSetFailed(msg), nil
+	case FlowHeadlessSetMsg:
+		return m.handleFlowHeadlessSet(msg), nil
+	case FlowHeadlessSetFailedMsg:
+		return m.handleFlowHeadlessSetFailed(msg), nil
 	case FlowManualMergeSetMsg:
 		return m.handleFlowManualMergeSet(msg), nil
 	case FlowManualMergeSetFailedMsg:
@@ -1786,6 +1802,11 @@ func (m Model) selectedFlowID() string {
 		return ""
 	}
 	return record.FlowID
+}
+
+func (m Model) selectedFlowHeadless() bool {
+	record, ok := m.selectedFlow()
+	return ok && record.Headless
 }
 
 func (m Model) selectedFlowPR() (flowstore.PullRequest, bool) {

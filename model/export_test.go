@@ -42,10 +42,6 @@ func SelectedActiveFlowPhaseIDForTest(m Model) string {
 	return m.selectedActiveFlowPhaseID
 }
 
-func FlowHeadlessForTest(m Model) bool {
-	return m.flowHeadless
-}
-
 func EmbeddedTerminalTickMsgForTest(m Model) any {
 	return embeddedTerminalTickMsg{Generation: m.embeddedTerminalTickGen}
 }

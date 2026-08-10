@@ -17,7 +17,7 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 	var launchUpdate flowstore.PhaseLaunchUpdate
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			calls = append(calls, "create-flow")
 			created = record
 			record.FlowID = "flow-1"
@@ -135,10 +135,68 @@ func TestFlowStarterStartPlanReturnsLaunchContext(t *testing.T) {
 	}
 }
 
+func TestFlowStarterPersistsRequestedHeadlessPreferenceBeforeLaunch(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		headless *bool
+		want     bool
+	}{
+		{name: "omitted defaults on", want: true},
+		{name: "explicit off", headless: testFlowStartBoolPtr(false), want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var flow flowstore.FlowRecord
+			var gotOptions flowstore.CreateOptions
+			starter := model.NewFlowStarter(model.FlowStarterOptions{
+				CreateFlow: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+					gotOptions = opts
+					record.FlowID = "flow-1"
+					record.Headless = opts.Headless == nil || *opts.Headless
+					record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady}}
+					flow = record
+					return record, nil
+				},
+				CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+					return actions.FlowWorktreeCreateResult{WorktreePath: "/repo-worktrees/flow-1", Branch: "flow/one"}, nil
+				},
+				SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+					flow.WorktreePath = update.WorktreePath
+					flow.Branch = update.Branch
+					return flow, nil
+				},
+				AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					flow.Phases[0].Status = flowstore.PhaseRunning
+					flow.Phases[0].LaunchIDs = []string{update.LaunchID}
+					return flow, nil
+				},
+				ResolveCommit: func(string) string { return "abc123" },
+				NewLaunchID:   func() string { return "launch-1" },
+			})
+
+			result, err := starter.StartPlan(model.FlowStartRequest{
+				RepoPath: "/repo", Title: "Headless Flow", Instructions: "Create it.", AgentCommand: "codex", Headless: tt.headless,
+			})
+			if err != nil {
+				t.Fatalf("StartPlan() error = %v", err)
+			}
+			if gotOptions.Headless != tt.headless {
+				t.Fatalf("CreateOptions.Headless = %v, want request pointer %v", gotOptions.Headless, tt.headless)
+			}
+			if result.Flow.Headless != tt.want || result.LaunchContext.Headless != tt.want {
+				t.Fatalf("headless result = flow %v launch %v, want %v", result.Flow.Headless, result.LaunchContext.Headless, tt.want)
+			}
+		})
+	}
+}
+
+func testFlowStartBoolPtr(value bool) *bool {
+	return &value
+}
+
 func TestFlowStarterStartPlanLaunchesFirstReadyRoot(t *testing.T) {
 	var launchedPhase string
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
@@ -188,7 +246,7 @@ func TestFlowStarterStartPlanLaunchesFirstReadyRoot(t *testing.T) {
 
 func TestFlowStarterStartPlanUsesGenericPromptForNonPlanRoot(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "triage", Title: "Triage", Kind: "", Status: flowstore.PhaseReady, Order: 1},
@@ -232,7 +290,7 @@ func TestFlowStarterStartPlanUsesGenericPromptForNonPlanRoot(t *testing.T) {
 
 func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "review", Title: "Review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 1},
@@ -274,7 +332,7 @@ func TestFlowStarterStartPlanRejectsPlanReviewRootWithoutLinkedPlan(t *testing.T
 
 func TestFlowStarterStartPlanParksFlowWhenNoPhaseIsLaunchable(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "ship", Title: "Ship", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 1},
@@ -343,7 +401,7 @@ func TestFlowStarterPrepareFlowCreatesLaunchableFlowWithoutLaunchID(t *testing.T
 	var startUpdate flowstore.StartMetadataUpdate
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			calls = append(calls, "create-flow")
 			created = record
 			record.FlowID = "flow-1"
@@ -420,7 +478,7 @@ func TestFlowStarterPrepareFlowCreatesLaunchableFlowWithoutLaunchID(t *testing.T
 
 func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			return record, nil
 		},
@@ -470,7 +528,7 @@ func TestFlowStarterStartPlanUsesConfiguredPromptTemplate(t *testing.T) {
 
 func TestFlowStarterStartPlanTemplateUsesCustomRootPhase(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
@@ -522,7 +580,7 @@ func TestFlowStarterStartPlanTemplateUsesCustomRootPhase(t *testing.T) {
 
 func TestFlowStarterStartPlanUsesRequestTimePromptTemplate(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-live"
 			return record, nil
 		},
@@ -568,7 +626,7 @@ func TestFlowStarterStartPlanUsesRequestTimePromptTemplate(t *testing.T) {
 
 func TestFlowStarterStartPlanUsesExplicitZeroRequestTimePromptTemplates(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-reset"
 			return record, nil
 		},
@@ -623,7 +681,7 @@ func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 	var calls []string
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			calls = append(calls, "create-flow")
 			record.FlowID = "flow-1"
 			return record, nil
@@ -681,7 +739,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	var calls []string
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			calls = append(calls, "create-flow")
 			record.FlowID = "flow-1"
 			return record, nil
@@ -735,7 +793,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksAllLaunchableRootPhases(t *te
 	var phaseUpdates []flowstore.PhaseUpdate
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
@@ -797,7 +855,7 @@ func TestFlowStarterStartPlanWorktreeFailureBlocksRequestedPlanPhase(t *testing.
 	var phaseUpdate flowstore.PhaseUpdate
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			return record, nil
 		},
@@ -828,7 +886,7 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksFirstLaunchablePhase(t *test
 	var phaseUpdate flowstore.PhaseUpdate
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
@@ -863,7 +921,7 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *t
 	var phaseUpdates []flowstore.PhaseUpdate
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			record.Phases = []flowstore.FlowPhase{
 				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
@@ -903,7 +961,7 @@ func TestFlowStarterPrepareFlowWorktreeFailureBlocksAllLaunchableRootPhases(t *t
 
 func TestFlowStarterStartPlanWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing.T) {
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
-		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		CreateFlow: func(record flowstore.FlowRecord, _ flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			record.FlowID = "flow-1"
 			return record, nil
 		},

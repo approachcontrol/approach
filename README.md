@@ -146,7 +146,9 @@ launchable phases blocked and the error is shown in the status line.
 Approach launches Codex and Claude Code in your worktrees, captures their
 sessions, and tracks longer tasks as Flows: persisted phase graphs
 (plan → review → implementation → PR → merge) that can auto-advance and run
-agents headlessly in embedded terminals.
+agents in embedded terminals. Each Flow persists its own default-on
+headless/interactive preference for manual phase and repair launches; automatic
+phase launches remain always headless.
 
 Agents persist plans and Flow progress through the `approach plan` and
 `approach flow` CLIs. The canonical agent instructions are the bundled skills

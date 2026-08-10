@@ -273,7 +273,7 @@ func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Mode
 	target, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
 		Record:   record,
 		Phase:    phase,
-		Headless: m.flowHeadless,
+		Headless: record.Headless,
 	})
 	return target, ok, m
 }

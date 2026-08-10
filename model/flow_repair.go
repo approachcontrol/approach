@@ -214,7 +214,7 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		FlowID:           record.FlowID,
 		FlowRepair:       true,
 		Embedded:         true,
-		Headless:         m.flowHeadless,
+		Headless:         record.Headless,
 		Model:            modelName,
 		ReasoningEffort:  reasoningEffort,
 		InitialPrompt:    flowRepairPrompt(record, obstruction),
@@ -355,6 +355,7 @@ func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flows
 	ctx.Commit = record.Commit
 	ctx.PlanID = record.PlanID
 	ctx.PlanPath = planPath
+	ctx.Headless = record.Headless
 	ctx.InitialPrompt = flowRepairPrompt(record, obstruction)
 	return ctx
 }

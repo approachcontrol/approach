@@ -1604,6 +1604,19 @@ func TestStatusBar_FlowsModeNarrowFooterShowsEnterWithHeadlessHint(t *testing.T)
 	}
 }
 
+func TestStatusBar_FlowsModeWithoutSelectionHidesHeadlessControl(t *testing.T) {
+	bar := renderStatusBarWithState(statusBarParams{
+		Width:        120,
+		Mode:         ModeFlows,
+		ActivePane:   PaneBottom,
+		RepoSelected: true,
+		FlowHeadless: true,
+	})
+	if strings.Contains(bar, "headless") || strings.Contains(bar, "h:") {
+		t.Fatalf("Flow footer without selection exposed headless control: %q", bar)
+	}
+}
+
 func TestStatusBar_FlowsModeTinyFooterKeepsQuitOverBackspace(t *testing.T) {
 	bar := renderStatusBarWithState(statusBarParams{
 		Width:               18,

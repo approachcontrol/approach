@@ -133,6 +133,153 @@ func TestStoreCreateDefaultsAutoModeOnEvenWhenCallerPassesFalse(t *testing.T) {
 	}
 }
 
+func TestStoreCreateHeadlessPreferenceDefaultsOnAndPreservesExplicitValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		headless *bool
+		want     bool
+	}{
+		{name: "omitted defaults on", want: true},
+		{name: "explicit on", headless: testBoolPtr(true), want: true},
+		{name: "explicit off", headless: testBoolPtr(false), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			record, err := store.CreateWithOptions(flowstore.FlowRecord{
+				Title:        "Headless Preference",
+				Instructions: "Persist the launch preference.",
+				RepoPath:     filepath.Join(root, "repo"),
+			}, flowstore.CreateOptions{Headless: tt.headless})
+			if err != nil {
+				t.Fatalf("CreateWithOptions() error = %v", err)
+			}
+			if record.Headless != tt.want {
+				t.Fatalf("CreateWithOptions().Headless = %v, want %v", record.Headless, tt.want)
+			}
+			read, err := store.Read(record.FlowID)
+			if err != nil {
+				t.Fatalf("Read() error = %v", err)
+			}
+			listed, err := store.List(flowstore.FlowFilter{RepoPath: record.RepoPath})
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+			if read.Headless != tt.want || len(listed) != 1 || listed[0].Headless != tt.want {
+				t.Fatalf("headless preference did not round-trip: read=%#v list=%#v", read, listed)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "flows", record.FlowID, "meta.json"))
+			if err != nil {
+				t.Fatalf("ReadFile(meta.json) error = %v", err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatalf("Unmarshal(meta.json) error = %v", err)
+			}
+			if _, ok := raw["headless"]; !ok {
+				t.Fatalf("meta.json omitted headless:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestStoreSetHeadlessUpdatesOnlyTargetAndNoOpPreservesTimestamp(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	create := func(title string) flowstore.FlowRecord {
+		record, err := store.Create(flowstore.FlowRecord{Title: title, Instructions: "Test isolation.", RepoPath: filepath.Join(root, "repo")})
+		if err != nil {
+			t.Fatalf("Create(%q) error = %v", title, err)
+		}
+		return record
+	}
+	first := create("First Flow")
+	second := create("Second Flow")
+
+	now = now.Add(time.Minute)
+	updated, err := store.SetHeadless(flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false})
+	if err != nil {
+		t.Fatalf("SetHeadless(false) error = %v", err)
+	}
+	if updated.Headless || !updated.UpdatedAt.Equal(now) {
+		t.Fatalf("SetHeadless(false) = %#v, want disabled with updated timestamp", updated)
+	}
+	unchanged, err := store.SetHeadless(flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false})
+	if err != nil {
+		t.Fatalf("SetHeadless(false) no-op error = %v", err)
+	}
+	if !unchanged.UpdatedAt.Equal(updated.UpdatedAt) {
+		t.Fatalf("no-op UpdatedAt = %s, want %s", unchanged.UpdatedAt, updated.UpdatedAt)
+	}
+	other, err := store.Read(second.FlowID)
+	if err != nil {
+		t.Fatalf("Read(second) error = %v", err)
+	}
+	if !other.Headless {
+		t.Fatalf("second Flow Headless = false after first update: %#v", other)
+	}
+}
+
+func TestStoreReadLegacyRecordWithoutHeadlessDefaultsOnWithoutRewriting(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{Title: "Legacy Headless", Instructions: "Test compatibility.", RepoPath: filepath.Join(root, "repo")})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	metaPath := filepath.Join(root, "flows", record.FlowID, "meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) error = %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v", err)
+	}
+	delete(raw, "headless")
+	legacy, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent(legacy) error = %v", err)
+	}
+	if err := os.WriteFile(metaPath, legacy, 0o600); err != nil {
+		t.Fatalf("WriteFile(meta.json) error = %v", err)
+	}
+
+	read, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if !read.Headless {
+		t.Fatalf("legacy Read().Headless = false: %#v", read)
+	}
+	after, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("ReadFile(meta.json) after read error = %v", err)
+	}
+	var afterRaw map[string]json.RawMessage
+	if err := json.Unmarshal(after, &afterRaw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) after read error = %v", err)
+	}
+	if _, ok := afterRaw["headless"]; ok {
+		t.Fatalf("legacy read unexpectedly rewrote headless:\n%s", after)
+	}
+}
+
+func testBoolPtr(value bool) *bool {
+	return &value
+}
+
 func TestStoreSetAutoModeDisablesNewlyCreatedFlow(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "repo")
@@ -6017,6 +6164,14 @@ func TestMetadataOnlyUpdatePreservesUnresolvedMissingDependsOn(t *testing.T) {
 				t.Fatalf("draft depends_on was persisted for unresolved graph:\n%s", data)
 			}
 		}
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatalf("Unmarshal(meta.json) top-level error = %v\n%s", err, data)
+	}
+	var headless bool
+	if value, ok := metadata["headless"]; !ok || json.Unmarshal(value, &headless) != nil || !headless {
+		t.Fatalf("specialized metadata write did not persist normalized headless=true:\n%s", data)
 	}
 
 	reread, err := store.Read(flowID)

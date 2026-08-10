@@ -347,6 +347,21 @@ type FlowAutoModeSetFailedMsg struct {
 	Err      string
 }
 
+type FlowHeadlessSetMsg struct {
+	RepoPath        string
+	FlowID          string
+	Flow            flowstore.FlowRecord
+	Enabled         bool
+	AllRepositories bool
+}
+
+type FlowHeadlessSetFailedMsg struct {
+	RepoPath        string
+	FlowID          string
+	Err             string
+	AllRepositories bool
+}
+
 type FlowManualMergeSetMsg struct {
 	RepoPath string
 	FlowID   string
@@ -1454,6 +1469,75 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 		errText = "failed to set Flow auto mode"
 	}
 	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) Model {
+	if msg.FlowID == "" || msg.Flow.FlowID != msg.FlowID || msg.Flow.Headless != msg.Enabled {
+		return m
+	}
+	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	if msg.Flow.RepoPath != "" && msg.RepoPath != "" && filepath.Clean(msg.Flow.RepoPath) != filepath.Clean(msg.RepoPath) {
+		return m
+	}
+	return m.replaceFlowHeadlessRecord(msg.Flow)
+}
+
+func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
+	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
+		return m
+	}
+	errText := strings.TrimSpace(msg.Err)
+	if errText == "" {
+		errText = "failed to set Flow headless mode"
+	}
+	return m.setStatus(statusOther, errText)
+}
+
+func (m Model) replaceFlowHeadlessRecord(flow flowstore.FlowRecord) Model {
+	selectedFlowID := ""
+	if record, ok := m.flows.Selected(); ok {
+		selectedFlowID = record.FlowID
+	}
+	expandedFlowID := m.expandedFlowID
+	selectedFlowPhaseID := m.selectedFlowPhaseID
+	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
+	replacedFlows := false
+	for i := range items {
+		if items[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(items[i].UpdatedAt) {
+			continue
+		}
+		items[i] = flow
+		replacedFlows = true
+		break
+	}
+	if replacedFlows {
+		m.flows = m.flows.SetItems(items)
+		if selectedFlowID != "" {
+			m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool { return record.FlowID == selectedFlowID })
+		}
+		m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
+	}
+
+	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
+	replacedActive := false
+	for i := range activeRecords {
+		if activeRecords[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+			continue
+		}
+		activeRecords[i] = flow
+		replacedActive = true
+		break
+	}
+	if replacedActive {
+		m.activeFlowRecords = activeRecords
+		m = m.syncActiveFlowsFromCache()
+	}
+	if !replacedFlows && !replacedActive {
+		return m
+	}
+	return m.clampSelectionsAfterFilter()
 }
 
 func (m Model) handleFlowManualMergeSet(msg FlowManualMergeSetMsg) Model {

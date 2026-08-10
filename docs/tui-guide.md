@@ -83,7 +83,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
 | `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane; grouped entries use their remembered subview. Active Flows is not in either cycle. |
-| `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
+| `h` | Switch to the history subview inside the Git view; toggle the selected Flow's persisted headless/interactive preference in Flows or Active Flows |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
@@ -436,7 +436,9 @@ checkboxes. New Flows use the built-in default phase graph unless
 `[flow].preset` selects a configured custom graph. Plan Now is checked by
 default and immediately launches the first ready root phase after creating the
 Flow; uncheck it to create a parked Flow whose ready root phase can be
-launched later from the Flow row.
+launched later from the Flow row. The Headless checkbox is persisted on the
+new Flow in either case, so a parked Flow uses the same choice when launched
+later. Ready-Bead and command-line creation retain the default-on setting.
 
 On a Flow row or an expanded phase row:
 
@@ -462,6 +464,9 @@ On a Flow row or an expanded phase row:
 - `a` toggles per-Flow auto mode, which is on by default for new Flows and
   persisted on that Flow record. Flows created before this field existed
   remain manual until toggled on.
+- `h` toggles the selected Flow's persisted manual-launch preference. It works
+  from the Flow row or an expanded phase row and is hidden when no Flow is
+  selected; changing one Flow does not affect another.
 - `m` on an eligible Flow row marks a GitHub PR that was merged manually:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
@@ -492,8 +497,10 @@ before allocating the terminal.
 Repair is an embedded CLI operation and accepts only `codex` or `claude`.
 `codex-app`, an unset agent, or another configured command produces guidance
 instead of opening an external app or changing Flow state. The launch reuses
-the selected provider's current model and reasoning effort plus the manual
-`h` headless setting. Interactive repairs prefill their recovery prompt and
+the selected provider's current model and reasoning effort plus that Flow's
+persisted `h` headless setting. The fresh pre-launch record read is
+authoritative, so a recently changed preference overrides a stale list row.
+Interactive repairs prefill their recovery prompt and
 focus terminal input; headless repairs submit it and keep list focus.
 
 A repair session carries the Flow ID, linked-plan/worktree metadata, and the
@@ -532,17 +539,21 @@ outcome and receives its normal one-shot handoff.
 
 ### Headless mode, model, and effort
 
-Flow headless mode is on by default: selected CLI `codex` and `claude` phase
-launches run in the shared runtime-only embedded terminal dock. Press
-`h` to choose the CLI command mode: headless runs `codex exec` or
+Each Flow persists its own headless preference, which defaults on. Selected CLI
+`codex` and `claude` phase launches run in the shared runtime-only embedded
+terminal dock. Press `h` on a Flow or one of its expanded phase rows to choose
+that Flow's manual CLI command mode: headless runs `codex exec` or
 `claude --print`, while headless off runs interactive `codex` or `claude` in
 the same dock. Headless-off launches prefill the phase prompt without
 submitting it, then focus the terminal in input mode so
 you can review or edit it before pressing enter. Headless launches keep focus
-on the Flow list. Creating a new Flow has its own default-on Headless checkbox
-for the initial Plan launch; that checkbox is ignored when Plan Now is off and
-does not change the selected-phase `h` setting. The `h` toggle applies only to
-manual phase launches; auto-mode CLI launches are always headless.
+on the Flow list. The New Flow form's default-on Headless checkbox seeds the
+persisted preference whether Plan Now is on or off; an immediate Plan launch
+and a later launch of a parked Flow both use that stored value. Records created
+before the field existed read as headless-on without being rewritten solely by
+a read. Manual phase and repair launches use the target Flow's value. Auto-mode
+CLI launches are always headless, independent of it; session resume behavior is
+unchanged.
 
 Press `M` to choose the selected CLI agent's model and `E` to choose its
 reasoning effort; the shortcut pane shows the current values. Codex CLI

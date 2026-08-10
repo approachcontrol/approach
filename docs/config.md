@@ -384,7 +384,7 @@ through `approach flow`. Each record is stored as
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
 flows pane (bottom-pane keyboard `3`), which is stored at startup below
 Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
-toggle per-Flow auto mode, resume attached phase sessions, record a manual
+toggle per-Flow auto mode and the per-Flow headless preference, resume attached phase sessions, record a manual
 GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
 Flow terminals are documented in `docs/tui-guide.md`. Other phase and
@@ -431,7 +431,10 @@ Flow IDs use the same safe single-path-segment shape as plans:
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use
 `YYYYMMDDTHHMMSSZ-<title-slug>` with a numeric suffix on collision. New flows
 start with a default phase graph: plan, plan review, implementation, review
-loop, PR creation, autoreview, and merge.
+loop, PR creation, autoreview, and merge. New TUI, Ready-Bead, and CLI-created
+Flows also persist `headless: true` unless the New Flow form explicitly seeds
+`false`. Legacy records without `headless` read as `true`, while a stored
+`false` is preserved across reads, lists, and later metadata writes.
 
 Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,
