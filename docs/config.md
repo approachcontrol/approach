@@ -194,6 +194,11 @@ command = "wezterm start"
 
 ```toml
 [terminal]
+command = "ghostty"
+```
+
+```toml
+[terminal]
 command = "iTerm"
 ```
 
@@ -210,6 +215,15 @@ an unsupported GUI app name can open a plain worktree terminal with
 `open -a <app> <path>`, but it cannot run detached agent scripts or detach
 handoff. Use a supported GUI alias or a CLI terminal command for agent launches
 and embedded detach handoff.
+
+Ghostty works through the CLI command path because it accepts `-e`:
+`command = "ghostty"` covers plain worktree terminals, agent launches, and
+detach handoff. The `ghostty` binary must be on `PATH` (the macOS app bundle
+ships it at `Ghostty.app/Contents/MacOS/ghostty`). On macOS each launch starts
+a separate Ghostty app instance rather than a window in the running one.
+Ghostty accepts any of its config keys as flags, so
+`command = "ghostty --wait-after-command=true"` keeps windows open after a
+launched agent exits instead of closing before the output can be read.
 
 ### `[provider]`
 
