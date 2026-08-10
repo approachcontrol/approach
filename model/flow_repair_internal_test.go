@@ -172,6 +172,16 @@ func TestFlowRepairObstructionClassifiesStalledAndHealthyFlows(t *testing.T) {
 	}
 }
 
+func TestFlowRuntimeOccupancyIncludesLiveSessionOnTerminalPhase(t *testing.T) {
+	record := repairClassificationRecord(flowstore.FlowPhase{
+		PhaseID: "implementation", Status: flowstore.PhaseCompleted, LaunchIDs: []string{"launch-1"},
+		Sessions: []flowstore.Session{{SessionID: "session-1", LaunchID: "launch-1", Status: "last_seen"}},
+	})
+	if reason := flowRuntimeOccupancyReason(record); !strings.Contains(reason, "active persisted session") {
+		t.Fatalf("runtime occupancy reason = %q", reason)
+	}
+}
+
 func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *testing.T) {
 	record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseBlocked})
 	newModel := func(mode ui.Mode) Model {

@@ -131,6 +131,18 @@ func phaseHasMatchingLiveSession(phase flowstore.FlowPhase) bool {
 	return false
 }
 
+func flowRuntimeOccupancyReason(record flowstore.FlowRecord) string {
+	for _, phase := range record.Phases {
+		if phaseHasMatchingLiveSession(phase) {
+			return fmt.Sprintf("an active persisted session on phase %s already occupies this Flow", phase.PhaseID)
+		}
+		if phase.Status == flowstore.PhaseRunning {
+			return fmt.Sprintf("a running phase %s already occupies this Flow", phase.PhaseID)
+		}
+	}
+	return ""
+}
+
 func (m Model) selectedFlowRepairObstruction() (flowstore.FlowRecord, flowRepairObstruction, bool) {
 	if !m.flowSurfaceVisible() {
 		return flowstore.FlowRecord{}, flowRepairObstruction{}, false
@@ -243,8 +255,8 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		for _, current := range flows {
 			if strings.TrimSpace(current.FlowID) == strings.TrimSpace(ctx.FlowID) {
 				for _, phase := range current.Phases {
-					if phase.Status == flowstore.PhaseRunning {
-						msg.RepairValidationErr = fmt.Sprintf("A persisted running phase %s still occupies this Flow", phase.PhaseID)
+					if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
+						msg.RepairValidationErr = fmt.Sprintf("A persisted running phase %s is still awaiting session capture", phase.PhaseID)
 						return msg
 					}
 				}

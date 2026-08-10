@@ -149,10 +149,8 @@ func (m Model) handleFlowWorktreeAgentPreflight(msg flowWorktreeAgentPreflightMs
 			return fail("An active persisted session already occupies this Flow")
 		}
 	}
-	for _, phase := range msg.Flow.Phases {
-		if phase.Status == flowstore.PhaseRunning {
-			return fail("A running phase already occupies this Flow")
-		}
+	if reason := flowRuntimeOccupancyReason(msg.Flow); reason != "" {
+		return fail(reason)
 	}
 	if m.hasFlowEmbeddedTerminalForFlow(msg.FlowID) {
 		return fail("An embedded terminal already occupies this Flow")
