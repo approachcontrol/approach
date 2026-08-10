@@ -3,10 +3,13 @@ package model
 import (
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/scanner"
+	"github.com/approachcontrol/approach/sessions"
 )
 
 func TestFlowLaunchLeaseIsTokenOwned(t *testing.T) {
@@ -27,6 +30,60 @@ func TestFlowLaunchLeaseIsTokenOwned(t *testing.T) {
 	if _, ok := m.flowLaunchLease("flow-1"); ok {
 		t.Fatal("matching release retained lease")
 	}
+}
+
+func TestPlanNowRejectsReusedFlowIDRuntimeOccupancy(t *testing.T) {
+	const flowID = "flow-reused"
+	newModel := func(listSessions func(sessions.SessionFilter) ([]sessions.SessionRecord, error)) (Model, *int) {
+		starts := new(int)
+		m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+			AllocateFlowID: func(string) (string, error) { return flowID, nil },
+			ListSessions:   listSessions,
+			StartFlowPlan: func(FlowStartRequest) (FlowStartResult, error) {
+				*starts++
+				return FlowStartResult{}, nil
+			},
+		})
+		m.activeFlowCreate = 1
+		return m, starts
+	}
+	request := flowStartRequestedMsg{RepoPath: "/repo", Title: "Reused", Request: 1}
+
+	t.Run("retained terminal", func(t *testing.T) {
+		m, starts := newModel(func(sessions.SessionFilter) ([]sessions.SessionRecord, error) { return nil, nil })
+		m.embeddedTerminals = []embeddedTerminalSlot{{ID: 1, FlowID: flowID, Terminal: internalFakeEmbeddedTerminal{state: "running"}}}
+		next, cmd := m.handleFlowStartRequested(request)
+		if cmd != nil || *starts != 0 || next.flowLaunchLeaseOccupied(flowID) {
+			t.Fatalf("occupied reused Flow start = cmd %T starts %d lease %v", cmd, *starts, next.flowLaunchLeaseOccupied(flowID))
+		}
+		if next.activeFlowCreate != 0 {
+			t.Fatalf("active create request = %d, want cleared", next.activeFlowCreate)
+		}
+	})
+
+	t.Run("active saved session", func(t *testing.T) {
+		m, starts := newModel(func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.FlowID != flowID {
+				t.Fatalf("session filter FlowID = %q, want %q", filter.FlowID, flowID)
+			}
+			return []sessions.SessionRecord{{FlowID: flowID, Status: "active"}}, nil
+		})
+		next, cmd := m.handleFlowStartRequested(request)
+		if cmd == nil {
+			t.Fatal("saved-session validation returned nil command")
+		}
+		failed, ok := cmd().(FlowCreateFailedMsg)
+		if !ok || !strings.Contains(failed.Err, "active persisted session") {
+			t.Fatalf("saved-session validation result = %#v", failed)
+		}
+		if *starts != 0 || !next.flowLaunchLeaseOccupied(flowID) {
+			t.Fatalf("saved-session validation starts/lease = %d/%v", *starts, next.flowLaunchLeaseOccupied(flowID))
+		}
+		final, _ := next.handleFlowCreateFailed(failed)
+		if final.flowLaunchLeaseOccupied(flowID) {
+			t.Fatal("rejected reused Flow retained its create lease")
+		}
+	})
 }
 
 func TestExternalFlowLaunchLeaseHeldUntilHandoffResult(t *testing.T) {

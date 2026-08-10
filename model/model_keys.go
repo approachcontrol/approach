@@ -1603,6 +1603,10 @@ func (m Model) handleFlowStartRequested(msg flowStartRequestedMsg) (Model, tea.C
 		m = m.clearFlowCreateRequest(msg.Request)
 		return m.setStatus(statusOther, "Unable to allocate Flow ID: "+err.Error()), nil
 	}
+	if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasKnownActiveFlowSession(flowID) {
+		m = m.clearFlowCreateRequest(msg.Request)
+		return m.setStatus(statusOther, "Unable to reserve the new Flow launch: the allocated Flow ID is already occupied"), nil
+	}
 	token := newLaunchID()
 	var acquired bool
 	m, acquired = m.acquireFlowLaunchLease(flowID, token, flowLaunchSourceCreatePhase)
@@ -1610,7 +1614,29 @@ func (m Model) handleFlowStartRequested(msg flowStartRequestedMsg) (Model, tea.C
 		m = m.clearFlowCreateRequest(msg.Request)
 		return m.setStatus(statusOther, "Unable to reserve the new Flow launch"), nil
 	}
-	cmd := m.createFlowAndLaunchPlanForRepoWithIdentity(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, msg.Headless, flowID, token)
+	startCmd := m.createFlowAndLaunchPlanForRepoWithIdentity(msg.RepoPath, msg.Title, msg.Instructions, msg.BaseRef, msg.Headless, flowID, token)
+	listSessions := m.listSessions
+	cmd := func() tea.Msg {
+		fail := func(errText string) tea.Msg {
+			return FlowCreateFailedMsg{
+				RepoPath: msg.RepoPath, FlowID: flowID, Title: msg.Title, Err: errText,
+				FlowLeaseID: flowID, FlowLeaseToken: token,
+			}
+		}
+		if listSessions == nil {
+			return fail("Unable to validate the new Flow launch: session storage is unavailable")
+		}
+		records, err := listSessions(sessions.SessionFilter{FlowID: flowID})
+		if err != nil {
+			return fail("Unable to validate the new Flow launch: " + err.Error())
+		}
+		for _, record := range records {
+			if strings.TrimSpace(record.FlowID) == strings.TrimSpace(flowID) && sessions.IsActive(record) {
+				return fail("Unable to reserve the new Flow launch: an active persisted session already occupies this Flow ID")
+			}
+		}
+		return startCmd()
+	}
 	return m, tagFlowCreateRequest(cmd, msg.Request)
 }
 
