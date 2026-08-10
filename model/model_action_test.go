@@ -925,7 +925,7 @@ func TestModel_VisibleRepoFetchRefreshesStoredTopModeAfterBottomPaneTakesFocus(t
 	if cmd == nil {
 		t.Fatal("expected selected-repository refresh after visible fetch completion")
 	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsOpen)
+	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsReady)
 }
 
 func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {

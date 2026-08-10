@@ -374,7 +374,7 @@ func settledBeadDetailModel(t *testing.T, opts model.Options, mode ui.Mode, key 
 	m := model.NewWithOptions(testRepos(), opts)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	if mode != ui.ModeBeadsOpen {
+	if mode != ui.ModeBeadsReady {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
 	}
 	return applyBeadsResult(t, m, mode, true, beads)
