@@ -751,7 +751,7 @@ func (m Model) handleWorktreeUnlockFailed(msg WorktreeUnlockFailedMsg) Model {
 func (m Model) handleGitFetched(msg GitFetchedMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m = m.clearStatus(statusGitMutation)
-		return m.startFetchForMode()
+		return m.startFetchMode(m.topMode)
 	}
 	return m, nil
 }
@@ -791,7 +791,7 @@ func (m Model) handleVisibleRepoFetchResult(msg VisibleRepoFetchResultMsg) (tea.
 	m = m.setVisibleRepoFetchSummaryStatus(finalStatus)
 	if currentOK && shouldRefresh {
 		var fetchCmd tea.Cmd
-		m, fetchCmd = m.startFetchForMode()
+		m, fetchCmd = m.startFetchMode(m.topMode)
 		return m, fetchCmd
 	}
 	return m, nil
@@ -924,7 +924,7 @@ func (m Model) handleRepoCreateFailed(msg RepoCreateFailedMsg) (tea.Model, tea.C
 func (m Model) handleGitPulled(msg GitPulledMsg) (tea.Model, tea.Cmd) {
 	if m.isCurrentRepo(msg.RepoPath) {
 		m = m.clearStatus(statusGitMutation)
-		return m.startFetchForMode()
+		return m.startFetchMode(m.topMode)
 	}
 	return m, nil
 }

@@ -115,6 +115,22 @@ func TestPaneFocusCyclesForwardAndBackward(t *testing.T) {
 	}
 }
 
+func TestRepositoryEnterFocusesTopAfterBottomPaneWasRemembered(t *testing.T) {
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
+
+	if m.activePane != ui.PaneRepos || m.contentPane != ui.PaneBottom {
+		t.Fatalf("precondition focus = active %d remembered %d, want repos/bottom", m.activePane, m.contentPane)
+	}
+
+	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activePane != ui.PaneTop || m.contentPane != ui.PaneTop || !m.repoPaneCollapsed {
+		t.Fatalf("Enter focus = active %d remembered %d collapsed %t, want top/top/true", m.activePane, m.contentPane, m.repoPaneCollapsed)
+	}
+}
+
 func TestPaneFocusCyclesSkipReposWhenCollapsed(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
 	m.repoPaneCollapsed = true

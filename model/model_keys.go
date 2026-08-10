@@ -326,11 +326,12 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
 		if len(m.filteredRepos()) > 0 {
-			m.activePane = m.contentPane
 			m = m.setRepoPaneCollapsed(true)
 			if m.activeFlowSurfaceVisible() {
+				m.activePane = m.contentPane
 				return m.syncActiveFlowsFromCache(), nil
 			}
+			m = m.focusContentPane(ui.PaneTop)
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
@@ -682,6 +683,9 @@ func (m Model) cyclePaneFocusBackward() Model {
 }
 
 func (m Model) focusContentPane(pane ui.Pane) Model {
+	if m.contentPane != pane {
+		m = m.invalidateViewRequest()
+	}
 	m.activePane = pane
 	m.contentPane = pane
 	m.terminalFocus = terminalFocusList

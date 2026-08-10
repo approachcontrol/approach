@@ -10,6 +10,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/model"
 	"github.com/approachcontrol/approach/planstore"
+	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -494,14 +495,16 @@ func TestModel_PlanListReplacementClearsExpandedPhases(t *testing.T) {
 }
 
 func TestModel_PlanRefetchStartClearsExpandedPhases(t *testing.T) {
-	m := model.New(testRepos())
+	m := model.NewWithOptions(testRepos(), model.Options{
+		ScanRepos: func() ([]scanner.Repo, error) { return testRepos(), nil },
+	})
 	m = plansInRightPane(t, m, []planstore.PlanRecord{
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Title: "Persist plans", Status: "draft",
 			Phases: []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}}},
 	})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
 	if cmd == nil {
 		t.Fatal("expected plans refetch command")
 	}

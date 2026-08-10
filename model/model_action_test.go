@@ -610,6 +610,28 @@ func TestModel_ViewResultAfterModeSwitchIgnored(t *testing.T) {
 	}
 }
 
+func TestModel_ViewResultAfterPaneFocusSwitchIgnored(t *testing.T) {
+	var paged []string
+	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m = inRightPane(m)
+	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
+		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
+	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	_, cmd := update(m, model.WorktreeDiffResultMsg{
+		RepoPath:     "/dev/alpha",
+		WorktreePath: "/dev/alpha",
+		DiffRequest:  1,
+		Diff:         "old worktree diff",
+	})
+
+	if cmd != nil || len(paged) != 0 {
+		t.Fatalf("expected pane focus switch to invalidate old view result, cmd=%T paged=%#v", cmd, paged)
+	}
+}
+
 // --- Worktree terminal/code actions ---
 
 func TestModel_TKey_Worktree_FiresCmd(t *testing.T) {
@@ -884,6 +906,26 @@ func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
 		t.Fatal("expected one selected-repo refresh when batch completes")
 	}
 	requireBatchCommandCount(t, cmd, 4)
+}
+
+func TestModel_VisibleRepoFetchRefreshesStoredTopModeAfterBottomPaneTakesFocus(t *testing.T) {
+	m := model.NewWithOptions(testRepos(), model.Options{
+		FetchRepo: func(string) error { return nil },
+	})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	msgs := runBatchCmd(t, cmd)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	before := listRequests(m)
+
+	for _, msg := range msgs {
+		m, cmd = update(m, msg)
+	}
+
+	if cmd == nil {
+		t.Fatal("expected selected-repository refresh after visible fetch completion")
+	}
+	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsOpen)
 }
 
 func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
@@ -1218,24 +1260,30 @@ func TestModel_CKey_BareRepoHistory_NoCmd(t *testing.T) {
 	}
 }
 
-func TestModel_GitFetchedRefetchesCurrentMode(t *testing.T) {
+func TestModel_GitFetchedRefetchesStoredTopModeAfterBottomPaneTakesFocus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inBranchesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	before := listRequests(m)
 
-	_, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
+	next, cmd := update(m, model.GitFetchedMsg{RepoPath: "/dev/alpha"})
 	if cmd == nil {
 		t.Fatal("expected refetch cmd after fetch success")
 	}
+	assertOnlyListRequestAdvanced(t, before, next, ui.ModeBranches)
 }
 
-func TestModel_GitPulledRefetchesCurrentMode(t *testing.T) {
+func TestModel_GitPulledRefetchesStoredTopModeAfterBottomPaneTakesFocus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inWorktreesMode(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	before := listRequests(m)
 
-	_, cmd := update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
+	next, cmd := update(m, model.GitPulledMsg{RepoPath: "/dev/alpha"})
 	if cmd == nil {
 		t.Fatal("expected refetch cmd after pull success")
 	}
+	assertOnlyListRequestAdvanced(t, before, next, ui.ModeWorktrees)
 }
 
 func TestModel_StaleGitFetchedMsgIgnored(t *testing.T) {

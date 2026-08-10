@@ -690,6 +690,7 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed Flow list", m.RepoPaneCollapsed(), m.ActivePane())
 	}
