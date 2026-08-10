@@ -1603,7 +1603,7 @@ func (m Model) handleFlowStartRequested(msg flowStartRequestedMsg) (Model, tea.C
 		m = m.clearFlowCreateRequest(msg.Request)
 		return m.setStatus(statusOther, "Unable to allocate Flow ID: "+err.Error()), nil
 	}
-	if m.hasFlowEmbeddedTerminalForFlow(flowID) || m.hasKnownActiveFlowSession(flowID) {
+	if m.hasFlowEmbeddedTerminalForFlow(flowID) {
 		m = m.clearFlowCreateRequest(msg.Request)
 		return m.setStatus(statusOther, "Unable to reserve the new Flow launch: the allocated Flow ID is already occupied"), nil
 	}
@@ -1631,7 +1631,7 @@ func (m Model) handleFlowStartRequested(msg flowStartRequestedMsg) (Model, tea.C
 			return fail("Unable to validate the new Flow launch: " + err.Error())
 		}
 		for _, record := range records {
-			if strings.TrimSpace(record.FlowID) == strings.TrimSpace(flowID) && sessions.IsActive(record) {
+			if record.FlowID == flowID && sessions.IsActive(record) {
 				return fail("Unable to reserve the new Flow launch: an active persisted session already occupies this Flow ID")
 			}
 		}

@@ -84,6 +84,22 @@ func TestPlanNowRejectsReusedFlowIDRuntimeOccupancy(t *testing.T) {
 			t.Fatal("rejected reused Flow retained its create lease")
 		}
 	})
+
+	t.Run("different exact saved-session Flow ID", func(t *testing.T) {
+		m, starts := newModel(func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{{FlowID: " " + flowID + " ", Status: "active"}}, nil
+		})
+		next, cmd := m.handleFlowStartRequested(request)
+		if cmd == nil {
+			t.Fatal("unoccupied Flow start returned nil command")
+		}
+		if failed, ok := cmd().(FlowCreateFailedMsg); ok {
+			t.Fatalf("different exact Flow ID blocked creation: %#v", failed)
+		}
+		if *starts != 1 || !next.flowLaunchLeaseOccupied(flowID) {
+			t.Fatalf("unoccupied Flow starts/lease = %d/%v", *starts, next.flowLaunchLeaseOccupied(flowID))
+		}
+	})
 }
 
 func TestExternalFlowLaunchLeaseHeldUntilHandoffResult(t *testing.T) {
