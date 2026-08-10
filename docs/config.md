@@ -141,7 +141,7 @@ under the resolved scan root, optionally creating a GitHub repo and wiring
 ### Legacy `[ui]` compatibility
 
 Approach no longer has configurable startup views. Every launch starts with
-repository focus, Beads/Open stored in the top pane, Flows stored in the bottom
+repository focus, Beads/Ready stored in the top pane, Flows stored in the bottom
 pane, and the top pane remembered as the first content destination. Older
 `[ui].default_view` assignments remain syntactically accepted because unknown
 keys are ignored, but their value has no effect. There is no startup-view picker
@@ -383,7 +383,7 @@ through `approach flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
 flows pane (bottom-pane keyboard `3`), which is stored at startup below
-Beads/Open. The TUI can create a new Flow, launch the next launchable phase,
+Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
 toggle per-Flow auto mode, resume attached phase sessions, record a manual
 GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded

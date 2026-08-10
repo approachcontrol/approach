@@ -10,7 +10,7 @@ session hooks and storage in `docs/agent-sessions.md`.
 The UI has a repos pane on the left, a stacked content column in the middle,
 and shortcuts on the right. Git/Beads is the top content pane;
 Sessions/Plans/Flows is the bottom pane. Approach starts with repos focused,
-Beads/Open stored above Flows, and the top pane remembered as the first content
+Beads/Ready stored above Flows, and the top pane remembered as the first content
 destination. Both stored panes load for the selected repo even while repos owns
 focus.
 
@@ -77,7 +77,7 @@ title, and assignee; repo filtering remains available from the left pane.
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list, including the active Beads subview |
-| Top `1` / `2` | Switch the top pane to Git / Beads at its last-used subview; Beads defaults to Open before first use |
+| Top `1` / `2` | Switch the top pane to Git / Beads at its last-used subview; Beads defaults to Ready before first use |
 | Bottom `1` / `2` / `3` | Switch the bottom pane to Sessions / Plans / Flows |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
@@ -135,7 +135,7 @@ While Beads is active, its second header row lists `r` ready, `b` blocked, `o`
 open, `i` in-progress, and `c` closed. The active top-level Beads entry and
 active subview are bracketed. This extra row comes out of the list viewport,
 so it does not increase the pane's outer height. Entering Beads lands on the
-last-used subview (Open before first use), and each subview keeps its own
+last-used subview (Ready before first use), and each subview keeps its own
 filter, cursor, and scroll position. Use the letter keys to move directly among
 Beads subviews; horizontal arrows move between the top pane's Git and Beads groups.
 
@@ -335,7 +335,7 @@ plans. v1 has no TUI plan deletion.
 ## Beads View (top `2`)
 
 With the top content pane focused, press `2` to enter the selected repository's
-Beads group at its last-used subview, defaulting to Open before first use.
+Beads group at its last-used subview, defaulting to Ready before first use.
 Beads queries and detail reads are read-only, and no action in this group
 mutates tracker state. Pressing `2` while already in any Beads subview is a
 no-op. Press `r` for

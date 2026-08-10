@@ -32,12 +32,12 @@ func (m Model) topLevelModeForNumberedKey(key string) (ui.Mode, bool) {
 }
 
 // lastBeadsSubview is where entering the top-level Beads view lands: the
-// last-used Beads subview, defaulting to Open on first-ever entry.
+// last-used Beads subview, defaulting to Ready on first-ever entry.
 func (m Model) lastBeadsSubview() ui.Mode {
 	if ui.IsBeadsMode(m.lastBeadsMode) {
 		return m.lastBeadsMode
 	}
-	return ui.ModeBeadsOpen
+	return ui.ModeBeadsReady
 }
 
 // lastGitSubview is where entering the top-level Git view lands: the

@@ -42,6 +42,7 @@ func TestBeadsReadyCreateFlowRescanRepoChangeDoesNotStrandShortcut(t *testing.T)
 		},
 	}))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, readyCmd())
 
@@ -89,6 +90,7 @@ func TestBeadsReadyCreateFlowRequiresUsableBeadIDAndToleratesEmptyTitle(t *testi
 		}))
 		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 		return applyBeadsResult(t, m, ui.ModeBeadsReady, true, beads)
 	}
@@ -197,6 +199,7 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 
 			ready := inBeadsPane(model.NewWithOptions(repos, opts))
 			ready, _ = update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			ready, _ = update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 			ready, readyCmd := update(ready, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 			if readyCmd == nil {
 				t.Fatal("entering Ready returned nil query command")
@@ -274,6 +277,7 @@ func TestBeadsReadyCreateFlowFailureWithoutDetailReportsFallback(t *testing.T) {
 		},
 	}))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, readyCmd())
 	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -335,6 +339,7 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 		},
 	}))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if readyCmd == nil {
 		t.Fatal("entering Ready returned nil query command")
@@ -388,6 +393,7 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			FetchRepo:      func(string) error { return nil },
 		}))
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 		return applyBeadsResult(t, m, ui.ModeBeadsReady, available, beads)
 	}
@@ -442,6 +448,7 @@ func TestBeadsReadyCreateFlowRejectsInvalidAndDuplicateRequests(t *testing.T) {
 			CreateFlow:     create,
 		}))
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 		assertNoCreate(t, m) // loading
 		assertNoCreate(t, newReadyModel(t, nil, false, create))
@@ -512,6 +519,7 @@ func TestBeadsReadyCreateFlowRepoRoundTripInvalidatesStaleCompletion(t *testing.
 				},
 			}))
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 			m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 			m, _ = update(m, readyCmd())
 			m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -592,6 +600,7 @@ func TestBeadsReadyCreateFlowCompletionRefreshesVisibleFlowSurface(t *testing.T)
 				}))
 				m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: tt.height})
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 				m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 				m, _ = update(m, readyCmd())
 				m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -627,6 +636,7 @@ func TestBeadsReadyCreateFlowSameRepoFilterAndCursorChangesKeepRequestCurrent(t 
 		},
 	}))
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, readyCmd())
 	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -652,6 +662,7 @@ func TestBeadsReadyFlowCreateShortcutMatchesExecutablePredicate(t *testing.T) {
 		}))
 		m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 		m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 		m, _ = update(m, readyCmd())
 		return m
@@ -723,6 +734,7 @@ func TestBeadsReadyCreateFlowPickerConsumesFWithoutCreating(t *testing.T) {
 	}))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, readyCmd())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
@@ -757,6 +769,7 @@ func TestBeadsReadyCreateFlowProductionWiringCreatesWorktreeWithStartMetadata(t 
 	})
 	m = inBeadsPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, readyCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, readyCmd())
 	_, createCmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})

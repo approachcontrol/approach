@@ -894,7 +894,7 @@ func TestModel_InitFetchUsesNonZeroListRequest(t *testing.T) {
 	if m.Init() == nil {
 		t.Fatal("expected startup fetch command")
 	}
-	for _, mode := range []ui.Mode{ui.ModeBeadsOpen, ui.ModeFlows} {
+	for _, mode := range []ui.Mode{ui.ModeBeadsReady, ui.ModeFlows} {
 		if got := m.ListRequest(mode); got == 0 {
 			t.Fatalf("initial mode %v fetch should carry a non-zero list request", mode)
 		}
