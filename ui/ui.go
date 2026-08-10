@@ -189,6 +189,10 @@ const (
 	stackedPaneBorderRows       = 2
 	stackedTopPaneHeaderRows    = 2
 	stackedBottomPaneHeaderRows = 1
+	// MinStackedPaneOuterRows is the smallest shared outer-row budget that
+	// keeps both stored panes and their minimum useful list content visible.
+	MinStackedPaneOuterRows = 2*MinStackedPaneListContentHeight +
+		2*stackedPaneBorderRows + stackedTopPaneHeaderRows + stackedBottomPaneHeaderRows
 )
 
 // StackedPaneLayout is a pure allocation of the content column's outer rows.
@@ -306,6 +310,16 @@ const (
 	EmbeddedTerminalDockCollapsed EmbeddedTerminalDockState = iota
 	EmbeddedTerminalDockExpanded
 )
+
+// EmbeddedTerminalDockAllocation is the mode-independent vertical allocation
+// for the terminal dock and the shared content surface.
+type EmbeddedTerminalDockAllocation struct {
+	State           EmbeddedTerminalDockState
+	DockRows        int
+	RenderPTYRows   int
+	BackendPTYRows  int
+	SharedOuterRows int
+}
 
 const (
 	// EmbeddedTerminalFrameColumns is the number of columns consumed by the
@@ -451,23 +465,38 @@ type RenderParams struct {
 	NewAgentAvailable            bool
 }
 
+// ResolveEmbeddedTerminalDock reserves enough shared outer rows for both
+// stored panes before allocating an expanded terminal. If the remaining dock
+// cannot draw a header and one PTY row inside its frame, it resolves to the
+// existing collapsed chip while retaining a backend-safe PTY height.
+func ResolveEmbeddedTerminalDock(height int, expansionRequested bool) EmbeddedTerminalDockAllocation {
+	viewportRows := max(0, height)
+	statusRows := min(1, viewportRows)
+	availableDockRows := max(0, viewportRows-statusRows-MinStackedPaneOuterRows)
+	_, preferredDockRows := EmbeddedTerminalDockHeights(max(0, viewportRows-BranchContentOverhead), EmbeddedTerminalDockExpanded)
+	candidateDockRows := min(preferredDockRows, availableDockRows)
+	minimumExpandedRows := EmbeddedTerminalFrameRows + EmbeddedTerminalHeaderRows + 1
+
+	allocation := EmbeddedTerminalDockAllocation{
+		State:          EmbeddedTerminalDockCollapsed,
+		BackendPTYRows: 1,
+	}
+	if expansionRequested && candidateDockRows >= minimumExpandedRows {
+		allocation.State = EmbeddedTerminalDockExpanded
+		allocation.DockRows = candidateDockRows
+		allocation.RenderPTYRows = candidateDockRows - EmbeddedTerminalFrameRows - EmbeddedTerminalHeaderRows
+		allocation.BackendPTYRows = max(1, allocation.RenderPTYRows)
+	} else if viewportRows > GitContentOverhead {
+		allocation.DockRows = TerminalChipRows
+	}
+	allocation.SharedOuterRows = max(0, viewportRows-statusRows-allocation.DockRows)
+	return allocation
+}
+
 // EmbeddedTerminalDockRows is the number of full-width rows the top-level
-// terminal dock consumes between the pane row and the status bar: the framed
-// terminal pane when expanded, or the single chip row otherwise. The expanded
-// height is derived from the same partition the dock used when it was nested,
-// so the terminal keeps its familiar size and is mode-independent.
+// terminal dock consumes between the pane row and the status bar.
 func EmbeddedTerminalDockRows(height int, state EmbeddedTerminalDockState) int {
-	if state == EmbeddedTerminalDockExpanded {
-		_, terminalHeight := EmbeddedTerminalDockHeights(height-BranchContentOverhead, state)
-		return terminalHeight
-	}
-	// At or below this height the pane row is already at its irreducible
-	// header height in every mode, so reserving the chip row would cost
-	// header rows instead of shrinking the lists.
-	if height <= GitContentOverhead {
-		return 0
-	}
-	return TerminalChipRows
+	return ResolveEmbeddedTerminalDock(height, state == EmbeddedTerminalDockExpanded).DockRows
 }
 
 func EmbeddedTerminalDockHeights(height int, state EmbeddedTerminalDockState) (listHeight, terminalHeight int) {
@@ -613,8 +642,12 @@ func renderApplication(p RenderParams) string {
 	reflogSelected := p.Mode == ModeReflog && p.ReflogSelected >= 0 && p.ReflogSelected < len(p.Reflogs)
 	activeFlows := p.ActiveFlows || p.Mode == ModeActiveFlows
 	embeddedTerminalActive := len(p.EmbeddedTerminals) > 0
+	terminalDockRequested := embeddedTerminalActive && p.EmbeddedTerminalVisible
+	dockAllocation := ResolveEmbeddedTerminalDock(p.Height, terminalDockRequested)
+	terminalEffectivelyExpanded := embeddedTerminalActive && dockAllocation.State == EmbeddedTerminalDockExpanded
+	terminalFocused := terminalEffectivelyExpanded && p.EmbeddedTerminalFocused
 	flowSurfaceActive := p.Mode == ModeFlows || activeFlows
-	terminalShortcutsActive := embeddedTerminalActive && p.EmbeddedTerminalFocused
+	terminalShortcutsActive := terminalFocused
 	sessionSelected := p.Mode == ModeSessions && p.SessionSelected >= 0 && p.SessionSelected < len(p.Sessions)
 	planSelected := p.Mode == ModePlans && p.PlanSelected >= 0 && p.PlanSelected < len(p.Plans)
 	flowSelected := flowSurfaceActive && p.FlowSelected >= 0 && p.FlowSelected < len(p.Flows)
@@ -634,7 +667,7 @@ func renderApplication(p RenderParams) string {
 	selectedPlanPhaseID := scopedSelectedPlanPhaseID(p, planSelected)
 	selectedFlowPhaseID := scopedSelectedFlowPhaseID(p, flowSelected)
 	flowDeletableSelected := flowSelected && selectedFlowPhaseID == ""
-	if p.EmbeddedTerminalFocused {
+	if terminalFocused {
 		flowSelected = false
 		selectedFlowPhaseID = ""
 		flowDeletableSelected = false
@@ -713,16 +746,9 @@ func renderApplication(p RenderParams) string {
 		NewAgent:                     p.NewAgentAvailable,
 		ReadyBeadFlowCreateAvailable: p.ReadyBeadFlowCreateAvailable,
 	}
-	innerHeight := p.Height - 3 // status bar + top/bottom borders
-	dockState := EmbeddedTerminalDockCollapsed
-	if embeddedTerminalActive && p.EmbeddedTerminalVisible {
-		dockState = EmbeddedTerminalDockExpanded
-	}
-	dockRows := EmbeddedTerminalDockRows(p.Height, dockState)
-	paneRowHeight := innerHeight - dockRows
-	if paneRowHeight < 0 {
-		paneRowHeight = 0
-	}
+	dockState := dockAllocation.State
+	dockRows := dockAllocation.DockRows
+	paneRowHeight := max(0, dockAllocation.SharedOuterRows-stackedPaneBorderRows)
 	activeStatusQuery := hasActiveStatusQuery(status)
 	showShortcutPane := shouldRenderShortcutPaneForViewport(p.Width, p.Height, activeStatusQuery)
 	statusBar := renderFooterStatusBar(status, !showShortcutPane)
@@ -736,7 +762,7 @@ func renderApplication(p RenderParams) string {
 	rightBorderColor := inactiveBorderColor
 	if p.Destructive {
 		rightBorderColor = destructiveBorderColor
-	} else if p.ActivePane != PaneRepos && !p.EmbeddedTerminalFocused {
+	} else if p.ActivePane != PaneRepos && !terminalFocused {
 		rightBorderColor = activeBorderColor
 	}
 	if p.ActivePane == PaneRepos && !p.RepoPaneCollapsed {
@@ -797,7 +823,7 @@ func renderApplication(p RenderParams) string {
 		selectedPlanPhaseID = ""
 		selectedFlowPhaseID = ""
 	}
-	if p.EmbeddedTerminalFocused {
+	if terminalFocused {
 		flowSel = -1
 		selectedFlowPhaseID = ""
 	}
@@ -873,16 +899,16 @@ func renderApplication(p RenderParams) string {
 	if p.TopMode != 0 && p.BottomMode != 0 {
 		sharedOuterRows := paneRowHeight + stackedPaneBorderRows
 		if activeFlows {
-			focused := p.ActivePane != PaneRepos && !p.EmbeddedTerminalFocused
+			focused := p.ActivePane != PaneRepos && !terminalFocused
 			rightPane = renderStackedModePane(p, ModeActiveFlows, rightContentWidth, sharedOuterRows, focused, true, repoPath)
 		} else {
 			layout := StackedContentLayout(sharedOuterRows, p.ActivePane, p.ContentPane)
 			stacked := make([]string, 0, 2)
 			if layout.TopRows > 0 {
-				stacked = append(stacked, renderStackedModePane(p, p.TopMode, rightContentWidth, layout.TopRows, p.ActivePane == PaneTop && !p.EmbeddedTerminalFocused, false, repoPath))
+				stacked = append(stacked, renderStackedModePane(p, p.TopMode, rightContentWidth, layout.TopRows, p.ActivePane == PaneTop && !terminalFocused, false, repoPath))
 			}
 			if layout.BottomRows > 0 {
-				stacked = append(stacked, renderStackedModePane(p, p.BottomMode, rightContentWidth, layout.BottomRows, p.ActivePane == PaneBottom && !p.EmbeddedTerminalFocused, false, repoPath))
+				stacked = append(stacked, renderStackedModePane(p, p.BottomMode, rightContentWidth, layout.BottomRows, p.ActivePane == PaneBottom && !terminalFocused, false, repoPath))
 			}
 			rightPane = lipgloss.JoinVertical(lipgloss.Left, stacked...)
 		}
@@ -901,7 +927,7 @@ func renderApplication(p RenderParams) string {
 	}
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, panes...)
-	if dockLines := renderEmbeddedTerminalDockPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, p.EmbeddedTerminalFocused, p.Width, dockRows, dockState); len(dockLines) > 0 {
+	if dockLines := renderEmbeddedTerminalDockPane(p.EmbeddedTerminals, p.EmbeddedTerminalLines, p.EmbeddedTerminalPrefix, terminalFocused, terminalDockRequested, p.Width, dockRows, dockState); len(dockLines) > 0 {
 		content += "\n" + strings.Join(dockLines, "\n")
 	}
 
@@ -3060,21 +3086,21 @@ func renderSessionPane(records []sessions.SessionRecord, selected, scroll, width
 // renderEmbeddedTerminalDockPane renders the top-level terminal dock that
 // spans the full application width between the pane row and the status bar:
 // the framed terminal pane when expanded, or the single chip row otherwise.
-func renderEmbeddedTerminalDockPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused bool, width, dockRows int, state EmbeddedTerminalDockState) []string {
+func renderEmbeddedTerminalDockPane(tabs []EmbeddedTerminalTab, liveLines []string, prefixActive, focused, expansionRequested bool, width, dockRows int, state EmbeddedTerminalDockState) []string {
 	if dockRows <= 0 || width <= 0 {
 		return nil
 	}
 	if state == EmbeddedTerminalDockExpanded {
 		return renderEmbeddedTerminalPane(tabs, liveLines, prefixActive, focused, width, dockRows)
 	}
-	chip := renderEmbeddedTerminalChip(tabs, width)
+	chip := renderEmbeddedTerminalChip(tabs, expansionRequested, width)
 	if pad := width - lipgloss.Width(chip); pad > 0 {
 		chip += strings.Repeat(" ", pad)
 	}
 	return scrollAndPad([]string{chip}, 0, dockRows)
 }
 
-func renderEmbeddedTerminalChip(tabs []EmbeddedTerminalTab, width int) string {
+func renderEmbeddedTerminalChip(tabs []EmbeddedTerminalTab, expansionRequested bool, width int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -3103,8 +3129,12 @@ func renderEmbeddedTerminalChip(tabs []EmbeddedTerminalTab, width int) string {
 	if len(tabs) != 1 {
 		countLabel = "terminals"
 	}
+	action := "ctrl+t show"
+	if expansionRequested {
+		action = "auto-collapsed · ctrl+t hide"
+	}
 	candidates := []string{
-		fmt.Sprintf("● %d %s · %s · ctrl+t show", len(tabs), countLabel, activeLabel),
+		fmt.Sprintf("● %d %s · %s · %s", len(tabs), countLabel, activeLabel, action),
 		fmt.Sprintf("● %d · %s · ctrl+t", len(tabs), activeLabel),
 		fmt.Sprintf("● %d · %s", len(tabs), activeLabel),
 		fmt.Sprintf("● %d · ctrl+t", len(tabs)),

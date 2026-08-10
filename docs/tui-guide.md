@@ -18,8 +18,9 @@ Press `enter` on a selected repo to collapse the repos pane to a narrow strip
 and focus the top pane. `ctrl+r` restores and focuses the full repos pane.
 Forward focus is repos → top → bottom → eligible terminal → repos; `bksp`
 reverses that order. With repos collapsed, the cycle is top → bottom → eligible
-terminal → top. The terminal stop is skipped when the dock is hidden, empty,
-or has no active embedded terminal. Raw terminal input owns Tab and Backspace;
+terminal → top. The terminal stop is skipped when the dock is manually hidden,
+automatically collapsed, empty, or has no active embedded terminal. Raw terminal
+input owns Tab and Backspace;
 enter terminal command mode with `ctrl+]` before using Tab to leave it. The
 focused pane is highlighted with a blue border.
 
@@ -268,13 +269,22 @@ session resume and a Flow launch appear in the same numbered header. The
 current list remains usable above the dock; in particular, the saved-session
 table is never replaced by the terminal surface.
 
-Press `ctrl+t` from repo or list focus to collapse or expand the dock. The
-dock's bottom chip row is always reserved: when terminals run collapsed, the
-narrow-safe chip shows the terminal count, active terminal, and `ctrl+t` hint
-when space permits; with no terminals it reads `no terminals running`. From
-terminal input, `ctrl+t` is sent to the PTY; use `ctrl+] t` to hide the dock.
-Hiding it returns terminal focus to the current list without stopping or
-resizing any terminal.
+Press `ctrl+t` from repo or list focus to store whether the dock is requested
+open or manually hidden. An expanded dock shrinks before either stored pane is
+sacrificed. If the viewport cannot fit both panes plus a framed terminal header
+and one output row, the requested-open dock automatically becomes the collapsed
+chip. Growing the viewport restores it automatically while the request remains
+open. Pressing `ctrl+t` during automatic collapse changes that request to a
+manual hide, so later growth does not restore the dock until `ctrl+t` is pressed
+again.
+
+The narrow-safe chip distinguishes `auto-collapsed · ctrl+t hide` from the
+manually hidden `ctrl+t show` state when space permits; with no terminals it
+reads `no terminals running`. From visible terminal input, `ctrl+t` is sent to
+the PTY; use `ctrl+] t` to hide the dock. Manual or automatic collapse returns
+terminal focus to the current list without stopping the process. Live PTYs are
+resized to a backend-safe one-row height while hidden or automatically collapsed
+and return to the allocated expanded height when shown or restored.
 
 Tabbing from a content list into terminal focus enters terminal command mode.
 Commands remain in Approach until `i` returns to terminal input mode; in input

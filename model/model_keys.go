@@ -49,7 +49,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	terminalInputFocused := m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
+	terminalInputFocused := m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
 	if !m.searchActive && key == "ctrl+t" && !terminalInputFocused {
 		m = m.clearAnyStatus()
 		return m.toggleEmbeddedTerminalDock(), nil
@@ -155,8 +155,8 @@ func (m Model) toggleEmbeddedTerminalDock() Model {
 		}
 	} else {
 		m.terminalDockVisible = true
-		m = m.resizeEmbeddedTerminals()
 	}
+	m = m.resizeEmbeddedTerminals()
 	return m.reflowForTerminalDock()
 }
 
@@ -537,7 +537,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) canCreateReadyBeadFlow() bool {
-	terminalInputFocused := m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
+	terminalInputFocused := m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
 	if m.modal.IsOpen() || m.searchActive || terminalInputFocused ||
 		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
 		return false
@@ -602,7 +602,7 @@ func (m Model) setRepoPaneCollapsed(collapsed bool) Model {
 }
 
 func (m Model) cyclePaneFocusForward() Model {
-	terminalEligible := m.terminalDockVisible && m.hasActiveEmbeddedTerminal()
+	terminalEligible := m.terminalEffectivelyExpanded() && m.hasActiveEmbeddedTerminal()
 	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
@@ -645,7 +645,7 @@ func (m Model) cyclePaneFocusForward() Model {
 }
 
 func (m Model) cyclePaneFocusBackward() Model {
-	terminalEligible := m.terminalDockVisible && m.hasActiveEmbeddedTerminal()
+	terminalEligible := m.terminalEffectivelyExpanded() && m.hasActiveEmbeddedTerminal()
 	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
@@ -715,6 +715,11 @@ func (m Model) focusContentPane(pane ui.Pane) Model {
 }
 
 func (m Model) focusTerminalCommand() Model {
+	if !m.terminalEffectivelyExpanded() || !m.hasActiveEmbeddedTerminal() {
+		m.terminalFocus = terminalFocusList
+		m.terminalPrefixActive = false
+		return m
+	}
 	m.terminalFocus = terminalFocusTerminal
 	m.terminalPrefixActive = true
 	return m
@@ -3079,10 +3084,7 @@ func (m Model) contentHeightForMode(modes ...ui.Mode) int {
 }
 
 func (m Model) paneContentHeight(mode ui.Mode) int {
-	sharedOuterRows := m.height - 1 - m.embeddedTerminalDockRows()
-	if sharedOuterRows < 0 {
-		sharedOuterRows = 0
-	}
+	sharedOuterRows := m.embeddedTerminalDockAllocation().SharedOuterRows
 	outerRows := sharedOuterRows
 	headerRows := 1
 	if mode != ui.ModeActiveFlows {
@@ -3192,12 +3194,8 @@ func (m Model) applyEmbeddedTerminalDockContentHeight(outerHeight, headerRows in
 
 // embeddedTerminalDockRows is the number of full-width rows the top-level
 // terminal dock consumes below the pane row: the framed terminal pane when
-// expanded, or the always-reserved chip row that shows the terminal summary
-// when collapsed and the empty-state notice when no terminals run.
+// expanded, the collapsed chip when the viewport can fit it, or zero rows at
+// the existing degenerate-height boundary.
 func (m Model) embeddedTerminalDockRows() int {
-	state := ui.EmbeddedTerminalDockCollapsed
-	if len(m.embeddedTerminals) > 0 && m.terminalDockVisible {
-		state = ui.EmbeddedTerminalDockExpanded
-	}
-	return ui.EmbeddedTerminalDockRows(m.height, state)
+	return m.embeddedTerminalDockAllocation().DockRows
 }

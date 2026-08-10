@@ -4858,7 +4858,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{
@@ -4914,7 +4914,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 			})
 			m = inRightPane(m)
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 			m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 				Provider:     sessions.ProviderCodex,
@@ -4953,7 +4953,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 		Provider:     sessions.ProviderCodex,
@@ -5014,7 +5014,7 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
@@ -5073,6 +5073,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
@@ -5127,7 +5128,7 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
@@ -5135,8 +5136,7 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	wantStartWidth := ui.EmbeddedTerminalPTYWidth(180)
-	_, wantStartOuterHeight := ui.EmbeddedTerminalDockHeights(14-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
-	wantStartHeight := ui.EmbeddedTerminalPTYHeight(wantStartOuterHeight)
+	wantStartHeight := ui.ResolveEmbeddedTerminalDock(24, true).BackendPTYRows
 	wantStartSize := [2]int{wantStartWidth, wantStartHeight}
 	if started != wantStartSize {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], wantStartWidth, wantStartHeight)
@@ -5150,32 +5150,74 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
 
-	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 12})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 23})
 	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(160)
-	_, wantResizeOuterHeight := ui.EmbeddedTerminalDockHeights(12-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
-	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(wantResizeOuterHeight)
+	wantResizeHeight := ui.ResolveEmbeddedTerminalDock(23, true).BackendPTYRows
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
 		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
 	}
 }
 
+func TestModel_EmbeddedTerminalUsesResponsiveRenderAndBackendRows(t *testing.T) {
+	m, fakeTerm, started := openEmbeddedSessionForSizingTest(t, 180, 65)
+	wantWidth := ui.EmbeddedTerminalPTYWidth(180)
+	if want := [2]int{wantWidth, 42}; started != want {
+		t.Fatalf("height 65 start = %v, want %v", started, want)
+	}
+
+	fakeTerm.visibleCalls = nil
+	_ = m.View()
+	if want := [2]int{wantWidth, 42}; len(fakeTerm.visibleCalls) != 1 || fakeTerm.visibleCalls[0] != want {
+		t.Fatalf("height 65 visible calls = %#v, want [%v]", fakeTerm.visibleCalls, want)
+	}
+
+	for _, tc := range []struct {
+		height      int
+		wantBackend int
+		wantRender  int
+	}{
+		{height: 64, wantBackend: 41, wantRender: 41},
+		{height: 24, wantBackend: 1, wantRender: 1},
+		{height: 23, wantBackend: 1},
+	} {
+		beforeVisible := len(fakeTerm.visibleCalls)
+		m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: tc.height})
+		if got := fakeTerm.resizes[len(fakeTerm.resizes)-1]; got != [2]int{wantWidth, tc.wantBackend} {
+			t.Fatalf("height %d resize = %v, want %v", tc.height, got, [2]int{wantWidth, tc.wantBackend})
+		}
+		_ = m.View()
+		if tc.wantRender == 0 {
+			if len(fakeTerm.visibleCalls) != beforeVisible {
+				t.Fatalf("height %d requested visible lines while collapsed: %#v", tc.height, fakeTerm.visibleCalls[beforeVisible:])
+			}
+		} else if got := fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1]; got != [2]int{wantWidth, tc.wantRender} {
+			t.Fatalf("height %d visible call = %v, want %v", tc.height, got, [2]int{wantWidth, tc.wantRender})
+		}
+	}
+
+	writes := len(fakeTerm.writes)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if len(fakeTerm.writes) != writes {
+		t.Fatalf("auto-collapsed terminal received user input: %#v", fakeTerm.writes[writes:])
+	}
+}
+
 func TestModel_EmbeddedTerminalWidthIgnoresShortcutAndSearchState(t *testing.T) {
 	t.Run("active search", func(t *testing.T) {
-		m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, 180, 14)
+		m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, 180, 24)
 
 		m = model.SetSearchActiveForTest(m, true)
 		_ = m.View()
-		_, wantOuterHeight := ui.EmbeddedTerminalDockHeights(14-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 		want := [2]int{
 			ui.EmbeddedTerminalPTYWidth(180),
-			ui.EmbeddedTerminalPTYHeight(wantOuterHeight),
+			ui.ResolveEmbeddedTerminalDock(24, true).RenderPTYRows,
 		}
 		if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != want {
 			t.Fatalf("visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, want[0], want[1])
 		}
 
-		m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+		m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 		if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != want {
 			t.Fatalf("resize calls = %#v, want latest %dx%d", fakeTerm.resizes, want[0], want[1])
 		}
@@ -5192,10 +5234,9 @@ func TestModel_EmbeddedTerminalWidthIgnoresShortcutAndSearchState(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, started := openEmbeddedSessionForSizingTest(t, tc.width, tc.height)
-			_, wantOuterHeight := ui.EmbeddedTerminalDockHeights(tc.height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 			want := [2]int{
 				ui.EmbeddedTerminalPTYWidth(tc.width),
-				ui.EmbeddedTerminalPTYHeight(wantOuterHeight),
+				ui.ResolveEmbeddedTerminalDock(tc.height, true).BackendPTYRows,
 			}
 			if started != want {
 				t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", started[0], started[1], want[0], want[1])
@@ -5205,7 +5246,7 @@ func TestModel_EmbeddedTerminalWidthIgnoresShortcutAndSearchState(t *testing.T) 
 }
 
 func TestModel_EmbeddedTerminalKeepsFullWidthWhenRepoPaneCollapsesAndExpands(t *testing.T) {
-	const width, height = 180, 14
+	const width, height = 180, 24
 	m, fakeTerm, _ := openEmbeddedSessionForSizingTest(t, width, height)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
@@ -5275,7 +5316,7 @@ func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 20})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{{
 		Provider:     sessions.ProviderCodex,
@@ -5335,7 +5376,7 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
@@ -5354,7 +5395,7 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "Resume session") || !strings.Contains(view, "claude docs") {
 		t.Fatalf("picker view missing sessions:\n%s", view)
 	} else {
-		assertRenderedSelectPanel(t, view, "Resume session", 72, 12, 54, 0)
+		assertRenderedSelectPanel(t, view, "Resume session", 72, 12, 54, 5)
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -5387,7 +5428,7 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
@@ -5429,7 +5470,7 @@ func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
@@ -5467,7 +5508,7 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 14})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/one", Branch: "feature/one"},
@@ -5537,6 +5578,7 @@ func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
@@ -5564,6 +5606,7 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
@@ -5598,6 +5641,7 @@ func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 24})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
