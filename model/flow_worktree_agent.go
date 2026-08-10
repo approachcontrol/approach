@@ -95,6 +95,12 @@ func (m Model) handleStartSelectedFlowWorktreeAgent() (tea.Model, tea.Cmd) {
 	listSessions := m.listSessions
 	return m, func() tea.Msg {
 		msg := flowWorktreeAgentPreflightMsg{FlowID: flowID, Token: token, Command: command}
+		var err error
+		msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: flowID})
+		if err != nil {
+			msg.Err = fmt.Errorf("list sessions for Flow %s: %w", flowID, err)
+			return msg
+		}
 		flows, err := listFlows(flowstore.FlowFilter{})
 		if err != nil {
 			msg.Err = fmt.Errorf("refresh Flow before starting agent: %w", err)
@@ -111,10 +117,6 @@ func (m Model) handleStartSelectedFlowWorktreeAgent() (tea.Model, tea.Cmd) {
 		if !found {
 			msg.Err = fmt.Errorf("Flow %s no longer exists", flowID)
 			return msg
-		}
-		msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: flowID})
-		if err != nil {
-			msg.Err = fmt.Errorf("list sessions for Flow %s: %w", flowID, err)
 		}
 		return msg
 	}

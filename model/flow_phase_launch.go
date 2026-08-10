@@ -327,11 +327,25 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 	return func() tea.Msg {
 		records, err := m.listSessions(sessions.SessionFilter{FlowID: target.Record.FlowID})
 		if err != nil {
-			return ActionFailedMsg{RepoPath: target.RepoPath, Err: "failed to list Flow sessions: " + err.Error(), FlowLeaseID: target.Record.FlowID, FlowLeaseToken: target.LaunchID}
+			return ActionFailedMsg{
+				RepoPath:                target.RepoPath,
+				Err:                     "failed to list Flow sessions: " + err.Error(),
+				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
+				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+				FlowLeaseID:             target.Record.FlowID,
+				FlowLeaseToken:          target.LaunchID,
+			}
 		}
 		for _, record := range records {
 			if sessions.IsActive(record) {
-				return ActionFailedMsg{RepoPath: target.RepoPath, Err: "an active persisted session already occupies this Flow", FlowLeaseID: target.Record.FlowID, FlowLeaseToken: target.LaunchID}
+				return ActionFailedMsg{
+					RepoPath:                target.RepoPath,
+					Err:                     "an active persisted session already occupies this Flow",
+					AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
+					AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+					FlowLeaseID:             target.Record.FlowID,
+					FlowLeaseToken:          target.LaunchID,
+				}
 			}
 		}
 		result, err := m.flowPhaseLauncher().Prepare(target.FlowPhaseLaunchPreparedRequest)

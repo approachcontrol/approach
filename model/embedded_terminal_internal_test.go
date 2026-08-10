@@ -194,6 +194,27 @@ func TestEmbeddedTerminalNumbersAreGlobalAcrossScopes(t *testing.T) {
 	}
 }
 
+func TestExitedFlowAssociatedSessionScopeDoesNotAutoClose(t *testing.T) {
+	m := Model{
+		activeTerminalNum: 1,
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number:   1,
+			ID:       1,
+			Scope:    embeddedTerminalScopeSession,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{state: "exited"},
+		}},
+	}
+
+	if m.hasExitedFlowEmbeddedTerminalAutoClose() {
+		t.Fatal("exited Flow-associated session scope reported Flow auto-close work")
+	}
+	next := m.dismissExitedFlowEmbeddedTerminals()
+	if len(next.embeddedTerminals) != 1 {
+		t.Fatalf("exited Flow-associated session slots = %d, want retained output", len(next.embeddedTerminals))
+	}
+}
+
 func TestDismissEmbeddedTerminalRenumbersGloballyAndPreservesActiveSlot(t *testing.T) {
 	m := Model{
 		activeTerminalNum: 3,

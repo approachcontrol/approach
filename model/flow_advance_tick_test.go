@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
 
@@ -1239,6 +1240,40 @@ func TestModel_AutoAdvanceAsyncLaunchFailurePreservesCompletionEdge(t *testing.T
 	}
 	if len(updates) != 1 || updates[0].PhaseID != "implementation" || !updates[0].AutoLaunch {
 		t.Fatalf("launch updates after async failure = %#v, want retried implementation auto launch", updates)
+	}
+}
+
+func TestModel_AutoAdvanceSessionPreflightFailuresCarryRetryMetadata(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		records []sessions.SessionRecord
+		err     error
+	}{
+		{name: "session list error", err: errors.New("session store unavailable")},
+		{name: "active untracked session", records: []sessions.SessionRecord{{FlowID: "flow-1", Status: "active"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+				return tt.records, tt.err
+			}}
+			target := flowPhaseLaunchTarget{
+				FlowPhaseLaunchPreparedRequest: FlowPhaseLaunchPreparedRequest{
+					FlowPhaseLaunchRequest: FlowPhaseLaunchRequest{Record: flowstore.FlowRecord{FlowID: "flow-1"}},
+					RepoPath:               "/repo",
+					LaunchID:               "launch-1",
+				},
+				AutoAdvanceRetryFlowID:  "flow-1",
+				AutoAdvanceRetryPhaseID: "implementation",
+			}
+
+			msg, ok := m.prepareFlowPhaseLaunch(target)().(ActionFailedMsg)
+			if !ok {
+				t.Fatalf("session preflight returned %T, want ActionFailedMsg", msg)
+			}
+			if msg.AutoAdvanceRetryFlowID != "flow-1" || msg.AutoAdvanceRetryPhaseID != "implementation" {
+				t.Fatalf("retry metadata = flow %q phase %q", msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceRetryPhaseID)
+			}
+		})
 	}
 }
 

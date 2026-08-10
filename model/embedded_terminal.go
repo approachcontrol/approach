@@ -960,7 +960,7 @@ func embeddedTerminalRunning(term EmbeddedTerminal) bool {
 func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 	ids := make([]embeddedTerminalID, 0)
 	for _, slot := range m.embeddedTerminals {
-		if (slot.Scope != embeddedTerminalScopeFlow && slot.FlowID == "") || slot.Terminal == nil {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -975,7 +975,7 @@ func (m Model) dismissExitedFlowEmbeddedTerminals() Model {
 
 func (m Model) hasExitedFlowEmbeddedTerminalAutoClose() bool {
 	for _, slot := range m.embeddedTerminals {
-		if (slot.Scope != embeddedTerminalScopeFlow && slot.FlowID == "") || slot.Terminal == nil {
+		if slot.Scope != embeddedTerminalScopeFlow || slot.Terminal == nil {
 			continue
 		}
 		if flowEmbeddedTerminalAutoCloses(slot.Terminal.State()) {
@@ -1213,6 +1213,11 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 				msg.Err = fmt.Errorf("selected session %s no longer exists", record.SessionID)
 				return msg
 			}
+			msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
+			if err != nil {
+				msg.Err = fmt.Errorf("list sessions for Flow %s: %w", ctx.FlowID, err)
+				return msg
+			}
 			flows, err := listFlows(flowstore.FlowFilter{})
 			if err != nil {
 				msg.Err = fmt.Errorf("refresh Flow before resuming session: %w", err)
@@ -1227,10 +1232,6 @@ func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, r
 			if msg.Flow.FlowID == "" {
 				msg.Err = fmt.Errorf("Flow %s no longer exists", ctx.FlowID)
 				return msg
-			}
-			msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: ctx.FlowID})
-			if err != nil {
-				msg.Err = fmt.Errorf("list sessions for Flow %s: %w", ctx.FlowID, err)
 			}
 			return msg
 		}
