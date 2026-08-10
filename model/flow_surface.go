@@ -47,7 +47,7 @@ func (m Model) storedModeVisible(mode ui.Mode) bool {
 	if m.height <= 0 {
 		return true
 	}
-	sharedOuterRows := m.height - 1 - m.embeddedTerminalDockRows()
+	sharedOuterRows := m.embeddedTerminalDockAllocation().SharedOuterRows
 	layout := ui.StackedContentLayout(sharedOuterRows, m.activePane, m.contentPane)
 	pane, _ := ui.PaneForMode(mode)
 	if pane == ui.PaneTop {

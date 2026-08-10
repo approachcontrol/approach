@@ -68,3 +68,19 @@ func TestStackedContentLayout(t *testing.T) {
 		})
 	}
 }
+
+func TestMinStackedPaneOuterRowsPreservesBothUsefulLists(t *testing.T) {
+	layout := StackedContentLayout(MinStackedPaneOuterRows, PaneTop, PaneBottom)
+	if !layout.Split {
+		t.Fatalf("minimum stacked outer rows %d did not split: %#v", MinStackedPaneOuterRows, layout)
+	}
+	if got := layout.TopRows - stackedPaneBorderRows - stackedTopPaneHeaderRows; got != MinStackedPaneListContentHeight {
+		t.Fatalf("top list rows = %d, want %d", got, MinStackedPaneListContentHeight)
+	}
+	if got := layout.BottomRows - stackedPaneBorderRows - stackedBottomPaneHeaderRows; got != MinStackedPaneListContentHeight {
+		t.Fatalf("bottom list rows = %d, want %d", got, MinStackedPaneListContentHeight)
+	}
+	if StackedContentLayout(MinStackedPaneOuterRows-1, PaneTop, PaneTop).Split {
+		t.Fatalf("one row below minimum %d should degrade", MinStackedPaneOuterRows)
+	}
+}

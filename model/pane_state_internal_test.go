@@ -253,6 +253,7 @@ func TestPaneModeSwitchPreservesOtherPaneState(t *testing.T) {
 func TestActiveFlowsReverseCycleActivatesContentBeforeTerminal(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
 	m.activeFlowSurface = true
+	m.height = 24
 	m.activePane = ui.PaneRepos
 	m.contentPane = ui.PaneBottom
 	m.terminalDockVisible = true
