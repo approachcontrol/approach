@@ -22,8 +22,26 @@ func (m Model) focusedMode() ui.Mode {
 	return m.topMode
 }
 
+// modeStored reports whether a repository-scoped mode currently belongs to
+// either stable pane. Stored background panes continue accepting their own
+// current results even while focus is elsewhere.
+func (m Model) modeStored(mode ui.Mode) bool {
+	pane, ok := ui.PaneForMode(mode)
+	if !ok {
+		return false
+	}
+	if pane == ui.PaneTop {
+		return m.topMode == mode
+	}
+	return m.bottomMode == mode
+}
+
 func (m Model) flowSurfaceVisible() bool {
 	return m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible()
+}
+
+func (m Model) flowRefreshSurfaceVisible() bool {
+	return m.activeFlowSurfaceVisible() || (!m.activeFlowSurfaceVisible() && m.modeStored(ui.ModeFlows))
 }
 
 func (m Model) activeContentFetchMode() ui.Mode {
@@ -167,7 +185,10 @@ func (m Model) currentFilteredFlows() []flowstore.FlowRecord {
 }
 
 func (m Model) flowSurfaceContentHeight() int {
-	return m.flowContentHeight()
+	if m.activeFlowSurfaceVisible() {
+		return m.paneContentHeight(ui.ModeActiveFlows)
+	}
+	return m.paneContentHeight(ui.ModeFlows)
 }
 
 func (m Model) flowSurfaceItemHeight(expandedFlowID string) pane.ItemHeight[flowstore.FlowRecord] {
@@ -214,7 +235,7 @@ func (m Model) restoreActiveExpandedFlowSelection(flowID, phaseID string) Model 
 }
 
 func (m Model) reflowActiveFlows() Model {
-	m.activeFlows = m.activeFlows.Reflow(m.flowContentHeight(), m.contentWidth())
+	m.activeFlows = m.activeFlows.Reflow(m.paneContentHeight(ui.ModeActiveFlows), m.contentWidth())
 	if m.activeFlowSurfaceVisible() {
 		if m.selectedActiveFlowPhaseID != "" {
 			return m.ensureSelectedFlowPhaseVisible()
@@ -230,10 +251,7 @@ func isNumberedModeKey(key string) bool {
 	return key >= "1" && key <= "9"
 }
 
-// switchModeFromKey routes the top-level number keys: 1 selects the Git view
-// (landing on its last-used subview), 2-4 select the remaining top-level
-// views, 5 selects Beads at its last-used subview, and 6-9 are silent no-ops
-// kept reserved for the future.
+// switchModeFromKey routes a number only within the focused stored pane.
 func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 	if !isNumberedModeKey(key) {
 		return m, nil, false
@@ -269,8 +287,8 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	m.activeFlowSurface = false
 	returnMode := m.focusedMode()
 	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
-	if returnMode == ui.ModeFlows {
+	if m.modeStored(ui.ModeFlows) {
 		return m.startFlowsModeFetchWithRefreshTick()
 	}
-	return m.startFetchMode(returnMode)
+	return m, nil
 }

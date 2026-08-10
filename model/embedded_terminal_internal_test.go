@@ -263,8 +263,8 @@ func TestFirstAndLastEmbeddedTerminalReflowSessionSelection(t *testing.T) {
 	}
 
 	next = next.dismissEmbeddedTerminal(next.embeddedTerminals[0].ID)
-	if got := next.sessions.Scroll(); got != 0 {
-		t.Fatalf("session scroll after closing last terminal = %d, want 0", got)
+	if selected, scroll, height := next.sessions.SelectedIndex(), next.sessions.Scroll(), next.sessionContentHeight(); selected < scroll || selected >= scroll+height {
+		t.Fatalf("selected session %d is outside restored stacked viewport [%d, %d)", selected, scroll, scroll+height)
 	}
 }
 
@@ -309,15 +309,15 @@ func TestContentHeightForModeAccountsForTerminalDockState(t *testing.T) {
 		wantExpanded  int
 		wantCollapsed int
 	}{
-		{name: "worktrees", mode: ui.ModeWorktrees, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "branches", mode: ui.ModeBranches, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "stashes", mode: ui.ModeStashes, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "history", mode: ui.ModeHistory, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "reflog", mode: ui.ModeReflog, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "sessions", mode: ui.ModeSessions, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "plans", mode: ui.ModePlans, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "flows", mode: ui.ModeFlows, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
-		{name: "active flows", mode: ui.ModeActiveFlows, wantNoDock: 13, wantExpanded: 3, wantCollapsed: 13},
+		{name: "worktrees", mode: ui.ModeWorktrees, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "branches", mode: ui.ModeBranches, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "stashes", mode: ui.ModeStashes, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "history", mode: ui.ModeHistory, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "reflog", mode: ui.ModeReflog, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "sessions", mode: ui.ModeSessions, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "plans", mode: ui.ModePlans, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "flows", mode: ui.ModeFlows, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
+		{name: "active flows", mode: ui.ModeActiveFlows, wantNoDock: 14, wantExpanded: 4, wantCollapsed: 14},
 	}
 
 	for _, tt := range tests {
@@ -356,8 +356,12 @@ func TestCyclePaneFocusIncludesExpandedTerminalDockInEveryMode(t *testing.T) {
 				t.Fatalf("repo -> list focus = pane %d focus %d, want pane 1/list", m.activePane, m.terminalFocus)
 			}
 			m = m.cyclePaneFocusForward()
+			if m.activePane != ui.PaneBottom || m.terminalFocus != terminalFocusList {
+				t.Fatalf("top -> bottom focus = pane %d focus %d, want bottom/list", m.activePane, m.terminalFocus)
+			}
+			m = m.cyclePaneFocusForward()
 			if m.activePane == ui.PaneRepos || m.terminalFocus != terminalFocusTerminal || !m.terminalPrefixActive {
-				t.Fatalf("list -> terminal focus = pane %d focus %d prefix %v, want pane 1/terminal/command", m.activePane, m.terminalFocus, m.terminalPrefixActive)
+				t.Fatalf("bottom -> terminal focus = pane %d focus %d prefix %v, want content/terminal/command", m.activePane, m.terminalFocus, m.terminalPrefixActive)
 			}
 			m = m.cyclePaneFocusForward()
 			if m.activePane != ui.PaneRepos || m.terminalFocus != terminalFocusList || m.terminalPrefixActive {
@@ -380,8 +384,9 @@ func TestCyclePaneFocusSkipsCollapsedOrEmptyTerminalDock(t *testing.T) {
 			m := Model{topMode: ui.ModeWorktrees, bottomMode: ui.ModePlans, contentPane: ui.PaneBottom, activePane: ui.PaneRepos, terminalDockVisible: tt.visible, embeddedTerminals: tt.terminals}
 			m = m.cyclePaneFocusForward()
 			m = m.cyclePaneFocusForward()
+			m = m.cyclePaneFocusForward()
 			if m.activePane != ui.PaneRepos || m.terminalFocus != terminalFocusList {
-				t.Fatalf("second tab = pane %d focus %d, want repo/list", m.activePane, m.terminalFocus)
+				t.Fatalf("third tab = pane %d focus %d, want repo/list", m.activePane, m.terminalFocus)
 			}
 		})
 	}
@@ -681,6 +686,8 @@ func TestGitAndNonGitModeSwitchesKeepTerminalDockSize(t *testing.T) {
 		}},
 	}
 
+	m.activePane = ui.PaneTop
+	m.contentPane = ui.PaneTop
 	next, _, handled := m.switchModeFromKey("1")
 	if !handled || next.focusedMode() != ui.ModeWorktrees {
 		t.Fatalf("switch to Git = handled %v mode %d, want worktrees", handled, next.focusedMode())
@@ -692,7 +699,9 @@ func TestGitAndNonGitModeSwitchesKeepTerminalDockSize(t *testing.T) {
 		t.Fatalf("Git switch should not resize the mode-independent terminal, got %#v", term.resizes)
 	}
 
-	next, _, handled = next.switchModeFromKey("2")
+	next.activePane = ui.PaneBottom
+	next.contentPane = ui.PaneBottom
+	next, _, handled = next.switchModeFromKey("1")
 	if !handled || next.focusedMode() != ui.ModeSessions {
 		t.Fatalf("switch from Git = handled %v mode %d, want sessions", handled, next.focusedMode())
 	}
@@ -724,10 +733,10 @@ func TestNumberedModeKeysRemainAvailableWithSessionTerminalListFocused(t *testin
 		key      rune
 		wantMode ui.Mode
 	}{
-		{key: '1', wantMode: ui.ModeWorktrees},
-		{key: '2', wantMode: ui.ModeSessions},
-		{key: '3', wantMode: ui.ModePlans},
-		{key: '4', wantMode: ui.ModeFlows},
+		{key: '1', wantMode: ui.ModeSessions},
+		{key: '2', wantMode: ui.ModePlans},
+		{key: '3', wantMode: ui.ModeFlows},
+		{key: '4', wantMode: ui.ModeSessions},
 	} {
 		t.Run(string(tt.key), func(t *testing.T) {
 			m := Model{

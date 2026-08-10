@@ -139,7 +139,56 @@ func assertOnlyListRequestChanged(t *testing.T, before map[ui.Mode]uint64, after
 // inRightPane switches focus to the right pane.
 func inRightPane(m model.Model) model.Model {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.ActivePane() == ui.PaneTop && !ui.IsGitMode(m.Mode()) {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	}
 	return m
+}
+
+func inBeadsPane(m model.Model) model.Model {
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.ActivePane() == ui.PaneTop && !ui.IsBeadsMode(m.Mode()) {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	}
+	return m
+}
+
+func switchTestMode(m model.Model, mode ui.Mode) (model.Model, tea.Cmd) {
+	pane, ok := ui.PaneForMode(mode)
+	if !ok {
+		return m, nil
+	}
+	if m.ActivePane() == ui.PaneRepos {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	if pane == ui.PaneBottom && m.ActivePane() == ui.PaneTop {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	if pane == ui.PaneTop && m.ActivePane() == ui.PaneBottom {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	key := '1'
+	if pane == ui.PaneTop && ui.IsBeadsMode(mode) {
+		key = '2'
+	}
+	if pane == ui.PaneBottom {
+		switch mode {
+		case ui.ModePlans:
+			key = '2'
+		case ui.ModeFlows:
+			key = '3'
+		}
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+	if ui.IsGitMode(mode) && m.Mode() != mode {
+		letter := map[ui.Mode]rune{ui.ModeWorktrees: 'w', ui.ModeBranches: 'b', ui.ModeStashes: 's', ui.ModeHistory: 'h', ui.ModeReflog: 'r'}[mode]
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{letter}})
+	}
+	if ui.IsBeadsMode(mode) && m.Mode() != mode {
+		letter := map[ui.Mode]rune{ui.ModeBeadsReady: 'r', ui.ModeBeadsBlocked: 'b', ui.ModeBeadsOpen: 'o', ui.ModeBeadsInProgress: 'i', ui.ModeBeadsClosed: 'c'}[mode]
+		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{letter}})
+	}
+	return m, cmd
 }
 
 // selectBravo navigates to repo index 1 (bravo) in the left pane.
@@ -290,13 +339,6 @@ func TestModel_NormalRepoRootBranchAllowsCleanedRepoPath(t *testing.T) {
 	}
 	if rows[0].Branch.Name != "main" || rows[0].WorktreePath != "/dev/project" {
 		t.Fatalf("expected cleaned root branch to remain, got %+v", rows)
-	}
-}
-
-func TestModel_DefaultModeIsWorktrees(t *testing.T) {
-	m := model.New(testRepos())
-	if m.Mode() != 1 {
-		t.Errorf("expected default mode ModeWorktrees (1), got %d", m.Mode())
 	}
 }
 
@@ -476,70 +518,6 @@ func TestModel_QuitKeys(t *testing.T) {
 
 // --- Pane switching ---
 
-func TestModel_TabFromRightPaneSwitchesToLeft(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	before := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
-
-	if m.ActivePane() != ui.PaneRepos {
-		t.Errorf("expected left pane after tab, got %d", m.ActivePane())
-	}
-	if cmd != nil {
-		t.Fatalf("tab from right pane produced cmd %T, want nil", cmd)
-	}
-	assertListRequestsUnchanged(t, before, m)
-}
-
-func TestModel_TabFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *testing.T) {
-	m := model.New(testRepos())
-	m = selectBravo(m)
-	before := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyTab})
-
-	if m.ActivePane() == ui.PaneRepos {
-		t.Errorf("expected right pane after tab, got %d", m.ActivePane())
-	}
-	if m.Selected() != 1 {
-		t.Errorf("expected selected unchanged at 1, got %d", m.Selected())
-	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
-	}
-	if m.RepoPaneCollapsed() {
-		t.Fatal("tab from the repos pane should leave it expanded")
-	}
-	if cmd != nil {
-		t.Fatalf("tab from left pane produced cmd %T, want nil", cmd)
-	}
-	assertListRequestsUnchanged(t, before, m)
-}
-
-func TestModel_EnterFromLeftPaneSwitchesToRightWithoutChangingSelectionOrMode(t *testing.T) {
-	m := model.New(testRepos())
-	m = selectBravo(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("expected right pane after enter, got %d", m.ActivePane())
-	}
-	if m.Selected() != 1 {
-		t.Fatalf("selected repo = %d, want unchanged 1", m.Selected())
-	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("mode = %d, want unchanged worktrees", m.Mode())
-	}
-	if !m.RepoPaneCollapsed() {
-		t.Fatal("enter from the repos pane should collapse it")
-	}
-	if cmd != nil {
-		t.Fatalf("enter from left pane produced cmd %T, want nil", cmd)
-	}
-}
-
 func TestModel_CtrlRRestoresAndFocusesRepoPane(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -597,34 +575,6 @@ func TestModel_TabSkipsCollapsedRepoPaneWithoutSessionTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_BackKeysRestoreCollapsedRepoPane(t *testing.T) {
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyBackspace}, {Type: tea.KeyCtrlH}} {
-		t.Run(key.String(), func(t *testing.T) {
-			m := model.New(testRepos())
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-
-			m, _ = update(m, key)
-
-			if m.RepoPaneCollapsed() || m.ActivePane() != ui.PaneRepos {
-				t.Fatalf("%s collapsed=%t activePane=%d, want expanded repos pane", key.String(), m.RepoPaneCollapsed(), m.ActivePane())
-			}
-		})
-	}
-}
-
-func TestModel_TabDoesNotChangeMode(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // mode 3 (stashes)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.Mode() != 3 {
-		t.Errorf("expected mode unchanged at 3, got %d", m.Mode())
-	}
-	if m.ActivePane() != ui.PaneRepos {
-		t.Errorf("expected active pane cycled to left pane, got %d", m.ActivePane())
-	}
-}
-
 func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -636,80 +586,6 @@ func TestModel_BackspaceFromRightPaneSwitchesToLeftWithoutChangingMode(t *testin
 	}
 	if m.Mode() != ui.ModeStashes {
 		t.Fatalf("mode = %d, want unchanged stashes", m.Mode())
-	}
-}
-
-func TestModel_BackspaceFromRightPaneSwitchesToLeftAcrossModes(t *testing.T) {
-	for _, tt := range []struct {
-		mode ui.Mode
-		key  tea.KeyMsg
-	}{
-		{mode: ui.ModeWorktrees, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeBranches, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeStashes, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeHistory, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeReflog, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeSessions, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModePlans, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeFlows, key: tea.KeyMsg{Type: tea.KeyBackspace}},
-		{mode: ui.ModeWorktrees, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModeBranches, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModeStashes, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModeHistory, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModeReflog, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModeSessions, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModePlans, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-		{mode: ui.ModeFlows, key: tea.KeyMsg{Type: tea.KeyCtrlH}},
-	} {
-		t.Run(fmt.Sprintf("mode_%d_%s", tt.mode, tt.key.String()), func(t *testing.T) {
-			m := model.New(testRepos())
-			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{keyForMode(tt.mode)}})
-			if m.ActivePane() == ui.PaneRepos || m.Mode() != tt.mode {
-				t.Fatalf("setup activePane=%d mode=%d, want right pane mode %d", m.ActivePane(), m.Mode(), tt.mode)
-			}
-			before := listRequests(m)
-
-			m, cmd := update(m, tt.key)
-
-			if m.ActivePane() != ui.PaneRepos {
-				t.Fatalf("active pane = %d, want left pane", m.ActivePane())
-			}
-			if m.Mode() != tt.mode {
-				t.Fatalf("mode = %d, want unchanged %d", m.Mode(), tt.mode)
-			}
-			if cmd != nil {
-				t.Fatalf("back key returned cmd %T, want nil", cmd)
-			}
-			assertListRequestsUnchanged(t, before, m)
-		})
-	}
-}
-
-func TestModel_BackspaceFromPlansPaneClearsSelectedPhase(t *testing.T) {
-	m := plansInRightPane(t, model.New(testRepos()), []planstore.PlanRecord{{
-		PlanID:   "plan-1",
-		RepoPath: "/dev/alpha",
-		Title:    "Persist plans",
-		Status:   "draft",
-		Phases:   []planstore.PlanPhase{{PhaseID: "p1", Title: "Tracer bullet", Status: "completed", Order: 1}},
-	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if got := m.SelectedPlanPhaseID(); got != "p1" {
-		t.Fatalf("selected plan phase = %q, want p1 before backspace", got)
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-
-	if m.ActivePane() != ui.PaneRepos {
-		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
-	}
-	if got := m.SelectedPlanPhaseID(); got != "" {
-		t.Fatalf("selected plan phase = %q, want cleared", got)
-	}
-	if m.Mode() != ui.ModePlans {
-		t.Fatalf("mode = %d, want unchanged plans", m.Mode())
 	}
 }
 
@@ -737,36 +613,19 @@ func TestModel_BackKeysFromPlansPaneClearSelectedPhase(t *testing.T) {
 
 			m, cmd := update(m, tt.key)
 
-			if m.ActivePane() != ui.PaneRepos {
-				t.Fatalf("expected left pane after %s, got %d", tt.name, m.ActivePane())
+			if m.ActivePane() != ui.PaneTop {
+				t.Fatalf("expected top pane after reverse focus with %s, got %d", tt.name, m.ActivePane())
 			}
-			if got := m.SelectedPlanPhaseID(); got != "" {
-				t.Fatalf("selected plan phase = %q, want cleared", got)
+			if got := m.SelectedPlanPhaseID(); got != "p1" {
+				t.Fatalf("selected plan phase = %q, want preserved", got)
 			}
-			if m.Mode() != ui.ModePlans {
-				t.Fatalf("mode = %d, want unchanged plans", m.Mode())
+			if m.Mode() != ui.ModeWorktrees {
+				t.Fatalf("mode = %d, want focused top Worktrees", m.Mode())
 			}
 			if cmd != nil {
 				t.Fatalf("%s from plans pane returned cmd %T, want nil", tt.name, cmd)
 			}
 		})
-	}
-}
-
-func TestModel_BackspaceFromFlowsPaneClearsSelectedPhase(t *testing.T) {
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m = selectFlowPhaseByID(t, m, "implementation")
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-
-	if m.ActivePane() != ui.PaneRepos {
-		t.Fatalf("expected left pane after backspace, got %d", m.ActivePane())
-	}
-	if got := m.SelectedFlowPhaseID(); got != "" {
-		t.Fatalf("selected flow phase = %q, want cleared", got)
-	}
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("mode = %d, want unchanged flows", m.Mode())
 	}
 }
 
@@ -963,7 +822,7 @@ func TestModel_LeftPaneModeKeysAreNoOps(t *testing.T) {
 	} {
 		before := listRequests(m)
 		m2, cmd := update(m, key)
-		if m2.Mode() != 1 {
+		if m2.Mode() != ui.ModeBeadsOpen {
 			t.Errorf("key %v changed mode in left pane: got %d", key, m2.Mode())
 		}
 		if m2.ActivePane() != ui.PaneRepos {
@@ -985,8 +844,8 @@ func TestModel_RightArrowFromLeftPaneIsNoOp(t *testing.T) {
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
+	if m.Mode() != ui.ModeBeadsOpen {
+		t.Fatalf("Mode() = %d, want remembered Beads Open", m.Mode())
 	}
 	if cmd != nil {
 		t.Fatalf("right from left pane produced cmd %T, want nil", cmd)
@@ -1003,8 +862,8 @@ func TestModel_LeftArrowFromLeftPaneIsNoOp(t *testing.T) {
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees", m.Mode())
+	if m.Mode() != ui.ModeBeadsOpen {
+		t.Fatalf("Mode() = %d, want remembered Beads Open", m.Mode())
 	}
 	if cmd != nil {
 		t.Fatalf("left from left pane produced cmd %T, want nil", cmd)
@@ -1035,37 +894,6 @@ func TestModel_RightArrowFromLeftPaneInNonEdgeModeIsNoOp(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatalf("right from left pane in branches produced cmd %T, want nil", cmd)
-	}
-	assertListRequestsUnchanged(t, before, m)
-}
-
-func TestModel_LeftArrowFromLeftPaneAtFlowsIsNoOp(t *testing.T) {
-	flow := flowWithPhaseDetails()
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
-		flow,
-		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
-	}, ListRequest: m.ListRequest(ui.ModeFlows)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	before := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-
-	if m.ActivePane() != ui.PaneRepos {
-		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
-	}
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("Mode() = %d, want flows", m.Mode())
-	}
-	if m.FlowSelected() != 1 || m.ExpandedFlowID() != "flow-2" {
-		t.Fatalf("flow state selected=%d expanded=%q, want selected 1 expanded flow-2", m.FlowSelected(), m.ExpandedFlowID())
-	}
-	if cmd != nil {
-		t.Fatalf("left from left pane at flows produced cmd %T, want nil", cmd)
 	}
 	assertListRequestsUnchanged(t, before, m)
 }
@@ -1105,13 +933,15 @@ func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
 	// The fetch targets the newly selected repo; both the success result and
 	// the error message (fake repo paths fail) carry the repo path.
 	var repoPath string
-	switch msg := cmd().(type) {
-	case model.WorktreeResultMsg:
-		repoPath = msg.RepoPath
-	case model.FetchErrorMsg:
-		repoPath = msg.RepoPath
-	default:
-		t.Fatalf("expected WorktreeResultMsg or FetchErrorMsg, got %T", msg)
+	for _, msg := range immediateTestCommandMessages(cmd) {
+		switch msg := msg.(type) {
+		case model.BeadsOpenResultMsg:
+			repoPath = msg.RepoPath
+		case model.FetchErrorMsg:
+			if msg.Mode == ui.ModeBeadsOpen {
+				repoPath = msg.RepoPath
+			}
+		}
 	}
 	if repoPath != "/dev/charlie" {
 		t.Fatalf("expected filtered selection to fetch charlie, got %q", repoPath)
@@ -1144,7 +974,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 				return m
 			},
 			wantPane:  ui.PaneRepos,
-			wantMode:  ui.ModeWorktrees,
+			wantMode:  ui.ModeBeadsOpen,
 			wantQuery: "a",
 		},
 		{
@@ -1813,15 +1643,6 @@ func TestModel_Key5SwitchesToReflog(t *testing.T) {
 	}
 }
 
-func TestModel_Key6SwitchesToSessions(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	if m.Mode() != ui.ModeSessions {
-		t.Errorf("expected sessions mode, got %d", m.Mode())
-	}
-}
-
 func TestModel_PressingCurrentModeKeyNoFetch(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -1842,15 +1663,6 @@ func TestModel_ModeSwitchPreservesSelection(t *testing.T) {
 	}
 }
 
-func TestModel_RightFromWorktreesSwitchesToBranches(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != 2 {
-		t.Errorf("expected mode 2 (branches), got %d", m.Mode())
-	}
-}
-
 func TestModel_LeftFromBranchesSwitchesToWorktrees(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
@@ -1858,41 +1670,6 @@ func TestModel_LeftFromBranchesSwitchesToWorktrees(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})  // worktrees
 	if m.Mode() != 1 {
 		t.Errorf("expected mode 1 (worktrees), got %d", m.Mode())
-	}
-}
-
-func TestModel_RightCyclesGitSubviewsAndWrapsToWorktrees(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("expected starting mode worktrees, got %d", m.Mode())
-	}
-
-	for want := ui.ModeBranches; want <= ui.ModeReflog; want++ {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-		if m.Mode() != want {
-			t.Fatalf("mode after right = %d, want %d", m.Mode(), want)
-		}
-		if m.ActivePane() == ui.PaneRepos {
-			t.Fatalf("ActivePane() = %d, want right pane while moving through subviews", m.ActivePane())
-		}
-	}
-
-	before := listRequests(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("Mode() = %d, want worktrees after wrapping", m.Mode())
-	}
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
-	}
-	if cmd == nil {
-		t.Fatal("right from reflog produced nil cmd, want worktrees fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeWorktrees)
-	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeWorktrees, m.ListRequest(ui.ModeWorktrees)) {
-		t.Fatalf("right from reflog command messages = %#v, want worktrees fetch for request %d", msgs, m.ListRequest(ui.ModeWorktrees))
 	}
 }
 
@@ -1907,149 +1684,6 @@ func TestModel_NumberedModeSwitchClearsStatus(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	if got := m.TransientError(); got != "" {
 		t.Fatalf("numbered mode switch left status %q, want cleared", got)
-	}
-}
-
-func TestModel_LeftCyclesTopLevelViewsIntoGitThenWrapsGitSubviews(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-
-	for _, want := range []ui.Mode{ui.ModePlans, ui.ModeSessions, ui.ModeWorktrees} {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-		if m.Mode() != want {
-			t.Fatalf("mode after left = %d, want %d", m.Mode(), want)
-		}
-		if m.ActivePane() == ui.PaneRepos {
-			t.Fatalf("ActivePane() = %d, want right pane while moving through views", m.ActivePane())
-		}
-	}
-
-	before := listRequests(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeReflog {
-		t.Fatalf("Mode() = %d, want reflog: arrows wrap inside the Git view without spilling out", m.Mode())
-	}
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
-	}
-	if cmd == nil {
-		t.Fatal("left from worktrees produced nil cmd, want reflog fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeReflog)
-	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeReflog, m.ListRequest(ui.ModeReflog)) {
-		t.Fatalf("left from worktrees command messages = %#v, want reflog fetch for request %d", msgs, m.ListRequest(ui.ModeReflog))
-	}
-}
-
-func TestModel_ArrowNavigationWrapsAtModeEdges(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
-		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
-		{Path: "/dev/alpha-worktrees/feature", BranchName: "feature"},
-	}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	before := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeReflog {
-		t.Fatalf("Mode() = %d, want reflog after wrapping inside the Git view", m.Mode())
-	}
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
-	}
-	if m.WorktreeSelected() != 1 {
-		t.Fatalf("WorktreeSelected() = %d, want preserved cursor 1", m.WorktreeSelected())
-	}
-	if cmd == nil {
-		t.Fatal("left from worktrees produced nil cmd, want reflog fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeReflog)
-	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeReflog, m.ListRequest(ui.ModeReflog)) {
-		t.Fatalf("left from worktrees command messages = %#v, want reflog fetch for request %d", msgs, m.ListRequest(ui.ModeReflog))
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	flow := flowWithPhaseDetails()
-	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
-		flow,
-		{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Second flow", Status: flowstore.StatusPending},
-	}, ListRequest: m.ListRequest(ui.ModeFlows)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	before = listRequests(m)
-
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("Mode() = %d, want default Beads Open after right from flows", m.Mode())
-	}
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("ActivePane() = %d, want right pane", m.ActivePane())
-	}
-	if cmd == nil {
-		t.Fatal("right from flows produced nil cmd, want Beads Open fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsOpen)
-	msgs = runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeBeadsOpen, m.ListRequest(ui.ModeBeadsOpen)) {
-		t.Fatalf("right from flows command messages = %#v, want Beads Open fetch for request %d", msgs, m.ListRequest(ui.ModeBeadsOpen))
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeBeadsInProgress {
-		t.Fatalf("Mode() = %d, want in-progress after cycling right inside Beads", m.Mode())
-	}
-	if m.FlowSelected() != 0 || m.ExpandedFlowID() != "" {
-		t.Fatalf("flow state selected=%d expanded=%q, want reset after leaving the flow surface", m.FlowSelected(), m.ExpandedFlowID())
-	}
-}
-
-func TestModel_HKeyOpensHistorySubviewAndLAliasesRightInFlows(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	before := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if m.ActivePane() == ui.PaneRepos || m.Mode() != ui.ModeHistory {
-		t.Fatalf("h at worktrees activePane=%d mode=%d, want right pane history", m.ActivePane(), m.Mode())
-	}
-	if cmd == nil {
-		t.Fatal("h at worktrees produced nil cmd, want history fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeHistory)
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	before = listRequests(m)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	if m.ActivePane() == ui.PaneRepos || m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("l at flows activePane=%d mode=%d, want right pane Beads Open", m.ActivePane(), m.Mode())
-	}
-	if cmd == nil {
-		t.Fatal("l at flows produced nil cmd, want Beads Open fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsOpen)
-}
-
-func TestModel_RightFromStashesGoesToHistory(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}) // stashes
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})                     // history
-	if m.Mode() != 4 {
-		t.Errorf("expected mode 4, got %d", m.Mode())
-	}
-}
-
-func TestModel_LeftFromHistoryGoesToStashes(t *testing.T) {
-	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}) // history
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})                      // stashes
-	if m.Mode() != 3 {
-		t.Errorf("expected mode 3, got %d", m.Mode())
 	}
 }
 

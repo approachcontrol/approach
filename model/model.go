@@ -94,6 +94,7 @@ type Model struct {
 	activeRepoRefresh         uint64
 	pendingRepoSelection      string
 	listRequests              [listRequestSlots]uint64
+	listErrors                [listRequestSlots]string
 	activePane                ui.Pane
 	repoPaneCollapsed         bool
 	activeFlowSurface         bool
@@ -112,7 +113,6 @@ type Model struct {
 	claudeModel               string
 	codexReasoningEffort      string
 	claudeReasoningEffort     string
-	defaultView               ui.Mode
 	planPromptTemplate        string
 	flowPromptTemplates       FlowPromptTemplates
 	repoCreateRoot            string
@@ -145,7 +145,6 @@ type Model struct {
 	saveAgent                 func(string) error
 	saveAgentModel            func(string, string) error
 	saveAgentReasoningEffort  func(string, string) error
-	saveDefaultView           func(ui.Mode) error
 	savePromptTemplate        func(string, string, string) error
 	resetPromptTemplate       func(string, string) error
 	launchTerminal            func(string) (actions.TerminalLaunchSpec, error)
@@ -222,7 +221,6 @@ type Options struct {
 	ClaudeModel              string
 	CodexReasoningEffort     string
 	ClaudeReasoningEffort    string
-	StartupMode              ui.Mode
 	PlanPromptTemplate       string
 	FlowPromptTemplates      FlowPromptTemplates
 	FlowPresets              []flowstore.Preset
@@ -261,7 +259,6 @@ type Options struct {
 	SaveAgentCommand         func(string) error
 	SaveAgentModel           func(string, string) error
 	SaveAgentReasoningEffort func(string, string) error
-	SaveDefaultView          func(ui.Mode) error
 	SavePromptTemplate       func(section, key, value string) error
 	ResetPromptTemplate      func(section, key string) error
 	LaunchTerminal           func(path string) (actions.TerminalLaunchSpec, error)
@@ -298,10 +295,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	saveAgentModel := opts.SaveAgentModel
 	if saveAgentModel == nil {
 		saveAgentModel = func(string, string) error { return nil }
-	}
-	saveDefaultView := opts.SaveDefaultView
-	if saveDefaultView == nil {
-		saveDefaultView = func(ui.Mode) error { return nil }
 	}
 	savePromptTemplate := opts.SavePromptTemplate
 	if savePromptTemplate == nil {
@@ -524,8 +517,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
-	initialMode := startupMode(opts.StartupMode)
-	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(initialMode)
+	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(ui.ModeBeadsOpen)
 	m := Model{
 		repos:                 newRepoPane().SetItems(repos),
 		rows:                  newBranchPane(),
@@ -546,7 +538,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		bottomMode:            bottomMode,
 		contentPane:           contentPane,
 		activeFlowSurface:     activeFlowSurface,
-		defaultView:           initialMode,
 		agentCommand:          agent.Normalize(opts.AgentCommand),
 		codexModel:            agent.NormalizeModel(opts.CodexModel),
 		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
@@ -590,7 +581,6 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		saveAgent:                saveAgent,
 		saveAgentModel:           saveAgentModel,
 		saveAgentReasoningEffort: saveAgentReasoningEffort,
-		saveDefaultView:          saveDefaultView,
 		savePromptTemplate:       savePromptTemplate,
 		resetPromptTemplate:      resetPromptTemplate,
 		launchTerminal:           launchTerminal,
@@ -615,24 +605,13 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		m.listRequestSeq++
 		m.listRequests[int(mode)] = m.listRequestSeq
 	}
-	if initialMode == ui.ModeFlows {
+	if m.modeStored(ui.ModeFlows) {
 		if _, ok := m.currentRepoPath(); ok {
 			m.flowRefreshInFlight = m.currentListRequest(ui.ModeFlows)
 			m.flowRefreshInFlightMode = ui.ModeFlows
 		}
 	}
-	if initialMode == ui.ModeActiveFlows {
-		m.flowRefreshInFlight = m.currentListRequest(ui.ModeActiveFlows)
-		m.flowRefreshInFlightMode = ui.ModeActiveFlows
-	}
 	return m
-}
-
-func startupMode(mode ui.Mode) ui.Mode {
-	if mode >= ui.ModeWorktrees && mode <= ui.ModeBeadsClosed {
-		return mode
-	}
-	return ui.ModeWorktrees
 }
 
 func startupPaneState(mode ui.Mode) (ui.Mode, ui.Mode, ui.Pane, bool) {
@@ -744,7 +723,6 @@ func (m Model) RepoSearch() string              { return m.repos.Query() }
 func (m Model) ItemSearch() string              { return m.activeItemPaneQuery() }
 func (m Model) ListRequest(mode ui.Mode) uint64 { return m.currentListRequest(mode) }
 func (m Model) AgentCommand() string            { return m.agentCommand }
-func (m Model) DefaultView() ui.Mode            { return m.defaultView }
 func (m Model) Beads(mode ui.Mode) []beadsquery.Bead {
 	state, ok := m.beadSubview(mode)
 	if !ok {
@@ -912,11 +890,7 @@ func (m Model) withReasoningEffort(command, effort string) Model {
 func (m Model) RepoCreateRoot() string { return m.repoCreateRoot }
 
 func (m Model) Init() tea.Cmd {
-	fetchCmd := m.fetchForMode()
-	if m.focusedMode() == ui.ModeFlows && fetchCmd == nil {
-		fetchCmd = m.flowRefreshTickCmd()
-	}
-	return batchNonNil(fetchCmd, autoAdvanceTickCmd())
+	return batchNonNil(m.fetchStoredModes(), autoAdvanceTickCmd())
 }
 
 func (m Model) View() string {
@@ -935,13 +909,13 @@ func (m Model) View() string {
 	beadsSelected, beadsScroll := 0, 0
 	beadsAvailable, beadsPending, beadsError := false, false, ""
 	beadsSourceCount, beadsClosedTotal := 0, 0
-	if state, ok := m.activeBeadSubview(); ok {
+	if state, ok := m.beadSubview(m.topMode); ok {
 		beadsActive, beadsSelected, beadsScroll = state.pane.View()
 		beadsAvailable = state.available
 		beadsPending = state.pending
 		beadsError = state.error
 		beadsSourceCount = state.pane.ItemCount()
-		if mode == ui.ModeBeadsClosed {
+		if m.topMode == ui.ModeBeadsClosed {
 			beadsClosedTotal = state.total
 		}
 	}
@@ -979,6 +953,9 @@ func (m Model) View() string {
 		Width:                        m.width,
 		Height:                       m.height,
 		Mode:                         mode,
+		TopMode:                      m.topMode,
+		BottomMode:                   m.bottomMode,
+		ContentPane:                  m.contentPane,
 		ActiveFlows:                  m.activeFlowSurfaceVisible(),
 		Branches:                     rows,
 		Stashes:                      stashes,
@@ -1061,7 +1038,6 @@ func (m Model) View() string {
 		FlowAgentLabel:               m.flowAgentShortcutLabel(),
 		FlowModel:                    m.flowModelLabel(),
 		FlowReasoningEffort:          m.flowReasoningEffortLabel(),
-		DefaultViewLabel:             ViewChoiceLabel(m.defaultView),
 		FlowNextLaunchReady:          m.selectedFlowHasLaunchablePhase(),
 		FlowRepairReady:              m.selectedFlowRepairReady(),
 		FlowManualMergeReadySelected: m.selectedFlowManualMergeReady(),
@@ -1075,6 +1051,9 @@ func (m Model) View() string {
 		ItemSearch:                   m.activeItemPaneQuery(),
 		RepoEmptyMessage:             repoEmptyMessage,
 		RightEmptyMessage:            rightEmptyMessage,
+		TopListError:                 m.currentListError(m.topMode),
+		BottomListError:              m.currentListError(m.bottomMode),
+		ActiveFlowsListError:         m.currentListError(ui.ModeActiveFlows),
 		FetchAvailable:               m.canFetch(),
 		FetchVisibleAvailable:        m.canFetchVisibleRepos(),
 		RepoCreateAvailable:          m.canCreateRepo(),
@@ -1443,7 +1422,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		return m, batchNonNil(cmds...)
 	case flowRefreshTickMsg:
-		if msg.Generation != m.flowRefreshTickGen || !m.flowSurfaceVisible() {
+		if msg.Generation != m.flowRefreshTickGen || !m.flowRefreshSurfaceVisible() {
 			return m, nil
 		}
 		return m.startFlowSurfaceRefreshFetch()
@@ -1621,10 +1600,6 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAgentReasoningEffortSet(msg), nil
 	case AgentReasoningEffortSetFailedMsg:
 		return m.handleAgentReasoningEffortSetFailed(msg), nil
-	case DefaultViewSetMsg:
-		return m.handleDefaultViewSet(msg), nil
-	case DefaultViewSetFailedMsg:
-		return m.handleDefaultViewSetFailed(msg), nil
 	case promptTemplateEditRequestedMsg:
 		return m.handlePromptTemplateEditRequested(msg), nil
 	case PromptTemplateSavedMsg:
@@ -2101,7 +2076,7 @@ func (m Model) reflowExpandedFlow() Model {
 		return m
 	}
 
-	viewHeight := m.flowContentHeight()
+	viewHeight := m.flowSurfaceContentHeight()
 	expandedFlowID := m.currentExpandedFlowID()
 	line := 0
 	for i := 0; i < selected; i++ {
@@ -2243,7 +2218,7 @@ func (m Model) ensureSelectedFlowPhaseVisible() Model {
 		return m
 	}
 	line += 1 + index
-	viewHeight := m.flowContentHeight()
+	viewHeight := m.flowSurfaceContentHeight()
 	if viewHeight <= 0 {
 		viewHeight = 1
 	}
@@ -2294,7 +2269,7 @@ func (m Model) isSelectedBranchDirtyWorktree() bool {
 }
 
 func (m Model) reflowStashes() Model {
-	m.stashes = m.stashes.Reflow(m.stashContentHeight(), m.contentWidth())
+	m.stashes = m.stashes.Reflow(m.contentHeightForMode(ui.ModeStashes), m.contentWidth())
 	return m
 }
 
@@ -2316,18 +2291,18 @@ func (m Model) reflowWorktreeSessions() Model {
 }
 
 func (m Model) reflowReflogs() Model {
-	contentHeight := m.gitPaneContentHeight()
+	contentHeight := m.contentHeightForMode(ui.ModeReflog)
 	m.reflogs = m.reflogs.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
 func (m Model) reflowSessions() Model {
-	m.sessions = m.sessions.Reflow(m.sessionContentHeight(), m.contentWidth())
+	m.sessions = m.sessions.Reflow(m.contentHeightForMode(ui.ModeSessions), m.contentWidth())
 	return m
 }
 
 func (m Model) reflowPlans() Model {
-	m.plans = m.plans.Reflow(m.planContentHeight(), m.contentWidth())
+	m.plans = m.plans.Reflow(m.contentHeightForMode(ui.ModePlans), m.contentWidth())
 	if m.selectedPlanPhaseID != "" {
 		return m.ensureSelectedPlanPhaseVisible()
 	}
@@ -2335,7 +2310,7 @@ func (m Model) reflowPlans() Model {
 }
 
 func (m Model) reflowFlows() Model {
-	m.flows = m.flows.Reflow(m.flowContentHeight(), m.contentWidth())
+	m.flows = m.flows.Reflow(m.contentHeightForMode(ui.ModeFlows), m.contentWidth())
 	if m.activeFlowSurfaceVisible() {
 		return m
 	}
@@ -2349,13 +2324,13 @@ func (m Model) reflowFlows() Model {
 }
 
 func (m Model) reflowCommits() Model {
-	contentHeight := m.gitPaneContentHeight()
+	contentHeight := m.contentHeightForMode(ui.ModeHistory)
 	m.commits = m.commits.Reflow(contentHeight, m.contentWidth())
 	return m
 }
 
 func (m Model) reflowBranches() Model {
-	contentHeight := m.gitPaneContentHeight()
+	contentHeight := m.contentHeightForMode(ui.ModeBranches)
 	m.rows = m.rows.Reflow(contentHeight, m.contentWidth())
 	return m
 }
@@ -2365,7 +2340,7 @@ func (m Model) reflowBeads(mode ui.Mode) Model {
 	if !ok {
 		return m
 	}
-	m.beads[index].pane = m.beads[index].pane.Reflow(m.beadsContentHeight(), m.contentWidth())
+	m.beads[index].pane = m.beads[index].pane.Reflow(m.contentHeightForMode(mode), m.contentWidth())
 	return m
 }
 

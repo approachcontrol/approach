@@ -18,8 +18,8 @@ are already implemented and should be treated as the baseline product:
 
 - Multi-repo scanning under `WORKTREE_ROOT` or `~/dev`, with configurable one-
   or two-level depth, excluding sibling `*-worktrees` directories.
-- Eight right-pane modes: worktrees, branches, stashes, history, reflog,
-  captured agent sessions, saved agent plans, and task-centric Flows.
+- Stable stacked content: a sticky Git/Beads pane above captured sessions,
+  saved plans, and task-centric Flows, plus a full-height Active Flows takeover.
 - Read-only default posture with explicit destructive mode (`D`) before delete,
   drop, or prune actions are exposed.
 - Worktree creation from an existing branch, tag, ref, or new branch name using
@@ -49,8 +49,8 @@ are already implemented and should be treated as the baseline product:
   plans pane with per-phase progress, phase expansion, plan-path copying, and
   plan Markdown editing plus editable launch instructions for whole-plan or
   selected-phase agent launch.
-- Flow records persisted through the `approach flow` CLI and started from the
-  default flows pane with new-flow creation, ready-phase agent launch, derived
+- Flow records persisted through the `approach flow` CLI and shown in the
+  startup bottom pane with new-flow creation, ready-phase agent launch, derived
   status, phase progress, linked plan metadata, PR metadata, repo-scoped
   filtering, linked-plan body opening, expanded-phase session resume, and
   recoverable partial-state labels for missing worktree metadata, pending
@@ -148,7 +148,7 @@ Goal: let users adapt Approach without changing source or environment wrappers.
 | Multiple scan roots | Current scanning accepts one root. Many developers split work across `~/dev`, client folders, and sandbox folders. | P1 |
 | Custom code-open command | `c` is currently hardcoded to `code`. Support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env. | P1 |
 | Additional scan exclude controls | Preserve zero-config scan-depth defaults while letting large workspaces avoid noisy directories beyond sibling `*-worktrees`. | P2 |
-| Persisted UI defaults | Remember default mode and possibly last selected repo without making the app feel stateful in surprising ways. | P3 |
+| Persisted repo selection | Consider remembering the last selected repo without making startup pane state configurable or surprising. | P3 |
 
 ## Distribution Strategy
 
@@ -201,5 +201,5 @@ Good roadmap questions:
 - Does this help users understand worktree state across repos?
 - Does this make common worktree lifecycle actions safer or faster?
 - Does this preserve the read-only default and destructive-mode boundary?
-- Can this be represented clearly in the two-pane dashboard without turning Approach
+- Can this be represented clearly in the stacked dashboard without turning Approach
   into a full git client?

@@ -695,11 +695,12 @@ func (m Model) handleEmbeddedTerminalKeyForScope(msg tea.KeyMsg, _ embeddedTermi
 
 func (m Model) handleFocusedEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	key := msg.String()
-	if key == "tab" {
-		return m.cyclePaneFocusForward(), nil, true
-	}
 	if m.terminalPrefixActive {
 		switch key {
+		case "tab":
+			return m.cyclePaneFocusForward(), nil, true
+		case "backspace", "ctrl+h":
+			return m.cyclePaneFocusBackward(), nil, true
 		case "left":
 			return m.cycleEmbeddedTerminal(-1), nil, true
 		case "right":

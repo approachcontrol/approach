@@ -50,21 +50,25 @@ WORKTREE_ROOT=~/projects ./bin/approach
 
 ### Getting Around
 
-Repos on the left, content on the right. The essentials:
+Repos are on the left. The content column is split into a Git/Beads pane on
+top and a Sessions/Plans/Flows pane on the bottom; the shortcut rail is on the
+right. The essentials:
 
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `k`/`j` | Move selection |
-| `enter` / `tab` | Collapse repos and focus content / focus content without collapsing |
-| `ctrl+r` / `bksp` | Restore and focus the full repo pane outside search or terminal input |
-| `1`–`5` | Git view, sessions, plans, flows, Beads group at its last-used subview (Open on first entry); `6`–`9` are unbound |
+| `enter` / `tab` | Collapse repos and focus the top pane / cycle focus without collapsing |
+| `ctrl+r` | Restore and focus the full repo pane outside search or terminal input |
+| `bksp` | Cycle focus in reverse outside search or terminal input |
+| Top `1` / `2` | Git / Beads at its last-used subview (Open on first Beads entry) |
+| Bottom `1` / `2` / `3` | Sessions / Plans / Flows |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |
-| `←`/`→` | Wrap within Git or Beads subviews; elsewhere step through Git, sessions, plans, flows, and Beads, after which the arrows stay inside whichever group they entered |
+| `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane |
 | `ctrl+a` | Toggle Active Flows (all repos) |
 | `/` | Fuzzy filter the active pane |
 | `f` | Fetch in eligible repo/Git contexts; in a settled Beads Ready pane, create a parked Flow with its worktree for the selected Bead |
-| `f5` | Rescan repositories and refresh the current view, including the active Beads subview |
+| `f5` | Rescan repositories and refresh both stored content panes; Active Flows also refreshes while its takeover is open |
 | `D` | Toggle destructive mode — deletion keys stay disabled until this is on |
 | `a` | Launch the configured coding agent |
 | `n` | Create a worktree, branch, Flow, or repo (context-dependent) |
@@ -78,15 +82,15 @@ plans, Flows, embedded terminals, recovery states — is in
 
 ### Beads
 
-With the content pane focused, press `5` to enter the selected repository's
-Beads group at its last-used subview, defaulting to Open on first entry.
+With the top pane focused, press `2` to enter the selected repository's Beads
+group at its last-used subview, defaulting to Open on first entry.
 All Beads queries and detail reads are read-only, and Approach never mutates
 tracker state. Pressing `5` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
 Closed, and `←`/`→` step and wrap through those five subviews. The letters
 remain scoped to Beads, so Git and other views keep their existing meanings.
-From an ungrouped view, Beads is the fifth top-level arrow stop after Flows and
-opens at the remembered subview; arrows never spill out of either grouped view.
+From Git, `←`/`→` enters Beads at the remembered subview; the same arrows return
+to Git at its remembered subview.
 
 Ready comes from `bd ready`; Blocked, Open, In-Progress, and Closed come from
 their respective `bd list -s ...` status queries. Ready, Blocked, Open, and
@@ -177,14 +181,13 @@ root = "~/projects"
 [agent]
 command = "claude"
 claude_model = "claude-sonnet-5"
-
-[ui]
-default_view = 8
 ```
 
 `WORKTREE_ROOT` overrides `[scan].root`. Unknown sections and keys are ignored
 for version compatibility; malformed TOML, wrong types for known keys, and
-invalid known values fail startup. The full reference — models and reasoning effort, Flow
+invalid known values fail startup. Legacy `[ui].default_view` assignments are
+accepted but ignored: startup is always repos-focused with Beads/Open above
+Flows. The full reference — models and reasoning effort, Flow
 presets, prompt templates, bootstrap hooks, sessions storage, terminal
 settings, and environment variables — is in [docs/config.md](docs/config.md).
 

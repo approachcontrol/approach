@@ -39,25 +39,33 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func initWorktreeResult(t *testing.T, m model.Model) model.WorktreeResultMsg {
+func initWorktreeResult(t *testing.T, m model.Model) (model.Model, model.WorktreeResultMsg) {
 	t.Helper()
-	cmd := m.Init()
+	m, _ = switchTestMode(m, ui.ModeBranches)
+	m, cmd := switchTestMode(m, ui.ModeWorktrees)
 	if cmd == nil {
 		t.Fatal("expected Init command")
 	}
-	msg := cmd()
-	if result, ok := msg.(model.WorktreeResultMsg); ok {
-		return result
-	}
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		for _, subcmd := range batch {
-			if result, ok := subcmd().(model.WorktreeResultMsg); ok {
-				return result
+	var findResult func(tea.Cmd) (model.WorktreeResultMsg, bool)
+	findResult = func(cmd tea.Cmd) (model.WorktreeResultMsg, bool) {
+		msg := cmd()
+		if result, ok := msg.(model.WorktreeResultMsg); ok {
+			return result, true
+		}
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, child := range batch {
+				if result, ok := findResult(child); ok {
+					return result, true
+				}
 			}
 		}
+		return model.WorktreeResultMsg{}, false
 	}
-	t.Fatalf("expected WorktreeResultMsg, got %T: %v", msg, msg)
-	return model.WorktreeResultMsg{}
+	if result, ok := findResult(cmd); ok {
+		return m, result
+	}
+	t.Fatal("expected WorktreeResultMsg")
+	return m, model.WorktreeResultMsg{}
 }
 
 func envValue(env []string, key string) string {
@@ -141,7 +149,7 @@ func setupModelPullRequestRepoWithOptions(t *testing.T, opts model.Options) (mod
 func TestModel_ModeFetchesProduceResultsAgainstRealRepo(t *testing.T) {
 	t.Run("worktrees via Init", func(t *testing.T) {
 		m, _ := setupModelRepo(t)
-		_ = initWorktreeResult(t, m)
+		_, _ = initWorktreeResult(t, m)
 	})
 
 	cases := []struct {
@@ -175,7 +183,8 @@ func TestModel_WorktreeDiffPayloadAgainstRealRepo(t *testing.T) {
 	writeFile(t, dir, "README.md", "hello\nchanged\n")
 
 	m = inRightPane(m)
-	m, _ = update(m, initWorktreeResult(t, m)) // load real worktrees (root is dirty)
+	m, result := initWorktreeResult(t, m)
+	m, _ = update(m, result) // load real worktrees (root is dirty)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.Overlay() != ui.OverlayNone {
@@ -285,7 +294,8 @@ func TestModel_MoveWorktreeAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "worktree", "add", oldPath, "-b", "feat")
 
 	m = inRightPane(m)
-	m, _ = update(m, initWorktreeResult(t, m))
+	m, result := initWorktreeResult(t, m)
+	m, _ = update(m, result)
 	if len(m.Worktrees()) != 2 {
 		t.Fatalf("expected root and linked worktree, got %+v", m.Worktrees())
 	}
@@ -418,7 +428,8 @@ func TestModel_AgentLaunchAgainstRealRepo(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, initWorktreeResult(t, m))
+	m, result := initWorktreeResult(t, m)
+	m, _ = update(m, result)
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
 		t.Fatal("expected agent launch command")
@@ -493,7 +504,8 @@ func TestModel_CreateThenAgentLaunchAgainstRealRepo(t *testing.T) {
 	})
 
 	m = inRightPane(m)
-	m, _ = update(m, initWorktreeResult(t, m))
+	m, result := initWorktreeResult(t, m)
+	m, _ = update(m, result)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("agent-smoke")})
 	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -553,7 +565,8 @@ func TestModel_CreateTagThenAgentLaunchUsesNoBranchMetadata(t *testing.T) {
 	mustGit(t, dir, "tag", "v1.0.0")
 
 	m = inRightPane(m)
-	m, _ = update(m, initWorktreeResult(t, m))
+	m, result := initWorktreeResult(t, m)
+	m, _ = update(m, result)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v1.0.0")})
 	m, createCmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -865,7 +878,8 @@ func TestModel_CombinedCleanupForceDeleteSucceedsAgainstRealRepo(t *testing.T) {
 	mustGit(t, dir, "checkout", base)
 
 	m = inWorktreesMode(m)
-	m, _ = update(m, initWorktreeResult(t, m)) // load real worktrees
+	m, result := initWorktreeResult(t, m)
+	m, _ = update(m, result) // load real worktrees
 
 	// Simulate the "feat" worktree having been removed → "Also delete branch?".
 	m, _ = update(m, model.WorktreeRemovedMsg{RepoPath: dir, BranchName: "feat"})

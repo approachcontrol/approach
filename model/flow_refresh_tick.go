@@ -85,7 +85,7 @@ func (m Model) finishFlowRefreshFetch(mode ui.Mode, request uint64) (Model, tea.
 	}
 	m.flowRefreshInFlight = 0
 	m.flowRefreshInFlightMode = 0
-	if !m.flowSurfaceVisible() {
+	if !m.flowRefreshSurfaceVisible() {
 		return m, nil
 	}
 	return m, m.flowRefreshTickCmd()

@@ -28,8 +28,9 @@ func TestModel_Key7SwitchesToPlansAndFetches(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if m.Mode() != ui.ModePlans {
 		t.Fatalf("mode = %d, want plans", m.Mode())
 	}
@@ -63,7 +64,8 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if cmd == nil {
 		t.Fatal("expected initial plans fetch")
 	}
@@ -72,7 +74,7 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 		t.Fatalf("initial Plans() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	if cmd != nil {
 		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
 	}
@@ -83,7 +85,9 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 	if got := m.Plans(); len(got) != 0 {
 		t.Fatalf("expected plans cleared before refetch, got %#v", got)
 	}
-	m, _ = update(m, cmd())
+	for _, msg := range immediateTestCommandMessages(cmd) {
+		m, _ = update(m, msg)
+	}
 	if got := m.Plans(); len(got) != 1 || got[0].RepoPath != "/dev/bravo" {
 		t.Fatalf("refetched Plans() = %#v", got)
 	}
@@ -97,7 +101,8 @@ func TestModel_StalePlanResultIgnored(t *testing.T) {
 		ListPlans: func(planstore.PlanFilter) ([]planstore.PlanRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 
 	// A result with a stale (zero) list request must be ignored.
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
@@ -115,7 +120,8 @@ func TestModel_PlanListErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if cmd == nil {
 		t.Fatal("expected plans fetch command")
 	}
@@ -142,7 +148,8 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
@@ -224,7 +231,8 @@ func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
@@ -301,7 +309,8 @@ func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -334,7 +343,8 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{{
 		PlanID:       "plan-1",
 		Title:        "Implement plans",
@@ -399,7 +409,8 @@ func TestModel_PlanLaunchInstructionsEscCancels(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -423,7 +434,8 @@ func TestModel_PlanLaunchInstructionsRejectsBlankSubmit(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -587,7 +599,8 @@ func TestModel_XKeyTogglesPlanPhaseRows(t *testing.T) {
 func TestModel_IKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	if cmd != nil {
@@ -598,7 +611,8 @@ func TestModel_IKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 func TestModel_IKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -644,7 +658,8 @@ func TestModel_IKeyLaunchPathFallsBackFromPlanRepoToSelectedRepo(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{tc.plan}, ListRequest: m.ListRequest(ui.ModePlans)})
 
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
@@ -672,7 +687,8 @@ func TestModel_IKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "", errors.New("bad plan path") },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -692,7 +708,8 @@ func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -715,7 +732,8 @@ func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -752,7 +770,8 @@ func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -875,7 +894,8 @@ func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -894,7 +914,8 @@ func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 func TestModel_YKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 	m := model.New(testRepos())
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 
 	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if cmd != nil {
@@ -907,7 +928,8 @@ func TestModel_YKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 		PlanMarkdownPath: func(string) (string, error) { return "", errors.New("cannot resolve plan path") },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})
@@ -927,7 +949,8 @@ func TestModel_YKeyPlanClipboardErrorShowsStatus(t *testing.T) {
 		CopyToClipboard:  func(string) error { return errors.New("clipboard unavailable") },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Implement plans", Status: "approved", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModePlans)})

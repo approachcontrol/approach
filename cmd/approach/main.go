@@ -19,7 +19,6 @@ import (
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
-	"github.com/approachcontrol/approach/ui"
 )
 
 func main() {
@@ -321,12 +320,6 @@ func startProgram(repos []scanner.Repo, opts startProgramOptions) error {
 
 func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo, error), sessionStore *sessions.Store, planStore *planstore.Store, flowStore *flowstore.Store) model.Options {
 	launchOpts := actions.LaunchOptions{TerminalCommand: cfg.Terminal.Command}
-	startupMode := ui.ModeFlows
-	if cfg.UI.DefaultView != nil {
-		if mode, ok := model.ModeForViewNumber(*cfg.UI.DefaultView); ok {
-			startupMode = mode
-		}
-	}
 	flowPreset, _ := resolveConfiguredFlowPreset(cfg, "")
 	return model.Options{
 		AgentCommand:          cfg.Agent.Command,
@@ -334,7 +327,6 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		ClaudeModel:           cfg.Agent.ClaudeModel,
 		CodexReasoningEffort:  cfg.Agent.CodexReasoningEffort,
 		ClaudeReasoningEffort: cfg.Agent.ClaudeReasoningEffort,
-		StartupMode:           startupMode,
 		PlanPromptTemplate:    cfg.Agent.PlanPrompt,
 		FlowPresets:           cfg.Flow.Presets,
 		FlowPreset:            flowPreset,
@@ -393,13 +385,6 @@ func modelOptionsFromConfig(cfg config.Config, scanRepos func() ([]scanner.Repo,
 		},
 		SaveAgentModel: func(command, model string) error {
 			return config.SaveAgentModel(command, model)
-		},
-		SaveDefaultView: func(mode ui.Mode) error {
-			number, ok := model.ViewNumber(mode)
-			if !ok {
-				return fmt.Errorf("unsupported default view %d", mode)
-			}
-			return config.SaveDefaultView(number)
 		},
 		SavePromptTemplate: func(section, key, value string) error {
 			return config.SavePromptTemplate(section, key, value)

@@ -18,7 +18,6 @@ import (
 	"github.com/approachcontrol/approach/planstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
-	"github.com/approachcontrol/approach/ui"
 )
 
 func TestRun_VersionBypassesConfigAndScan(t *testing.T) {
@@ -414,38 +413,6 @@ func TestModelOptionsFromConfigPassesReasoningEffort(t *testing.T) {
 	}
 	if opts.SaveAgentModel == nil {
 		t.Fatal("SaveAgentModel should be wired")
-	}
-}
-
-func TestModelOptionsFromConfigMapsDefaultView(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		view *int
-		want ui.Mode
-	}{
-		{name: "missing uses flows", want: ui.ModeFlows},
-		{name: "view 1", view: intPtr(1), want: ui.ModeWorktrees},
-		{name: "view 8", view: intPtr(8), want: ui.ModeFlows},
-		{name: "view 9", view: intPtr(9), want: ui.ModeActiveFlows},
-		{name: "view 10", view: intPtr(10), want: ui.ModeBeadsReady},
-		{name: "view 11", view: intPtr(11), want: ui.ModeBeadsBlocked},
-		{name: "view 12", view: intPtr(12), want: ui.ModeBeadsOpen},
-		{name: "view 13", view: intPtr(13), want: ui.ModeBeadsInProgress},
-		{name: "view 14", view: intPtr(14), want: ui.ModeBeadsClosed},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			sessionStore, planStore, flowStore := testArtifactStores(t)
-			opts := modelOptionsFromConfig(config.Config{
-				UI: config.UIConfig{DefaultView: tt.view},
-			}, nil, sessionStore, planStore, flowStore)
-
-			if opts.StartupMode != tt.want {
-				t.Fatalf("StartupMode = %v, want %v", opts.StartupMode, tt.want)
-			}
-			if opts.SaveDefaultView == nil {
-				t.Fatal("SaveDefaultView should be wired")
-			}
-		})
 	}
 }
 

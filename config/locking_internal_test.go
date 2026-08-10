@@ -56,23 +56,22 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	})
 
 	previousAcquire := acquireConfigFileLock
-	attempts := make(chan configLockAttempt, 6)
+	attempts := make(chan configLockAttempt, 5)
 	acquireConfigFileLock = func(path, label string, timeout time.Duration) (func(), error) {
 		attempts <- configLockAttempt{path: path, label: label}
 		return artifacts.AcquireFileLock(path, label, timeout)
 	}
 	t.Cleanup(func() { acquireConfigFileLock = previousAcquire })
-	results := make(chan error, 6)
+	results := make(chan error, 5)
 	go func() { results <- SaveAgentCommand("codex", options...) }()
 	go func() { results <- SaveAgentModel("codex", "gpt-5.5", options...) }()
 	go func() { results <- SaveAgentReasoningEffort("claude", "max", options...) }()
-	go func() { results <- SaveDefaultView(7, options...) }()
 	go func() {
 		results <- SavePromptTemplate("flow_prompts", "implementation", "new implementation prompt", options...)
 	}()
 	go func() { results <- ResetPromptTemplate("agent", "plan_prompt", options...) }()
 
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		select {
 		case attempt := <-attempts:
 			if attempt.path != lockPath || attempt.label != wantLabel {
@@ -88,7 +87,7 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	}
 	release()
 	released = true
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		select {
 		case err := <-results:
 			if err != nil {
@@ -105,9 +104,6 @@ func TestAllConfigMutationFamiliesSerializeAtOneTransactionLock(t *testing.T) {
 	}
 	if cfg.Agent.Command != "codex" || cfg.Agent.CodexModel != "gpt-5.5" || cfg.Agent.ClaudeReasoningEffort != "max" {
 		t.Fatalf("agent mutations missing: %#v", cfg.Agent)
-	}
-	if cfg.UI.DefaultView == nil || *cfg.UI.DefaultView != 7 {
-		t.Fatalf("default view = %#v, want 7", cfg.UI.DefaultView)
 	}
 	if cfg.FlowPrompts.Implementation != "new implementation prompt" || cfg.FlowPrompts.Generic != "preserve generic" {
 		t.Fatalf("flow prompts = %#v", cfg.FlowPrompts)

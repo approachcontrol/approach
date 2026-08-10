@@ -13,6 +13,19 @@ import (
 
 // pressKey sends a single-rune key to the model.
 func pressKey(m model.Model, r rune) model.Model {
+	if m.Mode() != ui.ModeActiveFlows {
+		switch r {
+		case '2', '3', '4':
+			if m.ActivePane() == ui.PaneTop {
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			}
+			r -= 1
+		case '1':
+			if m.ActivePane() == ui.PaneBottom {
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+			}
+		}
+	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	return m
 }
@@ -137,13 +150,11 @@ func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
 			name:       "sessions",
 			setup:      func(m model.Model) model.Model { return pressKey(m, '2') },
 			wantReturn: ui.ModeSessions,
-			wantFetch:  ui.ModeSessions,
 		},
 		{
 			name:       "plans",
 			setup:      func(m model.Model) model.Model { return pressKey(m, '3') },
 			wantReturn: ui.ModePlans,
-			wantFetch:  ui.ModePlans,
 		},
 		{
 			name:       "flows",
@@ -157,7 +168,7 @@ func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
 				return pressKey(m, 's')
 			},
 			wantReturn: ui.ModeStashes,
-			wantFetch:  ui.ModeStashes,
+			wantFetch:  ui.ModeFlows,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -180,27 +191,19 @@ func TestActiveFlowsToggle_OpensAndReturnsToPreviousView(t *testing.T) {
 			if m.Mode() != tc.wantReturn {
 				t.Fatalf("second ctrl+a mode = %d, want %d", m.Mode(), tc.wantReturn)
 			}
-			if cmd == nil {
-				t.Fatal("ctrl+a returning from active flows returned nil command")
+			if tc.wantFetch == 0 {
+				if cmd != nil {
+					t.Fatalf("ctrl+a return issued unexpected command %T", cmd)
+				}
+				assertListRequestsUnchanged(t, before, m)
+			} else {
+				if cmd == nil {
+					t.Fatal("ctrl+a returning to Flows returned nil refresh command")
+				}
+				assertOnlyListRequestChanged(t, before, m, tc.wantFetch)
 			}
-			assertOnlyListRequestChanged(t, before, m, tc.wantFetch)
 		})
 	}
-}
-
-func TestActiveFlowsToggle_FallsBackToFlowsWhenNoReturnModeRecorded(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeActiveFlows}))
-	before := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("ctrl+a from startup active flows mode = %d, want flows", m.Mode())
-	}
-	if cmd == nil {
-		t.Fatal("ctrl+a fallback returned nil command")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeFlows)
 }
 
 func TestActiveFlowsToggle_WorksFromLeftPane(t *testing.T) {
@@ -237,41 +240,7 @@ func TestActiveFlowsToggle_InertWhileSearchActive(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 }
 
-func TestTopLevelKeys_StartupGitDefaultSeedsStickySubview(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{StartupMode: ui.ModeReflog})
-	m = inRightPane(m)
-	m = pressKey(m, '3') // plans
-	if m.Mode() != ui.ModePlans {
-		t.Fatalf("mode = %d, want ModePlans", m.Mode())
-	}
-
-	m = pressKey(m, '1')
-
-	if m.Mode() != ui.ModeReflog {
-		t.Fatalf("mode = %d, want ModeReflog seeded from startup default", m.Mode())
-	}
-}
-
-func TestGitSubview_ArrowsCycleSubviewsWithWrap(t *testing.T) {
-	m := inRightPane(model.New(testRepos()))
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.Mode() != ui.ModeReflog {
-		t.Fatalf("left from worktrees mode = %d, want wrap to ModeReflog", m.Mode())
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeWorktrees {
-		t.Fatalf("right from reflog mode = %d, want wrap to ModeWorktrees", m.Mode())
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeBranches {
-		t.Fatalf("right from worktrees mode = %d, want ModeBranches", m.Mode())
-	}
-}
-
-func TestTopLevelArrows_CycleTopLevelViewsThroughBeads(t *testing.T) {
+func TestBottomPaneArrowsCycleBottomViews(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, '2') // sessions
 
@@ -282,8 +251,8 @@ func TestTopLevelArrows_CycleTopLevelViewsThroughBeads(t *testing.T) {
 
 	m = pressKey(m, '4') // flows
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
+	if m.Mode() != ui.ModeSessions {
+		t.Fatalf("right from flows mode = %d, want wrapped Sessions", m.Mode())
 	}
 }
 
@@ -327,18 +296,6 @@ func TestTopLevelNumberedKeys_InertInsideActiveFlows(t *testing.T) {
 	assertListRequestsUnchanged(t, before, m)
 }
 
-func TestTopLevelArrows_EnteringGitLandsOnLastUsedSubview(t *testing.T) {
-	m := inRightPane(model.New(testRepos()))
-	m = pressKey(m, 'h') // history subview
-	m = pressKey(m, '2') // sessions
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-
-	if m.Mode() != ui.ModeHistory {
-		t.Fatalf("left from sessions mode = %d, want last-used git subview ModeHistory", m.Mode())
-	}
-}
-
 func TestRetiredKeys_HLInertInSessionsAndPlans(t *testing.T) {
 	for _, view := range []struct {
 		key  rune
@@ -364,14 +321,14 @@ func TestRetiredKeys_HLInertInSessionsAndPlans(t *testing.T) {
 	}
 }
 
-func TestRetiredKeys_LInFlowsAliasesRightArrowToBeads(t *testing.T) {
+func TestRetiredLKeyIsInertInFlows(t *testing.T) {
 	m := inRightPane(model.New(testRepos()))
 	m = pressKey(m, '4') // flows
 
 	m = pressKey(m, 'l')
 
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("l in flows mode = %d, want ModeBeadsOpen (right alias)", m.Mode())
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("l in flows mode = %d, want unchanged Flows", m.Mode())
 	}
 }
 

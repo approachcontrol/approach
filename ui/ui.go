@@ -181,6 +181,48 @@ func PaneForMode(mode Mode) (Pane, bool) {
 
 const LeftPaneWidth = 30
 
+// MinStackedPaneListContentHeight is the minimum useful list area retained in
+// each stored pane before the content column degrades to one full-height pane.
+const MinStackedPaneListContentHeight = 6
+
+const (
+	stackedPaneBorderRows       = 2
+	stackedTopPaneHeaderRows    = 2
+	stackedBottomPaneHeaderRows = 1
+)
+
+// StackedPaneLayout is a pure allocation of the content column's outer rows.
+// In split mode the top pane receives the odd row. In degraded mode exactly
+// one allocation is non-zero.
+type StackedPaneLayout struct {
+	Split      bool
+	TopRows    int
+	BottomRows int
+}
+
+// StackedContentLayout allocates the shared outer row budget after terminal
+// dock subtraction.
+func StackedContentLayout(sharedRows int, focused, remembered Pane) StackedPaneLayout {
+	if sharedRows < 0 {
+		sharedRows = 0
+	}
+	topRows := (sharedRows + 1) / 2
+	bottomRows := sharedRows / 2
+	topListRows := topRows - stackedPaneBorderRows - stackedTopPaneHeaderRows
+	bottomListRows := bottomRows - stackedPaneBorderRows - stackedBottomPaneHeaderRows
+	if topListRows >= MinStackedPaneListContentHeight && bottomListRows >= MinStackedPaneListContentHeight {
+		return StackedPaneLayout{Split: true, TopRows: topRows, BottomRows: bottomRows}
+	}
+	visible := focused
+	if visible != PaneTop && visible != PaneBottom {
+		visible = remembered
+	}
+	if visible == PaneBottom {
+		return StackedPaneLayout{BottomRows: sharedRows}
+	}
+	return StackedPaneLayout{TopRows: sharedRows}
+}
+
 // CollapsedRepoPaneWidth is the total width of the collapsed repos strip,
 // including its left and right borders.
 const CollapsedRepoPaneWidth = 4
@@ -292,6 +334,9 @@ type RenderParams struct {
 	Width                        int
 	Height                       int
 	Mode                         Mode
+	TopMode                      Mode
+	BottomMode                   Mode
+	ContentPane                  Pane
 	ActiveFlows                  bool
 	Branches                     []gitquery.BranchRow
 	Stashes                      []gitquery.Stash
@@ -374,7 +419,6 @@ type RenderParams struct {
 	FlowAgentLabel               string
 	FlowModel                    string
 	FlowReasoningEffort          string
-	DefaultViewLabel             string
 	FlowNextLaunchReady          bool
 	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
@@ -388,6 +432,9 @@ type RenderParams struct {
 	ItemSearch                   string
 	RepoEmptyMessage             string
 	RightEmptyMessage            string
+	TopListError                 string
+	BottomListError              string
+	ActiveFlowsListError         string
 	FetchAvailable               bool
 	FetchVisibleAvailable        bool
 	RepoCreateAvailable          bool
@@ -642,7 +689,6 @@ func renderApplication(p RenderParams) string {
 		FlowAgentLabel:               p.FlowAgentLabel,
 		FlowModel:                    p.FlowModel,
 		FlowReasoningEffort:          p.FlowReasoningEffort,
-		DefaultViewLabel:             p.DefaultViewLabel,
 		FlowNextLaunchReady:          p.FlowNextLaunchReady,
 		FlowRepairReady:              p.FlowRepairReady,
 		FlowManualMergeReadySelected: p.FlowManualMergeReadySelected && flowSelected && !flowPhaseSelected,
@@ -818,6 +864,23 @@ func renderApplication(p RenderParams) string {
 		Width(rightContentWidth).
 		Height(paneRowHeight).
 		Render(rightContent)
+	if p.TopMode != 0 && p.BottomMode != 0 {
+		sharedOuterRows := paneRowHeight + stackedPaneBorderRows
+		if activeFlows {
+			focused := p.ActivePane != PaneRepos && !p.EmbeddedTerminalFocused
+			rightPane = renderStackedModePane(p, ModeActiveFlows, rightContentWidth, sharedOuterRows, focused, true, repoPath)
+		} else {
+			layout := StackedContentLayout(sharedOuterRows, p.ActivePane, p.ContentPane)
+			stacked := make([]string, 0, 2)
+			if layout.TopRows > 0 {
+				stacked = append(stacked, renderStackedModePane(p, p.TopMode, rightContentWidth, layout.TopRows, p.ActivePane == PaneTop && !p.EmbeddedTerminalFocused, false, repoPath))
+			}
+			if layout.BottomRows > 0 {
+				stacked = append(stacked, renderStackedModePane(p, p.BottomMode, rightContentWidth, layout.BottomRows, p.ActivePane == PaneBottom && !p.EmbeddedTerminalFocused, false, repoPath))
+			}
+			rightPane = lipgloss.JoinVertical(lipgloss.Left, stacked...)
+		}
+	}
 
 	panes := []string{leftPane, rightPane}
 	if showShortcutPane {
@@ -837,6 +900,206 @@ func renderApplication(p RenderParams) string {
 	}
 
 	return content + "\n" + statusBar
+}
+
+func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focused, takeover bool, repoPath string) string {
+	if outerRows <= 0 {
+		return ""
+	}
+	header := renderStackedModeHeader(p, mode, width, takeover)
+	headerLines := strings.Split(header, "\n")
+	contentRows := outerRows - stackedPaneBorderRows
+	if contentRows < 0 {
+		contentRows = 0
+	}
+	listRows := contentRows - len(headerLines)
+	if listRows < 0 {
+		listRows = 0
+	}
+
+	branchSel, stashSel := p.BranchSelected, p.StashSelected
+	commitSel, worktreeSel, reflogSel := p.CommitSelected, p.WorktreeSelected, p.ReflogSelected
+	sessionSel, planSel, flowSel, beadSel := p.SessionSelected, p.PlanSelected, p.FlowSelected, p.BeadsOpenSelected
+	worktreeSessionSel := p.WorktreeSessionSelected
+	selectedPlanPhaseID, selectedFlowPhaseID := p.SelectedPlanPhaseID, p.SelectedFlowPhaseID
+	if !focused {
+		branchSel, stashSel, commitSel, worktreeSel, reflogSel = -1, -1, -1, -1, -1
+		sessionSel, planSel, flowSel, beadSel, worktreeSessionSel = -1, -1, -1, -1, -1
+		selectedPlanPhaseID, selectedFlowPhaseID = "", ""
+	}
+
+	repoDisplayNames := repoDisplayNamesByPath(p.Repos)
+	var body []string
+	switch {
+	case (mode == ModeFlows || takeover) && len(p.Flows) > 0:
+		body = renderFlowPane(p.Flows, flowSel, p.FlowScroll, width, listRows, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, takeover, repoDisplayNames)
+	case mode == ModeFlows || takeover:
+		message := paneEmptyMessage(p, mode, repoPath)
+		if takeover && p.ActiveFlowsListError == "" {
+			message = "No active flows"
+		}
+		body = renderPlaceholderPane(width, listRows, message)
+	case mode == ModeWorktrees && len(p.Worktrees) > 0:
+		body = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, width, listRows, p.InlineWorktreeSessions, p.WorktreeSessions, worktreeSessionSel, p.WorktreeSessionScroll)
+	case mode == ModeBranches && len(p.Branches) > 0:
+		body = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, width, listRows, repoPath)
+	case mode == ModeStashes && len(p.Stashes) > 0:
+		body = renderStashPane(p.Stashes, stashSel, p.StashScroll, width, listRows)
+	case mode == ModeHistory && len(p.Commits) > 0:
+		body = renderCommitPane(p.Commits, commitSel, p.CommitScroll, width, listRows)
+	case mode == ModeReflog && len(p.Reflogs) > 0:
+		body = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, width, listRows)
+	case mode == ModeSessions && len(p.Sessions) > 0:
+		body = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, width, listRows)
+	case mode == ModePlans && len(p.Plans) > 0:
+		body = renderPlanPane(p.Plans, planSel, p.PlanScroll, width, listRows, p.ExpandedPlanID, selectedPlanPhaseID)
+	case IsBeadsMode(mode) && p.BeadsOpenPending:
+		body = renderPlaceholderPane(width, listRows, "loading "+beadsModeLabel(mode)+" beads")
+	case IsBeadsMode(mode) && p.BeadsError != "":
+		body = renderPlaceholderPane(width, listRows, "Could not load "+beadsModeLabel(mode)+" beads: "+terminalSafeSingleLine(p.BeadsError))
+	case IsBeadsMode(mode) && len(p.BeadsOpen) > 0:
+		body = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, listRows)
+	case IsBeadsMode(mode):
+		message := "beads not configured"
+		if repoPath == "" || p.BeadsOpenAvailable {
+			message = paneEmptyMessage(p, mode, repoPath)
+		}
+		body = renderPlaceholderPane(width, listRows, message)
+	default:
+		body = renderPlaceholderPane(width, listRows, paneEmptyMessage(p, mode, repoPath))
+	}
+
+	lines := append(headerLines, body...)
+	if len(lines) > contentRows {
+		lines = lines[:contentRows]
+	}
+	borderColor := clearDarkTheme.inactiveBorder
+	if focused {
+		borderColor = clearDarkTheme.activeBorder
+		if p.Destructive {
+			borderColor = clearDarkTheme.destructiveBorder
+		}
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(borderColor).
+		Width(width).
+		Height(contentRows).
+		Render(strings.Join(lines, "\n"))
+}
+
+func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
+	if mode == p.Mode && p.RightEmptyMessage != "" {
+		return p.RightEmptyMessage
+	}
+	listError := ""
+	pane, paneOK := PaneForMode(mode)
+	switch {
+	case mode == ModeActiveFlows:
+		listError = p.ActiveFlowsListError
+	case paneOK && pane == PaneTop:
+		listError = p.TopListError
+	case paneOK && pane == PaneBottom:
+		listError = p.BottomListError
+	}
+	if listError != "" {
+		message := "Could not load " + modeDataLabel(mode)
+		if p.TransientError == listError {
+			message += "; see status bar"
+		}
+		return message
+	}
+	if repoPath == "" {
+		if strings.TrimSpace(p.RepoSearch) != "" {
+			return "No matching repo"
+		}
+		return "No selected repo"
+	}
+	switch mode {
+	case ModeWorktrees:
+		return "No worktrees"
+	case ModeBranches:
+		return "No branches"
+	case ModeStashes:
+		return "No stashes"
+	case ModeHistory:
+		return "No commits"
+	case ModeReflog:
+		return "No reflog entries"
+	case ModeSessions:
+		return "No sessions"
+	case ModePlans:
+		return "No plans"
+	case ModeFlows:
+		return "No flows"
+	default:
+		return p.RightEmptyMessage
+	}
+}
+
+func modeDataLabel(mode Mode) string {
+	switch mode {
+	case ModeWorktrees:
+		return "worktrees"
+	case ModeBranches:
+		return "branches"
+	case ModeStashes:
+		return "stashes"
+	case ModeHistory:
+		return "commits"
+	case ModeReflog:
+		return "reflog"
+	case ModeSessions:
+		return "sessions"
+	case ModePlans:
+		return "plans"
+	case ModeFlows, ModeActiveFlows:
+		return "flows"
+	default:
+		return "data"
+	}
+}
+
+func renderStackedModeHeader(p RenderParams, mode Mode, width int, takeover bool) string {
+	if takeover {
+		return renderModeHeaderRowWithRight(nil, &modeHeaderItem{key: "^a", name: "active flows", active: true}, width)
+	}
+	if IsGitMode(mode) || IsBeadsMode(mode) {
+		topLevel := []modeHeaderItem{
+			{key: "1", name: "git", active: IsGitMode(mode)},
+			{key: "2", name: "beads", active: IsBeadsMode(mode)},
+		}
+		activeFlows := modeHeaderItem{key: "^a", name: "active flows"}
+		header := renderModeHeaderRowWithRight(topLevel, &activeFlows, width)
+		if IsGitMode(mode) {
+			return header + "\n" + renderModeHeaderRow([]modeHeaderItem{
+				{key: "w", name: "worktrees", active: mode == ModeWorktrees},
+				{key: "b", name: "branches", active: mode == ModeBranches},
+				{key: "s", name: "stashes", active: mode == ModeStashes},
+				{key: "h", name: "history", active: mode == ModeHistory},
+				{key: "r", name: "reflog", active: mode == ModeReflog},
+			}, width)
+		}
+		closedName := "closed"
+		if mode == ModeBeadsClosed && p.BeadsOpenAvailable && !p.BeadsOpenPending {
+			closedName = fmt.Sprintf("closed %d", p.BeadsSourceCount)
+			if p.BeadsClosedTotal > p.BeadsSourceCount {
+				closedName = fmt.Sprintf("closed %d of %d", p.BeadsSourceCount, p.BeadsClosedTotal)
+			}
+		}
+		return header + "\n" + renderModeHeaderRowKeepingActive([]modeHeaderItem{
+			{key: "r", name: "ready", active: mode == ModeBeadsReady},
+			{key: "b", name: "blocked", active: mode == ModeBeadsBlocked},
+			{key: "o", name: "open", active: mode == ModeBeadsOpen},
+			{key: "i", name: "in-progress", active: mode == ModeBeadsInProgress},
+			{key: "c", name: closedName, active: mode == ModeBeadsClosed},
+		}, width)
+	}
+	return renderModeHeaderRow([]modeHeaderItem{
+		{key: "1", name: "sessions", active: mode == ModeSessions},
+		{key: "2", name: "plans", active: mode == ModePlans},
+		{key: "3", name: "flows", active: mode == ModeFlows},
+	}, width)
 }
 
 func scopedSelectedPlanPhaseID(p RenderParams, planSelected bool) string {
@@ -1076,7 +1339,6 @@ type statusBarParams struct {
 	FlowAgentLabel               string
 	FlowModel                    string
 	FlowReasoningEffort          string
-	DefaultViewLabel             string
 	FlowNextLaunchReady          bool
 	FlowRepairReady              bool
 	FlowManualMergeReadySelected bool
@@ -1402,9 +1664,6 @@ func shortcutSections(sp statusBarParams) []shortcutSection {
 	if !flowSurfaceActive {
 		global = slices.Insert(global, 2, shortcutHint{Key: "A", Label: "set agent"})
 	}
-	if label := defaultViewShortcutLabel(sp.DefaultViewLabel); label != "" {
-		global = slices.Insert(global, len(global)-1, shortcutHint{Key: "V", Label: label})
-	}
 
 	var actions []shortcutHint
 	if sp.ActivePane == PaneRepos && sp.FetchVisibleAvailable {
@@ -1684,14 +1943,6 @@ func flowModelShortcutLabel(value string) string {
 	return value
 }
 
-func defaultViewShortcutLabel(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return "default view"
-}
-
 func muteShortcutSections(sections []shortcutSection) []shortcutSection {
 	muted := make([]shortcutSection, 0, len(sections))
 	for _, section := range sections {
@@ -1711,7 +1962,6 @@ func shortcutSectionsForPane(sp statusBarParams, height int) []shortcutSection {
 	flowSurfaceActive := sp.Mode == ModeFlows || sp.Mode == ModeActiveFlows || sp.ActiveFlows
 	if height < 20 && sp.Mode != ModeFlows && sp.Mode != ModeActiveFlows && !sp.ActiveFlows {
 		paneKey := paneShortcutKeyForStatus(sp)
-		sections = prioritizeShortcutInSection(sections, "Global", "V", paneKey)
 		sections = prioritizeShortcutInSection(sections, "Global", "A", paneKey)
 	}
 	if flowSurfaceActive && height < 24 {
