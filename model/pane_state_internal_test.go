@@ -33,6 +33,10 @@ func TestInitFetchesBothStoredPanesWithoutActiveFlows(t *testing.T) {
 		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1"}}, nil
 		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) {
+			t.Fatal("Init fetched Beads Open instead of Ready")
+			return nil, nil
+		},
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			if filter.RepoPath == "" {
 				t.Fatal("Init fetched global Active Flows")
@@ -72,7 +76,18 @@ func TestRepositorySwitchStartsBothStoredPaneRequests(t *testing.T) {
 }
 
 func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
-	m := New([]scanner.Repo{{Path: "/repo"}})
+	readyCalls := 0
+	openCalls := 0
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			readyCalls++
+			return []beadsquery.Bead{{ID: "bd-ready"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) {
+			openCalls++
+			return nil, nil
+		},
+	})
 
 	// Repository focus suppresses pane-local numbers.
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
@@ -105,6 +120,21 @@ func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
 		if got != request {
 			t.Fatalf("request slot %d = %d, want unchanged %d", mode, got, request)
 		}
+	}
+	msg := cmd()
+	result, ok := msg.(BeadsReadyResultMsg)
+	if !ok {
+		t.Fatalf("top right fetch result = %T, want BeadsReadyResultMsg", msg)
+	}
+	if readyCalls != 1 || openCalls != 0 {
+		t.Fatalf("top right query calls = Ready %d Open %d, want 1/0", readyCalls, openCalls)
+	}
+	if result.RepoPath != "/repo" || result.ListRequest != m.currentListRequest(ui.ModeBeadsReady) {
+		t.Fatalf("top right Ready result = repo %q request %d, want /repo request %d", result.RepoPath, result.ListRequest, m.currentListRequest(ui.ModeBeadsReady))
+	}
+	m = updatePaneStateTestModel(t, m, result)
+	if got := m.Beads(ui.ModeBeadsReady); len(got) != 1 || got[0].ID != "bd-ready" || !m.BeadsAvailable(ui.ModeBeadsReady) {
+		t.Fatalf("accepted Ready result = %#v available=%t, want bd-ready and available", got, m.BeadsAvailable(ui.ModeBeadsReady))
 	}
 
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
