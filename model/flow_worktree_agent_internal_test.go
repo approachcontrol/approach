@@ -231,6 +231,44 @@ func TestTrackedFlowDetachRequiresFreshRunningPhase(t *testing.T) {
 	}
 }
 
+func TestTrackedFlowDetachRevalidatesPersistedPhaseAtDetachBoundary(t *testing.T) {
+	terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t flow"}
+	reads := 0
+	m := Model{
+		activeTerminalNum: 1,
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			reads++
+			status := flowstore.PhaseRunning
+			if reads > 1 {
+				status = flowstore.PhaseCompleted
+			}
+			return []flowstore.FlowRecord{{
+				FlowID: "flow-1",
+				Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Status: status}},
+			}}, nil
+		},
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 1, FlowID: "flow-1", FlowPhaseID: "implementation", FlowLaunchTracked: true, Terminal: terminal,
+		}},
+	}
+
+	next, cmd := m.handleEmbeddedTerminalDetachPrefix()
+	if cmd == nil {
+		t.Fatal("detach did not queue initial phase validation")
+	}
+	msg := cmd().(embeddedTerminalDetachValidatedMsg)
+	if reads != 1 || msg.Err != nil {
+		t.Fatalf("initial validation reads/error = %d/%v, want 1/nil", reads, msg.Err)
+	}
+	next, _ = next.handleEmbeddedTerminalDetachValidated(msg)
+	if reads != 2 {
+		t.Fatalf("persisted Flow reads = %d, want revalidation at detach boundary", reads)
+	}
+	if terminal.detached || len(next.embeddedTerminals) != 1 {
+		t.Fatalf("phase completed after preflight detached/slots = %v/%d, want false/1", terminal.detached, len(next.embeddedTerminals))
+	}
+}
+
 func TestTrackedFlowDetachSucceedsAfterFreshRunningPhase(t *testing.T) {
 	terminal := &internalFakeDetachableEmbeddedTerminal{target: "tmux attach -t flow"}
 	m := Model{

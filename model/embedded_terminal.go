@@ -908,6 +908,24 @@ func (m Model) handleEmbeddedTerminalDetachValidated(msg embeddedTerminalDetachV
 	if !ok || phase.Status != flowstore.PhaseRunning {
 		return m.setStatus(statusOther, "Detach unavailable: the matching Flow phase is no longer running"), nil
 	}
+	records, err := m.listFlows(flowstore.FlowFilter{})
+	if err != nil {
+		return m.setStatus(statusOther, "Detach unavailable: refresh Flow at detach boundary: "+err.Error()), nil
+	}
+	var currentFlow flowstore.FlowRecord
+	for _, record := range records {
+		if strings.TrimSpace(record.FlowID) == strings.TrimSpace(slot.FlowID) {
+			currentFlow = record
+			break
+		}
+	}
+	if currentFlow.FlowID == "" {
+		return m.setStatus(statusOther, "Detach unavailable: the matching Flow no longer exists"), nil
+	}
+	phase, ok = flowPhaseByID(currentFlow, slot.FlowPhaseID)
+	if !ok || phase.Status != flowstore.PhaseRunning {
+		return m.setStatus(statusOther, "Detach unavailable: the matching Flow phase is no longer running"), nil
+	}
 	for _, current := range m.embeddedTerminals {
 		if current.ID == slot.ID && current.FlowID == slot.FlowID && current.FlowPhaseID == slot.FlowPhaseID {
 			return m.detachEmbeddedTerminal(current)
