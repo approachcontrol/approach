@@ -171,9 +171,9 @@ func (m Model) handleFlowWorktreeAgentPreflight(msg flowWorktreeAgentPreflightMs
 	ctx := actions.AgentLaunchContext{
 		Command:           command,
 		LaunchID:          msg.Token,
-		RepoPath:          strings.TrimSpace(msg.Flow.RepoPath),
-		WorktreePath:      strings.TrimSpace(msg.Flow.WorktreePath),
-		WorkingDir:        strings.TrimSpace(msg.Flow.WorktreePath),
+		RepoPath:          msg.Flow.RepoPath,
+		WorktreePath:      msg.Flow.WorktreePath,
+		WorkingDir:        msg.Flow.WorktreePath,
 		Branch:            msg.Flow.Branch,
 		Commit:            msg.Flow.Commit,
 		SessionStateRoot:  m.sessionStateRoot,
@@ -205,8 +205,7 @@ func (m Model) handleFlowWorktreeAgentPreflight(msg flowWorktreeAgentPreflightMs
 }
 
 func flowWorktreeDirectoryUsable(path string) bool {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return false
 	}
 	info, err := os.Stat(path)

@@ -1,6 +1,8 @@
 package model
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,7 +15,10 @@ import (
 )
 
 func TestFlowWorktreeAgentStartsFromParentFlowWithoutPhaseTracking(t *testing.T) {
-	worktree := t.TempDir()
+	worktree := filepath.Join(t.TempDir(), "flow ")
+	if err := os.Mkdir(worktree, 0o755); err != nil {
+		t.Fatalf("Mkdir(%q) error = %v", worktree, err)
+	}
 	record := flowstore.FlowRecord{
 		FlowID:       "flow-1",
 		RepoPath:     "/repo",
