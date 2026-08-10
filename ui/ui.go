@@ -938,7 +938,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 	var body []string
 	hasRows := stackedModePaneHasRows(p, mode, takeover)
 	_, sourceCount := paneItemFilterState(p, mode)
-	showCachedWarning := paneListError(p, mode) != "" && (hasRows || sourceCount > 0)
+	showCachedWarning := ShowsCachedListWarning(paneListError(p, mode), hasRows, sourceCount)
 	bodyRows := listRows
 	if showCachedWarning && bodyRows > 0 {
 		bodyRows--
@@ -1089,6 +1089,13 @@ func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
 	default:
 		return p.RightEmptyMessage
 	}
+}
+
+// ShowsCachedListWarning reports whether a stacked pane prepends the "showing
+// cached data" banner above its list, which costs one list row. The model
+// reserves the same row so selection and scroll geometry match what renders.
+func ShowsCachedListWarning(listError string, hasRows bool, sourceCount int) bool {
+	return listError != "" && (hasRows || sourceCount > 0)
 }
 
 func paneListError(p RenderParams, mode Mode) string {

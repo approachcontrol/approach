@@ -510,3 +510,108 @@ func TestCrossPaneListResultCompatibility(t *testing.T) {
 		}
 	})
 }
+
+func TestPaneContentHeightReservesCachedRefreshWarningRow(t *testing.T) {
+	records := make([]sessions.SessionRecord, 20)
+	for i := range records {
+		records[i].SessionID = fmt.Sprintf("session-%02d", i)
+	}
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m.width = 160
+	m.height = 26
+	m.topMode = ui.ModeWorktrees
+	m.bottomMode = ui.ModeSessions
+	m.activePane = ui.PaneBottom
+	m.contentPane = ui.PaneBottom
+	m.sessions = newSessionPane().SetItems(records)
+
+	clean := m.paneContentHeight(ui.ModeSessions)
+
+	m = m.setCurrentListError(ui.ModeSessions, "sessions failed")
+	if got := m.paneContentHeight(ui.ModeSessions); got != clean-1 {
+		t.Fatalf("cached-warning pane height = %d, want %d", got, clean-1)
+	}
+
+	if got := m.paneContentHeight(ui.ModeWorktrees); got == 0 {
+		t.Fatal("unrelated pane height collapsed")
+	}
+}
+
+func TestPaneContentHeightKeepsFullListWhenWarningHidden(t *testing.T) {
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m.width = 160
+	m.height = 26
+	m.topMode = ui.ModeWorktrees
+	m.bottomMode = ui.ModeSessions
+	m.activePane = ui.PaneBottom
+	m.contentPane = ui.PaneBottom
+
+	clean := m.paneContentHeight(ui.ModeSessions)
+	m = m.setCurrentListError(ui.ModeSessions, "sessions failed")
+	if got := m.paneContentHeight(ui.ModeSessions); got != clean {
+		t.Fatalf("empty-pane height with error = %d, want %d", got, clean)
+	}
+}
+
+func TestListErrorReflowsPaneSoSelectionStaysVisible(t *testing.T) {
+	records := make([]sessions.SessionRecord, 20)
+	for i := range records {
+		records[i].SessionID = fmt.Sprintf("session-%02d", i)
+	}
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m.width = 160
+	m.height = 26
+	m.topMode = ui.ModeWorktrees
+	m.bottomMode = ui.ModeSessions
+	m.activePane = ui.PaneBottom
+	m.contentPane = ui.PaneBottom
+	m.sessions = newSessionPane().SetItems(records)
+
+	listRows := m.paneContentHeight(ui.ModeSessions)
+	m.sessions = m.sessions.Move(listRows-1, listRows, m.contentWidth())
+	if m.sessions.Scroll() != 0 || m.sessions.SelectedIndex() != listRows-1 {
+		t.Fatalf("precondition = selected %d scroll %d, want %d/0", m.sessions.SelectedIndex(), m.sessions.Scroll(), listRows-1)
+	}
+
+	m = m.setCurrentListError(ui.ModeSessions, "sessions failed")
+
+	warnedRows := m.paneContentHeight(ui.ModeSessions)
+	if warnedRows != listRows-1 {
+		t.Fatalf("warned list rows = %d, want %d", warnedRows, listRows-1)
+	}
+	if m.sessions.Scroll() != 1 {
+		t.Fatalf("scroll after refresh warning = %d, want 1 so the selected row stays visible", m.sessions.Scroll())
+	}
+}
+
+func TestClearingListErrorOnFetchStartReflowsPane(t *testing.T) {
+	records := make([]sessions.SessionRecord, 20)
+	for i := range records {
+		records[i].SessionID = fmt.Sprintf("session-%02d", i)
+	}
+	m := New([]scanner.Repo{{Path: "/repo"}})
+	m.width = 160
+	m.height = 26
+	m.topMode = ui.ModeWorktrees
+	m.bottomMode = ui.ModeSessions
+	m.activePane = ui.PaneBottom
+	m.contentPane = ui.PaneBottom
+	m.sessions = newSessionPane().SetItems(records)
+	m = m.setCurrentListError(ui.ModeSessions, "sessions failed")
+
+	warnedRows := m.paneContentHeight(ui.ModeSessions)
+	m.sessions = m.sessions.Move(len(records)-1, warnedRows, m.contentWidth())
+	if got, want := m.sessions.Scroll(), len(records)-warnedRows; got != want {
+		t.Fatalf("precondition scroll = %d, want %d", got, want)
+	}
+
+	m, _ = m.nextListFetchRequest(ui.ModeSessions)
+
+	clearedRows := m.paneContentHeight(ui.ModeSessions)
+	if clearedRows != warnedRows+1 {
+		t.Fatalf("cleared list rows = %d, want %d", clearedRows, warnedRows+1)
+	}
+	if got, want := m.sessions.Scroll(), len(records)-clearedRows; got != want {
+		t.Fatalf("scroll after clearing warning = %d, want %d so the list has no blank tail row", got, want)
+	}
+}

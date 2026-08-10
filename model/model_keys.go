@@ -3102,10 +3102,66 @@ func (m Model) paneContentHeight(mode ui.Mode) int {
 	if mode == ui.ModeSessions || mode == ui.ModePlans || mode == ui.ModeFlows || mode == ui.ModeActiveFlows {
 		rows -= ui.TableHeaderRows
 	}
+	rows -= m.paneCachedWarningRows(mode)
+	// The positive floor predates the warning row and also covers hidden
+	// background panes, which are allocated no rows at all. Viewports this
+	// small cannot show a cached row either way, so the floor stays.
 	if rows <= 0 {
 		return 1
 	}
 	return rows
+}
+
+// paneCachedWarningRows is the list row the renderer spends on the "showing
+// cached data" banner when a refresh fails while rows are still cached.
+// Selection and scroll must use the same reduced viewport or the last visible
+// row is clipped.
+func (m Model) paneCachedWarningRows(mode ui.Mode) int {
+	if !ui.ShowsCachedListWarning(m.currentListError(mode), m.paneHasRows(mode), m.paneSourceCount(mode)) {
+		return 0
+	}
+	return 1
+}
+
+func (m Model) paneSourceCount(mode ui.Mode) int {
+	if mode == ui.ModeActiveFlows {
+		return m.activeItemPaneSourceCount()
+	}
+	return m.itemPaneSourceCount(mode)
+}
+
+// paneHasRows mirrors the renderer's view of whether a pane still has cached
+// rows to show, including the empty-repository reset the view applies.
+func (m Model) paneHasRows(mode ui.Mode) bool {
+	if len(m.filteredRepos()) == 0 {
+		return false
+	}
+	switch mode {
+	case ui.ModeActiveFlows:
+		return m.activeFlows.Len() > 0
+	case ui.ModeFlows:
+		return m.flows.Len() > 0
+	case ui.ModeWorktrees:
+		return m.worktrees.Len() > 0
+	case ui.ModeBranches:
+		return m.rows.Len() > 0
+	case ui.ModeStashes:
+		return m.stashes.Len() > 0
+	case ui.ModeHistory:
+		return m.commits.Len() > 0
+	case ui.ModeReflog:
+		return m.reflogs.Len() > 0
+	case ui.ModeSessions:
+		return m.sessions.Len() > 0
+	case ui.ModePlans:
+		return m.plans.Len() > 0
+	default:
+		if !ui.IsBeadsMode(mode) {
+			return false
+		}
+		state, ok := m.beadSubview(mode)
+		return ok && !state.pending && state.error == "" && state.pane.Len() > 0
+	}
 }
 
 func (m Model) beadsContentHeight() int {

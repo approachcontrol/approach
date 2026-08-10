@@ -117,7 +117,7 @@ func (m Model) nextListFetchRequest(mode ui.Mode) (Model, uint64) {
 	request := m.listRequestSeq
 	if int(mode) >= 0 && int(mode) < len(m.listRequests) {
 		m.listRequests[int(mode)] = request
-		m.listErrors[int(mode)] = ""
+		m = m.setCurrentListError(mode, "")
 	}
 	return m, request
 }
@@ -130,17 +130,55 @@ func (m Model) currentListError(mode ui.Mode) string {
 }
 
 func (m Model) setCurrentListError(mode ui.Mode, detail string) Model {
-	if int(mode) >= 0 && int(mode) < len(m.listErrors) {
-		m.listErrors[int(mode)] = detail
+	if int(mode) < 0 || int(mode) >= len(m.listErrors) {
+		return m
+	}
+	if m.listErrors[int(mode)] == detail {
+		return m
+	}
+	warningRows := m.paneCachedWarningRows(mode)
+	m.listErrors[int(mode)] = detail
+	if m.paneCachedWarningRows(mode) != warningRows {
+		// Showing or clearing the cached-data banner resizes the list, so the
+		// pane has to re-clamp its scroll against the new viewport.
+		m = m.reflowMode(mode)
 	}
 	return m
+}
+
+func (m Model) reflowMode(mode ui.Mode) Model {
+	switch mode {
+	case ui.ModeActiveFlows:
+		return m.reflowActiveFlows()
+	case ui.ModeFlows:
+		return m.reflowFlows()
+	case ui.ModeWorktrees:
+		return m.reflowWorktrees()
+	case ui.ModeBranches:
+		return m.reflowBranches()
+	case ui.ModeStashes:
+		return m.reflowStashes()
+	case ui.ModeHistory:
+		return m.reflowCommits()
+	case ui.ModeReflog:
+		return m.reflowReflogs()
+	case ui.ModeSessions:
+		return m.reflowSessions()
+	case ui.ModePlans:
+		return m.reflowPlans()
+	default:
+		if ui.IsBeadsMode(mode) {
+			return m.reflowBeads(mode)
+		}
+		return m
+	}
 }
 
 func (m Model) invalidateListRequests() Model {
 	m.listRequestSeq++
 	for i := range m.listRequests {
 		m.listRequests[i] = m.listRequestSeq
-		m.listErrors[i] = ""
+		m = m.setCurrentListError(ui.Mode(i), "")
 	}
 	return m
 }
@@ -152,7 +190,7 @@ func (m Model) invalidateStoredListRequests() Model {
 			continue
 		}
 		m.listRequests[int(mode)] = m.listRequestSeq
-		m.listErrors[int(mode)] = ""
+		m = m.setCurrentListError(mode, "")
 	}
 	return m
 }
