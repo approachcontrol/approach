@@ -676,6 +676,60 @@ func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 	}
 }
 
+func TestFlowStarterStartPlanLaunchPersistenceFailureBlocksPlanPhase(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	var calls []string
+
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			calls = append(calls, "create-flow")
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{{
+				PhaseID: "plan",
+				Title:   "Plan",
+				Kind:    flowstore.KindPlan,
+				Status:  flowstore.PhaseReady,
+			}}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			calls = append(calls, "create-worktree")
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-add-flow-mode", Branch: "flow/add-flow-mode"}, nil
+		},
+		AddPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "add-launch")
+			return flowstore.FlowRecord{}, errors.New("write failed")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, "set-phase")
+			phaseUpdate = update
+			return flowstore.FlowRecord{}, nil
+		},
+		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			t.Fatalf("SetStartMetadata() should not run after launch persistence failure: %#v", update)
+			return flowstore.FlowRecord{}, nil
+		},
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/dev/alpha", Title: "Add Flow Mode", Instructions: "Build the thing"})
+	if err == nil {
+		t.Fatal("StartPlan returned nil error, want launch persistence failure")
+	}
+
+	if strings.Join(calls, ",") != "create-flow,create-worktree,add-launch,set-phase" {
+		t.Fatalf("call order = %#v", calls)
+	}
+	if !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("error = %q, want launch persistence failure", err)
+	}
+	if phaseUpdate.FlowID != "flow-1" ||
+		phaseUpdate.PhaseID != "plan" ||
+		phaseUpdate.Status != flowstore.PhaseBlocked ||
+		!strings.Contains(phaseUpdate.Notes, "Initial phase launch persistence failed") {
+		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+}
+
 func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 	var calls []string

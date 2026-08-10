@@ -174,7 +174,8 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		LaunchID: launchID,
 	})
 	if err != nil {
-		return result, err
+		errText := "Initial phase launch persistence failed: " + err.Error()
+		return result, s.blockStartupFailurePhases(flow, phaseID, errText, err.Error())
 	}
 	flow = launchedFlow
 	result.Flow = flow
