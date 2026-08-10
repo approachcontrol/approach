@@ -38,6 +38,12 @@ func ActiveFlowsForTest(m Model) []flowstore.FlowRecord {
 	return flows
 }
 
+// ActiveFlowRecordsForTest exposes the cross-repository Flow cache, which
+// outlives the visible Active Flows rows across repository selection changes.
+func ActiveFlowRecordsForTest(m Model) []flowstore.FlowRecord {
+	return m.activeFlowRecords
+}
+
 func SelectedActiveFlowPhaseIDForTest(m Model) string {
 	return m.selectedActiveFlowPhaseID
 }

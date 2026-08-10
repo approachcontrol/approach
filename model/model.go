@@ -61,7 +61,7 @@ type Model struct {
 	flows                     pane.Pane[flowstore.FlowRecord]
 	activeFlowRecords         []flowstore.FlowRecord
 	latestFlowMutations       []cachedFlowMutation
-	pendingFlowHeadlessWrites []string
+	pendingFlowHeadlessWrites []pendingFlowHeadlessWrite
 	activeFlows               pane.Pane[flowstore.FlowRecord]
 	beads                     [beadSubviewCount]beadSubviewState
 	expandedPlanID            string
@@ -1557,7 +1557,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case FlowAutoModeSetFailedMsg:
 		return m.handleFlowAutoModeSetFailed(msg), nil
 	case FlowHeadlessSetMsg:
-		return m.handleFlowHeadlessSet(msg), nil
+		return m.handleFlowHeadlessSet(msg)
 	case FlowHeadlessSetFailedMsg:
 		return m.handleFlowHeadlessSetFailed(msg), nil
 	case FlowManualMergeSetMsg:

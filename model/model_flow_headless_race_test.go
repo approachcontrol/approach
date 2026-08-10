@@ -139,24 +139,289 @@ func TestModel_OverlappingHeadlessWritesKeepTheLaunchFenced(t *testing.T) {
 	m = selectFlowPhaseByID(t, m, "implementation")
 
 	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if first == nil {
+		t.Fatal("the first h press should return a persistence command")
+	}
+	// Only one write may be outstanding per Flow, so the second press records
+	// intent instead of starting a command that could reach the store first.
 	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if first == nil || second == nil {
-		t.Fatal("both h presses should return a persistence command")
+	if second != nil {
+		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
 	}
 
-	// The first completion must not release the fence the second write holds.
-	m, _ = update(m, first())
+	// Completing the in-flight write must persist the coalesced intent rather
+	// than release the fence.
+	m, followUp := update(m, first())
+	if followUp == nil {
+		t.Fatal("completing the first write should persist the queued toggle")
+	}
 	m, launchCmd := update(m, flowLaunchKey())
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 0 {
-		t.Fatalf("reserved %#v while the second headless write was in flight, want no launch", reservations)
+		t.Fatalf("reserved %#v while the queued headless write was outstanding, want no launch", reservations)
 	}
 
-	m, _ = update(m, second())
+	m, _ = update(m, followUp())
 	m, launchCmd = update(m, flowLaunchKey())
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 1 {
 		t.Fatalf("reservations = %#v, want one launch after every headless write completed", reservations)
+	}
+}
+
+func TestModel_QueuedHeadlessTogglesAlternateFromThePendingValue(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	if !flow.Headless {
+		t.Fatal("fixture should start headless so the toggles alternate off then on")
+	}
+
+	var writes []flowstore.HeadlessUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			writes = append(writes, update)
+			result := flow
+			result.Headless = update.Enabled
+			return result, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	// Both presses land before the first result is handled, so the second must
+	// alternate from the value the first one queued rather than the stale row.
+	// Writes are serialized, so the store observes them in the pressed order.
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if first == nil {
+		t.Fatal("the first h press should return a persistence command")
+	}
+	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if second != nil {
+		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
+	}
+	m, followUp := update(m, first())
+	if followUp == nil {
+		t.Fatal("completing the first write should persist the queued toggle")
+	}
+	m, _ = update(m, followUp())
+
+	want := []flowstore.HeadlessUpdate{
+		{FlowID: flow.FlowID, Enabled: false},
+		{FlowID: flow.FlowID, Enabled: true},
+	}
+	if len(writes) != 2 || writes[0] != want[0] || writes[1] != want[1] {
+		t.Fatalf("headless writes = %#v, want %#v", writes, want)
+	}
+	if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+		t.Fatalf("Flows() = %#v, want the two toggles to return headless mode to on", got)
+	}
+	if m.TransientError() != "" {
+		t.Fatalf("status = %q, want no error after the queued toggle settled", m.TransientError())
+	}
+}
+
+func TestModel_QueuedHeadlessToggleKeepsItsOwnSurfaceScope(t *testing.T) {
+	flow := flowWithPhaseDetails()
+
+	var writes []flowstore.HeadlessUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			writes = append(writes, update)
+			result := flow
+			result.Headless = update.Enabled
+			return result, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	// The write starts from the repository Flow list, so it is repo-scoped.
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if first == nil {
+		t.Fatal("the first h press should return a persistence command")
+	}
+
+	// The queued toggle is entered from Active Flows, which is global. The
+	// follow-up must carry that scope so its result is not rejected as off-repo.
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if second != nil {
+		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
+	}
+
+	m, followUp := update(m, first())
+	if followUp == nil {
+		t.Fatal("completing the first write should persist the queued toggle")
+	}
+	followUpMsg, ok := followUp().(model.FlowHeadlessSetMsg)
+	if !ok {
+		t.Fatalf("follow-up command returned %T, want FlowHeadlessSetMsg", followUp())
+	}
+	if !followUpMsg.AllRepositories {
+		t.Fatalf("follow-up msg = %#v, want the Active Flows scope of the queued toggle", followUpMsg)
+	}
+
+	m, _ = update(m, followUpMsg)
+	if len(writes) != 2 || writes[1].Enabled != true {
+		t.Fatalf("headless writes = %#v, want the queued toggle persisted", writes)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || !got[0].Headless {
+		t.Fatalf("ActiveFlows = %#v, want the queued toggle applied to the active row", got)
+	}
+}
+
+func TestModel_CoalescedHeadlessToggleKeepsTheLatestSurfaceScope(t *testing.T) {
+	flow := flowWithPhaseDetails()
+
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			result := flow
+			result.Headless = update.Enabled
+			return result, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	// A repo-scoped write starts from the repository Flow list.
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if first == nil {
+		t.Fatal("the first h press should return a persistence command")
+	}
+
+	// Two Active Flows toggles bring the intent back to the in-flight value, so
+	// the completion needs no follow-up but still belongs to the global surface.
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// The user moves to another repository before the write lands, so a
+	// repo-scoped result would be discarded as off-repo.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+
+	m, followUp := update(m, first())
+	if followUp != nil {
+		t.Fatalf("follow-up command %T issued although the coalesced intent matched, want none", followUp)
+	}
+	if got := model.ActiveFlowRecordsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("Active Flow cache = %#v, want the global result applied", got)
+	}
+}
+
+func TestModel_QueuedHeadlessToggleKeepsGlobalScopeAcrossTheChain(t *testing.T) {
+	flow := flowWithPhaseDetails()
+
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			result := flow
+			result.Headless = update.Enabled
+			return result, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	// The chain starts global, from Active Flows.
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if first == nil {
+		t.Fatal("the first h press should return a persistence command")
+	}
+
+	// A later toggle from the repository Flow list must not narrow the chain's
+	// scope: the follow-up still has to reach the cross-repository cache.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, second := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if second != nil {
+		t.Fatalf("second h press returned command %T while a write was in flight, want none", second)
+	}
+
+	m, followUp := update(m, first())
+	if followUp == nil {
+		t.Fatal("completing the first write should persist the queued toggle")
+	}
+	followUpMsg, ok := followUp().(model.FlowHeadlessSetMsg)
+	if !ok {
+		t.Fatalf("follow-up command returned %T, want FlowHeadlessSetMsg", followUp())
+	}
+	if !followUpMsg.AllRepositories {
+		t.Fatalf("follow-up msg = %#v, want the chain to stay globally scoped", followUpMsg)
+	}
+
+	// The user selects another repository before the follow-up lands.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown}) // repo bravo
+	m, _ = update(m, followUpMsg)
+
+	if got := model.ActiveFlowRecordsForTest(m); len(got) != 1 || !got[0].Headless {
+		t.Fatalf("Active Flow cache = %#v, want the final result applied", got)
+	}
+}
+
+func TestModel_FailedWriteReportsDroppedQueuedHeadlessToggles(t *testing.T) {
+	flow := flowWithPhaseDetails()
+
+	var writes []flowstore.HeadlessUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			writes = append(writes, update)
+			return flowstore.FlowRecord{}, errFlowHeadlessWrite
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	// Three presses queue headless-off behind the in-flight headless-off write.
+	// The failure leaves the store on, so that intent can no longer be reached.
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, followUp := update(m, first())
+	m = settleModelCommands(t, m, followUp, 4)
+
+	if len(writes) != 1 {
+		t.Fatalf("headless writes = %#v, want the failure to stop after one attempt", writes)
+	}
+	got := m.TransientError()
+	if !strings.Contains(got, "state root locked") || !strings.Contains(got, "headless mode is unchanged") {
+		t.Fatalf("status = %q, want the failure and the dropped queued toggle reported", got)
+	}
+	if flows := m.Flows(); len(flows) != 1 || !flows[0].Headless {
+		t.Fatalf("Flows() = %#v, want the stored preference unchanged", flows)
+	}
+	if _, cmd := update(m, flowLaunchKey()); cmd == nil {
+		t.Fatal("launch stayed fenced after the failed write")
+	}
+}
+
+func TestModel_QueuedHeadlessTogglesCoalesceToTheLastIntent(t *testing.T) {
+	flow := flowWithPhaseDetails()
+
+	var writes []flowstore.HeadlessUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			writes = append(writes, update)
+			result := flow
+			result.Headless = update.Enabled
+			return result, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+
+	// Three presses from headless-on: the middle intent never has to reach the
+	// store because the in-flight write already persists the final value.
+	m, first := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, followUp := update(m, first())
+	if followUp != nil {
+		t.Fatalf("follow-up command %T issued although the in-flight write matched the last intent", followUp)
+	}
+
+	want := []flowstore.HeadlessUpdate{{FlowID: flow.FlowID, Enabled: false}}
+	if len(writes) != 1 || writes[0] != want[0] {
+		t.Fatalf("headless writes = %#v, want %#v", writes, want)
+	}
+	if got := m.Flows(); len(got) != 1 || got[0].Headless {
+		t.Fatalf("Flows() = %#v, want three toggles to leave headless mode off", got)
+	}
+	if _, cmd := update(m, flowLaunchKey()); cmd == nil {
+		t.Fatal("launch stayed fenced after the coalesced toggle settled")
 	}
 }
 

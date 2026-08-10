@@ -358,6 +358,7 @@ type FlowHeadlessSetMsg struct {
 type FlowHeadlessSetFailedMsg struct {
 	RepoPath        string
 	FlowID          string
+	Enabled         bool
 	Err             string
 	AllRepositories bool
 }
@@ -1475,28 +1476,47 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 	return m.setStatus(statusOther, errText)
 }
 
-func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) Model {
-	m = m.clearFlowHeadlessWritePending(msg.FlowID)
+func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
+	// Toggles queued behind this write may have been entered from a different
+	// surface. Honour the latest intent's scope so a result that satisfies it is
+	// not rejected as off-repo, including when coalescing needs no follow-up.
+	if queued, ok := m.queuedFlowHeadlessValue(msg.FlowID); ok {
+		msg.AllRepositories = msg.AllRepositories || queued.allRepositories
+	}
+	m, followUp := m.resolveFlowHeadlessWrite(msg)
 	if msg.FlowID == "" || msg.Flow.FlowID != msg.FlowID || msg.Flow.Headless != msg.Enabled {
-		return m
+		return m, followUp
 	}
 	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
-		return m
+		return m, followUp
 	}
 	if !sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
-		return m
+		return m, followUp
 	}
-	return m.replaceFlowHeadlessRecord(msg.Flow)
+	return m.replaceFlowHeadlessRecord(msg.Flow), followUp
 }
 
 func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
+	// The write left the stored preference untouched, so the toggles queued
+	// behind it are unreachable. Retrying here could ping-pong against a
+	// persistent failure, so report the dropped intent instead of hiding it.
+	queued, dropped := m.queuedFlowHeadlessValue(msg.FlowID)
+	dropped = dropped && queued.enabled == msg.Enabled
 	m = m.clearFlowHeadlessWritePending(msg.FlowID)
+	// The queued intent may have been entered from a different surface, so honour
+	// its scope rather than the failed write's when deciding to report.
+	if dropped {
+		msg.AllRepositories = msg.AllRepositories || queued.allRepositories
+	}
 	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
 	errText := strings.TrimSpace(msg.Err)
 	if errText == "" {
 		errText = "failed to set Flow headless mode"
+	}
+	if dropped {
+		errText += "; headless mode is unchanged, press h again to retry"
 	}
 	return m.setStatus(statusOther, errText)
 }

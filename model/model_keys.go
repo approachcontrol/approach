@@ -994,29 +994,65 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 	if repoPath == "" {
 		return m, nil
 	}
+	allRepositories := m.activeFlowSurfaceVisible()
+	// A write is already outstanding for this Flow. Commands run concurrently, so
+	// starting a second one would let the two values reach the store in either
+	// order. Record the new intent instead and let the in-flight completion
+	// persist it. The queued intent keeps the scope of the surface it was
+	// entered from, which may differ from the surface that started the write.
+	if queued, ok := m.queuedFlowHeadlessValue(record.FlowID); ok {
+		return m.updateQueuedFlowHeadlessWrite(record.FlowID, !queued.enabled, allRepositories), nil
+	}
 	// Launches read the persisted preference under the Flow store lock, so the
 	// launch must wait for this write instead of racing it.
-	m = m.markFlowHeadlessWritePending(record.FlowID)
-	return m, m.setFlowHeadlessCmd(repoPath, record.FlowID, !record.Headless, m.activeFlowSurfaceVisible())
+	enabled := !record.Headless
+	m = m.markFlowHeadlessWritePending(pendingFlowHeadlessWrite{
+		flowID: record.FlowID, repoPath: repoPath, enabled: enabled, allRepositories: allRepositories,
+	})
+	return m, m.setFlowHeadlessCmd(repoPath, record.FlowID, enabled, allRepositories)
 }
 
 // flowHeadlessWritePendingStatus explains why a launch waits for an in-flight
 // headless toggle instead of starting in the previous mode.
 const flowHeadlessWritePendingStatus = "Applying headless mode change; retry the launch in a moment"
 
-// pendingFlowHeadlessWrites is a multiset: rapid toggles start one persistence
-// command each, so a completion must retire only its own entry and leave any
-// still-outstanding write fenced.
-func (m Model) markFlowHeadlessWritePending(flowID string) Model {
-	if flowID == "" {
+// pendingFlowHeadlessWrite fences launches for one Flow while a headless write
+// is outstanding and carries the value the user last asked for, along with the
+// scope of the surface that asked for it. At most one entry exists per Flow:
+// toggles arriving while a write is in flight update the entry in place, and the
+// completion persists it if it still differs.
+type pendingFlowHeadlessWrite struct {
+	flowID          string
+	repoPath        string
+	enabled         bool
+	allRepositories bool
+}
+
+func (m Model) markFlowHeadlessWritePending(pending pendingFlowHeadlessWrite) Model {
+	if pending.flowID == "" {
 		return m
 	}
-	m.pendingFlowHeadlessWrites = append(slices.Clone(m.pendingFlowHeadlessWrites), flowID)
+	m.pendingFlowHeadlessWrites = append(slices.Clone(m.pendingFlowHeadlessWrites), pending)
+	return m
+}
+
+func (m Model) updateQueuedFlowHeadlessWrite(flowID string, enabled bool, allRepositories bool) Model {
+	index := m.pendingFlowHeadlessWriteIndex(flowID)
+	if index < 0 {
+		return m
+	}
+	pending := slices.Clone(m.pendingFlowHeadlessWrites)
+	pending[index].enabled = enabled
+	// Scope accumulates across the serialized chain. Once any toggle in it came
+	// from Active Flows, every result in the chain has to reach the global cache,
+	// even if a later toggle was entered from a repository Flow list.
+	pending[index].allRepositories = pending[index].allRepositories || allRepositories
+	m.pendingFlowHeadlessWrites = pending
 	return m
 }
 
 func (m Model) clearFlowHeadlessWritePending(flowID string) Model {
-	index := slices.Index(m.pendingFlowHeadlessWrites, flowID)
+	index := m.pendingFlowHeadlessWriteIndex(flowID)
 	if index < 0 {
 		return m
 	}
@@ -1024,8 +1060,41 @@ func (m Model) clearFlowHeadlessWritePending(flowID string) Model {
 	return m
 }
 
+func (m Model) pendingFlowHeadlessWriteIndex(flowID string) int {
+	return slices.IndexFunc(m.pendingFlowHeadlessWrites, func(pending pendingFlowHeadlessWrite) bool {
+		return pending.flowID == flowID
+	})
+}
+
 func (m Model) flowHeadlessWritePending(flowID string) bool {
-	return slices.Contains(m.pendingFlowHeadlessWrites, flowID)
+	_, ok := m.queuedFlowHeadlessValue(flowID)
+	return ok
+}
+
+// queuedFlowHeadlessValue reports the outstanding write for this Flow and the
+// value it is expected to leave persisted.
+func (m Model) queuedFlowHeadlessValue(flowID string) (pendingFlowHeadlessWrite, bool) {
+	index := m.pendingFlowHeadlessWriteIndex(flowID)
+	if index < 0 {
+		return pendingFlowHeadlessWrite{}, false
+	}
+	return m.pendingFlowHeadlessWrites[index], true
+}
+
+// resolveFlowHeadlessWrite retires the outstanding write for this Flow. When
+// toggles arrived while it was in flight, the coalesced intent is persisted by a
+// follow-up command so only one write is ever outstanding per Flow. The
+// follow-up carries the queued intent's own scope, not the scope of the write
+// that just completed.
+func (m Model) resolveFlowHeadlessWrite(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
+	queued, ok := m.queuedFlowHeadlessValue(msg.FlowID)
+	if !ok {
+		return m, nil
+	}
+	if queued.enabled == msg.Enabled {
+		return m.clearFlowHeadlessWritePending(msg.FlowID), nil
+	}
+	return m, m.setFlowHeadlessCmd(queued.repoPath, msg.FlowID, queued.enabled, queued.allRepositories)
 }
 
 func (m Model) setFlowHeadlessCmd(repoPath, flowID string, enabled, allRepositories bool) tea.Cmd {
@@ -1033,7 +1102,7 @@ func (m Model) setFlowHeadlessCmd(repoPath, flowID string, enabled, allRepositor
 		flow, err := m.setFlowHeadless(flowstore.HeadlessUpdate{FlowID: flowID, Enabled: enabled})
 		if err != nil {
 			return FlowHeadlessSetFailedMsg{
-				RepoPath: repoPath, FlowID: flowID, AllRepositories: allRepositories,
+				RepoPath: repoPath, FlowID: flowID, Enabled: enabled, AllRepositories: allRepositories,
 				Err: fmt.Sprintf("failed to set Flow headless mode: %v", err),
 			}
 		}
