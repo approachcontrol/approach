@@ -751,6 +751,53 @@ func TestFlowStarterStartPlanLaunchPersistenceFailureBlocksPlanPhase(t *testing.
 	}
 }
 
+func TestFlowStarterStartPlanMetadataFailureBlocksEveryLaunchableRoot(t *testing.T) {
+	var phaseUpdates []flowstore.PhaseUpdate
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseReady, Order: 1},
+				{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
+			}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/repo/worktrees/research", Branch: "flow/research"}, nil
+		},
+		AddPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{
+				FlowID: update.FlowID,
+				Phases: []flowstore.FlowPhase{
+					{PhaseID: "research", Title: "Research", Kind: flowstore.KindPlan, Status: flowstore.PhaseRunning, Order: 1, LaunchIDs: []string{update.LaunchID}},
+					{PhaseID: "spike", Title: "Spike", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2},
+				},
+			}, nil
+		},
+		SetStartMetadata: func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{}, errors.New("state root locked")
+		},
+		SetPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates = append(phaseUpdates, update)
+			return flowstore.FlowRecord{}, nil
+		},
+		NewLaunchID: func() string { return "launch-1" },
+	})
+
+	_, err := starter.StartPlan(model.FlowStartRequest{RepoPath: "/repo", Title: "Research flow"})
+	if err == nil || !strings.Contains(err.Error(), "state root locked") {
+		t.Fatalf("StartPlan error = %v, want metadata persistence failure", err)
+	}
+	if len(phaseUpdates) != 2 {
+		t.Fatalf("phase updates = %#v, want selected and sibling roots blocked", phaseUpdates)
+	}
+	for i, wantPhaseID := range []string{"research", "spike"} {
+		if update := phaseUpdates[i]; update.PhaseID != wantPhaseID || update.Status != flowstore.PhaseBlocked {
+			t.Fatalf("phase update %d = %#v, want blocked %s", i, update, wantPhaseID)
+		}
+	}
+}
+
 func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
 	var startUpdate flowstore.StartMetadataUpdate

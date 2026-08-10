@@ -196,7 +196,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	})
 	if err != nil {
 		notes := "Flow start metadata failed after the initial phase was marked running: " + err.Error()
-		return result, s.blockPlanPhase(flow.FlowID, phaseID, notes, err.Error())
+		return result, s.blockStartupFailurePhases(flow, phaseID, notes, err.Error())
 	}
 	if len(startedFlow.Phases) == 0 {
 		startedFlow.Phases = flow.Phases
@@ -341,18 +341,6 @@ func (s FlowStarter) runBootstrap(repoPath string, worktree actions.FlowWorktree
 	}, hook)
 }
 
-func (s FlowStarter) blockPlanPhase(flowID, phaseID, notes, resultErr string) error {
-	if _, err := s.setPhase(flowstore.PhaseUpdate{
-		FlowID:  flowID,
-		PhaseID: phaseID,
-		Status:  flowstore.PhaseBlocked,
-		Notes:   notes,
-	}); err != nil {
-		return fmt.Errorf("%s; mark flow blocked: %v", resultErr, err)
-	}
-	return fmt.Errorf("%s", resultErr)
-}
-
 func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes, resultErr string) error {
 	if err := s.fenceStartupFailurePhases(flow, fallbackPhaseID, notes); err != nil {
 		return fmt.Errorf("%s; %v", resultErr, err)
@@ -361,16 +349,24 @@ func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallba
 }
 
 func (s FlowStarter) fenceStartupFailurePhases(flow flowstore.FlowRecord, fallbackPhaseID, notes string) error {
-	phases := launchablePhases(flow)
-	if len(phases) == 0 {
-		if fallbackPhaseID == "" {
-			return nil
-		}
+	launchable := launchablePhases(flow)
+	phases := make([]flowstore.FlowPhase, 0, len(launchable)+1)
+	seen := make(map[string]bool, len(launchable)+1)
+	if fallbackPhaseID != "" {
 		if phase, ok := findFlowPhaseByID(flow, fallbackPhaseID); ok {
-			phases = []flowstore.FlowPhase{phase}
-		} else {
-			phases = []flowstore.FlowPhase{{PhaseID: fallbackPhaseID}}
+			phases = append(phases, phase)
+			seen[phase.PhaseID] = true
+		} else if len(launchable) == 0 {
+			phases = append(phases, flowstore.FlowPhase{PhaseID: fallbackPhaseID})
+			seen[fallbackPhaseID] = true
 		}
+	}
+	for _, phase := range launchable {
+		if seen[phase.PhaseID] {
+			continue
+		}
+		phases = append(phases, phase)
+		seen[phase.PhaseID] = true
 	}
 	for _, phase := range phases {
 		if _, err := s.setPhase(blockedPhaseUpdate(flow.FlowID, phase, notes)); err != nil {
