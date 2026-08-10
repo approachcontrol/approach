@@ -162,6 +162,11 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	// Repair reads the persisted headless preference asynchronously, so it must
+	// wait for an in-flight toggle exactly as a phase launch does.
+	if m.flowHeadlessWritePending(record.FlowID) {
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
+	}
 	if !m.selectedFlowRepairReady() {
 		if m.hasPendingFlowRepairLaunch(record.FlowID) {
 			return m.setStatus(statusOther, "A repair launch is already pending for this Flow"), nil

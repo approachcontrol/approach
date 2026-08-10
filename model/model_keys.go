@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -993,7 +994,38 @@ func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
 	if repoPath == "" {
 		return m, nil
 	}
+	// Launches read the persisted preference under the Flow store lock, so the
+	// launch must wait for this write instead of racing it.
+	m = m.markFlowHeadlessWritePending(record.FlowID)
 	return m, m.setFlowHeadlessCmd(repoPath, record.FlowID, !record.Headless, m.activeFlowSurfaceVisible())
+}
+
+// flowHeadlessWritePendingStatus explains why a launch waits for an in-flight
+// headless toggle instead of starting in the previous mode.
+const flowHeadlessWritePendingStatus = "Applying headless mode change; retry the launch in a moment"
+
+// pendingFlowHeadlessWrites is a multiset: rapid toggles start one persistence
+// command each, so a completion must retire only its own entry and leave any
+// still-outstanding write fenced.
+func (m Model) markFlowHeadlessWritePending(flowID string) Model {
+	if flowID == "" {
+		return m
+	}
+	m.pendingFlowHeadlessWrites = append(slices.Clone(m.pendingFlowHeadlessWrites), flowID)
+	return m
+}
+
+func (m Model) clearFlowHeadlessWritePending(flowID string) Model {
+	index := slices.Index(m.pendingFlowHeadlessWrites, flowID)
+	if index < 0 {
+		return m
+	}
+	m.pendingFlowHeadlessWrites = slices.Delete(slices.Clone(m.pendingFlowHeadlessWrites), index, index+1)
+	return m
+}
+
+func (m Model) flowHeadlessWritePending(flowID string) bool {
+	return slices.Contains(m.pendingFlowHeadlessWrites, flowID)
 }
 
 func (m Model) setFlowHeadlessCmd(repoPath, flowID string, enabled, allRepositories bool) tea.Cmd {
@@ -1881,6 +1913,9 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
+	if record, ok := m.selectedFlow(); ok && m.flowHeadlessWritePending(record.FlowID) {
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
+	}
 	target, ok, next := m.selectedFlowNextLaunchTarget()
 	if !ok {
 		return next, nil

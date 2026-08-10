@@ -1415,7 +1415,8 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	flows := preferNewerCachedFlowRecords(msg.Flows, m.flows.Items(), m.latestFlowMutations)
+	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
+	m = m.pruneAcknowledgedFlowMutations()
 	m = m.seedAutoAdvanceSnapshot(flows)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
@@ -1444,7 +1445,8 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
-	flows := preferNewerCachedFlowRecords(msg.Flows, m.activeFlowRecords, m.latestFlowMutations)
+	flows := preferNewerCachedFlowRecords(msg.Flows, msg.ListRequest, m.latestFlowMutations)
+	m = m.pruneAcknowledgedFlowMutations()
 	m = m.seedAutoAdvanceSnapshot(flows)
 	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), flows...)
 	m = m.syncActiveFlowsFromCache()
@@ -1474,6 +1476,7 @@ func (m Model) handleFlowAutoModeSetFailed(msg FlowAutoModeSetFailedMsg) Model {
 }
 
 func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) Model {
+	m = m.clearFlowHeadlessWritePending(msg.FlowID)
 	if msg.FlowID == "" || msg.Flow.FlowID != msg.FlowID || msg.Flow.Headless != msg.Enabled {
 		return m
 	}
@@ -1487,6 +1490,7 @@ func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) Model {
 }
 
 func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
+	m = m.clearFlowHeadlessWritePending(msg.FlowID)
 	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
@@ -1616,39 +1620,88 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	return m.clampSelectionsAfterFilter()
 }
 
-func preferNewerCachedFlowRecords(incoming []flowstore.FlowRecord, cachedSets ...[]flowstore.FlowRecord) []flowstore.FlowRecord {
+// cachedFlowMutation retains a Flow record this process persisted, together
+// with the list request generation current when the write completed. The
+// generation is a causal version: a fetch issued at a later generation already
+// observes the write, so the cached copy can be dropped. Wall-clock UpdatedAt
+// cannot serve that role because a peer writing the shared state root may have
+// a clock behind this process.
+type cachedFlowMutation struct {
+	record     flowstore.FlowRecord
+	generation uint64
+}
+
+// preferNewerCachedFlowRecords restores mutations that a fetch issued before
+// the write could not have seen. Mutations the fetch supersedes are dropped by
+// pruneAcknowledgedFlowMutations.
+//
+// Both guards are required. The generation alone is not sufficient: a request is
+// numbered when it is issued, but the store read happens later and unlocked, so
+// an older request can still return a record that already carries this write
+// plus a newer peer write. The timestamp alone is not sufficient either, because
+// a peer's clock may lag this process. Restoring only when the fetch predates
+// the write and the incoming copy also looks older keeps both cases safe.
+func preferNewerCachedFlowRecords(incoming []flowstore.FlowRecord, request uint64, mutations []cachedFlowMutation) []flowstore.FlowRecord {
 	merged := append([]flowstore.FlowRecord(nil), incoming...)
 	for i, record := range merged {
-		for _, cached := range cachedSets {
-			for _, cachedRecord := range cached {
-				if cachedRecord.FlowID != record.FlowID || !sameRepoPath(cachedRecord.RepoPath, record.RepoPath) {
-					continue
-				}
-				if merged[i].UpdatedAt.Before(cachedRecord.UpdatedAt) {
-					merged[i] = cachedRecord
-				}
+		for _, mutation := range mutations {
+			if mutation.generation < request {
+				continue
 			}
+			if mutation.record.FlowID != record.FlowID || !sameRepoPath(mutation.record.RepoPath, record.RepoPath) {
+				continue
+			}
+			if !merged[i].UpdatedAt.Before(mutation.record.UpdatedAt) {
+				continue
+			}
+			merged[i] = mutation.record
 		}
 	}
 	return merged
+}
+
+// pruneAcknowledgedFlowMutations drops mutations that every surface able to
+// accept a Flow result has already observed. Repository Flows and Active Flows
+// keep separate request counters and both accept results, so a repository fetch
+// started while an Active Flows fetch is still outstanding must not retire a
+// mutation that the older request still needs. A hidden Active Flows surface
+// rejects its own results and re-fetches on entry, so it never holds pruning
+// back.
+func (m Model) pruneAcknowledgedFlowMutations() Model {
+	threshold := m.currentListRequest(ui.ModeFlows)
+	if active := m.currentListRequest(ui.ModeActiveFlows); m.activeFlowSurfaceVisible() && active < threshold {
+		threshold = active
+	}
+	retained := make([]cachedFlowMutation, 0, len(m.latestFlowMutations))
+	for _, mutation := range m.latestFlowMutations {
+		if mutation.generation >= threshold {
+			retained = append(retained, mutation)
+		}
+	}
+	if len(retained) == len(m.latestFlowMutations) {
+		return m
+	}
+	m.latestFlowMutations = retained
+	return m
 }
 
 func (m Model) rememberFlowMutation(flow flowstore.FlowRecord) Model {
 	if flow.FlowID == "" || strings.TrimSpace(flow.RepoPath) == "" {
 		return m
 	}
-	records := append([]flowstore.FlowRecord(nil), m.latestFlowMutations...)
-	for i, record := range records {
-		if record.FlowID != flow.FlowID || !sameRepoPath(record.RepoPath, flow.RepoPath) {
+	mutation := cachedFlowMutation{record: flow, generation: m.listRequestSeq}
+	mutations := append([]cachedFlowMutation(nil), m.latestFlowMutations...)
+	for i, cached := range mutations {
+		if cached.record.FlowID != flow.FlowID || !sameRepoPath(cached.record.RepoPath, flow.RepoPath) {
 			continue
 		}
-		if !flow.UpdatedAt.Before(record.UpdatedAt) {
-			records[i] = flow
+		if !flow.UpdatedAt.Before(cached.record.UpdatedAt) {
+			mutations[i] = mutation
 		}
-		m.latestFlowMutations = records
+		m.latestFlowMutations = mutations
 		return m
 	}
-	m.latestFlowMutations = append(records, flow)
+	m.latestFlowMutations = append(mutations, mutation)
 	return m
 }
 
