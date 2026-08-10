@@ -8355,7 +8355,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if sessionTick != nil {
 		t.Fatal("opening a session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -8411,7 +8411,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, sessionTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, sessionTick := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if sessionTick != nil {
 		t.Fatal("opening an exited session while a Flow terminal is running should reuse the active repaint loop")
 	}
@@ -9264,8 +9264,11 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 					t.Fatalf("status = %q, want to contain %q", m.TransientError(), want)
 				}
 			}
-			if strings.Contains(m.View(), "agent output") {
-				t.Fatalf("failed prefill should not append a terminal slot:\n%s", m.View())
+			if tt.term.terminateErr == nil && strings.Contains(m.View(), "agent output") {
+				t.Fatalf("confirmed prefill cleanup should remove the terminal slot:\n%s", m.View())
+			}
+			if tt.term.terminateErr != nil && !strings.Contains(m.View(), "agent output") {
+				t.Fatalf("failed prefill cleanup should retain the terminal slot for retry:\n%s", m.View())
 			}
 		})
 	}
@@ -10026,7 +10029,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if view := m.View(); !strings.Contains(view, "2 codex feature/session exited") {
 		t.Fatalf("session terminal should use the next global tab number:\n%s", view)
 	}
@@ -10073,7 +10076,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -10255,7 +10258,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-5", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/five", Branch: "feature/five"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-6", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/six", Branch: "feature/six"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	openSessionIndex := func(index int, label string) {
 		t.Helper()
@@ -10269,7 +10272,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		if cmd == nil {
 			t.Fatalf("%s should return a command", label)
 		}
-		m, _ = update(m, cmd())
+		m, _ = submitSavedSessionSelection(m, cmd)
 	}
 	for i := 1; i < 5; i++ {
 		openSessionIndex(i, "session picker selection")

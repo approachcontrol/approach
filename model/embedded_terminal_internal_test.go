@@ -1197,6 +1197,32 @@ func TestStaleEmbeddedPromptPrefillResultIsIgnoredAfterSlotRemoval(t *testing.T)
 	}
 }
 
+func TestPromptPrefillTerminationFailureRetainsFlowOccupancy(t *testing.T) {
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", FlowID: "flow-1", LaunchID: "repair-1", FlowRepair: true,
+	}
+	m := Model{
+		embeddedTerminals: []embeddedTerminalSlot{{
+			Number: 1, ID: 42, Scope: embeddedTerminalScopeFlow, FlowID: ctx.FlowID, LaunchID: ctx.LaunchID,
+			FlowRepair: true, FlowDetachBlocked: true, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{state: "running"},
+		}},
+	}
+
+	nextModel, _ := m.Update(embeddedPromptPrefillResultMsg{
+		ID:                42,
+		LaunchContext:     ctx,
+		Err:               errors.New("prefill failed; terminate embedded terminal after prefill failure: kill failed"),
+		TerminationFailed: true,
+	})
+	next := nextModel.(Model)
+	if len(next.embeddedTerminals) != 1 || next.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("prefill cleanup failure slots = %#v, want retained active occupancy", next.embeddedTerminals)
+	}
+	if next.activeTerminalNum != 1 || !next.hasFlowEmbeddedTerminalForFlow(ctx.FlowID) {
+		t.Fatalf("prefill cleanup failure active/occupancy = %d/%v", next.activeTerminalNum, next.hasFlowEmbeddedTerminalForFlow(ctx.FlowID))
+	}
+}
+
 func commandMessageOfType[T any](t *testing.T, cmd tea.Cmd) T {
 	t.Helper()
 	var zero T

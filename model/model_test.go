@@ -40,6 +40,26 @@ func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
 	return tm.(model.Model), cmd
 }
 
+// resumeSelectedSession advances the authoritative saved-session refresh that
+// precedes routing a resume to an embedded terminal or external launcher.
+func resumeSelectedSession(m model.Model, key tea.KeyMsg) (model.Model, tea.Cmd) {
+	m, cmd := update(m, key)
+	if cmd == nil {
+		return m, nil
+	}
+	return update(m, cmd())
+}
+
+// submitSavedSessionSelection advances both the picker callback and the
+// authoritative refresh it schedules.
+func submitSavedSessionSelection(m model.Model, cmd tea.Cmd) (model.Model, tea.Cmd) {
+	m, cmd = update(m, cmd())
+	if cmd == nil {
+		return m, nil
+	}
+	return update(m, cmd())
+}
+
 func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 	switch msg := msg.(type) {
 	case model.WorktreeResultMsg:

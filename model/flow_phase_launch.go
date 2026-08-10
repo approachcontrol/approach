@@ -652,6 +652,20 @@ func (m Model) hasFlowEmbeddedTerminalForFlow(flowID string) bool {
 	return false
 }
 
+func (m Model) hasFlowEmbeddedTerminalForLaunch(flowID, launchID string) bool {
+	flowID = strings.TrimSpace(flowID)
+	launchID = strings.TrimSpace(launchID)
+	if flowID == "" || launchID == "" {
+		return false
+	}
+	for _, slot := range m.embeddedTerminals {
+		if strings.TrimSpace(slot.FlowID) == flowID && strings.TrimSpace(slot.LaunchID) == launchID {
+			return true
+		}
+	}
+	return false
+}
+
 func (m Model) hasFlowRepairEmbeddedTerminalForFlow(flowID string) bool {
 	flowID = strings.TrimSpace(flowID)
 	if flowID == "" {

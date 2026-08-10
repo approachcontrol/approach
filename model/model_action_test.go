@@ -5040,7 +5040,7 @@ func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
@@ -5089,7 +5089,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 				CWD:          "/dev/alpha-worktrees/feat",
 				Branch:       "feature/api",
 			}}, ListRequest: m.ListRequest(ui.ModeSessions)})
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+			m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 			if cmd == nil {
 				t.Fatal("embedded session resume should schedule terminal repaint ticks")
 			}
@@ -5127,7 +5127,7 @@ func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 		CWD:          "/dev/alpha-worktrees/feat",
 		Branch:       "feature/api",
 	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
@@ -5194,7 +5194,7 @@ func TestModel_CollapsedSessionTerminalForwardsCtrlRAndNeverTrapsFocus(t *testin
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/feat",
 	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
@@ -5252,7 +5252,7 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -5287,7 +5287,7 @@ func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected external resume command when embedded PTY is unsupported")
 	}
@@ -5308,7 +5308,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd != nil {
@@ -5362,7 +5362,7 @@ func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	wantStartWidth := ui.EmbeddedTerminalPTYWidth(180)
 	_, wantStartOuterHeight := ui.EmbeddedTerminalDockHeights(14-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
@@ -5472,7 +5472,7 @@ func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Mo
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	return m, fakeTerm, started
 }
 
@@ -5488,16 +5488,25 @@ func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.
 			return terms[ctx.ResumeSessionID], nil
 		},
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
-			if filter.RepoPath != "/dev/bravo" {
-				return nil, nil
+			if filter.Provider == sessions.ProviderCodex || filter.RepoPath == "/dev/alpha" {
+				return []sessions.SessionRecord{{
+					Provider:     sessions.ProviderCodex,
+					SessionID:    "alpha-session",
+					RepoPath:     "/dev/alpha",
+					WorktreePath: "/dev/alpha-worktrees/feat",
+					Branch:       "feature",
+				}}, nil
 			}
-			return []sessions.SessionRecord{{
-				Provider:     sessions.ProviderClaude,
-				SessionID:    "bravo-session",
-				RepoPath:     "/dev/bravo",
-				WorktreePath: "/dev/bravo-worktrees/docs",
-				Branch:       "docs",
-			}}, nil
+			if filter.Provider == sessions.ProviderClaude || filter.RepoPath == "/dev/bravo" {
+				return []sessions.SessionRecord{{
+					Provider:     sessions.ProviderClaude,
+					SessionID:    "bravo-session",
+					RepoPath:     "/dev/bravo",
+					WorktreePath: "/dev/bravo-worktrees/docs",
+					Branch:       "docs",
+				}}, nil
+			}
+			return nil, nil
 		},
 	})
 	m = inRightPane(m)
@@ -5510,7 +5519,7 @@ func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.
 		WorktreePath: "/dev/alpha-worktrees/feat",
 		Branch:       "feature",
 	}}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	// Switching the selected repo clears the sessions cache while the dock
 	// and its terminal persist.
@@ -5538,7 +5547,7 @@ func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.
 	if cmd == nil {
 		t.Fatal("expected picker submit command")
 	}
-	m, _ = update(m, cmd())
+	m, _ = submitSavedSessionSelection(m, cmd)
 	if want := []string{"alpha-session", "bravo-session"}; !reflect.DeepEqual(started, want) {
 		t.Fatalf("started sessions = %#v, want %#v", started, want)
 	}
@@ -5564,7 +5573,7 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
@@ -5585,7 +5594,7 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected picker submit command")
 	}
-	m, _ = update(m, cmd())
+	m, _ = submitSavedSessionSelection(m, cmd)
 
 	if want := []string{"codex-session-1", "claude-session-2"}; !reflect.DeepEqual(started, want) {
 		t.Fatalf("started = %#v, want %#v", started, want)
@@ -5615,7 +5624,7 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, tick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, tick := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if tick == nil {
 		t.Fatal("expected first embedded terminal to schedule repaint tick")
 	}
@@ -5633,7 +5642,7 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 	if cmd == nil {
 		t.Fatal("expected picker submit command")
 	}
-	_, restarted := update(m, cmd())
+	_, restarted := submitSavedSessionSelection(m, cmd)
 	if restarted == nil {
 		t.Fatal("opening a new running terminal after all PTYs exited should restart repaint tick")
 	}
@@ -5656,12 +5665,12 @@ func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat", Branch: "feature/api"},
 		{Provider: sessions.ProviderClaude, SessionID: "claude-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/docs", Branch: "docs"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, cmd())
+	m, _ = submitSavedSessionSelection(m, cmd)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
@@ -5694,18 +5703,18 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/two", Branch: "feature/two"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-3", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/three", Branch: "feature/three"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, cmd())
+	m, _ = submitSavedSessionSelection(m, cmd)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, cmd())
+	m, _ = submitSavedSessionSelection(m, cmd)
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -5760,7 +5769,7 @@ func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -5786,7 +5795,7 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -5819,7 +5828,7 @@ func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd != nil {
@@ -5862,7 +5871,7 @@ func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
 
@@ -5887,7 +5896,7 @@ func TestModel_EmbeddedTerminalResizeSkipsExitedPTYs(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, _ = resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 30})
 
@@ -5914,7 +5923,7 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, firstTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, firstTick := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if firstTick == nil {
 		t.Fatal("expected first embedded terminal to schedule repaint tick")
 	}
@@ -5922,7 +5931,7 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 	first.state = "exited"
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m, secondTick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, secondTick := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if secondTick == nil {
 		t.Fatal("expected reopened embedded terminal to schedule repaint tick")
 	}
@@ -5949,7 +5958,7 @@ func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
-	m, tick := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, tick := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if tick == nil {
 		t.Fatal("expected embedded terminal to schedule repaint tick")
 	}
@@ -5995,7 +6004,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{record}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("Flow-associated session resume should schedule a preflight")
 	}
@@ -6047,7 +6056,7 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{record}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected Flow-associated resume preflight")
 	}
@@ -6074,7 +6083,7 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", CWD: "/dev/alpha/subdir"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("embedded session resume should schedule terminal repaint ticks")
 	}
@@ -6099,7 +6108,7 @@ func TestModel_RKeyUsesCodexAppPreferenceForCodexSessionResume(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "9a0c8d4e-1111-2222-3333-abcdefabcdef", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected codex-app resume command")
 	}
@@ -6133,7 +6142,7 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 		},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	_, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("embedded claude resume should schedule terminal repaint ticks")
 	}
@@ -6157,11 +6166,11 @@ func TestModel_RKeySessionResumeNoOpsOutsideSessionSelection(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}) // plans: r has no meaning here
 
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
+	if _, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
 		t.Fatalf("expected r outside sessions to no-op, got %T", cmd)
 	}
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	if _, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
+	if _, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd != nil {
 		t.Fatalf("expected r with no selected session to no-op, got %T", cmd)
 	}
 	if called {
@@ -6183,7 +6192,7 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for missing resume path")
 	}
@@ -6209,7 +6218,7 @@ func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 		{Provider: sessions.ProviderClaude, SessionID: "   ", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/feat"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m, cmd := resumeSelectedSession(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blank session id")
 	}
@@ -6249,6 +6258,7 @@ func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected status expiry command for blank inline session id")
 	}
+	m, cmd = update(m, cmd())
 	if called {
 		t.Fatal("expected blank inline session id not to call launcher")
 	}
@@ -6378,6 +6388,7 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected inline session resume command")
 	}
+	m, cmd = update(m, cmd())
 	m, _ = update(m, cmd())
 	if got.Command != "claude" ||
 		got.ResumeSessionID != "claude-inline-1" ||

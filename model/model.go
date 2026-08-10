@@ -120,6 +120,7 @@ type Model struct {
 	createRepo                func(actions.RepoCreateOptions) (actions.RepoCreateResult, error)
 	fetchRepo                 func(string) error
 	listSessions              func(sessions.SessionFilter) ([]sessions.SessionRecord, error)
+	listSessionsAuthoritative bool
 	readTranscript            func(sessions.Provider, string) ([]sessions.TranscriptEvent, error)
 	listPlans                 func(planstore.PlanFilter) ([]planstore.PlanRecord, error)
 	listFlows                 func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error)
@@ -544,41 +545,42 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	initialMode := startupMode(opts.StartupMode)
 	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(initialMode)
 	m := Model{
-		repos:                 newRepoPane().SetItems(repos),
-		rows:                  newBranchPane(),
-		stashes:               newStashPane(),
-		worktrees:             newWorktreePane(),
-		worktreeSessions:      newSessionPane(),
-		commits:               newCommitPane(),
-		reflogs:               newReflogPane(),
-		sessions:              newSessionPane(),
-		plans:                 newPlanPane(),
-		flows:                 newFlowPane(),
-		activeFlows:           newFlowPane(),
-		beads:                 newBeadSubviews(),
-		flowHeadless:          true,
-		terminalDockVisible:   true,
-		flowRefreshTickGen:    1,
-		topMode:               topMode,
-		bottomMode:            bottomMode,
-		contentPane:           contentPane,
-		activeFlowSurface:     activeFlowSurface,
-		defaultView:           initialMode,
-		agentCommand:          agent.Normalize(opts.AgentCommand),
-		codexModel:            agent.NormalizeModel(opts.CodexModel),
-		claudeModel:           agent.NormalizeModel(opts.ClaudeModel),
-		codexReasoningEffort:  agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
-		claudeReasoningEffort: agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
-		planPromptTemplate:    opts.PlanPromptTemplate,
-		flowPromptTemplates:   opts.FlowPromptTemplates,
-		repoCreateRoot:        opts.RepoCreateRoot,
-		scanRepos:             opts.ScanRepos,
-		createRepo:            createRepo,
-		fetchRepo:             fetchRepo,
-		listSessions:          listSessions,
-		readTranscript:        readTranscript,
-		listPlans:             listPlans,
-		listFlows:             listFlows,
+		repos:                     newRepoPane().SetItems(repos),
+		rows:                      newBranchPane(),
+		stashes:                   newStashPane(),
+		worktrees:                 newWorktreePane(),
+		worktreeSessions:          newSessionPane(),
+		commits:                   newCommitPane(),
+		reflogs:                   newReflogPane(),
+		sessions:                  newSessionPane(),
+		plans:                     newPlanPane(),
+		flows:                     newFlowPane(),
+		activeFlows:               newFlowPane(),
+		beads:                     newBeadSubviews(),
+		flowHeadless:              true,
+		terminalDockVisible:       true,
+		flowRefreshTickGen:        1,
+		topMode:                   topMode,
+		bottomMode:                bottomMode,
+		contentPane:               contentPane,
+		activeFlowSurface:         activeFlowSurface,
+		defaultView:               initialMode,
+		agentCommand:              agent.Normalize(opts.AgentCommand),
+		codexModel:                agent.NormalizeModel(opts.CodexModel),
+		claudeModel:               agent.NormalizeModel(opts.ClaudeModel),
+		codexReasoningEffort:      agent.NormalizeReasoningEffort(opts.CodexReasoningEffort),
+		claudeReasoningEffort:     agent.NormalizeReasoningEffort(opts.ClaudeReasoningEffort),
+		planPromptTemplate:        opts.PlanPromptTemplate,
+		flowPromptTemplates:       opts.FlowPromptTemplates,
+		repoCreateRoot:            opts.RepoCreateRoot,
+		scanRepos:                 opts.ScanRepos,
+		createRepo:                createRepo,
+		fetchRepo:                 fetchRepo,
+		listSessions:              listSessions,
+		listSessionsAuthoritative: opts.ListSessions != nil,
+		readTranscript:            readTranscript,
+		listPlans:                 listPlans,
+		listFlows:                 listFlows,
 		listBeads: [beadSubviewCount]func(string) ([]beadsquery.Bead, error){
 			listReadyBeads,
 			listBlockedBeads,
@@ -1431,6 +1433,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleEmbeddedSessionPickerSelected(msg)
 	case embeddedSessionPickerLoadedMsg:
 		return m.handleEmbeddedSessionPickerLoaded(msg)
+	case savedSessionResumeRefreshedMsg:
+		return m.handleSavedSessionResumeRefreshed(msg)
 	case terminateEmbeddedTerminalMsg:
 		return m.handleTerminateEmbeddedTerminal(msg)
 	case quitEmbeddedTerminalsMsg:
@@ -1440,6 +1444,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		if msg.Err != nil {
+			if msg.TerminationFailed {
+				m = m.activateEmbeddedTerminal(msg.ID)
+				return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
+			}
 			m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
 			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
 		}
@@ -1681,7 +1689,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		next, launchCmd := m.launchFlowEmbeddedRequest(msg)
-		if msg.FlowLeaseSource != "" {
+		if msg.FlowLeaseSource != "" && (next.hasFlowEmbeddedTerminalForLaunch(msg.FlowLeaseID, msg.FlowLeaseToken) || launchCmd == nil) {
 			next = next.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
 		}
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
@@ -1712,6 +1720,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case ReadyBeadFlowCreateFailedMsg:
 		return m.handleReadyBeadFlowCreateFailed(msg)
 	case AgentResultMsg:
+		if !m.currentExternalFlowLaunchResult(msg) {
+			return m, nil
+		}
 		// Detached launches only start the agent in an external
 		// terminal/multiplexer session and return while it keeps running, so the
 		// captured session must not be finalized here; provider hooks own that.
@@ -1745,6 +1756,9 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 }
 
 func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeErr error) (Model, tea.Cmd) {
+	if !m.currentExternalFlowLaunchResult(msg) {
+		return m, nil
+	}
 	resultErr := msg.Err
 	if finalizeErr != nil {
 		if resultErr != "" {
@@ -1760,6 +1774,15 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
 	}
 	return m, nil
+}
+
+func (m Model) currentExternalFlowLaunchResult(msg AgentResultMsg) bool {
+	ctx := msg.LaunchContext
+	if agent.Normalize(ctx.Command) != agent.CommandCodexApp || strings.TrimSpace(ctx.FlowID) == "" || strings.TrimSpace(ctx.FlowPhaseID) == "" {
+		return true
+	}
+	lease, ok := m.flowLaunchLease(ctx.FlowID)
+	return ok && lease.Token == strings.TrimSpace(ctx.LaunchID)
 }
 
 func (m Model) cancelStaleFlowCreateLaunch(ctx actions.AgentLaunchContext, flowID, token string, source flowLaunchSource) (Model, tea.Cmd) {

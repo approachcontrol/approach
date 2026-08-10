@@ -900,14 +900,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
-			ctx, ok, next := m.sessionResumeLaunchContext(record)
-			if !ok {
-				return next, nil
-			}
-			if ctx.Command != agent.CommandCodexApp && ctx.FlowID != "" {
-				return next.resumeSessionInEmbeddedTerminal(ctx, record)
-			}
-			return next.launchAgentWithContext(ctx)
+			return m.resumeSavedSession(record)
 		}
 		wt, ok := m.selectedWorktree()
 		if ok && wt.Dirty && !wt.Stale {
@@ -2082,14 +2075,7 @@ func (m Model) handleResumeSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	ctx, ok, next := m.sessionResumeLaunchContext(record)
-	if !ok {
-		return next, nil
-	}
-	if ctx.Command != agent.CommandCodexApp {
-		return next.resumeSessionInEmbeddedTerminal(ctx, record)
-	}
-	return next.launchAgentWithContext(ctx)
+	return m.resumeSavedSession(record)
 }
 
 func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
@@ -2544,7 +2530,6 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
 	}
 	if m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) {
-		m = m.releaseFlowLaunchLease(key.FlowID, ctx.LaunchID)
 		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
 	}
 	needsTick := !m.hasRunningEmbeddedTerminal()
@@ -2554,7 +2539,6 @@ func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (
 		if err != nil {
 			errText = err.Error()
 		}
-		next = next.releaseFlowLaunchLease(key.FlowID, ctx.LaunchID)
 		return next.startFlowLaunchFailure(ctx, errText)
 	}
 	next = next.releaseFlowLaunchLease(key.FlowID, ctx.LaunchID)

@@ -332,6 +332,50 @@ func TestFlowAssociatedSavedSessionResumeReadsFlowAfterSessionScan(t *testing.T)
 	}
 }
 
+func TestSavedSessionResumeRefreshesFlowAssociationBeforeRouting(t *testing.T) {
+	cached := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", CWD: t.TempDir(),
+	}
+	current := cached
+	current.FlowID = "flow-1"
+	var launched actions.AgentLaunchContext
+	m := Model{
+		agentCommand: "codex",
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: current.FlowID}}, nil
+		},
+		listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{current}, nil
+		},
+		startEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+			launched = ctx
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+
+	next, refreshCmd := m.handleEmbeddedSessionPickerSelected(embeddedSessionPickerSelectedMsg{Record: cached, OK: true})
+	if refreshCmd == nil {
+		t.Fatal("saved-session selection did not queue an authoritative record refresh")
+	}
+	if len(next.embeddedTerminals) != 0 {
+		t.Fatal("saved-session selection launched before refreshing Flow association")
+	}
+
+	refreshedModel, flowPreflightCmd := next.Update(refreshCmd())
+	refreshed := refreshedModel.(Model)
+	if flowPreflightCmd == nil || !refreshed.flowLaunchLeaseOccupied(current.FlowID) {
+		t.Fatal("refreshed Flow-associated session did not reserve and queue Flow preflight")
+	}
+	finalModel, _ := refreshed.Update(flowPreflightCmd())
+	final := finalModel.(Model)
+	if len(final.embeddedTerminals) != 1 || final.embeddedTerminals[0].FlowID != current.FlowID {
+		t.Fatalf("refreshed Flow-associated terminal slots = %#v", final.embeddedTerminals)
+	}
+	if launched.FlowID != current.FlowID || launched.FlowPhaseID != "" || launched.FlowLaunchTracked {
+		t.Fatalf("refreshed Flow-associated launch context = %#v", launched)
+	}
+}
+
 func TestFlowAssociatedSavedSessionResumeRejectsRecordMovedToAnotherFlow(t *testing.T) {
 	selected := sessions.SessionRecord{
 		Provider: sessions.ProviderCodex, SessionID: "session-1", LaunchID: "launch-a", Status: "ended", FlowID: "flow-a", CWD: t.TempDir(),

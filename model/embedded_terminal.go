@@ -131,6 +131,12 @@ type embeddedSessionPickerLoadedMsg struct {
 	Err      error
 }
 
+type savedSessionResumeRefreshedMsg struct {
+	Record sessions.SessionRecord
+	Found  bool
+	Err    error
+}
+
 type terminateEmbeddedTerminalMsg struct {
 	ID embeddedTerminalID
 }
@@ -142,9 +148,10 @@ type embeddedTerminalTickMsg struct {
 }
 
 type embeddedPromptPrefillResultMsg struct {
-	ID            embeddedTerminalID
-	LaunchContext actions.AgentLaunchContext
-	Err           error
+	ID                embeddedTerminalID
+	LaunchContext     actions.AgentLaunchContext
+	Err               error
+	TerminationFailed bool
 }
 
 type realEmbeddedTerminal struct {
@@ -438,12 +445,14 @@ func (m Model) openEmbeddedTerminalWithLabel(ctx actions.AgentLaunchContext, sco
 	if actions.ShouldPrefillEmbeddedPrompt(ctx) {
 		return m, true, nil, func() tea.Msg {
 			err := prefillEmbeddedPromptIfNeeded(term, ctx)
+			terminationFailed := false
 			if err != nil {
 				if terminateErr := term.Terminate(); terminateErr != nil {
+					terminationFailed = true
 					err = errors.Join(err, fmt.Errorf("terminate embedded terminal after prefill failure: %w", terminateErr))
 				}
 			}
-			return embeddedPromptPrefillResultMsg{ID: id, LaunchContext: ctx, Err: err}
+			return embeddedPromptPrefillResultMsg{ID: id, LaunchContext: ctx, Err: err, TerminationFailed: terminationFailed}
 		}
 	}
 	m = m.activateEmbeddedTerminal(id)
@@ -1172,15 +1181,55 @@ func (m Model) handleEmbeddedSessionPickerSelected(msg embeddedSessionPickerSele
 	if !msg.OK {
 		return m.setStatus(statusOther, "Selected session is unavailable"), nil
 	}
-	record := msg.Record
-	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	return m.resumeSavedSession(msg.Record)
+}
+
+// resumeSavedSession refreshes the selected record before routing it. Flow
+// association can change after a picker or list is rendered, and launch policy
+// must be based on the authoritative record rather than that cached snapshot.
+func (m Model) resumeSavedSession(record sessions.SessionRecord) (Model, tea.Cmd) {
+	if m.listSessions == nil {
+		return m.setStatus(statusOther, "Session storage is unavailable"), nil
+	}
+	listSessions := m.listSessions
+	authoritative := m.listSessionsAuthoritative
+	return m, func() tea.Msg {
+		msg := savedSessionResumeRefreshedMsg{}
+		records, err := listSessions(sessions.SessionFilter{Provider: record.Provider})
+		if err != nil {
+			msg.Err = fmt.Errorf("refresh selected session before resuming: %w", err)
+			return msg
+		}
+		for _, current := range records {
+			if current.Provider == record.Provider && strings.TrimSpace(current.SessionID) == strings.TrimSpace(record.SessionID) {
+				msg.Record = current
+				msg.Found = true
+				break
+			}
+		}
+		if !msg.Found && !authoritative {
+			msg.Record = record
+			msg.Found = true
+		}
+		return msg
+	}
+}
+
+func (m Model) handleSavedSessionResumeRefreshed(msg savedSessionResumeRefreshedMsg) (Model, tea.Cmd) {
+	if msg.Err != nil {
+		return m.setStatus(statusOther, msg.Err.Error()), nil
+	}
+	if !msg.Found {
+		return m.setStatus(statusOther, "Selected session is no longer available"), nil
+	}
+	ctx, ok, next := m.sessionResumeLaunchContext(msg.Record)
 	if !ok {
 		return next, nil
 	}
 	if ctx.Command == agent.CommandCodexApp {
 		return next.launchAgentWithContext(ctx)
 	}
-	return next.resumeSessionInEmbeddedTerminal(ctx, record)
+	return next.resumeSessionInEmbeddedTerminal(ctx, msg.Record)
 }
 
 func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
