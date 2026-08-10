@@ -60,7 +60,7 @@ right. The essentials:
 | `enter` / `tab` | Collapse repos and focus the top pane / cycle focus without collapsing |
 | `ctrl+r` | Restore and focus the full repo pane outside search or terminal input |
 | `bksp` | Cycle focus in reverse outside search or terminal input |
-| Top `1` / `2` | Git / Beads at its last-used subview (Open on first Beads entry) |
+| Top `1` / `2` | Git / Beads at its last-used subview (Ready on first Beads entry) |
 | Bottom `1` / `2` / `3` | Sessions / Plans / Flows |
 | `w`/`b`/`s`/`h`/`r` | Git subviews: worktrees, branches, stashes, history, reflog |
 | `r`/`b`/`o`/`i`/`c` | Beads-only subviews: ready, blocked, open, in-progress, closed |
@@ -83,7 +83,7 @@ plans, Flows, embedded terminals, recovery states — is in
 ### Beads
 
 With the top pane focused, press `2` to enter the selected repository's Beads
-group at its last-used subview, defaulting to Open on first entry.
+group at its last-used subview, defaulting to Ready on first entry.
 All Beads queries and detail reads are read-only, and Approach never mutates
 tracker state. Pressing `2` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
@@ -187,7 +187,7 @@ claude_model = "claude-sonnet-5"
 `WORKTREE_ROOT` overrides `[scan].root`. Unknown sections and keys are ignored
 for version compatibility; malformed TOML, wrong types for known keys, and
 invalid known values fail startup. Legacy `[ui].default_view` assignments are
-accepted but ignored: startup is always repos-focused with Beads/Open above
+accepted but ignored: startup is always repos-focused with Beads/Ready above
 Flows. The full reference — models and reasoning effort, Flow
 presets, prompt templates, bootstrap hooks, sessions storage, terminal
 settings, and environment variables — is in [docs/config.md](docs/config.md).

@@ -822,7 +822,7 @@ func TestModel_LeftPaneModeKeysAreNoOps(t *testing.T) {
 	} {
 		before := listRequests(m)
 		m2, cmd := update(m, key)
-		if m2.Mode() != ui.ModeBeadsOpen {
+		if m2.Mode() != ui.ModeBeadsReady {
 			t.Errorf("key %v changed mode in left pane: got %d", key, m2.Mode())
 		}
 		if m2.ActivePane() != ui.PaneRepos {
@@ -844,8 +844,8 @@ func TestModel_RightArrowFromLeftPaneIsNoOp(t *testing.T) {
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("Mode() = %d, want remembered Beads Open", m.Mode())
+	if m.Mode() != ui.ModeBeadsReady {
+		t.Fatalf("Mode() = %d, want remembered Beads Ready", m.Mode())
 	}
 	if cmd != nil {
 		t.Fatalf("right from left pane produced cmd %T, want nil", cmd)
@@ -862,8 +862,8 @@ func TestModel_LeftArrowFromLeftPaneIsNoOp(t *testing.T) {
 	if m.ActivePane() != ui.PaneRepos {
 		t.Fatalf("ActivePane() = %d, want left pane", m.ActivePane())
 	}
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("Mode() = %d, want remembered Beads Open", m.Mode())
+	if m.Mode() != ui.ModeBeadsReady {
+		t.Fatalf("Mode() = %d, want remembered Beads Ready", m.Mode())
 	}
 	if cmd != nil {
 		t.Fatalf("left from left pane produced cmd %T, want nil", cmd)
@@ -935,10 +935,10 @@ func TestModel_SlashFiltersReposInLeftPane(t *testing.T) {
 	var repoPath string
 	for _, msg := range immediateTestCommandMessages(cmd) {
 		switch msg := msg.(type) {
-		case model.BeadsOpenResultMsg:
+		case model.BeadsReadyResultMsg:
 			repoPath = msg.RepoPath
 		case model.FetchErrorMsg:
-			if msg.Mode == ui.ModeBeadsOpen {
+			if msg.Mode == ui.ModeBeadsReady {
 				repoPath = msg.RepoPath
 			}
 		}
@@ -974,7 +974,7 @@ func TestModel_SearchActiveSuppressesHorizontalArrowNavigation(t *testing.T) {
 				return m
 			},
 			wantPane:  ui.PaneRepos,
-			wantMode:  ui.ModeBeadsOpen,
+			wantMode:  ui.ModeBeadsReady,
 			wantQuery: "a",
 		},
 		{

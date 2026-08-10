@@ -520,7 +520,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if finalizeAgentSession == nil {
 		finalizeAgentSession = func(actions.AgentLaunchContext) error { return nil }
 	}
-	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(ui.ModeBeadsOpen)
+	topMode, bottomMode, contentPane, activeFlowSurface := startupPaneState(ui.ModeBeadsReady)
 	m := Model{
 		repos:                 newRepoPane().SetItems(repos),
 		rows:                  newBranchPane(),

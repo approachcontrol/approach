@@ -20,8 +20,8 @@ func TestFixedStackedPaneStartupState(t *testing.T) {
 	if m.activePane != ui.PaneRepos {
 		t.Fatalf("activePane = %d, want repositories", m.activePane)
 	}
-	if m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModeFlows || m.contentPane != ui.PaneTop {
-		t.Fatalf("startup panes = top %d bottom %d remembered %d, want Beads Open / Flows / top", m.topMode, m.bottomMode, m.contentPane)
+	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows || m.contentPane != ui.PaneTop {
+		t.Fatalf("startup panes = top %d bottom %d remembered %d, want Beads Ready / Flows / top", m.topMode, m.bottomMode, m.contentPane)
 	}
 	if m.activeFlowSurface {
 		t.Fatal("startup unexpectedly entered Active Flows takeover")
@@ -30,8 +30,12 @@ func TestFixedStackedPaneStartupState(t *testing.T) {
 
 func TestInitFetchesBothStoredPanesWithoutActiveFlows(t *testing.T) {
 	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
-		ListOpenBeads: func(repoPath string) ([]beadsquery.Bead, error) {
+		ListReadyBeads: func(repoPath string) ([]beadsquery.Bead, error) {
 			return []beadsquery.Bead{{ID: "bd-1"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) {
+			t.Fatal("Init fetched Beads Open instead of Ready")
+			return nil, nil
 		},
 		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			if filter.RepoPath == "" {
@@ -44,7 +48,7 @@ func TestInitFetchesBothStoredPanesWithoutActiveFlows(t *testing.T) {
 	var beadsResults, flowResults int
 	for _, msg := range collectInitMessages(m.Init()) {
 		switch msg.(type) {
-		case BeadsOpenResultMsg:
+		case BeadsReadyResultMsg:
 			beadsResults++
 		case FlowResultMsg:
 			flowResults++
@@ -59,24 +63,35 @@ func TestInitFetchesBothStoredPanesWithoutActiveFlows(t *testing.T) {
 
 func TestRepositorySwitchStartsBothStoredPaneRequests(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/one"}, {Path: "/two"}})
-	beforeTop := m.currentListRequest(ui.ModeBeadsOpen)
+	beforeTop := m.currentListRequest(ui.ModeBeadsReady)
 	beforeBottom := m.currentListRequest(ui.ModeFlows)
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("repository switch returned no stored-pane fetch command")
 	}
-	if m.currentListRequest(ui.ModeBeadsOpen) == beforeTop || m.currentListRequest(ui.ModeFlows) == beforeBottom {
-		t.Fatalf("request tokens = Beads %d Flows %d, want both advanced from %d/%d", m.currentListRequest(ui.ModeBeadsOpen), m.currentListRequest(ui.ModeFlows), beforeTop, beforeBottom)
+	if m.currentListRequest(ui.ModeBeadsReady) == beforeTop || m.currentListRequest(ui.ModeFlows) == beforeBottom {
+		t.Fatalf("request tokens = Beads %d Flows %d, want both advanced from %d/%d", m.currentListRequest(ui.ModeBeadsReady), m.currentListRequest(ui.ModeFlows), beforeTop, beforeBottom)
 	}
 }
 
 func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
-	m := New([]scanner.Repo{{Path: "/repo"}})
+	readyCalls := 0
+	openCalls := 0
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			readyCalls++
+			return []beadsquery.Bead{{ID: "bd-ready"}}, nil
+		},
+		ListOpenBeads: func(string) ([]beadsquery.Bead, error) {
+			openCalls++
+			return nil, nil
+		},
+	})
 
 	// Repository focus suppresses pane-local numbers.
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModeFlows {
+	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows {
 		t.Fatalf("repository number mutated stored modes to %d/%d", m.topMode, m.bottomMode)
 	}
 
@@ -85,18 +100,50 @@ func TestPaneLocalNumbersAndArrowNavigation(t *testing.T) {
 	if m.topMode != ui.ModeWorktrees || m.bottomMode != ui.ModeFlows || m.activePane != ui.PaneTop {
 		t.Fatalf("top 1 = top %d bottom %d focus %d, want Git / Flows / top", m.topMode, m.bottomMode, m.activePane)
 	}
-	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModeFlows {
-		t.Fatalf("top right = top %d bottom %d, want sticky Beads / unchanged Flows", m.topMode, m.bottomMode)
+	before := m.listRequests
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(Model)
+	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows {
+		t.Fatalf("top right = top %d bottom %d, want Ready / unchanged Flows", m.topMode, m.bottomMode)
+	}
+	if cmd == nil {
+		t.Fatal("top right returned nil Ready fetch command")
+	}
+	for mode, request := range before {
+		got := m.listRequests[mode]
+		if ui.Mode(mode) == ui.ModeBeadsReady {
+			if got == request {
+				t.Fatalf("Ready request = %d, want advancement", got)
+			}
+			continue
+		}
+		if got != request {
+			t.Fatalf("request slot %d = %d, want unchanged %d", mode, got, request)
+		}
+	}
+	msg := cmd()
+	result, ok := msg.(BeadsReadyResultMsg)
+	if !ok {
+		t.Fatalf("top right fetch result = %T, want BeadsReadyResultMsg", msg)
+	}
+	if readyCalls != 1 || openCalls != 0 {
+		t.Fatalf("top right query calls = Ready %d Open %d, want 1/0", readyCalls, openCalls)
+	}
+	if result.RepoPath != "/repo" || result.ListRequest != m.currentListRequest(ui.ModeBeadsReady) {
+		t.Fatalf("top right Ready result = repo %q request %d, want /repo request %d", result.RepoPath, result.ListRequest, m.currentListRequest(ui.ModeBeadsReady))
+	}
+	m = updatePaneStateTestModel(t, m, result)
+	if got := m.Beads(ui.ModeBeadsReady); len(got) != 1 || got[0].ID != "bd-ready" || !m.BeadsAvailable(ui.ModeBeadsReady) {
+		t.Fatalf("accepted Ready result = %#v available=%t, want bd-ready and available", got, m.BeadsAvailable(ui.ModeBeadsReady))
 	}
 
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModeSessions || m.activePane != ui.PaneBottom {
+	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeSessions || m.activePane != ui.PaneBottom {
 		t.Fatalf("bottom 1 = top %d bottom %d focus %d, want unchanged Beads / Sessions / bottom", m.topMode, m.bottomMode, m.activePane)
 	}
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.bottomMode != ui.ModeFlows || m.topMode != ui.ModeBeadsOpen {
+	if m.bottomMode != ui.ModeFlows || m.topMode != ui.ModeBeadsReady {
 		t.Fatalf("bottom left = top %d bottom %d, want unchanged Beads / wrapped Flows", m.topMode, m.bottomMode)
 	}
 }
@@ -276,12 +323,12 @@ func TestRefreshAndActiveFlowsUseIndependentRequestSlots(t *testing.T) {
 	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
 		ScanRepos: func() ([]scanner.Repo, error) { return []scanner.Repo{{Path: "/repo"}}, nil },
 	})
-	beadsBefore := m.currentListRequest(ui.ModeBeadsOpen)
+	beadsBefore := m.currentListRequest(ui.ModeBeadsReady)
 	flowsBefore := m.currentListRequest(ui.ModeFlows)
 	activeBefore := m.currentListRequest(ui.ModeActiveFlows)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyF5})
 	m = next.(Model)
-	if m.currentListRequest(ui.ModeBeadsOpen) == beadsBefore || m.currentListRequest(ui.ModeFlows) == flowsBefore {
+	if m.currentListRequest(ui.ModeBeadsReady) == beadsBefore || m.currentListRequest(ui.ModeFlows) == flowsBefore {
 		t.Fatal("f5 did not advance both stored-pane requests")
 	}
 	if m.currentListRequest(ui.ModeActiveFlows) != activeBefore {
@@ -291,11 +338,11 @@ func TestRefreshAndActiveFlowsUseIndependentRequestSlots(t *testing.T) {
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
 	m = next.(Model)
 	activeBefore = m.currentListRequest(ui.ModeActiveFlows)
-	beadsBefore = m.currentListRequest(ui.ModeBeadsOpen)
+	beadsBefore = m.currentListRequest(ui.ModeBeadsReady)
 	flowsBefore = m.currentListRequest(ui.ModeFlows)
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyF5})
 	m = next.(Model)
-	if m.currentListRequest(ui.ModeBeadsOpen) == beadsBefore || m.currentListRequest(ui.ModeFlows) == flowsBefore || m.currentListRequest(ui.ModeActiveFlows) == activeBefore {
+	if m.currentListRequest(ui.ModeBeadsReady) == beadsBefore || m.currentListRequest(ui.ModeFlows) == flowsBefore || m.currentListRequest(ui.ModeActiveFlows) == activeBefore {
 		t.Fatal("f5 during takeover did not independently advance both stored panes and Active Flows")
 	}
 }
@@ -389,7 +436,7 @@ func TestRemovedDefaultViewKeyIsUnbound(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'V'}})
 	m = next.(Model)
-	if cmd != nil || m.modal.IsOpen() || m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModeFlows {
+	if cmd != nil || m.modal.IsOpen() || m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModeFlows {
 		t.Fatalf("V changed state: cmd=%T modal=%t top=%d bottom=%d", cmd, m.modal.IsOpen(), m.topMode, m.bottomMode)
 	}
 }
@@ -400,7 +447,7 @@ func TestFlowsLKeyNoLongerAliasesBeads(t *testing.T) {
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = next.(Model)
-	if cmd != nil || m.activePane != ui.PaneBottom || m.bottomMode != ui.ModeFlows || m.topMode != ui.ModeBeadsOpen {
+	if cmd != nil || m.activePane != ui.PaneBottom || m.bottomMode != ui.ModeFlows || m.topMode != ui.ModeBeadsReady {
 		t.Fatalf("Flows l changed pane state: cmd=%T focus=%d top=%d bottom=%d", cmd, m.activePane, m.topMode, m.bottomMode)
 	}
 }
@@ -430,7 +477,7 @@ func TestStoredPaneModesSurviveFocusAndTakeoverTransitions(t *testing.T) {
 
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	if m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModePlans || m.activePane != ui.PaneBottom || m.contentPane != ui.PaneBottom {
+	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModePlans || m.activePane != ui.PaneBottom || m.contentPane != ui.PaneBottom {
 		t.Fatalf("top -> bottom state = top %d bottom %d active %d content %d", m.topMode, m.bottomMode, m.activePane, m.contentPane)
 	}
 
@@ -440,7 +487,7 @@ func TestStoredPaneModesSurviveFocusAndTakeoverTransitions(t *testing.T) {
 	}
 
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	if !m.activeFlowSurface || m.activePane != ui.PaneRepos || m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModePlans || m.Mode() != ui.ModeActiveFlows {
+	if !m.activeFlowSurface || m.activePane != ui.PaneRepos || m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModePlans || m.Mode() != ui.ModeActiveFlows {
 		t.Fatalf("takeover entry changed stored state: takeover %t active %d top %d bottom %d mode %d", m.activeFlowSurface, m.activePane, m.topMode, m.bottomMode, m.Mode())
 	}
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
@@ -449,7 +496,7 @@ func TestStoredPaneModesSurviveFocusAndTakeoverTransitions(t *testing.T) {
 	}
 
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.topMode != ui.ModeBeadsOpen || m.bottomMode != ui.ModePlans || m.activePane != ui.PaneTop || m.contentPane != ui.PaneTop || m.Mode() != ui.ModeBeadsOpen {
+	if m.topMode != ui.ModeBeadsReady || m.bottomMode != ui.ModePlans || m.activePane != ui.PaneTop || m.contentPane != ui.PaneTop || m.Mode() != ui.ModeBeadsReady {
 		t.Fatalf("bottom -> top restore = top %d bottom %d active %d content %d mode %d", m.topMode, m.bottomMode, m.activePane, m.contentPane, m.Mode())
 	}
 }
@@ -488,13 +535,13 @@ func TestCrossPaneListResultCompatibility(t *testing.T) {
 
 	t.Run("stored Beads cache may fill while bottom pane is focused", func(t *testing.T) {
 		m := New([]scanner.Repo{{Path: "/repo"}})
-		request := m.currentListRequest(ui.ModeBeadsOpen)
+		request := m.currentListRequest(ui.ModeBeadsReady)
 		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
 		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
 		m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-		m = updatePaneStateTestModel(t, m, BeadsOpenResultMsg{RepoPath: "/repo", ListRequest: request, Available: true, Beads: []beadsquery.Bead{{ID: "bd-1"}}})
-		if len(m.Beads(ui.ModeBeadsOpen)) != 1 || m.Mode() != ui.ModePlans {
-			t.Fatalf("background Beads result = rows %d mode %d, want cached row with Plans focused", len(m.Beads(ui.ModeBeadsOpen)), m.Mode())
+		m = updatePaneStateTestModel(t, m, BeadsReadyResultMsg{RepoPath: "/repo", ListRequest: request, Available: true, Beads: []beadsquery.Bead{{ID: "bd-1"}}})
+		if len(m.Beads(ui.ModeBeadsReady)) != 1 || m.Mode() != ui.ModePlans {
+			t.Fatalf("background Beads result = rows %d mode %d, want cached row with Plans focused", len(m.Beads(ui.ModeBeadsReady)), m.Mode())
 		}
 	})
 
