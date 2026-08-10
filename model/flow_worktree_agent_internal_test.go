@@ -457,6 +457,9 @@ func TestSavedSessionResumePreservesExactSessionIdentityAcrossRefreshes(t *testi
 	m := Model{
 		agentCommand: "codex",
 		listSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.FlowID == exact.FlowID {
+				return []sessions.SessionRecord{exact}, nil
+			}
 			if filter.Provider != "" {
 				return []sessions.SessionRecord{aliased, exact}, nil
 			}
@@ -603,6 +606,47 @@ func TestFlowAssociatedSavedSessionResumeRejectsRecordMovedToAnotherFlow(t *test
 	}
 	if next.flowLaunchLeaseOccupied("flow-a") {
 		t.Fatal("stale resume rejection retained the old Flow lease")
+	}
+}
+
+func TestFlowAssociatedSavedSessionResumeRejectsRecordMovedBetweenAuthoritativeReads(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", LaunchID: "launch-a", Status: "ended", FlowID: "flow-a", CWD: t.TempDir(),
+	}
+	started := false
+	m := Model{
+		agentCommand: "codex",
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: record.FlowID}}, nil
+		},
+		listSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.Provider == record.Provider {
+				return []sessions.SessionRecord{record}, nil
+			}
+			if filter.FlowID == record.FlowID {
+				return nil, nil
+			}
+			return nil, nil
+		},
+		startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+	ctx, ok, next := m.sessionResumeLaunchContext(record)
+	if !ok {
+		t.Fatal("selected record did not produce a resume context")
+	}
+	next, cmd := next.resumeSessionInEmbeddedTerminal(ctx, record)
+	if cmd == nil || !next.flowLaunchLeaseOccupied(record.FlowID) {
+		t.Fatal("saved-session resume did not reserve and queue preflight")
+	}
+	next, _ = next.handleFlowSessionResumePreflight(cmd().(flowSessionResumePreflightMsg))
+	if started {
+		t.Fatal("session absent from final Flow snapshot but resume still started")
+	}
+	if next.flowLaunchLeaseOccupied(record.FlowID) {
+		t.Fatal("stale final-snapshot rejection retained the Flow lease")
 	}
 }
 

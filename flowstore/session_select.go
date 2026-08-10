@@ -138,8 +138,8 @@ func LatestPhaseLaunchID(phase FlowPhase) string {
 }
 
 func sessionEnded(session Session) bool {
-	if status := strings.TrimSpace(session.Status); status != "" {
-		return status == "ended"
+	if strings.TrimSpace(session.Status) != "" {
+		return session.Status == "ended"
 	}
 	return !session.EndedAt.IsZero()
 }

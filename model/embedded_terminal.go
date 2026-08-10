@@ -1394,6 +1394,24 @@ func (m Model) flowSessionResumePreflightCmd(ctx actions.AgentLaunchContext, rec
 			msg.Err = fmt.Errorf("list sessions for Flow %s: %w", ctx.FlowID, err)
 			return msg
 		}
+		finalRecordFound := false
+		for _, current := range msg.Sessions {
+			if current.Provider != record.Provider || current.SessionID != record.SessionID {
+				continue
+			}
+			if strings.TrimSpace(current.FlowID) != strings.TrimSpace(ctx.FlowID) ||
+				strings.TrimSpace(current.LaunchID) != strings.TrimSpace(msg.CurrentRecord.LaunchID) {
+				msg.Err = fmt.Errorf("selected session changed while the resume was pending")
+				return msg
+			}
+			msg.CurrentRecord = current
+			finalRecordFound = true
+			break
+		}
+		if !finalRecordFound {
+			msg.Err = fmt.Errorf("selected session changed while the resume was pending")
+			return msg
+		}
 		flows, err := listFlows(flowstore.FlowFilter{})
 		if err != nil {
 			msg.Err = fmt.Errorf("refresh Flow before resuming session: %w", err)

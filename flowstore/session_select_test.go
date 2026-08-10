@@ -94,6 +94,22 @@ func TestPhaseLatestLaunchEndedRejectsMixedLatestSessions(t *testing.T) {
 	}
 }
 
+func TestPhaseRecoveryTreatsNonExactEndedStatusAsActive(t *testing.T) {
+	phase := flowstore.FlowPhase{
+		Status:    flowstore.PhaseRunning,
+		LaunchIDs: []string{"launch-new"},
+		Sessions: []flowstore.Session{{
+			Provider: "codex", SessionID: "session-new", LaunchID: "launch-new", Status: "ended ",
+		}},
+	}
+	if flowstore.PhaseLatestLaunchEnded(phase) {
+		t.Fatal("PhaseLatestLaunchEnded() = true, want non-exact ended status treated as active")
+	}
+	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); ok || reason != "" {
+		t.Fatalf("RecoverableRunningPhaseResetReason() = %q, %v; want active session not recoverable", reason, ok)
+	}
+}
+
 func TestPhaseSessionLaunchMismatch(t *testing.T) {
 	tests := []struct {
 		name  string
