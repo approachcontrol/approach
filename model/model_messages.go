@@ -1415,14 +1415,15 @@ func (m Model) handleFlowResult(msg FlowResultMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m = m.seedAutoAdvanceSnapshot(msg.Flows)
+	flows := preferNewerCachedFlowRecords(msg.Flows, m.flows.Items())
+	m = m.seedAutoAdvanceSnapshot(flows)
 	selectedFlowID := ""
 	if record, ok := m.flows.Selected(); ok {
 		selectedFlowID = record.FlowID
 	}
 	expandedFlowID := m.expandedFlowID
 	selectedFlowPhaseID := m.selectedFlowPhaseID
-	m.flows = m.flows.SetItems(msg.Flows)
+	m.flows = m.flows.SetItems(flows)
 	if selectedFlowID != "" {
 		m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool {
 			return record.FlowID == selectedFlowID
@@ -1443,8 +1444,9 @@ func (m Model) handleActiveFlowResult(msg ActiveFlowResultMsg) (Model, tea.Cmd) 
 	if !ok {
 		return m, nil
 	}
-	m = m.seedAutoAdvanceSnapshot(msg.Flows)
-	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), msg.Flows...)
+	flows := preferNewerCachedFlowRecords(msg.Flows, m.activeFlowRecords)
+	m = m.seedAutoAdvanceSnapshot(flows)
+	m.activeFlowRecords = append([]flowstore.FlowRecord(nil), flows...)
 	m = m.syncActiveFlowsFromCache()
 	m = m.clampSelectionsAfterFilter()
 	if m.terminalFocus != terminalFocusTerminal {
@@ -1478,7 +1480,7 @@ func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) Model {
 	if !msg.AllRepositories && !m.isCurrentRepo(msg.RepoPath) {
 		return m
 	}
-	if msg.Flow.RepoPath != "" && msg.RepoPath != "" && filepath.Clean(msg.Flow.RepoPath) != filepath.Clean(msg.RepoPath) {
+	if !sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
 		return m
 	}
 	return m.replaceFlowHeadlessRecord(msg.Flow)
@@ -1574,11 +1576,12 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
 	replacedFlows := false
 	for i := range items {
-		if items[i].FlowID == flow.FlowID {
-			items[i] = flow
-			replacedFlows = true
-			break
+		if items[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(items[i].UpdatedAt) {
+			continue
 		}
+		items[i] = flow
+		replacedFlows = true
+		break
 	}
 	if replacedFlows {
 		m.flows = m.flows.SetItems(items)
@@ -1594,11 +1597,12 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
 	replacedActive := false
 	for i := range activeRecords {
-		if activeRecords[i].FlowID == flow.FlowID {
-			activeRecords[i] = flow
-			replacedActive = true
-			break
+		if activeRecords[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
+			continue
 		}
+		activeRecords[i] = flow
+		replacedActive = true
+		break
 	}
 	if replacedActive {
 		m.activeFlowRecords = activeRecords
@@ -1608,6 +1612,21 @@ func (m Model) replaceFlowRecord(flow flowstore.FlowRecord) Model {
 	}
 	m = m.syncActiveFlowsFromCache()
 	return m.clampSelectionsAfterFilter()
+}
+
+func preferNewerCachedFlowRecords(incoming, cached []flowstore.FlowRecord) []flowstore.FlowRecord {
+	newestByID := make(map[string]flowstore.FlowRecord, len(cached))
+	for _, record := range cached {
+		newestByID[record.FlowID] = record
+	}
+	merged := append([]flowstore.FlowRecord(nil), incoming...)
+	for i, record := range merged {
+		cachedRecord, ok := newestByID[record.FlowID]
+		if ok && record.UpdatedAt.Before(cachedRecord.UpdatedAt) {
+			merged[i] = cachedRecord
+		}
+	}
+	return merged
 }
 
 func (m Model) handleFlowDeleted(msg FlowDeletedMsg) (tea.Model, tea.Cmd) {

@@ -1720,6 +1720,98 @@ func TestModel_FlowHeadlessResultValidatesScopeIdentityAndCacheFreshness(t *test
 	}
 }
 
+func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	older := flowWithPhaseDetails()
+	older.UpdatedAt = t0
+	newer := older
+	newer.Headless = false
+	newer.UpdatedAt = t0.Add(time.Minute)
+
+	t.Run("repository Flow list", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older Flow list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older Active Flows list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("auto-mode result", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		autoModeResult := older
+		autoModeResult.AutoMode = true
+		m, _ = update(m, model.FlowAutoModeSetMsg{
+			RepoPath: "/dev/alpha", FlowID: older.FlowID, Flow: autoModeResult, Enabled: true,
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older auto-mode result replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("authoritative deletion", func(t *testing.T) {
+		second := older
+		second.FlowID = "flow-2"
+		second.Title = "Second Flow"
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{newer, second})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{second}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].FlowID != second.FlowID || m.FlowSelected() != 0 {
+			t.Fatalf("authoritative deletion did not remove cached Flow and select fallback: flows=%#v selected=%d", got, m.FlowSelected())
+		}
+	})
+}
+
+func TestModel_FlowHeadlessResultRejectsMissingReturnedRepoPath(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	malformed := flow
+	malformed.RepoPath = ""
+	malformed.Headless = false
+	malformed.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+
+	t.Run("repository Flows", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false,
+		})
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed repository Flow cache: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false, AllRepositories: true,
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed Active Flows cache: %#v", got)
+		}
+	})
+}
+
 func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testing.T) {
 	flow := flowWithPhaseDetails()
 	flow.AutoMode = true
