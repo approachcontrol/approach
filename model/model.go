@@ -1441,14 +1441,10 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case quitEmbeddedTerminalsMsg:
 		return m.handleQuitEmbeddedTerminals()
 	case embeddedPromptPrefillResultMsg:
-		if !m.hasEmbeddedTerminalID(msg.ID) {
+		if !m.embeddedTerminalPrefillPending(msg.ID) {
 			return m, nil
 		}
 		if msg.Err != nil {
-			if msg.TerminationFailed {
-				m = m.activateEmbeddedTerminal(msg.ID)
-				return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
-			}
 			if _, needsPersistence := m.flowLaunchFailureUpdate(msg.LaunchContext, msg.Err.Error()); needsPersistence {
 				var acquired bool
 				m, acquired = m.acquireFlowLaunchLease(
@@ -1457,11 +1453,19 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 					flowLaunchSourceFailure,
 				)
 				if !acquired {
-					m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+					if msg.TerminationFailed {
+						m = m.activateEmbeddedTerminal(msg.ID)
+					} else {
+						m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+					}
 					return m.setStatus(statusOther, msg.Err.Error()), nil
 				}
 			}
-			m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+			if msg.TerminationFailed {
+				m = m.activateEmbeddedTerminal(msg.ID)
+			} else {
+				m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
+			}
 			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)

@@ -483,10 +483,10 @@ func (m Model) activateEmbeddedTerminal(id embeddedTerminalID) Model {
 	return m
 }
 
-func (m Model) hasEmbeddedTerminalID(id embeddedTerminalID) bool {
+func (m Model) embeddedTerminalPrefillPending(id embeddedTerminalID) bool {
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID == id {
-			return true
+			return slot.PrefillPending
 		}
 	}
 	return false

@@ -1223,6 +1223,50 @@ func TestPromptPrefillTerminationFailureRetainsFlowOccupancy(t *testing.T) {
 	}
 }
 
+func TestPromptPrefillTerminationFailureTransfersRetainedOccupancyToFailurePersistence(t *testing.T) {
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", FlowID: "flow-1", FlowPhaseID: "implementation", LaunchID: "launch-a", FlowLaunchTracked: true,
+	}
+	phaseUpdates := 0
+	m := NewWithOptions(nil, Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdates++
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	})
+	m.embeddedTerminals = []embeddedTerminalSlot{{
+		Number: 1, ID: 42, Scope: embeddedTerminalScopeFlow, FlowID: ctx.FlowID, FlowPhaseID: ctx.FlowPhaseID,
+		FlowLaunchTracked: true, LaunchID: ctx.LaunchID, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{state: "running"},
+	}}
+	result := embeddedPromptPrefillResultMsg{
+		ID: 42, LaunchContext: ctx, Err: errors.New("prefill failed; terminate failed"), TerminationFailed: true,
+	}
+
+	nextModel, persistCmd := m.Update(result)
+	next := nextModel.(Model)
+	if persistCmd == nil || len(next.embeddedTerminals) != 1 || next.embeddedTerminals[0].PrefillPending {
+		t.Fatalf("retained prefill failure = cmd %T slots %#v", persistCmd, next.embeddedTerminals)
+	}
+	lease, ok := next.flowLaunchLease(ctx.FlowID)
+	if !ok || lease.Token != ctx.LaunchID || !lease.FailurePending {
+		t.Fatalf("retained prefill failure lease = %#v, present %v", lease, ok)
+	}
+	if _, replayCmd := next.Update(result); replayCmd != nil {
+		t.Fatalf("replayed retained prefill failure queued duplicate persistence: %T", replayCmd)
+	}
+
+	next = next.dismissEmbeddedTerminalForReason(42, embeddedTerminalRemovalAutoClose)
+	if _, acquired := next.acquireFlowLaunchLease(ctx.FlowID, "launch-b", flowLaunchSourcePhase); acquired {
+		t.Fatal("terminal removal during failure persistence allowed a newer Flow launch")
+	}
+	persisted := commandMessageOfType[flowLaunchFailurePersistedMsg](t, persistCmd)
+	finalModel, _ := next.Update(persisted)
+	final := finalModel.(Model)
+	if phaseUpdates != 1 || final.flowLaunchLeaseOccupied(ctx.FlowID) {
+		t.Fatalf("persisted retained failure = updates %d occupied %v", phaseUpdates, final.flowLaunchLeaseOccupied(ctx.FlowID))
+	}
+}
+
 func TestPromptPrefillFailureTransfersTerminalOccupancyToFailurePersistence(t *testing.T) {
 	ctx := actions.AgentLaunchContext{
 		Command: "codex", FlowID: "flow-1", FlowPhaseID: "implementation", LaunchID: "launch-a", FlowLaunchTracked: true,
