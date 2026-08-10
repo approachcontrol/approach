@@ -520,6 +520,20 @@ func (m Model) createFlowAndLaunchPlanForRepoWithIdentity(repoPath, title, instr
 			}
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: failedFlowID, Title: title, Err: err.Error(), FlowLeaseID: flowID, FlowLeaseToken: token}
 		}
+		if flowID != "" {
+			if result.Flow.FlowID != "" && strings.TrimSpace(result.Flow.FlowID) != strings.TrimSpace(flowID) {
+				return FlowCreateFailedMsg{
+					RepoPath: repoPath, FlowID: flowID, Title: title,
+					Err:         "Flow starter returned a different Flow ID than the reserved launch",
+					FlowLeaseID: flowID, FlowLeaseToken: token,
+				}
+			}
+			result.Flow.FlowID = flowID
+			if !result.LaunchSkipped {
+				result.LaunchContext.FlowID = flowID
+				result.LaunchContext.LaunchID = token
+			}
+		}
 		if result.LaunchSkipped {
 			return FlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, FlowLeaseID: flowID, FlowLeaseToken: token}
 		}

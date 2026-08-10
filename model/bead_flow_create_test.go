@@ -188,7 +188,7 @@ func TestBeadsReadyCreateFlowAdaptersAreIndependentWhenInjectedAlone(t *testing.
 				opts.StartFlowPlan = func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 					calls = append(calls, "start")
 					return model.FlowStartResult{
-						Flow:          flowstore.FlowRecord{FlowID: "custom-start", RepoPath: req.RepoPath, Title: req.Title},
+						Flow:          flowstore.FlowRecord{FlowID: req.FlowID, RepoPath: req.RepoPath, Title: req.Title},
 						LaunchSkipped: true,
 					}, nil
 				}

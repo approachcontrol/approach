@@ -694,6 +694,7 @@ func TestFlowStarterStartPlanRunsBootstrapBeforeLaunchID(t *testing.T) {
 
 func TestFlowStarterStartPlanLaunchPersistenceFailureBlocksPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
+	var startUpdate flowstore.StartMetadataUpdate
 	var calls []string
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
@@ -722,8 +723,9 @@ func TestFlowStarterStartPlanLaunchPersistenceFailureBlocksPlanPhase(t *testing.
 			return flowstore.FlowRecord{}, nil
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
-			t.Fatalf("SetStartMetadata() should not run after launch persistence failure: %#v", update)
-			return flowstore.FlowRecord{}, nil
+			calls = append(calls, "set-start")
+			startUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID, WorktreePath: update.WorktreePath, Branch: update.Branch}, nil
 		},
 	})
 
@@ -732,7 +734,7 @@ func TestFlowStarterStartPlanLaunchPersistenceFailureBlocksPlanPhase(t *testing.
 		t.Fatal("StartPlan returned nil error, want launch persistence failure")
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,add-launch,set-phase" {
+	if strings.Join(calls, ",") != "create-flow,create-worktree,add-launch,set-phase,set-start" {
 		t.Fatalf("call order = %#v", calls)
 	}
 	if !strings.Contains(err.Error(), "write failed") {
@@ -744,10 +746,14 @@ func TestFlowStarterStartPlanLaunchPersistenceFailureBlocksPlanPhase(t *testing.
 		!strings.Contains(phaseUpdate.Notes, "Initial phase launch persistence failed") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
 	}
+	if startUpdate.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" || startUpdate.Branch != "flow/add-flow-mode" {
+		t.Fatalf("failure worktree metadata = %#v", startUpdate)
+	}
 }
 
 func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 	var phaseUpdate flowstore.PhaseUpdate
+	var startUpdate flowstore.StartMetadataUpdate
 	var calls []string
 
 	starter := model.NewFlowStarter(model.FlowStarterOptions{
@@ -762,6 +768,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 		},
 		SetStartMetadata: func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			calls = append(calls, "set-start")
+			startUpdate = update
 			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 		BootstrapHookForRepo: func(string) (actions.BootstrapHook, bool) {
@@ -787,7 +794,7 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 		t.Fatal("StartPlan returned nil error, want bootstrap failure")
 	}
 
-	if strings.Join(calls, ",") != "create-flow,create-worktree,bootstrap,set-phase" {
+	if strings.Join(calls, ",") != "create-flow,create-worktree,bootstrap,set-phase,set-start" {
 		t.Fatalf("call order = %#v", calls)
 	}
 	if !strings.Contains(err.Error(), "Bootstrap hook failed") || !strings.Contains(err.Error(), "missing env file") {
@@ -798,6 +805,11 @@ func TestFlowStarterStartPlanBootstrapFailureBlocksPlanPhase(t *testing.T) {
 		phaseUpdate.Status != flowstore.PhaseBlocked ||
 		!strings.Contains(phaseUpdate.Notes, "missing env file") {
 		t.Fatalf("phase update = %#v", phaseUpdate)
+	}
+	if startUpdate.FlowID != "flow-1" ||
+		startUpdate.WorktreePath != "/dev/alpha-worktrees/flow-add-flow-mode" ||
+		startUpdate.Branch != "flow/add-flow-mode" {
+		t.Fatalf("failure worktree metadata = %#v", startUpdate)
 	}
 }
 

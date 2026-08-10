@@ -153,7 +153,9 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	result.Commit = commit
 	if err := s.runBootstrap(req.RepoPath, worktree); err != nil {
 		errText := "Bootstrap hook failed: " + err.Error()
-		return result, s.blockStartupFailurePhases(flow, phaseID, errText, errText)
+		failedFlow, failureErr := s.blockStartupFailurePhasesWithMetadata(flow, phaseID, errText, errText, worktree, req.BaseRef, commit)
+		result.Flow = failedFlow
+		return result, failureErr
 	}
 	if !phaseOK {
 		startedFlow, err := s.setStartMetadata(flowstore.StartMetadataUpdate{
@@ -178,7 +180,9 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 	})
 	if err != nil {
 		errText := "Initial phase launch persistence failed: " + err.Error()
-		return result, s.blockStartupFailurePhases(flow, phaseID, errText, err.Error())
+		failedFlow, failureErr := s.blockStartupFailurePhasesWithMetadata(flow, phaseID, errText, err.Error(), worktree, req.BaseRef, commit)
+		result.Flow = failedFlow
+		return result, failureErr
 	}
 	flow = launchedFlow
 	result.Flow = flow
@@ -367,6 +371,26 @@ func (s FlowStarter) blockStartupFailurePhases(flow flowstore.FlowRecord, fallba
 		}
 	}
 	return fmt.Errorf("%s", resultErr)
+}
+
+func (s FlowStarter) blockStartupFailurePhasesWithMetadata(
+	flow flowstore.FlowRecord,
+	fallbackPhaseID, notes, resultErr string,
+	worktree actions.FlowWorktreeCreateResult,
+	baseRef, commit string,
+) (flowstore.FlowRecord, error) {
+	failureErr := s.blockStartupFailurePhases(flow, fallbackPhaseID, notes, resultErr)
+	startedFlow, metadataErr := s.setStartMetadata(flowstore.StartMetadataUpdate{
+		FlowID:       flow.FlowID,
+		WorktreePath: worktree.WorktreePath,
+		Branch:       worktree.Branch,
+		BaseRef:      baseRef,
+		Commit:       commit,
+	})
+	if metadataErr != nil {
+		return flow, fmt.Errorf("%v; persist failed Flow worktree metadata: %w", failureErr, metadataErr)
+	}
+	return startedFlow, failureErr
 }
 
 func launchablePhases(flow flowstore.FlowRecord) []flowstore.FlowPhase {

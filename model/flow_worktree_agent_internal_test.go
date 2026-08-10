@@ -606,3 +606,73 @@ func TestFlowWorktreeAndPhaseLaunchesSerializeInBothOrders(t *testing.T) {
 		t.Fatalf("g then s lease = %#v", lease)
 	}
 }
+
+func TestFlowWorktreeAgentSerializesAgainstEveryLaunchEntrypointInBothOrders(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{
+		FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree,
+		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}},
+	}
+	newModel := func() Model {
+		m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{StartupMode: ui.ModeFlows, AgentCommand: "codex"})
+		m.activePane = ui.PaneBottom
+		m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+		return m
+	}
+
+	for _, tt := range []struct {
+		name   string
+		source flowLaunchSource
+	}{
+		{name: "AutoMode", source: flowLaunchSourceAutoPhase},
+		{name: "phase r", source: flowLaunchSourcePhaseResume},
+		{name: "repair R", source: flowLaunchSourceRepair},
+		{name: "Sessions pane resume", source: flowLaunchSourceSessionResume},
+		{name: "session picker resume", source: flowLaunchSourceSessionResume},
+		{name: "inline session resume", source: flowLaunchSourceSessionResume},
+		{name: "Plan Now after partial Flow publication", source: flowLaunchSourceCreatePhase},
+	} {
+		t.Run(tt.name+" then worktree agent", func(t *testing.T) {
+			m, acquired := newModel().acquireFlowLaunchLease(record.FlowID, "competing-token", tt.source)
+			if !acquired {
+				t.Fatal("competing entrypoint did not acquire its lease")
+			}
+			nextModel, cmd := m.handleStartSelectedFlowWorktreeAgent()
+			if cmd != nil {
+				t.Fatal("worktree agent started while a competing launch owned the Flow")
+			}
+			if lease, ok := nextModel.(Model).flowLaunchLease(record.FlowID); !ok || lease.Source != tt.source || lease.Token != "competing-token" {
+				t.Fatalf("competing lease changed = %#v, present %v", lease, ok)
+			}
+		})
+
+		t.Run("worktree agent then "+tt.name, func(t *testing.T) {
+			nextModel, cmd := newModel().handleStartSelectedFlowWorktreeAgent()
+			if cmd == nil {
+				t.Fatal("worktree agent did not queue its preflight")
+			}
+			m := nextModel.(Model)
+			if _, acquired := m.acquireFlowLaunchLease(record.FlowID, "competing-token", tt.source); acquired {
+				t.Fatal("competing entrypoint acquired a Flow already reserved by the worktree agent")
+			}
+			if lease, ok := m.flowLaunchLease(record.FlowID); !ok || lease.Source != flowLaunchSourceWorktreeAgent || lease.Token == "" {
+				t.Fatalf("worktree lease changed = %#v, present %v", lease, ok)
+			}
+		})
+
+		t.Run(tt.name+" stale token and failure cleanup", func(t *testing.T) {
+			m, acquired := newModel().acquireFlowLaunchLease(record.FlowID, "current-token", tt.source)
+			if !acquired {
+				t.Fatal("entrypoint did not acquire its lease")
+			}
+			m = m.releaseFlowLaunchLease(record.FlowID, "stale-token")
+			if !m.matchingFlowLaunchLease(record.FlowID, "current-token", tt.source) {
+				t.Fatal("stale completion released or replaced the current lease")
+			}
+			m = m.releaseFlowLaunchLease(record.FlowID, "current-token")
+			if m.flowLaunchLeaseOccupied(record.FlowID) {
+				t.Fatal("owned failure cleanup retained the Flow lease")
+			}
+		})
+	}
+}
