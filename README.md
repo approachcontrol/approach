@@ -85,7 +85,7 @@ plans, Flows, embedded terminals, recovery states — is in
 With the top pane focused, press `2` to enter the selected repository's Beads
 group at its last-used subview, defaulting to Open on first entry.
 All Beads queries and detail reads are read-only, and Approach never mutates
-tracker state. Pressing `5` again inside Beads is a no-op. While Beads is active,
+tracker state. Pressing `2` again inside Beads is a no-op. While Beads is active,
 `r`/`b`/`o`/`i`/`c` switch directly to Ready, Blocked, Open, In-Progress, and
 Closed, and `←`/`→` step and wrap through those five subviews. The letters
 remain scoped to Beads, so Git and other views keep their existing meanings.
@@ -110,9 +110,10 @@ asynchronously while retaining that same-repo pane state internally; the UI
 shows only the subview's `loading` message until the accepted replacement
 arrives, then reapplies the filter and clamps selection and scroll to the new
 result. Moving to another repo invalidates all Beads requests, clears old-repo
-rows and selections, retains each subview's filter, and fetches only the active
-subview. Request tokens prevent older repo, refresh, or subview results from
-replacing the active pane.
+rows and selections, retains each subview's filter, and fetches the stored
+top-pane view alongside the stored bottom-pane view. Request tokens prevent
+older repo, refresh, or subview results from replacing either stored pane's
+current data.
 
 Successful empty queries show `no ready beads`, `no blocked beads`, `no open
 beads`, `no in-progress beads`, or `no closed beads`. A missing `bd` executable

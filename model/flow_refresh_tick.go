@@ -54,6 +54,9 @@ func (m Model) startFlowRefreshFetch() (Model, tea.Cmd) {
 	if m.flowRefreshInFlight != 0 {
 		return m, nil
 	}
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
 	var fetchCmd tea.Cmd
 	m, fetchCmd = m.startFetchMode(ui.ModeFlows)
 	if fetchCmd == nil {

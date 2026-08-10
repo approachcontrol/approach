@@ -36,12 +36,38 @@ func (m Model) modeStored(mode ui.Mode) bool {
 	return m.bottomMode == mode
 }
 
+// storedModeVisible reports whether a stored mode currently receives rows in
+// the stacked content layout. Before the first window-size message, the layout
+// is unknown, so stored modes remain provisionally visible for startup fetch
+// and refresh bookkeeping.
+func (m Model) storedModeVisible(mode ui.Mode) bool {
+	if m.activeFlowSurfaceVisible() || !m.modeStored(mode) {
+		return false
+	}
+	if m.height <= 0 {
+		return true
+	}
+	sharedOuterRows := m.height - 1 - m.embeddedTerminalDockRows()
+	layout := ui.StackedContentLayout(sharedOuterRows, m.activePane, m.contentPane)
+	pane, _ := ui.PaneForMode(mode)
+	if pane == ui.PaneTop {
+		return layout.TopRows > 0
+	}
+	return layout.BottomRows > 0
+}
+
 func (m Model) flowSurfaceVisible() bool {
 	return m.focusedMode() == ui.ModeFlows || m.activeFlowSurfaceVisible()
 }
 
 func (m Model) flowRefreshSurfaceVisible() bool {
-	return m.activeFlowSurfaceVisible() || (!m.activeFlowSurfaceVisible() && m.modeStored(ui.ModeFlows))
+	if m.activeFlowSurfaceVisible() {
+		return true
+	}
+	if _, ok := m.currentRepoPath(); !ok {
+		return false
+	}
+	return m.storedModeVisible(ui.ModeFlows)
 }
 
 func (m Model) activeContentFetchMode() ui.Mode {
@@ -287,7 +313,7 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	m.activeFlowSurface = false
 	returnMode := m.focusedMode()
 	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
-	if m.modeStored(ui.ModeFlows) {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowsModeFetchWithRefreshTick()
 	}
 	return m, nil

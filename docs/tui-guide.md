@@ -381,9 +381,10 @@ accepted replacement reapplies the filter and clamps selection and scroll for
 shorter, empty, or zero-match results. An unavailable result retains the query
 but clears that pane's rows and selection. Moving to another repo invalidates
 every Beads request, clears all old-repo rows and cursor/scroll positions,
-retains each subview's query, and starts only the active subview pending for the
-new repo; retention is same-repo only, so this holds even when the repo changes
-while Active Flows is open.
+retains each subview's query, and starts the stored top Beads subview and the
+stored bottom mode for the new repo; only that top subview becomes pending
+within the Beads group. Retention is same-repo only, so this holds even when the
+repo changes while Active Flows is open.
 Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
@@ -558,8 +559,8 @@ answer streamed token-by-token, and a closing summary).
 
 ### Flow terminals
 
-Flow terminals share the persistent dock, global numbering, focus cycle, and
-command set described in [Embedded Terminals](#embedded-terminals). Selecting
+Flow terminals share the persistent dock, global terminal-tab numbering, focus
+cycle, and command set described in [Embedded Terminals](#embedded-terminals). Selecting
 a Flow or phase still synchronizes the active dock terminal to its attached
 Flow terminal when one exists. Flow scope remains lifecycle metadata for
 launch tracking, auto-mode gating, and recovery; it no longer creates a

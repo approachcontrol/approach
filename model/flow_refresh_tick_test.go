@@ -717,6 +717,155 @@ func TestModel_FlowRefreshOldTrackedResultDoesNotScheduleAfterNewerRefetch(t *te
 	}
 }
 
+func TestModel_ActiveFlowsExitDoesNotRefreshHiddenStoredFlows(t *testing.T) {
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
+		},
+	})
+	// Height 20 leaves 18 shared outer rows after the collapsed terminal chip,
+	// so the stacked layout degrades to the focused top pane.
+	m.height = 20
+	m.activePane = ui.PaneTop
+	m.contentPane = ui.PaneTop
+	m.activeFlowSurface = true
+	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
+	beforeRequest := m.ListRequest(ui.ModeFlows)
+	beforeGeneration := m.flowRefreshTickGen
+
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+	if m.activeFlowSurfaceVisible() {
+		t.Fatal("Active Flows remained visible after toggle")
+	}
+	if cmd != nil {
+		t.Fatalf("hidden stored Flows exit returned command %T, want nil", cmd)
+	}
+	if got := m.ListRequest(ui.ModeFlows); got != beforeRequest {
+		t.Fatalf("hidden stored Flows request = %d, want unchanged %d", got, beforeRequest)
+	}
+	if m.flowRefreshTickGen != beforeGeneration {
+		t.Fatalf("hidden stored Flows generation = %d, want unchanged %d", m.flowRefreshTickGen, beforeGeneration)
+	}
+	if m.flowRefreshInFlight != 0 {
+		t.Fatalf("hidden stored Flows in-flight request = %d, want 0", m.flowRefreshInFlight)
+	}
+}
+
+func TestModel_HiddenStoredFlowsCompletionDoesNotScheduleTick(t *testing.T) {
+	m := NewWithOptions(flowRefreshTestRepos(), Options{})
+	m.height = 20
+	m.activePane = ui.PaneTop
+	m.contentPane = ui.PaneTop
+	m.flowRefreshInFlight = m.ListRequest(ui.ModeFlows)
+	m.flowRefreshInFlightMode = ui.ModeFlows
+
+	m, cmd := updateFlowRefreshTest(m, FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	if cmd != nil {
+		t.Fatalf("hidden stored Flows completion returned command %T, want nil", cmd)
+	}
+	if m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0 {
+		t.Fatalf("hidden stored Flows refresh remained in flight: request=%d mode=%d", m.flowRefreshInFlight, m.flowRefreshInFlightMode)
+	}
+}
+
+func TestModel_FocusingDegradedStoredFlowsRestartsRefresh(t *testing.T) {
+	m := NewWithOptions(flowRefreshTestRepos(), Options{
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
+		},
+	})
+	m.height = 20
+	m.activePane = ui.PaneTop
+	m.contentPane = ui.PaneTop
+	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
+	beforeRequest := m.ListRequest(ui.ModeFlows)
+
+	m, cmd := updateFlowRefreshTest(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	if m.activePane != ui.PaneBottom || m.contentPane != ui.PaneBottom {
+		t.Fatalf("focus = active %d remembered %d, want bottom/bottom", m.activePane, m.contentPane)
+	}
+	if got := m.ListRequest(ui.ModeFlows); got == beforeRequest {
+		t.Fatalf("visible stored Flows request = %d, want changed from %d", got, beforeRequest)
+	}
+	if m.flowRefreshInFlight != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("visible stored Flows in-flight request = %d, want %d", m.flowRefreshInFlight, m.ListRequest(ui.ModeFlows))
+	}
+	result := flowResultFromCommand(t, cmd)
+	if result.ListRequest != m.ListRequest(ui.ModeFlows) {
+		t.Fatalf("visible stored Flows result request = %d, want %d", result.ListRequest, m.ListRequest(ui.ModeFlows))
+	}
+}
+
+func TestModel_NoRepoDoesNotStartStoredFlowsRefresh(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(Model) Model
+		key   tea.KeyMsg
+	}{
+		{
+			name: "focus degraded bottom pane",
+			setup: func(m Model) Model {
+				m.activePane = ui.PaneTop
+				m.contentPane = ui.PaneTop
+				return m
+			},
+			key: tea.KeyMsg{Type: tea.KeyTab},
+		},
+		{
+			name: "enter flows horizontally",
+			setup: func(m Model) Model {
+				m.bottomMode = ui.ModePlans
+				m.activePane = ui.PaneBottom
+				m.contentPane = ui.PaneBottom
+				return m
+			},
+			key: tea.KeyMsg{Type: tea.KeyRight},
+		},
+		{
+			name: "exit active flows to bottom pane",
+			setup: func(m Model) Model {
+				m.activePane = ui.PaneBottom
+				m.contentPane = ui.PaneBottom
+				m.activeFlowSurface = true
+				return m
+			},
+			key: tea.KeyMsg{Type: tea.KeyCtrlA},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.setup(NewWithOptions(nil, Options{}))
+			m.height = 20
+			beforeRequest := m.ListRequest(ui.ModeFlows)
+			beforeGeneration := m.flowRefreshTickGen
+
+			m, cmd := updateFlowRefreshTest(m, tt.key)
+
+			if cmd != nil {
+				t.Fatalf("no-repo stored Flows transition returned command %T, want nil", cmd)
+			}
+			if got := m.ListRequest(ui.ModeFlows); got != beforeRequest {
+				t.Fatalf("no-repo stored Flows request = %d, want unchanged %d", got, beforeRequest)
+			}
+			if m.flowRefreshTickGen != beforeGeneration {
+				t.Fatalf("no-repo stored Flows generation = %d, want unchanged %d", m.flowRefreshTickGen, beforeGeneration)
+			}
+			if m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0 {
+				t.Fatalf("no-repo stored Flows refresh started: request=%d mode=%d", m.flowRefreshInFlight, m.flowRefreshInFlightMode)
+			}
+		})
+	}
+}
+
 func TestModel_FlowRefreshFetchErrorClearsInFlightAndSchedulesNextTick(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {

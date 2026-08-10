@@ -1371,10 +1371,16 @@ func (m Model) activeViewMatches(kind FetchKind, mode ui.Mode, request uint64) b
 // --- Update ---
 
 func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
+	flowRefreshWasVisible := m.flowRefreshSurfaceVisible()
 	defer func() {
 		modelNext, ok := next.(Model)
 		if !ok {
 			return
+		}
+		if !flowRefreshWasVisible && modelNext.flowRefreshSurfaceVisible() && modelNext.flowRefreshInFlight == 0 {
+			var refreshCmd tea.Cmd
+			modelNext, refreshCmd = modelNext.startFlowSurfaceRefreshFetch()
+			cmd = batchNonNil(cmd, refreshCmd)
 		}
 		modelNext, cmd = modelNext.drainStatusCmds(cmd)
 		next = modelNext
