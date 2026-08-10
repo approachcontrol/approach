@@ -534,15 +534,15 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) 
 
 func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64) tea.Cmd {
 	return func() tea.Msg {
-		record, err := m.createFlowRecord(flowstore.FlowRecord{
+		result, err := m.createFlow(FlowStartRequest{
+			RepoPath:     repoPath,
 			Title:        title,
 			Instructions: instructions,
-			RepoPath:     repoPath,
 		})
 		if err != nil {
 			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error(), Request: request}
 		}
-		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: record.FlowID, Title: title, Request: request}
+		return ReadyBeadFlowCreatedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Request: request}
 	}
 }
 

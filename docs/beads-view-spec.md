@@ -5,8 +5,8 @@ five visible query/header subviews, sticky group re-entry, arrow navigation, and
 per-subview filter/cursor preservation with refetch clamping, plus
 configured/not-configured/error classification are shipped, as are the
 newest-100 Closed cap with its plain/truncated header count and `default_view`
-10–14 startup routing, read-only detail paging, and record-only Flow creation
-from a settled Ready selection. Companion docs:
+10–14 startup routing, read-only detail paging, and parked-Flow creation (record
+plus worktree) from a settled Ready selection. Companion docs:
 `architecture.md`
 (package map, invariants), `config.md` (config vocabulary), `README.md` (current
 key bindings).
@@ -36,7 +36,8 @@ repo cursor. Repos without beads show a calm "beads not configured" message;
 configured repos where `bd` fails show a real error. The view is read-only in
 its Beads access and tracker state, with `enter` paging a bead's detail through
 the pager. A settled Ready selection also exposes `f` to create an
-Approach-owned record-only Flow without invoking `bd` or mutating the Bead.
+Approach-owned parked Flow — record, branch, and worktree — without invoking
+`bd` or mutating the Bead.
 
 ## User Stories
 
@@ -69,7 +70,7 @@ Approach-owned record-only Flow without invoking `bd` or mutating the Bead.
 27. As an Approach user, I want the frozen `default_view` vocabulary (1–9) untouched, so that existing configs keep their meaning.
 28. As an Approach user, I want a manual way to refetch beads via the app's existing refresh affordance, so that I can pull in changes an agent made without bouncing the repo cursor.
 29. As an agent operator, I want issue state visible next to Sessions, Plans, and Flows, so that I can see what my agents should pick up next and what they have finished.
-30. As an Approach user, I want `f` on a settled visible Ready selection to create a record-only Flow for that Bead, so that I can carry the durable requirement into the Flow workflow without creating a worktree, launching an agent, or changing the Bead.
+30. As an Approach user, I want `f` on a settled visible Ready selection to create a parked Flow with its worktree for that Bead, so that I can carry the durable requirement into the Flow workflow with isolation ready, without launching an agent or changing the Bead.
 
 ## Implementation Decisions
 
@@ -112,15 +113,17 @@ Approach-owned record-only Flow without invoking `bd` or mutating the Bead.
 - `enter` on a bead pages `bd show <id> --readonly` output through the pager with
   stale-result protection, the same pattern as the app's other read-only
   detail views.
-- `f` is a Ready-only record-persistence action. It requires right-pane focus,
+- `f` is a Ready-only Flow-preparation action. It requires right-pane focus,
   an available settled filtered selection whose Bead has a non-empty trimmed
   ID, a selected repo, and no existing Ready Flow request. It creates a Flow
   titled `<trimmed bead ID>: <trimmed bead title>` with instructions directing
   agents to use `bd show <id>` as the durable source of requirements. Creation
-  uses the configured preset but supplies only title, instructions, and repo
-  path: no worktree, branch, base ref, commit, plan/link, launch/session, agent,
-  issue, or PR metadata. It never invokes the Flow starter, bootstrap hooks,
-  agent launchers, or `bd`.
+  routes through the same Flow-starter prepare path as the Flows-pane `n` form
+  with Plan Now off: the configured preset seeds the phase graph, the
+  `flow/<slug>` branch and worktree are created from the repository's current
+  HEAD (no base ref is supplied), start metadata is recorded, and the
+  repository's bootstrap hook runs. It supplies no plan/link, launch/session,
+  agent, issue, or PR metadata and never invokes agent launchers or `bd`.
 - Ready Flow persistence has its own monotonically increasing request token.
   Duplicate keypresses are ignored while it is active. Cursor-driven repo
   changes invalidate it at the top of `handleRepoSelectionChanged`, before
@@ -131,10 +134,12 @@ Approach-owned record-only Flow without invoking `bd` or mutating the Bead.
   Accepted success or failure updates status and refreshes exactly the
   currently visible Flow surface, if any; Beads and other surfaces do not
   refresh.
-- The resulting Flow is record-only, not the Flows-pane form's parked Flow: it
-  has no worktree, so existing Flow rendering labels it `missing-worktree` /
-  `recover-worktree`, and phase launch falls back to the repository root. The
-  docs state this explicitly rather than implying an isolated worktree exists.
+- The resulting Flow is the same parked Flow the Flows-pane form produces, so
+  phase launch runs in the Flow's isolated worktree. On worktree or bootstrap
+  failure the persisted record's launchable phases are blocked with the failure
+  noted; existing Flow rendering then labels the worktree-less record
+  `missing-worktree` / `recover-worktree`, and phase launch falls back to the
+  repository root.
 - Config: `default_view` gains frozen numbers 10 (ready), 11 (blocked),
   12 (open), 13 (in-progress), 14 (closed), parallel to the git subviews'
   1–5. Numbers 1–9 keep their existing frozen meanings.
