@@ -401,6 +401,67 @@ func TestFirstTerminalStartupUsesProspectiveRequestedState(t *testing.T) {
 	}
 }
 
+func TestInteractiveFlowPrefillImmediatelyResizesExistingHiddenTerminals(t *testing.T) {
+	newModel := func(existing *internalFakeDetachableEmbeddedTerminal, started EmbeddedTerminal) Model {
+		return Model{
+			width:                  180,
+			height:                 65,
+			topMode:                ui.ModeWorktrees,
+			bottomMode:             ui.ModeFlows,
+			contentPane:            ui.PaneBottom,
+			activePane:             ui.PaneBottom,
+			terminalDockVisible:    false,
+			activeTerminalNum:      1,
+			nextEmbeddedTerminalID: 1,
+			embeddedTerminals: []embeddedTerminalSlot{{
+				Number: 1, ID: 1, Terminal: existing,
+			}},
+			startEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+				return started, nil
+			},
+		}
+	}
+	ctx := actions.AgentLaunchContext{
+		Command:           "codex",
+		FlowID:            "flow-1",
+		FlowPhaseID:       "implementation",
+		FlowLaunchTracked: true,
+		InitialPrompt:     "Implement it",
+	}
+	wantResize := [2]int{ui.EmbeddedTerminalPTYWidth(180), ui.ResolveEmbeddedTerminalDock(65, true).BackendPTYRows}
+
+	t.Run("while prefill is pending", func(t *testing.T) {
+		existing := &internalFakeDetachableEmbeddedTerminal{}
+		pending := newDelayedPrefillFakeEmbeddedTerminal()
+		t.Cleanup(pending.release)
+		next, opened, err, prefillCmd := newModel(existing, pending).openFlowEmbeddedTerminal(ctx)
+		if err != nil || !opened || prefillCmd == nil {
+			t.Fatalf("interactive launch: opened=%v err=%v prefill=%T", opened, err, prefillCmd)
+		}
+		if !next.terminalDockVisible || len(existing.resizes) != 1 || existing.resizes[0] != wantResize {
+			t.Fatalf("pending prefill state: visible=%v existing resizes=%#v, want [%v]", next.terminalDockVisible, existing.resizes, wantResize)
+		}
+	})
+
+	t.Run("after prefill failure", func(t *testing.T) {
+		existing := &internalFakeDetachableEmbeddedTerminal{}
+		failing := &repairPrefillFailureTerminal{}
+		next, opened, err, prefillCmd := newModel(existing, failing).openFlowEmbeddedTerminal(ctx)
+		if err != nil || !opened || prefillCmd == nil {
+			t.Fatalf("interactive launch: opened=%v err=%v prefill=%T", opened, err, prefillCmd)
+		}
+		result := prefillCmd()
+		afterModel, _ := next.Update(result)
+		after := afterModel.(Model)
+		if len(after.embeddedTerminals) != 1 || after.embeddedTerminals[0].Number != 1 {
+			t.Fatalf("prefill failure terminals = %#v, want surviving original", after.embeddedTerminals)
+		}
+		if !after.terminalDockVisible || len(existing.resizes) != 1 || existing.resizes[0] != wantResize {
+			t.Fatalf("failed prefill state: visible=%v existing resizes=%#v, want [%v]", after.terminalDockVisible, existing.resizes, wantResize)
+		}
+	})
+}
+
 func TestAutoCollapsedRequestedPreferenceRestoresOnlyWhileStillOpen(t *testing.T) {
 	base := Model{
 		width:               120,

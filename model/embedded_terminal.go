@@ -397,6 +397,7 @@ func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, 
 	next, opened, err, prefillCmd := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), height)
 	if opened {
 		next.terminalDockVisible = requested
+		next = next.resizeEmbeddedTerminals()
 		next = next.reflowForTerminalDock()
 	}
 	if opened && prefillCmd == nil && ctx.FlowAutoLaunch && activeNum != 0 {
