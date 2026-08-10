@@ -1454,6 +1454,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				)
 				if !acquired {
 					if msg.TerminationFailed {
+						m = m.blockEmbeddedTerminalDetach(msg.ID)
 						m = m.activateEmbeddedTerminal(msg.ID)
 					} else {
 						m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
@@ -1462,6 +1463,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				}
 			}
 			if msg.TerminationFailed {
+				m = m.blockEmbeddedTerminalDetach(msg.ID)
 				m = m.activateEmbeddedTerminal(msg.ID)
 			} else {
 				m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)

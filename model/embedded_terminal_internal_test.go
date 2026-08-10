@@ -1267,6 +1267,39 @@ func TestPromptPrefillTerminationFailureTransfersRetainedOccupancyToFailurePersi
 	}
 }
 
+func TestTrackedPromptPrefillTerminationFailureBlocksDetachDuringPersistence(t *testing.T) {
+	ctx := actions.AgentLaunchContext{
+		Command: "codex", FlowID: "flow-1", FlowPhaseID: "implementation", LaunchID: "launch-a", FlowLaunchTracked: true,
+	}
+	m := NewWithOptions(nil, Options{
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	})
+	m.activeTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{{
+		Number: 1, ID: 42, Scope: embeddedTerminalScopeFlow, FlowID: ctx.FlowID, FlowPhaseID: ctx.FlowPhaseID,
+		FlowLaunchTracked: true, LaunchID: ctx.LaunchID, PrefillPending: true, Terminal: internalFakeEmbeddedTerminal{state: "running"},
+	}}
+
+	nextModel, persistCmd := m.Update(embeddedPromptPrefillResultMsg{
+		ID:                42,
+		LaunchContext:     ctx,
+		Err:               errors.New("prefill failed; terminate embedded terminal after prefill failure: kill failed"),
+		TerminationFailed: true,
+	})
+	next := nextModel.(Model)
+	if persistCmd == nil {
+		t.Fatal("prefill cleanup failure returned nil failure-persistence command")
+	}
+	if len(next.embeddedTerminals) != 1 || !next.embeddedTerminals[0].FlowDetachBlocked {
+		t.Fatalf("prefill cleanup failure slot = %#v, want retained detach-blocked occupancy", next.embeddedTerminals)
+	}
+	if detached, detachCmd := next.handleEmbeddedTerminalDetachPrefix(); detachCmd != nil || len(detached.embeddedTerminals) != 1 {
+		t.Fatalf("prefill cleanup failure allowed detach: cmd=%T slots=%#v", detachCmd, detached.embeddedTerminals)
+	}
+}
+
 func TestPromptPrefillFailureTransfersTerminalOccupancyToFailurePersistence(t *testing.T) {
 	ctx := actions.AgentLaunchContext{
 		Command: "codex", FlowID: "flow-1", FlowPhaseID: "implementation", LaunchID: "launch-a", FlowLaunchTracked: true,

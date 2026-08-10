@@ -483,6 +483,16 @@ func (m Model) activateEmbeddedTerminal(id embeddedTerminalID) Model {
 	return m
 }
 
+func (m Model) blockEmbeddedTerminalDetach(id embeddedTerminalID) Model {
+	for i := range m.embeddedTerminals {
+		if m.embeddedTerminals[i].ID == id {
+			m.embeddedTerminals[i].FlowDetachBlocked = true
+			break
+		}
+	}
+	return m
+}
+
 func (m Model) embeddedTerminalPrefillPending(id embeddedTerminalID) bool {
 	for _, slot := range m.embeddedTerminals {
 		if slot.ID == id {
