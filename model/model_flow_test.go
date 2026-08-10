@@ -11409,7 +11409,7 @@ func TestModel_NewFlowPlanNowLetsStarterChooseCustomRootPhase(t *testing.T) {
 			startRequest = req
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
 				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
+				LaunchID:     req.LaunchToken,
 				RepoPath:     req.RepoPath,
 				WorktreePath: "/dev/alpha-worktrees/flow-research",
 				Branch:       "flow/research",
@@ -11860,22 +11860,25 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 	}
 }
 
-func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
+func TestModel_NewFlowCodexAppStaleLaunchMarksPhaseNeedsAttentionAfterRepoChange(t *testing.T) {
 	externalLaunches := 0
 	startEmbeddedRan := false
+	var phaseUpdate flowstore.PhaseUpdate
+	var startedFlowID string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		StartFlowPlan: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
 			if req.RepoPath != "/dev/alpha" {
 				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
 			}
+			startedFlowID = req.FlowID
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
 				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
+				LaunchID:     req.LaunchToken,
 				RepoPath:     req.RepoPath,
 				WorktreePath: "/dev/alpha-worktrees/flow-stale",
 				Branch:       "flow/stale",
-				FlowID:       "flow-1",
+				FlowID:       req.FlowID,
 				FlowPhaseID:  "plan",
 			}}, nil
 		},
@@ -11886,6 +11889,10 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			startEmbeddedRan = true
 			return &fakeEmbeddedTerminal{}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -11902,15 +11909,22 @@ func TestModel_NewFlowCodexAppStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged PlanLaunchRequestedMsg", staleMsg)
 	}
-	_, cmd := update(m, staleMsg)
-	if cmd != nil {
-		t.Fatalf("stale codex-app launch returned command %T, want nil", cmd)
+	m, cmd := update(m, staleMsg)
+	if cmd == nil {
+		t.Fatal("stale codex-app launch returned nil command, want failure persistence")
 	}
+	m = settleModelCommands(t, m, cmd, 1)
 	if externalLaunches != 0 {
 		t.Fatalf("stale codex-app launch count = %d, want 0", externalLaunches)
 	}
 	if startEmbeddedRan {
 		t.Fatal("stale codex-app launch should not start an embedded terminal")
+	}
+	if phaseUpdate.FlowID != startedFlowID ||
+		phaseUpdate.PhaseID != "plan" ||
+		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(phaseUpdate.Notes, "no longer current") {
+		t.Fatalf("stale codex-app phase update = %#v", phaseUpdate)
 	}
 }
 
@@ -11995,9 +12009,11 @@ func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
 	}
 }
 
-func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
+func TestModel_NewFlowStaleLaunchMarksPhaseNeedsAttentionAfterRepoChange(t *testing.T) {
 	embeddedStarts := 0
 	externalLaunches := 0
+	var phaseUpdate flowstore.PhaseUpdate
+	var startedFlowID string
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
@@ -12007,13 +12023,14 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 			if req.RepoPath != "/dev/alpha" {
 				t.Fatalf("StartFlowPlan repo = %q, want /dev/alpha", req.RepoPath)
 			}
+			startedFlowID = req.FlowID
 			return model.FlowStartResult{LaunchContext: actions.AgentLaunchContext{
 				Command:      req.AgentCommand,
-				LaunchID:     "launch-1",
+				LaunchID:     req.LaunchToken,
 				RepoPath:     req.RepoPath,
 				WorktreePath: "/dev/alpha-worktrees/flow-stale",
 				Branch:       "flow/stale",
-				FlowID:       "flow-1",
+				FlowID:       req.FlowID,
 				FlowPhaseID:  "plan",
 			}}, nil
 		},
@@ -12024,6 +12041,10 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			embeddedStarts++
 			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
 		},
 	})
 	m = inRightPane(m)
@@ -12041,12 +12062,19 @@ func TestModel_NewFlowStaleLaunchIgnoredAfterRepoChange(t *testing.T) {
 	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
 		t.Fatalf("creation command returned %#v, want tagged FlowEmbeddedLaunchRequestedMsg", staleMsg)
 	}
-	_, cmd := update(m, staleMsg)
-	if cmd != nil {
-		t.Fatalf("stale launch returned command %T, want nil", cmd)
+	m, cmd := update(m, staleMsg)
+	if cmd == nil {
+		t.Fatal("stale launch returned nil command, want failure persistence")
 	}
+	m = settleModelCommands(t, m, cmd, 1)
 	if embeddedStarts != 0 || externalLaunches != 0 {
-		t.Fatalf("stale flow creation launch should be ignored after repo change; embedded=%d external=%d", embeddedStarts, externalLaunches)
+		t.Fatalf("stale flow creation should not launch after repo change; embedded=%d external=%d", embeddedStarts, externalLaunches)
+	}
+	if phaseUpdate.FlowID != startedFlowID ||
+		phaseUpdate.PhaseID != "plan" ||
+		phaseUpdate.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(phaseUpdate.Notes, "no longer current") {
+		t.Fatalf("stale launch phase update = %#v", phaseUpdate)
 	}
 
 	requestless := model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{

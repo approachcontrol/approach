@@ -1656,14 +1656,13 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
-			return m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken), nil
+			return m.cancelStaleFlowCreateLaunch(msg.LaunchContext, msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource)
 		}
 		m = m.clearFlowCreateRequest(msg.Request)
 		if msg.FlowLeaseSource != "" {
 			if !m.matchingFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource) {
 				return m, nil
 			}
-			m = m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken)
 		}
 		next, launchCmd := m.launchAgentWithContext(msg.LaunchContext)
 		if msg.LaunchContext.FlowID != "" && next.flowSurfaceVisible() {
@@ -1674,7 +1673,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case FlowEmbeddedLaunchRequestedMsg:
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
-				return m.releaseFlowLaunchLease(msg.FlowLeaseID, msg.FlowLeaseToken), nil
+				return m.cancelStaleFlowCreateLaunch(msg.LaunchContext, msg.FlowLeaseID, msg.FlowLeaseToken, msg.FlowLeaseSource)
 			}
 			m = m.clearFlowCreateRequest(msg.Request)
 		}
@@ -1757,9 +1756,19 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
 	} else if msg.Detached {
+		m = m.releaseFlowLaunchLease(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID)
 		m = m.setStatus(statusOther, agentLaunchedStatus(msg.LaunchContext.Command))
 	}
 	return m, nil
+}
+
+func (m Model) cancelStaleFlowCreateLaunch(ctx actions.AgentLaunchContext, flowID, token string, source flowLaunchSource) (Model, tea.Cmd) {
+	if source != flowLaunchSourceCreatePhase || !m.matchingFlowLaunchLease(flowID, token, source) {
+		return m, nil
+	}
+	ctx.FlowID = strings.TrimSpace(flowID)
+	ctx.LaunchID = strings.TrimSpace(token)
+	return m.startFlowLaunchFailure(ctx, "Flow creation launch canceled because its request is no longer current")
 }
 
 // --- Helpers ---

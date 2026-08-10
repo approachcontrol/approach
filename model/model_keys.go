@@ -2709,6 +2709,7 @@ func (m Model) flowLaunchFailureUpdate(ctx actions.AgentLaunchContext, errText s
 func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText string) (Model, tea.Cmd) {
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)
 	if !ok {
+		m = m.releaseFlowLaunchLease(ctx.FlowID, ctx.LaunchID)
 		return m.setStatus(statusOther, errText), nil
 	}
 	return m, func() tea.Msg {
@@ -2722,6 +2723,7 @@ func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText st
 }
 
 func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMsg) (Model, tea.Cmd) {
+	m = m.releaseFlowLaunchLease(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID)
 	errText := msg.OriginalErr
 	if msg.PersistErr != nil {
 		if errText != "" {

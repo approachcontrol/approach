@@ -1,6 +1,12 @@
 package model
 
-import "testing"
+import (
+	"os/exec"
+	"testing"
+
+	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/flowstore"
+)
 
 func TestFlowLaunchLeaseIsTokenOwned(t *testing.T) {
 	m := Model{}
@@ -19,5 +25,95 @@ func TestFlowLaunchLeaseIsTokenOwned(t *testing.T) {
 	m = m.releaseFlowLaunchLease("flow-1", "token-a")
 	if _, ok := m.flowLaunchLease("flow-1"); ok {
 		t.Fatal("matching release retained lease")
+	}
+}
+
+func TestExternalFlowLaunchLeaseHeldUntilHandoffResult(t *testing.T) {
+	m := NewWithOptions(nil, Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
+		},
+	})
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease("flow-1", "launch-1", flowLaunchSourcePhase)
+	if !acquired {
+		t.Fatal("failed to acquire initial Flow launch lease")
+	}
+
+	nextModel, cmd := m.Update(PlanLaunchRequestedMsg{
+		LaunchContext: actions.AgentLaunchContext{
+			Command:     "codex-app",
+			FlowID:      "flow-1",
+			FlowPhaseID: "plan",
+			LaunchID:    "launch-1",
+		},
+		FlowLeaseSource: flowLaunchSourcePhase,
+		FlowLeaseID:     "flow-1",
+		FlowLeaseToken:  "launch-1",
+	})
+	next := nextModel.(Model)
+	if cmd == nil {
+		t.Fatal("external Flow launch returned nil handoff command")
+	}
+	if !next.flowLaunchLeaseOccupied("flow-1") {
+		t.Fatal("external Flow launch released its lease before the handoff command ran")
+	}
+
+	result := cmd()
+	afterModel, _ := next.Update(result)
+	after := afterModel.(Model)
+	if after.flowLaunchLeaseOccupied("flow-1") {
+		t.Fatal("successful external handoff result retained the Flow launch lease")
+	}
+}
+
+func TestExternalFlowLaunchFailureHoldsLeaseUntilFailurePersistence(t *testing.T) {
+	var phaseUpdate flowstore.PhaseUpdate
+	m := NewWithOptions(nil, Options{
+		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
+			return actions.TerminalLaunchSpec{Cmd: exec.Command("false")}, nil
+		},
+		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
+			phaseUpdate = update
+			return flowstore.FlowRecord{FlowID: update.FlowID}, nil
+		},
+	})
+	var acquired bool
+	m, acquired = m.acquireFlowLaunchLease("flow-1", "launch-1", flowLaunchSourcePhase)
+	if !acquired {
+		t.Fatal("failed to acquire initial Flow launch lease")
+	}
+
+	nextModel, launchCmd := m.Update(PlanLaunchRequestedMsg{
+		LaunchContext: actions.AgentLaunchContext{
+			Command:     "codex-app",
+			FlowID:      "flow-1",
+			FlowPhaseID: "plan",
+			LaunchID:    "launch-1",
+		},
+		FlowLeaseSource: flowLaunchSourcePhase,
+		FlowLeaseID:     "flow-1",
+		FlowLeaseToken:  "launch-1",
+	})
+	next := nextModel.(Model)
+	result := launchCmd()
+
+	failingModel, persistCmd := next.Update(result)
+	failing := failingModel.(Model)
+	if persistCmd == nil {
+		t.Fatal("failed external handoff returned nil failure-persistence command")
+	}
+	if !failing.flowLaunchLeaseOccupied("flow-1") {
+		t.Fatal("failed external handoff released its lease before failure persistence")
+	}
+
+	persisted := persistCmd()
+	finalModel, _ := failing.Update(persisted)
+	final := finalModel.(Model)
+	if final.flowLaunchLeaseOccupied("flow-1") {
+		t.Fatal("persisted external handoff failure retained the Flow launch lease")
+	}
+	if phaseUpdate.FlowID != "flow-1" || phaseUpdate.PhaseID != "plan" || phaseUpdate.Status != flowstore.PhaseNeedsAttention {
+		t.Fatalf("external handoff failure phase update = %#v", phaseUpdate)
 	}
 }
