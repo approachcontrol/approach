@@ -468,6 +468,119 @@ func TestModel_RepairIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	}
 }
 
+// UpdatedAt selects the base record and the toggle is re-applied on top, so the
+// field this process persisted survives either choice of base while the newer
+// record's other metadata is kept.
+func TestModel_StaleFetchReconcilesAgainstTheNewerRecord(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	toggled := stored
+	toggled.Headless = false
+	toggled.UpdatedAt = t0.Add(time.Minute)
+
+	completedPhases := []flowstore.FlowPhase{
+		{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
+		{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
+		{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted},
+	}
+
+	t.Run("incoming record is newer", func(t *testing.T) {
+		// A peer completed the phase after the toggle, so its work must survive
+		// and only the toggled field is re-applied over it.
+		peer := stored
+		peer.Phases = completedPhases
+		peer.UpdatedAt = t0.Add(2 * time.Minute)
+
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: toggled.FlowID, Flow: toggled, Enabled: false,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath:    "/dev/alpha",
+			Flows:       []flowstore.FlowRecord{peer},
+			ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+
+		got := m.Flows()
+		if len(got) != 1 || got[0].Phases[2].Status != flowstore.PhaseCompleted {
+			t.Fatalf("Flows() = %#v, want the peer completion preserved", got)
+		}
+		if got[0].Headless {
+			t.Fatal("Headless = true, want the local toggle re-applied over the peer record")
+		}
+	})
+
+	t.Run("cached record is newer", func(t *testing.T) {
+		// The write result was read under the Flow lock and carries a phase
+		// completion the genuinely stale list response predates.
+		cached := toggled
+		cached.Phases = completedPhases
+
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: cached.FlowID, Flow: cached, Enabled: false,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath:    "/dev/alpha",
+			Flows:       []flowstore.FlowRecord{stored},
+			ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+
+		got := m.Flows()
+		if len(got) != 1 || got[0].Phases[2].Status != flowstore.PhaseCompleted {
+			t.Fatalf("Flows() = %#v, want the write result's completion kept", got)
+		}
+		if got[0].Headless {
+			t.Fatal("Headless = true, want the local toggle preserved")
+		}
+	})
+}
+
+// Successive writes to different fields of one Flow are independent. A stale
+// fetch must not revert an earlier field just because a later write to a
+// different field was cached after it.
+func TestModel_StaleFetchKeepsEveryUnacknowledgedFieldMutation(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	stored := flowWithPhaseDetails()
+	stored.UpdatedAt = t0
+
+	headlessOff := stored
+	headlessOff.Headless = false
+	headlessOff.UpdatedAt = t0.Add(time.Minute)
+
+	autoModeOn := headlessOff
+	autoModeOn.AutoMode = true
+	autoModeOn.UpdatedAt = t0.Add(2 * time.Minute)
+
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{stored})
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: headlessOff.FlowID, Flow: headlessOff, Enabled: false,
+	})
+	m, _ = update(m, model.FlowAutoModeSetMsg{
+		RepoPath: "/dev/alpha", FlowID: autoModeOn.FlowID, Flow: autoModeOn, Enabled: true,
+	})
+
+	// This result belongs to the request that was in flight before either write.
+	m, _ = update(m, model.FlowResultMsg{
+		RepoPath:    "/dev/alpha",
+		Flows:       []flowstore.FlowRecord{stored},
+		ListRequest: m.ListRequest(ui.ModeFlows),
+	})
+
+	got := m.Flows()
+	if len(got) != 1 {
+		t.Fatalf("Flows() = %#v, want one record", got)
+	}
+	if got[0].Headless {
+		t.Fatal("Headless = true, want the earlier headless write preserved")
+	}
+	if !got[0].AutoMode {
+		t.Fatal("AutoMode = false, want the later auto-mode write preserved")
+	}
+}
+
 func TestModel_FetchIssuedAfterMutationWinsRegardlessOfWallClock(t *testing.T) {
 	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	stored := flowWithPhaseDetails()

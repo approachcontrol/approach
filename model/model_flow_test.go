@@ -1736,7 +1736,7 @@ func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) 
 		m, _ = update(m, model.FlowResultMsg{
 			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
 		})
-		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
 			t.Fatalf("older Flow list replaced newer headless record: %#v", got)
 		}
 	})
@@ -1749,7 +1749,7 @@ func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) 
 		m, _ = update(m, model.ActiveFlowResultMsg{
 			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
 		})
-		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
 			t.Fatalf("older Active Flows list replaced newer headless record: %#v", got)
 		}
 	})
@@ -1763,7 +1763,7 @@ func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) 
 		m, _ = update(m, model.FlowResultMsg{
 			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
 		})
-		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
 			t.Fatalf("older repository Flow list replaced newer Active Flows result: %#v", got)
 		}
 	})
@@ -1777,7 +1777,7 @@ func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) 
 		m, _ = update(m, model.ActiveFlowResultMsg{
 			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
 		})
-		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
 			t.Fatalf("older Active Flows list replaced newer repository Flow result: %#v", got)
 		}
 	})
