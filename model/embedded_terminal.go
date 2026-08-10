@@ -1258,7 +1258,7 @@ func (m Model) resumeSavedSession(record sessions.SessionRecord, origin savedSes
 			return msg
 		}
 		for _, current := range records {
-			if current.Provider == record.Provider && strings.TrimSpace(current.SessionID) == strings.TrimSpace(record.SessionID) {
+			if current.Provider == record.Provider && current.SessionID == record.SessionID {
 				msg.Record = current
 				msg.Found = true
 				break
@@ -1340,7 +1340,7 @@ func (m Model) handleSavedSessionResumeRefreshed(msg savedSessionResumeRefreshed
 }
 
 func savedSessionResumeKey(record sessions.SessionRecord) string {
-	return string(record.Provider) + "\x00" + strings.TrimSpace(record.SessionID)
+	return string(record.Provider) + "\x00" + record.SessionID
 }
 
 func (m Model) resumeSessionInEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, tea.Cmd) {
@@ -1369,7 +1369,7 @@ func (m Model) flowSessionResumePreflightCmd(ctx actions.AgentLaunchContext, rec
 			return msg
 		}
 		for _, current := range currentRecords {
-			if current.Provider == record.Provider && strings.TrimSpace(current.SessionID) == strings.TrimSpace(record.SessionID) {
+			if current.Provider == record.Provider && current.SessionID == record.SessionID {
 				msg.CurrentRecord = current
 				msg.CurrentRecordFound = true
 				break

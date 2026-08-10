@@ -446,6 +446,47 @@ func TestSavedSessionResumeValidatesLaunchPathAfterAuthoritativeRefresh(t *testi
 	}
 }
 
+func TestSavedSessionResumePreservesExactSessionIdentityAcrossRefreshes(t *testing.T) {
+	exact := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: " session-1 ", Status: "ended", FlowID: "flow-exact", LaunchID: "launch-exact", CWD: t.TempDir(),
+	}
+	aliased := exact
+	aliased.SessionID = "session-1"
+	aliased.FlowID = "flow-aliased"
+	aliased.LaunchID = "launch-aliased"
+	m := Model{
+		agentCommand: "codex",
+		listSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if filter.Provider != "" {
+				return []sessions.SessionRecord{aliased, exact}, nil
+			}
+			return nil, nil
+		},
+		listFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{{FlowID: exact.FlowID}}, nil
+		},
+	}
+
+	if savedSessionResumeKey(exact) == savedSessionResumeKey(aliased) {
+		t.Fatal("resume keys aliased distinct exact session IDs")
+	}
+	_, refreshCmd := m.handleEmbeddedSessionPickerSelected(embeddedSessionPickerSelectedMsg{Record: exact, OK: true})
+	if refreshCmd == nil {
+		t.Fatal("saved-session resume did not queue authoritative refresh")
+	}
+	refreshed := refreshCmd().(savedSessionResumeRefreshedMsg)
+	if !refreshed.Found || refreshed.Record.SessionID != exact.SessionID || refreshed.Record.FlowID != exact.FlowID {
+		t.Fatalf("authoritative refresh selected %#v, want exact record %#v", refreshed.Record, exact)
+	}
+
+	ctx := actions.AgentLaunchContext{FlowID: exact.FlowID, LaunchID: "resume-token"}
+	preflight := m.flowSessionResumePreflightCmd(ctx, exact)().(flowSessionResumePreflightMsg)
+	if preflight.Err != nil || !preflight.CurrentRecordFound ||
+		preflight.CurrentRecord.SessionID != exact.SessionID || preflight.CurrentRecord.LaunchID != exact.LaunchID {
+		t.Fatalf("second authoritative refresh = %#v, want exact session identity", preflight)
+	}
+}
+
 func TestFlowAssociatedSavedSessionResumeReservesLeaseAndFencesRefreshReplay(t *testing.T) {
 	record := sessions.SessionRecord{
 		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", CWD: t.TempDir(), FlowID: "flow-1",
