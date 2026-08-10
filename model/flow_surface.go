@@ -314,6 +314,12 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	}
 
 	m.activeFlowSurface = false
+	// Active Flows owns the shared refresh slot while its takeover is visible.
+	// Clear that ownership before deciding whether the restored Flows pane is
+	// visible, otherwise a hidden takeover request can block its next refresh.
+	hadFlowRefreshOwnership := m.flowRefreshInFlight != 0 || m.flowRefreshInFlightMode != 0
+	m.flowRefreshInFlight = 0
+	m.flowRefreshInFlightMode = 0
 	if m.activeFlowReturnSet {
 		m.activePane = m.activeFlowReturnPane
 		m.contentPane = m.activeFlowReturnContent
@@ -323,6 +329,11 @@ func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
 	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowsModeFetchWithRefreshTick()
+	}
+	// No replacement refresh will advance the generation for a hidden stored
+	// pane, so invalidate the takeover's outstanding tick explicitly.
+	if hadFlowRefreshOwnership {
+		m.flowRefreshTickGen++
 	}
 	return m, nil
 }

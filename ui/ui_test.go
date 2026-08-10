@@ -4993,6 +4993,66 @@ func TestRender_StackedPaneListErrorsRenderIndependently(t *testing.T) {
 	}
 }
 
+func TestRender_StackedPaneRetainedRowsShowPersistentFetchWarning(t *testing.T) {
+	view := ansi.Strip(Render(RenderParams{
+		Width:        160,
+		Height:       26,
+		Repos:        []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:     0,
+		Mode:         ModeWorktrees,
+		TopMode:      ModeWorktrees,
+		BottomMode:   ModePlans,
+		ContentPane:  PaneTop,
+		ActivePane:   PaneTop,
+		Worktrees:    []gitquery.Worktree{{Path: "/repo", BranchName: "main"}},
+		TopListError: "worktrees failed",
+	}))
+	for _, want := range []string{"Could not refresh worktrees; showing cached data", "main"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("retained-row error view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRender_StackedBackgroundFiltersUsePaneLocalState(t *testing.T) {
+	tests := []struct {
+		name   string
+		params RenderParams
+		want   string
+	}{
+		{
+			name: "top Worktrees while bottom focused",
+			params: RenderParams{
+				Mode: ModeFlows, TopMode: ModeWorktrees, BottomMode: ModeFlows,
+				ActivePane: PaneBottom, ContentPane: PaneBottom,
+				TopItemSearch: "zzz", TopItemSourceCount: 1,
+			},
+			want: "No worktree results for zzz",
+		},
+		{
+			name: "bottom Plans while top focused",
+			params: RenderParams{
+				Mode: ModeWorktrees, TopMode: ModeWorktrees, BottomMode: ModePlans,
+				ActivePane: PaneTop, ContentPane: PaneTop,
+				BottomItemSearch: "zzz", BottomItemSourceCount: 1,
+			},
+			want: "No plan results for zzz",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.params.Width = 160
+			tt.params.Height = 26
+			tt.params.Repos = []scanner.Repo{{Path: "/repo", DisplayName: "repo"}}
+			tt.params.Selected = 0
+			view := ansi.Strip(Render(tt.params))
+			if !strings.Contains(view, tt.want) {
+				t.Fatalf("background filter view missing %q:\n%s", tt.want, view)
+			}
+		})
+	}
+}
+
 func TestRender_CollapsedRepoPaneHidesRestoreHintWhileTerminalOwnsInput(t *testing.T) {
 	tests := []struct {
 		name   string

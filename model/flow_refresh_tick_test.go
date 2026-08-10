@@ -717,7 +717,7 @@ func TestModel_FlowRefreshOldTrackedResultDoesNotScheduleAfterNewerRefetch(t *te
 	}
 }
 
-func TestModel_ActiveFlowsExitDoesNotRefreshHiddenStoredFlows(t *testing.T) {
+func TestModel_ActiveFlowsExitCancelsRefreshOwnershipWithoutRefreshingHiddenStoredFlows(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
@@ -729,8 +729,8 @@ func TestModel_ActiveFlowsExitDoesNotRefreshHiddenStoredFlows(t *testing.T) {
 	m.activePane = ui.PaneTop
 	m.contentPane = ui.PaneTop
 	m.activeFlowSurface = true
-	m.flowRefreshInFlight = 0
-	m.flowRefreshInFlightMode = 0
+	m.flowRefreshInFlight = m.ListRequest(ui.ModeActiveFlows)
+	m.flowRefreshInFlightMode = ui.ModeActiveFlows
 	beforeRequest := m.ListRequest(ui.ModeFlows)
 	beforeGeneration := m.flowRefreshTickGen
 
@@ -745,8 +745,8 @@ func TestModel_ActiveFlowsExitDoesNotRefreshHiddenStoredFlows(t *testing.T) {
 	if got := m.ListRequest(ui.ModeFlows); got != beforeRequest {
 		t.Fatalf("hidden stored Flows request = %d, want unchanged %d", got, beforeRequest)
 	}
-	if m.flowRefreshTickGen != beforeGeneration {
-		t.Fatalf("hidden stored Flows generation = %d, want unchanged %d", m.flowRefreshTickGen, beforeGeneration)
+	if m.flowRefreshTickGen != beforeGeneration+1 {
+		t.Fatalf("hidden stored Flows generation = %d, want %d", m.flowRefreshTickGen, beforeGeneration+1)
 	}
 	if m.flowRefreshInFlight != 0 {
 		t.Fatalf("hidden stored Flows in-flight request = %d, want 0", m.flowRefreshInFlight)

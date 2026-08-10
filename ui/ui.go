@@ -431,6 +431,10 @@ type RenderParams struct {
 	SearchActive                 bool
 	RepoSearch                   string
 	ItemSearch                   string
+	TopItemSearch                string
+	BottomItemSearch             string
+	TopItemSourceCount           int
+	BottomItemSourceCount        int
 	RepoEmptyMessage             string
 	RightEmptyMessage            string
 	TopListError                 string
@@ -931,43 +935,52 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 
 	repoDisplayNames := repoDisplayNamesByPath(p.Repos)
 	var body []string
+	hasRows := stackedModePaneHasRows(p, mode, takeover)
+	bodyRows := listRows
+	if hasRows && paneListError(p, mode) != "" && bodyRows > 0 {
+		bodyRows--
+	}
 	switch {
 	case (mode == ModeFlows || takeover) && len(p.Flows) > 0:
-		body = renderFlowPane(p.Flows, flowSel, p.FlowScroll, width, listRows, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, takeover, repoDisplayNames)
+		body = renderFlowPane(p.Flows, flowSel, p.FlowScroll, width, bodyRows, p.ExpandedFlowID, selectedFlowPhaseID, p.FlowTerminalActivity, takeover, repoDisplayNames)
 	case mode == ModeFlows || takeover:
 		message := paneEmptyMessage(p, mode, repoPath)
 		if takeover && p.ActiveFlowsListError == "" {
 			message = "No active flows"
 		}
-		body = renderPlaceholderPane(width, listRows, message)
+		body = renderPlaceholderPane(width, bodyRows, message)
 	case mode == ModeWorktrees && len(p.Worktrees) > 0:
-		body = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, width, listRows, p.InlineWorktreeSessions, p.WorktreeSessions, worktreeSessionSel, p.WorktreeSessionScroll)
+		body = renderWorktreePaneWithSessions(p.Worktrees, worktreeSel, p.WorktreeScroll, width, bodyRows, p.InlineWorktreeSessions, p.WorktreeSessions, worktreeSessionSel, p.WorktreeSessionScroll)
 	case mode == ModeBranches && len(p.Branches) > 0:
-		body = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, width, listRows, repoPath)
+		body = renderBranchPaneSelected(p.Branches, branchSel, p.BranchScroll, width, bodyRows, repoPath)
 	case mode == ModeStashes && len(p.Stashes) > 0:
-		body = renderStashPane(p.Stashes, stashSel, p.StashScroll, width, listRows)
+		body = renderStashPane(p.Stashes, stashSel, p.StashScroll, width, bodyRows)
 	case mode == ModeHistory && len(p.Commits) > 0:
-		body = renderCommitPane(p.Commits, commitSel, p.CommitScroll, width, listRows)
+		body = renderCommitPane(p.Commits, commitSel, p.CommitScroll, width, bodyRows)
 	case mode == ModeReflog && len(p.Reflogs) > 0:
-		body = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, width, listRows)
+		body = renderReflogPane(p.Reflogs, reflogSel, p.ReflogScroll, width, bodyRows)
 	case mode == ModeSessions && len(p.Sessions) > 0:
-		body = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, width, listRows)
+		body = renderSessionPane(p.Sessions, sessionSel, p.SessionScroll, width, bodyRows)
 	case mode == ModePlans && len(p.Plans) > 0:
-		body = renderPlanPane(p.Plans, planSel, p.PlanScroll, width, listRows, p.ExpandedPlanID, selectedPlanPhaseID)
+		body = renderPlanPane(p.Plans, planSel, p.PlanScroll, width, bodyRows, p.ExpandedPlanID, selectedPlanPhaseID)
 	case IsBeadsMode(mode) && p.BeadsOpenPending:
-		body = renderPlaceholderPane(width, listRows, "loading "+beadsModeLabel(mode)+" beads")
+		body = renderPlaceholderPane(width, bodyRows, "loading "+beadsModeLabel(mode)+" beads")
 	case IsBeadsMode(mode) && p.BeadsError != "":
-		body = renderPlaceholderPane(width, listRows, "Could not load "+beadsModeLabel(mode)+" beads: "+terminalSafeSingleLine(p.BeadsError))
+		body = renderPlaceholderPane(width, bodyRows, "Could not load "+beadsModeLabel(mode)+" beads: "+terminalSafeSingleLine(p.BeadsError))
 	case IsBeadsMode(mode) && len(p.BeadsOpen) > 0:
-		body = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, listRows)
+		body = renderBeadsOpenPane(p.BeadsOpen, beadSel, p.BeadsOpenScroll, width, bodyRows)
 	case IsBeadsMode(mode):
 		message := "beads not configured"
 		if repoPath == "" || p.BeadsOpenAvailable {
 			message = paneEmptyMessage(p, mode, repoPath)
 		}
-		body = renderPlaceholderPane(width, listRows, message)
+		body = renderPlaceholderPane(width, bodyRows, message)
 	default:
-		body = renderPlaceholderPane(width, listRows, paneEmptyMessage(p, mode, repoPath))
+		body = renderPlaceholderPane(width, bodyRows, paneEmptyMessage(p, mode, repoPath))
+	}
+	if hasRows && paneListError(p, mode) != "" {
+		warning := " Could not refresh " + modeDataLabel(mode) + "; showing cached data"
+		body = append([]string{truncateToWidth(dirtyRedStyle.Render(warning), width)}, body...)
 	}
 
 	lines := append(headerLines, body...)
@@ -989,20 +1002,51 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 		Render(strings.Join(lines, "\n"))
 }
 
+func stackedModePaneHasRows(p RenderParams, mode Mode, takeover bool) bool {
+	switch {
+	case mode == ModeFlows || takeover:
+		return len(p.Flows) > 0
+	case mode == ModeWorktrees:
+		return len(p.Worktrees) > 0
+	case mode == ModeBranches:
+		return len(p.Branches) > 0
+	case mode == ModeStashes:
+		return len(p.Stashes) > 0
+	case mode == ModeHistory:
+		return len(p.Commits) > 0
+	case mode == ModeReflog:
+		return len(p.Reflogs) > 0
+	case mode == ModeSessions:
+		return len(p.Sessions) > 0
+	case mode == ModePlans:
+		return len(p.Plans) > 0
+	case IsBeadsMode(mode):
+		return !p.BeadsOpenPending && p.BeadsError == "" && len(p.BeadsOpen) > 0
+	default:
+		return false
+	}
+}
+
 func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
+	if mode == ModeActiveFlows && mode == p.Mode && strings.TrimSpace(p.ItemSearch) != "" && strings.Contains(p.RightEmptyMessage, " results for ") {
+		return p.RightEmptyMessage
+	}
+	if mode != ModeActiveFlows && repoPath == "" {
+		if strings.TrimSpace(p.RepoSearch) != "" {
+			return "No matching repo"
+		}
+		return "No selected repo"
+	}
+	query, sourceCount := paneItemFilterState(p, mode)
+	if strings.TrimSpace(query) != "" && sourceCount > 0 {
+		return "No " + modeResultLabel(mode) + " results for " + query
+	}
+	// Preserve the focused-pane compatibility path for callers that only
+	// provide the original aggregate search fields.
 	if mode == p.Mode && strings.TrimSpace(p.ItemSearch) != "" && strings.Contains(p.RightEmptyMessage, " results for ") {
 		return p.RightEmptyMessage
 	}
-	listError := ""
-	pane, paneOK := PaneForMode(mode)
-	switch {
-	case mode == ModeActiveFlows:
-		listError = p.ActiveFlowsListError
-	case paneOK && pane == PaneTop:
-		listError = p.TopListError
-	case paneOK && pane == PaneBottom:
-		listError = p.BottomListError
-	}
+	listError := paneListError(p, mode)
 	if listError != "" {
 		message := "Could not load " + modeDataLabel(mode)
 		if p.TransientError == listError {
@@ -1012,12 +1056,6 @@ func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
 	}
 	if mode == p.Mode && p.RightEmptyMessage != "" {
 		return p.RightEmptyMessage
-	}
-	if repoPath == "" {
-		if strings.TrimSpace(p.RepoSearch) != "" {
-			return "No matching repo"
-		}
-		return "No selected repo"
 	}
 	if IsBeadsMode(mode) {
 		if strings.TrimSpace(p.BeadsQuery) != "" && p.BeadsSourceCount > 0 && len(p.BeadsOpen) == 0 {
@@ -1050,6 +1088,57 @@ func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
 	}
 }
 
+func paneListError(p RenderParams, mode Mode) string {
+	pane, paneOK := PaneForMode(mode)
+	switch {
+	case mode == ModeActiveFlows:
+		return p.ActiveFlowsListError
+	case paneOK && pane == PaneTop:
+		return p.TopListError
+	case paneOK && pane == PaneBottom:
+		return p.BottomListError
+	default:
+		return ""
+	}
+}
+
+func paneItemFilterState(p RenderParams, mode Mode) (string, int) {
+	pane, ok := PaneForMode(mode)
+	if !ok {
+		return "", 0
+	}
+	if pane == PaneTop {
+		return p.TopItemSearch, p.TopItemSourceCount
+	}
+	return p.BottomItemSearch, p.BottomItemSourceCount
+}
+
+func modeResultLabel(mode Mode) string {
+	switch mode {
+	case ModeWorktrees:
+		return "worktree"
+	case ModeBranches:
+		return "branch"
+	case ModeStashes:
+		return "stash"
+	case ModeHistory:
+		return "commit"
+	case ModeReflog:
+		return "reflog"
+	case ModeSessions:
+		return "session"
+	case ModePlans:
+		return "plan"
+	case ModeFlows, ModeActiveFlows:
+		return "flow"
+	default:
+		if IsBeadsMode(mode) {
+			return "bead"
+		}
+		return "item"
+	}
+}
+
 func modeDataLabel(mode Mode) string {
 	switch mode {
 	case ModeWorktrees:
@@ -1071,6 +1160,9 @@ func modeDataLabel(mode Mode) string {
 	case ModeActiveFlows:
 		return "active flows"
 	default:
+		if IsBeadsMode(mode) {
+			return beadsModeLabel(mode) + " beads"
+		}
 		return "data"
 	}
 }
