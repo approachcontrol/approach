@@ -105,6 +105,7 @@ func TestSessionRecordIsActiveUsesStatusBeforeEndedAt(t *testing.T) {
 		want   bool
 	}{
 		{name: "ended status without end time", record: sessions.SessionRecord{Status: "ended"}},
+		{name: "non-exact ended status remains active", record: sessions.SessionRecord{Status: "ended ", EndedAt: endedAt}, want: true},
 		{name: "nonblank active status with end time", record: sessions.SessionRecord{Status: "active", EndedAt: endedAt}, want: true},
 		{name: "blank status with end time", record: sessions.SessionRecord{EndedAt: endedAt}},
 		{name: "blank status without end time", record: sessions.SessionRecord{}, want: true},

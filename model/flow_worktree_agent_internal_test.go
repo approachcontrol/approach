@@ -421,6 +421,39 @@ func TestFlowAssociatedSavedSessionResumeReservesLeaseAndFencesRefreshReplay(t *
 	}
 }
 
+func TestPendingSavedSessionResumeRejectsSupersedingRequestWithoutStrandingLease(t *testing.T) {
+	record := sessions.SessionRecord{
+		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", CWD: t.TempDir(), FlowID: "flow-1",
+	}
+	m := Model{
+		agentCommand: "codex",
+		listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return []sessions.SessionRecord{record}, nil
+		},
+	}
+
+	reserved, refreshCmd := m.handleEmbeddedSessionPickerSelected(embeddedSessionPickerSelectedMsg{Record: record, OK: true})
+	lease, ok := reserved.flowLaunchLease(record.FlowID)
+	if !ok {
+		t.Fatal("first saved-session resume did not reserve its Flow")
+	}
+	duplicateRecord := record
+	duplicateRecord.FlowID = ""
+	afterDuplicate, _ := reserved.handleEmbeddedSessionPickerSelected(embeddedSessionPickerSelectedMsg{Record: duplicateRecord, OK: true})
+	if got := afterDuplicate.pendingSavedSessionResumes[savedSessionResumeKey(record)]; got != lease.Token {
+		t.Fatalf("pending saved-session token = %q, want original %q", got, lease.Token)
+	}
+	if !afterDuplicate.matchingFlowLaunchLease(record.FlowID, lease.Token, flowLaunchSourceSessionResume) {
+		t.Fatal("superseding saved-session request stranded the original Flow lease")
+	}
+
+	refreshedModel, preflightCmd := afterDuplicate.Update(refreshCmd())
+	refreshed := refreshedModel.(Model)
+	if preflightCmd == nil || !refreshed.matchingFlowLaunchLease(record.FlowID, lease.Token, flowLaunchSourceSessionResume) {
+		t.Fatal("original saved-session request could not continue after duplicate rejection")
+	}
+}
+
 func TestFlowAssociatedSavedSessionResumeRejectsRecordMovedToAnotherFlow(t *testing.T) {
 	selected := sessions.SessionRecord{
 		Provider: sessions.ProviderCodex, SessionID: "session-1", LaunchID: "launch-a", Status: "ended", FlowID: "flow-a", CWD: t.TempDir(),

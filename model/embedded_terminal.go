@@ -1202,6 +1202,10 @@ func (m Model) resumeSavedSession(record sessions.SessionRecord, origin savedSes
 	if m.listSessions == nil {
 		return m.setStatus(statusOther, "Session storage is unavailable"), nil
 	}
+	key := savedSessionResumeKey(record)
+	if m.pendingSavedSessionResumes[key] != "" {
+		return m.setStatus(statusOther, "A resume for this session is already pending"), nil
+	}
 	ctx, ok, next := m.sessionResumeLaunchContext(record)
 	if !ok {
 		return next, nil
@@ -1218,7 +1222,6 @@ func (m Model) resumeSavedSession(record sessions.SessionRecord, origin savedSes
 			return m.setStatus(statusOther, "Another launch or session already occupies this Flow"), nil
 		}
 	}
-	key := savedSessionResumeKey(record)
 	pending := make(map[string]string, len(m.pendingSavedSessionResumes)+1)
 	for pendingKey, pendingToken := range m.pendingSavedSessionResumes {
 		pending[pendingKey] = pendingToken

@@ -89,9 +89,8 @@ type SessionFilter struct {
 // provider's explicit status is authoritative; legacy blank-status records
 // fall back to EndedAt.
 func IsActive(record SessionRecord) bool {
-	status := strings.TrimSpace(record.Status)
-	if status != "" {
-		return status != "ended"
+	if strings.TrimSpace(record.Status) != "" {
+		return record.Status != "ended"
 	}
 	return record.EndedAt.IsZero()
 }
