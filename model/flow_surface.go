@@ -305,12 +305,20 @@ func (m Model) switchModeFromKey(key string) (Model, tea.Cmd, bool) {
 func (m Model) handleActiveFlowsToggle() (Model, tea.Cmd) {
 	if !m.activeFlowSurfaceVisible() {
 		previousMode := m.focusedMode()
+		m.activeFlowReturnPane = m.activePane
+		m.activeFlowReturnContent = m.contentPane
+		m.activeFlowReturnSet = true
 		m.activeFlowSurface = true
 		m = m.resetModeCursorsForSwitch(previousMode, ui.ModeActiveFlows)
 		return m.startActiveFlowsFetchWithRefreshTick()
 	}
 
 	m.activeFlowSurface = false
+	if m.activeFlowReturnSet {
+		m.activePane = m.activeFlowReturnPane
+		m.contentPane = m.activeFlowReturnContent
+		m.activeFlowReturnSet = false
+	}
 	returnMode := m.focusedMode()
 	m = m.resetModeCursorsForSwitch(ui.ModeActiveFlows, returnMode)
 	if m.flowRefreshSurfaceVisible() {

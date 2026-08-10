@@ -318,6 +318,44 @@ func TestActiveFlowsToggleRestoresStoredStateWithoutTopFetch(t *testing.T) {
 	}
 }
 
+func TestActiveFlowsToggleRestoresFocusChangedDuringTakeover(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(Model) Model
+		move  tea.KeyMsg
+	}{
+		{
+			name: "content entry restores content after takeover moved to repos",
+			setup: func(m Model) Model {
+				return m.focusContentPane(ui.PaneTop)
+			},
+			move: tea.KeyMsg{Type: tea.KeyTab},
+		},
+		{
+			name:  "repo entry restores repos after takeover moved to content",
+			setup: func(m Model) Model { return m.focusRepoPane() },
+			move:  tea.KeyMsg{Type: tea.KeyTab},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.setup(New([]scanner.Repo{{Path: "/repo"}}))
+			wantActive, wantContent := m.activePane, m.contentPane
+			m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+			m = updatePaneStateTestModel(t, m, tt.move)
+			if m.activePane == wantActive {
+				t.Fatalf("takeover focus did not move from precondition pane %d", wantActive)
+			}
+
+			m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlA})
+
+			if m.activeFlowSurfaceVisible() || m.activePane != wantActive || m.contentPane != wantContent {
+				t.Fatalf("takeover exit = activeFlow %t active %d content %d, want false/%d/%d", m.activeFlowSurfaceVisible(), m.activePane, m.contentPane, wantActive, wantContent)
+			}
+		})
+	}
+}
+
 func TestStoredPaneListErrorsRemainIndependent(t *testing.T) {
 	m := New([]scanner.Repo{{Path: "/repo"}})
 	m = updatePaneStateTestModel(t, m, tea.KeyMsg{Type: tea.KeyTab})

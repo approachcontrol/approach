@@ -4972,18 +4972,19 @@ func TestRender_CollapsedRepoPaneShowsRestoreHintInFooterAndShortcutRail(t *test
 
 func TestRender_StackedPaneListErrorsRenderIndependently(t *testing.T) {
 	view := ansi.Strip(Render(RenderParams{
-		Width:            160,
-		Height:           26,
-		Repos:            []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
-		Selected:         0,
-		Mode:             ModeWorktrees,
-		TopMode:          ModeWorktrees,
-		BottomMode:       ModePlans,
-		ContentPane:      PaneTop,
-		ActivePane:       PaneRepos,
-		TopListError:     "worktrees failed",
-		BottomListError:  "plans failed",
-		RepoEmptyMessage: "No repos",
+		Width:             160,
+		Height:            26,
+		Repos:             []scanner.Repo{{Path: "/repo", DisplayName: "repo"}},
+		Selected:          0,
+		Mode:              ModeWorktrees,
+		TopMode:           ModeWorktrees,
+		BottomMode:        ModePlans,
+		ContentPane:       PaneTop,
+		ActivePane:        PaneRepos,
+		TopListError:      "worktrees failed",
+		BottomListError:   "plans failed",
+		RightEmptyMessage: "No worktrees",
+		RepoEmptyMessage:  "No repos",
 	}))
 	for _, want := range []string{"Could not load worktrees", "Could not load plans"} {
 		if !strings.Contains(view, want) {

@@ -98,6 +98,9 @@ type Model struct {
 	activePane                ui.Pane
 	repoPaneCollapsed         bool
 	activeFlowSurface         bool
+	activeFlowReturnPane      ui.Pane
+	activeFlowReturnContent   ui.Pane
+	activeFlowReturnSet       bool
 	destructive               bool
 	status                    statusError
 	statusSeq                 uint64

@@ -990,7 +990,7 @@ func renderStackedModePane(p RenderParams, mode Mode, width, outerRows int, focu
 }
 
 func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
-	if mode == p.Mode && p.RightEmptyMessage != "" {
+	if mode == p.Mode && strings.TrimSpace(p.ItemSearch) != "" && strings.Contains(p.RightEmptyMessage, " results for ") {
 		return p.RightEmptyMessage
 	}
 	listError := ""
@@ -1009,6 +1009,9 @@ func paneEmptyMessage(p RenderParams, mode Mode, repoPath string) string {
 			message += "; see status bar"
 		}
 		return message
+	}
+	if mode == p.Mode && p.RightEmptyMessage != "" {
+		return p.RightEmptyMessage
 	}
 	if repoPath == "" {
 		if strings.TrimSpace(p.RepoSearch) != "" {
@@ -1063,8 +1066,10 @@ func modeDataLabel(mode Mode) string {
 		return "sessions"
 	case ModePlans:
 		return "plans"
-	case ModeFlows, ModeActiveFlows:
+	case ModeFlows:
 		return "flows"
+	case ModeActiveFlows:
+		return "active flows"
 	default:
 		return "data"
 	}
