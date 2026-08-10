@@ -1206,12 +1206,14 @@ func (m Model) resumeSavedSession(record sessions.SessionRecord, origin savedSes
 	if m.pendingSavedSessionResumes[key] != "" {
 		return m.setStatus(statusOther, "A resume for this session is already pending"), nil
 	}
-	ctx, ok, next := m.sessionResumeLaunchContext(record)
-	if !ok {
-		return next, nil
+	if strings.TrimSpace(record.SessionID) == "" {
+		return m.setStatus(statusOther, "Session has no provider session ID and cannot be resumed"), nil
 	}
-	token := ctx.LaunchID
-	reservedFlow := strings.TrimSpace(ctx.FlowID)
+	token := newLaunchID()
+	reservedFlow := strings.TrimSpace(record.FlowID)
+	if record.Provider == sessions.ProviderCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
+		reservedFlow = ""
+	}
 	if reservedFlow != "" {
 		if m.hasFlowEmbeddedTerminalForFlow(reservedFlow) {
 			return m.setStatus(statusOther, "An embedded terminal already occupies this Flow"), nil

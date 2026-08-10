@@ -2144,6 +2144,34 @@ func TestStoreAddPhaseLaunchIDResumePreservesCompletedPhase(t *testing.T) {
 	}
 }
 
+func TestStoreAddPhaseLaunchIDTerminalResumeRejectsAnotherRunningPhase(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record := graphRecord(root, "20260810T120000Z-terminal-resume-occupied", []flowstore.FlowPhase{
+		graphPhase(now, "completed", flowstore.PhaseCompleted, []string{}),
+		graphPhase(now, "running", flowstore.PhaseRunning, []string{}),
+	})
+	writeFreshFlowRecordForTest(t, root, record)
+
+	_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID: record.FlowID, PhaseID: "completed", LaunchID: "launch-resume", Resume: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already has running phase") {
+		t.Fatalf("terminal resume occupancy error = %v", err)
+	}
+	read, readErr := store.Read(record.FlowID)
+	if readErr != nil {
+		t.Fatalf("Read() error = %v", readErr)
+	}
+	if got := phaseByID(t, read, "completed"); len(got.LaunchIDs) != 0 || got.Status != flowstore.PhaseCompleted {
+		t.Fatalf("completed phase after rejected resume = %#v", got)
+	}
+}
+
 func TestStoreAddPhaseLaunchIDResumePreservesSkippedPhase(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})

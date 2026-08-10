@@ -249,6 +249,12 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		}
 		for _, current := range flows {
 			if strings.TrimSpace(current.FlowID) == strings.TrimSpace(ctx.FlowID) {
+				for _, phase := range current.Phases {
+					if phase.Status == flowstore.PhaseRunning {
+						msg.RepairValidationErr = fmt.Sprintf("A persisted running phase %s still occupies this Flow", phase.PhaseID)
+						return msg
+					}
+				}
 				msg.RepairRecord = current
 				return msg
 			}

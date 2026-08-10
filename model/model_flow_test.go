@@ -4756,6 +4756,38 @@ func TestModel_RReservesRepairLaunchAndRejectsDuplicateOrStaleMessages(t *testin
 	})
 }
 
+func TestModel_RAuthoritativePreflightRejectsPersistedRunningPhase(t *testing.T) {
+	record := repairableFlowForShortcut()
+	record.Phases[0].Status = flowstore.PhaseRunning
+	record.Phases[0].LaunchIDs = []string{"launch-awaiting-session"}
+	starts := 0
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			return []flowstore.FlowRecord{record}, nil
+		},
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			return nil, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			starts++
+			return &fakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if cmd == nil {
+		t.Fatal("repair did not queue authoritative preflight")
+	}
+	m, _ = update(m, cmd())
+	if starts != 0 {
+		t.Fatalf("repair started %d terminals beside persisted running phase", starts)
+	}
+	if got := m.TransientError(); !strings.Contains(got, "running phase") {
+		t.Fatalf("repair running-phase status = %q", got)
+	}
+}
+
 func TestModel_RIsUnavailableForBlockedFlowWithLiveSession(t *testing.T) {
 	for _, status := range []string{flowstore.PhaseBlocked, flowstore.PhaseNeedsAttention} {
 		t.Run(status, func(t *testing.T) {

@@ -947,6 +947,9 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 			return FlowRecord{}, fmt.Errorf("phase %q in flow %q is already awaiting session capture", update.PhaseID, update.FlowID)
 		}
 		if update.Resume && PhaseStatusTerminal(phase.Status) {
+			if err := validateFlowTerminalResumeOccupancy(record, phaseIndex); err != nil {
+				return FlowRecord{}, err
+			}
 			// Resuming a finished phase's session is read-back, not new work:
 			// record the launch so the session can re-link, but leave the
 			// phase's terminal status, outcome, and notes intact.
@@ -988,6 +991,16 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		record.Status = DeriveStatus(record)
 		return record, nil
 	})
+}
+
+func validateFlowTerminalResumeOccupancy(record FlowRecord, targetIndex int) error {
+	for i, phase := range record.Phases {
+		if i == targetIndex || phase.Status != PhaseRunning {
+			continue
+		}
+		return fmt.Errorf("flow %q already has running phase %q", record.FlowID, phase.PhaseID)
+	}
+	return nil
 }
 
 func validateFlowLaunchOccupancy(record FlowRecord, targetIndex int, autoLaunch bool) error {

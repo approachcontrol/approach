@@ -376,6 +376,33 @@ func TestSavedSessionResumeRefreshesFlowAssociationBeforeRouting(t *testing.T) {
 	}
 }
 
+func TestSavedSessionResumeValidatesLaunchPathAfterAuthoritativeRefresh(t *testing.T) {
+	cached := sessions.SessionRecord{Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended"}
+	current := cached
+	current.CWD = t.TempDir()
+	refreshes := 0
+	m := Model{
+		agentCommand: "codex",
+		listSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			refreshes++
+			return []sessions.SessionRecord{current}, nil
+		},
+		startEmbeddedTerminal: func(_ actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	}
+
+	pending, refreshCmd := m.handleEmbeddedSessionPickerSelected(embeddedSessionPickerSelectedMsg{Record: cached, OK: true})
+	if refreshCmd == nil || refreshes != 0 {
+		t.Fatalf("cached missing path refresh = cmd %T calls %d", refreshCmd, refreshes)
+	}
+	finalModel, _ := pending.Update(refreshCmd())
+	final := finalModel.(Model)
+	if refreshes != 1 || len(final.embeddedTerminals) != 1 {
+		t.Fatalf("authoritatively refreshed resume = calls %d slots %#v", refreshes, final.embeddedTerminals)
+	}
+}
+
 func TestFlowAssociatedSavedSessionResumeReservesLeaseAndFencesRefreshReplay(t *testing.T) {
 	record := sessions.SessionRecord{
 		Provider: sessions.ProviderCodex, SessionID: "session-1", Status: "ended", CWD: t.TempDir(), FlowID: "flow-1",
