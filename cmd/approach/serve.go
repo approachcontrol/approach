@@ -161,10 +161,14 @@ func isLoopbackBindAddr(addr string) (bool, error) {
 	return ip.IsLoopback(), nil
 }
 
+// firstNonEmpty returns the first value with non-space content, trimmed.
+// Trimming the returned value matters: the token is compared against a trimmed
+// header, so a padded APPROACH_API_TOKEN would otherwise 401 every request
+// with no diagnostic.
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
 		}
 	}
 	return ""

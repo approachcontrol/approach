@@ -1,7 +1,9 @@
 package graphqlapi
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,5 +336,138 @@ func TestBuildSnapshotFlowLookupPrefersFirstRecordForDuplicateID(t *testing.T) {
 	}
 	if flow.RepoPath != "/repos/alpha" {
 		t.Fatalf("Flow(dupe).RepoPath = %q, want the first (newest) record's %q", flow.RepoPath, "/repos/alpha")
+	}
+}
+
+// fullyPopulatedSources fills every optional field on every type, so the
+// drift guard sees a width for each one and byte-budget tests have realistic
+// free text to measure.
+func fullyPopulatedSources() (RepoSource, FlowSource, func(string, ...any)) {
+	created := fixtureTime(0)
+	merged := fixtureTime(time.Hour)
+	return staticRepos(scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha", IsBare: true}),
+		staticFlows(flowstore.FlowRecord{
+			FlowID: "flow-alpha-1", Title: "Alpha one", Instructions: "do the thing",
+			Status: flowstore.StatusInProgress, RepoPath: "/repos/alpha",
+			WorktreePath: "/repos/alpha-worktrees/one", Branch: "flow/one", BaseRef: "main",
+			Commit: "abc123", PresetName: "default", PlanID: "plan-1", AutoMode: true,
+			Issue: flowstore.Issue{Provider: "github", Number: 7, URL: "https://example.test/i/7"},
+			PR: flowstore.PullRequest{
+				Provider: "github", Number: 9, URL: "https://example.test/p/9",
+				HeadBranch: "flow/one", BaseBranch: "main", Status: "open",
+			},
+			Merge: flowstore.Merge{Status: flowstore.MergeMerged, Commit: "def456", MergedAt: &merged},
+			Phases: []flowstore.FlowPhase{
+				{
+					PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseCompleted,
+					Order: 1, Outcome: "approved", Notes: "some notes", Summary: "a summary",
+					CreatedAt: created, UpdatedAt: created,
+				},
+				{
+					PhaseID: "impl", ParentPhaseID: "plan", Title: "Implement", Kind: flowstore.KindImplementation,
+					Status: flowstore.PhaseReady, Order: 2, DependsOn: []string{"plan"},
+					CreatedAt: created, UpdatedAt: created,
+				},
+			},
+			CreatedAt: created, UpdatedAt: created,
+		}),
+		nil
+}
+
+func TestSnapshotBounds(t *testing.T) {
+	created := fixtureTime(0)
+	// Distinct, non-trivial cardinalities so a bound wired to the wrong field
+	// cannot pass by coincidence.
+	repos := staticRepos(
+		scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha"},
+		scanner.Repo{Path: "/repos/beta", DisplayName: "beta"},
+	)
+	records := []flowstore.FlowRecord{
+		{
+			FlowID: "a1", Title: "a1", RepoPath: "/repos/alpha", Instructions: strings.Repeat("x", 900),
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "p1", Title: "p1", DependsOn: []string{"a", "b", "c"}, CreatedAt: created, UpdatedAt: created},
+			},
+			CreatedAt: created, UpdatedAt: created,
+		},
+		{FlowID: "a2", Title: "a2", RepoPath: "/repos/alpha", CreatedAt: created, UpdatedAt: created},
+		{FlowID: "a3", Title: "a3", RepoPath: "/repos/alpha", CreatedAt: created, UpdatedAt: created},
+		{FlowID: "b1", Title: "b1", RepoPath: "/repos/beta", CreatedAt: created, UpdatedAt: created},
+	}
+	bounds := buildSnapshot(repos, staticFlows(records...), nil).bounds()
+
+	for name, got := range map[string][2]int{
+		"repos":             {bounds.repos, 2},
+		"flows":             {bounds.flows, 4},
+		"flowsPerRepo":      {bounds.flowsPerRepo, 3},
+		"phasesPerFlow":     {bounds.phasesPerFlow, 1},
+		"dependsOnPerPhase": {bounds.dependsOnPerPhase, 3},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("bounds.%s = %d, want %d", name, got[0], got[1])
+		}
+	}
+	// Widths are the *encoded* width, so they include the surrounding quotes.
+	if got := bounds.valueBytes("Flow", "instructions"); got != 902 {
+		t.Errorf("valueBytes(Flow.instructions) = %d, want 902", got)
+	}
+	if got, want := bounds.valueBytes("Repo", "path"), int64(len(`"/repos/alpha"`)); got != want {
+		t.Errorf("valueBytes(Repo.path) = %d, want %d", got, want)
+	}
+}
+
+func TestJSONStringBytesMatchesTheEncoder(t *testing.T) {
+	// The byte budget is only an upper bound if the measured width is never
+	// below what the encoder emits. encoding/json expands <, >, & and control
+	// bytes to a six-byte \uXXXX, which is a 6x undercount for the markdown
+	// that lands in Flow.instructions.
+	for _, value := range []string{
+		"", "plain text", `"quoted"`, `back\slash`,
+		"<script>", "a & b", "less < greater >",
+		"tab\tnewline\ncarriage\r", "\x00\x01\x1f",
+		"héllo wörld", "日本語のテキスト", "emoji 🚀",
+		"  ", "\xff\xfe invalid utf8",
+		strings.Repeat("<&>", 100),
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("Marshal(%q) error = %v", value, err)
+		}
+		got := jsonStringBytes(value)
+		if got != len(encoded) {
+			t.Errorf("jsonStringBytes(%q) = %d, want %d (the encoder's own width)", value, got, len(encoded))
+		}
+	}
+}
+
+func TestSnapshotBoundsCountPhasesAsResolved(t *testing.T) {
+	// Flow.phases resolves flowstore.OrderedPhases, which re-appends a
+	// parent's children once per top-level row sharing that parent's id — the
+	// pre-normalization duplicate shape. len(Record.Phases) is therefore not
+	// an upper bound, and the cost limit is only sound if bounds() measures
+	// what the resolver actually returns.
+	created := fixtureTime(0)
+	phases := []flowstore.FlowPhase{}
+	for i := 0; i < 20; i++ {
+		phases = append(phases, flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Order: i, CreatedAt: created, UpdatedAt: created})
+	}
+	for i := 0; i < 20; i++ {
+		phases = append(phases, flowstore.FlowPhase{
+			PhaseID: fmt.Sprintf("child-%d", i), ParentPhaseID: "plan", Title: "Child",
+			Order: i, CreatedAt: created, UpdatedAt: created,
+		})
+	}
+	resolved := len(flowstore.OrderedPhases(phases))
+	if resolved <= len(phases) {
+		t.Fatalf("fixture resolves %d phases from %d inputs; it no longer expands, so it proves nothing", resolved, len(phases))
+	}
+
+	bounds := buildSnapshot(nil, staticFlows(flowstore.FlowRecord{
+		FlowID: "f1", Title: "f1", RepoPath: "/repos/alpha", Phases: phases,
+		CreatedAt: created, UpdatedAt: created,
+	}), nil).bounds()
+	if bounds.phasesPerFlow < resolved {
+		t.Fatalf("bounds.phasesPerFlow = %d, want >= %d (the number Flow.phases actually resolves)",
+			bounds.phasesPerFlow, resolved)
 	}
 }

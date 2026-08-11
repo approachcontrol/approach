@@ -2,6 +2,7 @@ package graphqlapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -490,4 +491,344 @@ func TestServerSanitizesStoreFailure(t *testing.T) {
 	if !strings.Contains(logger.String(), secret) {
 		t.Errorf("log = %q, want the unsanitized detail server-side", logger.String())
 	}
+}
+
+func TestServerRejectsResultAmplification(t *testing.T) {
+	// A tiny query that passes every structural limit and resolves flows^N
+	// values, because Repo.flows <-> Flow.repo is a cycle in the type graph.
+	// Only the snapshot-aware cost limit stands in front of it.
+	// One repo with thirty flows is enough: unbounded, this exact shape
+	// resolves 30^5 flows and serializes to hundreds of megabytes.
+	created := fixtureTime(0)
+	flows := make([]flowstore.FlowRecord, 0, 30)
+	for f := 0; f < 30; f++ {
+		flows = append(flows, flowstore.FlowRecord{
+			FlowID: fmt.Sprintf("flow-%d", f), Title: "t", RepoPath: "/repos/alpha",
+			Status: flowstore.StatusPending, Merge: flowstore.Merge{Status: flowstore.MergePending},
+			CreatedAt: created, UpdatedAt: created,
+		})
+	}
+	handler := newTestServer(t, ServerOptions{
+		Repos: staticRepos(scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha"}),
+		Flows: staticFlows(flows...),
+	})
+
+	query := cycleQuery(5)
+	measured := measure(t, query)
+	if measured.depth > maxQueryDepth || measured.nodes > maxQueryNodes {
+		t.Fatalf("fixture depth=%d nodes=%d trips a structural limit; it no longer proves the cost limit is load-bearing",
+			measured.depth, measured.nodes)
+	}
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- serve(handler, newGraphQLRequest(queryBody(t, query))) }()
+	select {
+	case recorder := <-done:
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (response was %d bytes)", recorder.Code, recorder.Body.Len())
+		}
+		if !strings.Contains(recorder.Body.String(), errQueryTooExpensive.Error()) {
+			t.Errorf("body = %s, want the cost-limit message", recorder.Body.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("handler did not return; the query was executed instead of rejected")
+	}
+}
+
+func TestServerAllowsAmplifyingShapeOnASmallSnapshot(t *testing.T) {
+	// The cost limit must reject a shape only because of what this snapshot
+	// holds. Against the two-flow fixture the same nesting is cheap and has to
+	// keep working, or the limit is just a disguised depth cap.
+	handler := newTestServer(t, ServerOptions{})
+	recorder := serve(handler, newGraphQLRequest(queryBody(t, cycleQuery(3))))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", recorder.Code, recorder.Body.String())
+	}
+	if payload := decodeBody(t, recorder); payload["data"] == nil {
+		t.Errorf("data = nil, want a result (errors %v)", payload["errors"])
+	}
+}
+
+func TestServerDefaultsMatchDocumentedLimits(t *testing.T) {
+	// Every number in the hardening table of docs/graphql-api.md. Each is
+	// either overridden by other tests or only asserted indirectly, so without
+	// this they drift out of the doc silently.
+	for name, got := range map[string][2]int{
+		"defaultMaxInFlight":    {defaultMaxInFlight, 8},
+		"MaxRequestBytes":       {MaxRequestBytes, 64 << 10},
+		"maxQueryDepth":         {maxQueryDepth, 12},
+		"maxIntrospectionDepth": {maxIntrospectionDepth, 20},
+		"maxIntrospectionNodes": {maxIntrospectionNodes, 400},
+		"maxQueryNodes":         {maxQueryNodes, 2000},
+		"maxWalkBudget":         {maxWalkBudget, 20000},
+		"maxQueryCost":          {maxQueryCost, 500_000},
+		"maxResponseBytes":      {maxResponseBytes, 16 << 20},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("%s = %d, want %d (docs/graphql-api.md)", name, got[0], got[1])
+		}
+	}
+	if defaultRequestTimeout != 20*time.Second {
+		t.Errorf("defaultRequestTimeout = %s, want 20s (docs/graphql-api.md)", defaultRequestTimeout)
+	}
+	handler, err := NewServer(ServerOptions{})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	built, ok := handler.(*server)
+	if !ok {
+		t.Fatalf("NewServer() returned %T, want *server", handler)
+	}
+	if got := cap(built.slots); got != defaultMaxInFlight {
+		t.Errorf("in-flight capacity = %d, want %d", got, defaultMaxInFlight)
+	}
+	if built.requestTimeout != defaultRequestTimeout {
+		t.Errorf("requestTimeout = %s, want %s", built.requestTimeout, defaultRequestTimeout)
+	}
+}
+
+func TestServerSetsResponseHardeningHeaders(t *testing.T) {
+	handler := newTestServer(t, ServerOptions{})
+	for name, request := range map[string]*http.Request{
+		"query":  newGraphQLRequest(queryBody(t, "{ repos { id } }")),
+		"error":  newGraphQLRequest("not json"),
+		"health": httptest.NewRequest(http.MethodGet, HealthPath, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := serve(handler, request).Header()
+			if got := header.Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := header.Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
+		})
+	}
+}
+
+func TestServerRejectsByteAmplificationFromUnboundedText(t *testing.T) {
+	// Value count alone is a bad proxy for response size: Flow.instructions is
+	// unbounded agent text, so this query resolves only a few thousand values
+	// but serializes to hundreds of megabytes once Repo.flows <-> Flow.repo
+	// re-entry repeats each one. Only the byte budget sees it.
+	created := fixtureTime(0)
+	instructions := strings.Repeat("x", 8<<10)
+	repos := make([]scanner.Repo, 0, 10)
+	flows := make([]flowstore.FlowRecord, 0, 1000)
+	for r := 0; r < 10; r++ {
+		path := fmt.Sprintf("/repos/r%d", r)
+		repos = append(repos, scanner.Repo{Path: path, DisplayName: fmt.Sprintf("r%d", r)})
+		for f := 0; f < 100; f++ {
+			flows = append(flows, flowstore.FlowRecord{
+				FlowID: fmt.Sprintf("flow-%d-%d", r, f), Title: "t", RepoPath: path, Instructions: instructions,
+				Status: flowstore.StatusPending, Merge: flowstore.Merge{Status: flowstore.MergePending},
+				CreatedAt: created, UpdatedAt: created,
+			})
+		}
+	}
+	handler := newTestServer(t, ServerOptions{Repos: staticRepos(repos...), Flows: staticFlows(flows...)})
+
+	query := `{ repos { flows { repo { flows { instructions } } } } }`
+	if measured := measure(t, query); measured.depth > maxQueryDepth || measured.nodes > maxQueryNodes {
+		t.Fatalf("fixture depth=%d nodes=%d trips a structural limit", measured.depth, measured.nodes)
+	}
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- serve(handler, newGraphQLRequest(queryBody(t, query))) }()
+	select {
+	case recorder := <-done:
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (response was %d bytes)", recorder.Code, recorder.Body.Len())
+		}
+		if !strings.Contains(recorder.Body.String(), errResponseTooLarge.Error()) {
+			t.Errorf("body = %s, want the response-size message", recorder.Body.String())
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("handler did not return; the query was executed instead of rejected")
+	}
+
+	// The same data without the re-entry is just the data, and must still be
+	// served: the limit targets amplification, not size.
+	recorder := serve(handler, newGraphQLRequest(queryBody(t, `{ flows { id } }`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("plain flow list = %d, want 200 (body %s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestServerHoldsInFlightSlotAcrossExecution(t *testing.T) {
+	// The slot must cover execution, not just snapshot construction:
+	// execution is where the cost is, so a slot released after the snapshot
+	// would cap the cheap phase and leave the expensive one unbounded.
+	executing := make(chan struct{})
+	proceed := make(chan struct{})
+	handler := newTestServer(t, ServerOptions{MaxInFlight: 1, beforeExecute: func() {
+		select {
+		case executing <- struct{}{}:
+			<-proceed
+		default: // later requests run unimpeded
+		}
+	}})
+
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- serve(handler, newGraphQLRequest(queryBody(t, "{ repos { id } }"))) }()
+	select {
+	case <-executing:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("first request never reached execution")
+	}
+
+	second := serve(handler, newGraphQLRequest(queryBody(t, "{ repos { id } }")))
+	if second.Code != http.StatusServiceUnavailable {
+		t.Errorf("concurrent request during execution = %d, want 503 (the slot was released too early)", second.Code)
+	}
+
+	close(proceed)
+	if recorder := <-first; recorder.Code != http.StatusOK {
+		t.Fatalf("first request = %d, want 200", recorder.Code)
+	}
+	// And the slot comes back once the handler returns.
+	if third := serve(handler, newGraphQLRequest(queryBody(t, "{ repos { id } }"))); third.Code != http.StatusOK {
+		t.Errorf("request after completion = %d, want 200 (the slot was never released)", third.Code)
+	}
+}
+
+func TestServerExecutionIgnoresClientCancellation(t *testing.T) {
+	// graphql.Do returns on a cancelled context but leaves its execution
+	// goroutine running to completion, so honoring a client disconnect would
+	// accumulate orphaned executions that no slot accounts for. Execution runs
+	// on an uncancellable context instead.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handler := newTestServer(t, ServerOptions{beforeExecute: cancel})
+
+	request := newGraphQLRequest(queryBody(t, "{ repos { id displayName } }")).WithContext(ctx)
+	recorder := serve(handler, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	payload := decodeBody(t, recorder)
+	if payload["errors"] != nil {
+		t.Fatalf("errors = %v, want none (execution inherited the cancellation)", payload["errors"])
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok || data["repos"] == nil {
+		t.Fatalf("data = %#v, want a resolved repos list", payload["data"])
+	}
+}
+
+// bigSnapshotServer builds a handler over repos x flows flows, each carrying
+// phases phases, for the amplification tests.
+func bigSnapshotServer(t *testing.T, repoCount, flowsPerRepo, phaseCount int) http.Handler {
+	t.Helper()
+	created := fixtureTime(0)
+	repos := make([]scanner.Repo, 0, repoCount)
+	flows := make([]flowstore.FlowRecord, 0, repoCount*flowsPerRepo)
+	phases := make([]flowstore.FlowPhase, 0, phaseCount)
+	for p := 0; p < phaseCount; p++ {
+		phases = append(phases, flowstore.FlowPhase{
+			PhaseID: fmt.Sprintf("p%d", p), Title: "Phase", Kind: flowstore.KindPlan,
+			Status: flowstore.PhasePending, Order: p, CreatedAt: created, UpdatedAt: created,
+		})
+	}
+	for r := 0; r < repoCount; r++ {
+		path := fmt.Sprintf("/repos/r%d", r)
+		repos = append(repos, scanner.Repo{Path: path, DisplayName: fmt.Sprintf("r%d", r)})
+		for f := 0; f < flowsPerRepo; f++ {
+			flows = append(flows, flowstore.FlowRecord{
+				FlowID: fmt.Sprintf("flow-%d-%d", r, f), Title: "t", RepoPath: path,
+				Status: flowstore.StatusPending, Merge: flowstore.Merge{Status: flowstore.MergePending},
+				Phases: phases, CreatedAt: created, UpdatedAt: created,
+			})
+		}
+	}
+	return newTestServer(t, ServerOptions{Repos: staticRepos(repos...), Flows: staticFlows(flows...)})
+}
+
+func assertRejected(t *testing.T, handler http.Handler, query string, want error) {
+	t.Helper()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- serve(handler, newGraphQLRequest(queryBody(t, query))) }()
+	select {
+	case recorder := <-done:
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (response was %d bytes)", recorder.Code, recorder.Body.Len())
+		}
+		if !strings.Contains(recorder.Body.String(), want.Error()) {
+			t.Errorf("body = %s, want %q", recorder.Body.String(), want)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("handler did not return; the query was executed instead of rejected")
+	}
+}
+
+func TestServerChargesAliasBytes(t *testing.T) {
+	// graphql-go writes the *alias* as the response key, and an alias is
+	// client-chosen and unbounded. Charging the field name instead leaves a
+	// 60 KiB alias under a list traversal free, which is a gigabyte-scale
+	// response from a single request that fits the body cap.
+	handler := bigSnapshotServer(t, 1, 100, 100)
+	alias := strings.Repeat("a", 55<<10)
+	query := fmt.Sprintf("{ repos { flows { phases { %s: id } } } }", alias)
+	if len(queryBody(t, query)) > MaxRequestBytes {
+		t.Fatalf("fixture is %d bytes, which the body cap would have rejected first", len(queryBody(t, query)))
+	}
+	if measured := measure(t, query); measured.depth > maxQueryDepth || measured.nodes > maxQueryNodes {
+		t.Fatalf("fixture depth=%d nodes=%d trips a structural limit", measured.depth, measured.nodes)
+	}
+	assertRejected(t, handler, query, errResponseTooLarge)
+
+	// A short alias over the same shape stays served.
+	recorder := serve(handler, newGraphQLRequest(queryBody(t, "{ repos { flows { phases { x: id } } } }")))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("short alias = %d, want 200 (body %s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestServerChargesTypename(t *testing.T) {
+	// __typename looks like introspection but resolves once per *snapshot
+	// object*, not against the fixed schema, so it puts data-proportional
+	// values and bytes on the wire and cannot share the introspection cost
+	// exemption that __schema and __type get.
+	handler := bigSnapshotServer(t, 1, 100, 100)
+	var builder strings.Builder
+	builder.WriteString("{ repos { flows { phases { ")
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&builder, "a%d: __typename ", i)
+	}
+	builder.WriteString("} } } }")
+
+	recorder := serve(handler, newGraphQLRequest(queryBody(t, builder.String())))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (response was %d bytes)", recorder.Code, recorder.Body.Len())
+	}
+
+	// __schema, by contrast, stays exempt however large the snapshot is.
+	recorder = serve(handler, newGraphQLRequest(queryBody(t, `{ __schema { types { name fields { name } } } }`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("introspection = %d, want 200 (body %s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestServerChargesJSONEscapedWidth(t *testing.T) {
+	// encoding/json expands <, >, & and control bytes to a six-byte \uXXXX.
+	// Measuring len() instead of the encoded width would put the real ceiling
+	// at six times the documented one, on exactly the markdown that lands in
+	// Flow.instructions.
+	created := fixtureTime(0)
+	// Each "<a & b>" is 7 bytes of markdown that the encoder writes as 22.
+	// len() therefore reads this as 6.3 MB — comfortably inside the budget —
+	// while the response really is 19.8 MB.
+	instructions := strings.Repeat("<a & b>", 900_000)
+	if len(instructions) >= maxResponseBytes {
+		t.Fatalf("fixture is %d unescaped bytes; a len()-based bound would reject it too, so it proves nothing", len(instructions))
+	}
+	handler := newTestServer(t, ServerOptions{
+		Repos: staticRepos(scanner.Repo{Path: "/repos/alpha", DisplayName: "alpha"}),
+		Flows: staticFlows(flowstore.FlowRecord{
+			FlowID: "flow-0", Title: "t", RepoPath: "/repos/alpha", Instructions: instructions,
+			Status: flowstore.StatusPending, Merge: flowstore.Merge{Status: flowstore.MergePending},
+			CreatedAt: created, UpdatedAt: created,
+		}),
+	})
+	assertRejected(t, handler, `{ flow(id: "flow-0") { instructions } }`, errResponseTooLarge)
 }

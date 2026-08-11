@@ -9,10 +9,12 @@
 package graphqlapi
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
@@ -121,8 +123,11 @@ func buildSnapshot(repos RepoSource, flows FlowSource, logf func(string, ...any)
 		}
 		flow := &Flow{Record: record, RepoPath: path}
 		snap.flows = append(snap.flows, flow)
-		if _, exists := snap.flowByID[record.FlowID]; !exists {
-			snap.flowByID[record.FlowID] = flow
+		// Keyed the same way Flow(id) looks up, so a padded persisted id
+		// cannot become permanently unreachable.
+		flowID := strings.TrimSpace(record.FlowID)
+		if _, exists := snap.flowByID[flowID]; !exists {
+			snap.flowByID[flowID] = flow
 		}
 		if _, exists := snap.repoByPath[path]; !exists {
 			snap.addRepo(&Repo{
@@ -140,6 +145,161 @@ func buildSnapshot(repos RepoSource, flows FlowSource, logf func(string, ...any)
 func (s *snapshot) addRepo(repo *Repo) {
 	s.repoByPath[repo.Path] = repo
 	s.repos = append(s.repos, repo)
+}
+
+// bounds reports, for this snapshot, the largest each list field can resolve
+// to and the widest each scalar field can serialize to. inspectCost combines
+// these to bound a query's result before executing it, so every value here
+// must be an upper bound — never a sample or an average.
+func (s *snapshot) bounds() resultBounds {
+	limits := resultBounds{
+		repos:  len(s.repos),
+		flows:  len(s.flows),
+		values: fieldValueBytes{},
+	}
+	for _, flows := range s.flowsByRepo {
+		limits.flowsPerRepo = maxInt(limits.flowsPerRepo, len(flows))
+	}
+	for _, repo := range s.repos {
+		limits.values.observeRepo(repo)
+	}
+	for _, flow := range s.flows {
+		limits.values.observeFlow(flow)
+		// Measured on OrderedPhases, not Record.Phases, because that is what
+		// Flow.phases resolves. A record whose rows share a phase id — the
+		// pre-normalization shape flowstore.collapseDuplicatePhaseRows exists
+		// to repair — expands there, so len(Record.Phases) is not a bound.
+		phases := flowstore.OrderedPhases(flow.Record.Phases)
+		limits.phasesPerFlow = maxInt(limits.phasesPerFlow, len(phases))
+		for _, phase := range phases {
+			limits.dependsOnPerPhase = maxInt(limits.dependsOnPerPhase, len(phase.DependsOn))
+			limits.values.observePhase(phase)
+		}
+	}
+	return limits
+}
+
+// Serialized widths for the non-string scalars the schema exposes. These are
+// fixed by their encoding; only strings vary with the data.
+const (
+	boolValueBytes     = 5  // "false"
+	intValueBytes      = 20 // int64 with a sign
+	dateTimeValueBytes = 40 // RFC3339Nano, quoted
+)
+
+// fieldValueBytes is the widest one value of each scalar field serializes to
+// in this snapshot, keyed "Type.field".
+//
+// Counting resolved values alone does not bound a response: Flow.instructions
+// and Phase.notes are unbounded agent-supplied text, so a query that resolves
+// only a few thousand values can still serialize to hundreds of megabytes once
+// re-entry repeats each one.
+type fieldValueBytes map[string]int64
+
+// observe records one value's serialized width, inserting a zero-width entry
+// the first time so "no key" means "field this snapshot has never seen" —
+// which is drift, and gets the pessimistic fallback — rather than "field that
+// happens to be empty everywhere", which really is zero bytes wide.
+func (f fieldValueBytes) observe(field string, size int) {
+	if current, seen := f[field]; !seen || int64(size) > current {
+		f[field] = int64(size)
+	}
+}
+
+// observeText records a string field at its *encoded* width. Measuring len()
+// would undercount by up to 6x: encoding/json escapes <, >, & and every
+// control byte to a six-byte \uXXXX, and a Flow's markdown instructions are
+// full of the first three.
+func (f fieldValueBytes) observeText(field, value string) {
+	f.observe(field, jsonStringBytes(value))
+}
+
+func (f fieldValueBytes) observeRepo(repo *Repo) {
+	f.observeText("Repo.id", repo.Path)
+	f.observeText("Repo.path", repo.Path)
+	f.observeText("Repo.displayName", repo.DisplayName)
+	f.observe("Repo.isBare", boolValueBytes)
+	f.observe("Repo.inScanRoot", boolValueBytes)
+}
+
+func (f fieldValueBytes) observeFlow(flow *Flow) {
+	record := flow.Record
+	f.observeText("Flow.id", record.FlowID)
+	f.observeText("Flow.title", record.Title)
+	f.observeText("Flow.instructions", record.Instructions)
+	f.observeText("Flow.status", record.Status)
+	f.observeText("Flow.repoPath", flow.RepoPath)
+	f.observeText("Flow.worktreePath", record.WorktreePath)
+	f.observeText("Flow.branch", record.Branch)
+	f.observeText("Flow.baseRef", record.BaseRef)
+	f.observeText("Flow.commit", record.Commit)
+	f.observeText("Flow.presetName", record.PresetName)
+	f.observeText("Flow.planId", record.PlanID)
+	f.observe("Flow.autoMode", boolValueBytes)
+	f.observe("Flow.createdAt", dateTimeValueBytes)
+	f.observe("Flow.updatedAt", dateTimeValueBytes)
+
+	f.observeText("Issue.provider", record.Issue.Provider)
+	f.observe("Issue.number", intValueBytes)
+	f.observeText("Issue.url", record.Issue.URL)
+
+	f.observeText("PullRequest.provider", record.PR.Provider)
+	f.observe("PullRequest.number", intValueBytes)
+	f.observeText("PullRequest.url", record.PR.URL)
+	f.observeText("PullRequest.headBranch", record.PR.HeadBranch)
+	f.observeText("PullRequest.baseBranch", record.PR.BaseBranch)
+	f.observeText("PullRequest.status", record.PR.Status)
+
+	f.observeText("Merge.status", record.Merge.Status)
+	f.observeText("Merge.commit", record.Merge.Commit)
+	f.observe("Merge.mergedAt", dateTimeValueBytes)
+}
+
+func (f fieldValueBytes) observePhase(phase flowstore.FlowPhase) {
+	f.observeText("Phase.id", phase.PhaseID)
+	f.observeText("Phase.parentPhaseId", phase.ParentPhaseID)
+	f.observeText("Phase.title", phase.Title)
+	f.observeText("Phase.kind", phase.Kind)
+	f.observeText("Phase.status", phase.Status)
+	f.observe("Phase.order", intValueBytes)
+	f.observeText("Phase.outcome", phase.Outcome)
+	f.observeText("Phase.notes", phase.Notes)
+	f.observeText("Phase.summary", phase.Summary)
+	f.observe("Phase.createdAt", dateTimeValueBytes)
+	f.observe("Phase.updatedAt", dateTimeValueBytes)
+	// Seeded outside the loop: a phase graph with no edges anywhere still has
+	// to register the field, or it would look like schema drift.
+	f.observe("Phase.dependsOn", 0)
+	for _, dependency := range phase.DependsOn {
+		f.observeText("Phase.dependsOn", dependency)
+	}
+}
+
+// jsonStringBytes is the width of value once encoding/json has escaped and
+// quoted it. The scan is an exact match for the encoder's rules on plain text,
+// which is the overwhelmingly common case and allocates nothing; anything
+// needing an escape defers to the encoder itself rather than re-deriving its
+// table here, because a width that drifts below the encoder's is precisely the
+// undercount the byte budget exists to prevent.
+func jsonStringBytes(value string) int {
+	plain := true
+	for i := 0; i < len(value); i++ {
+		if b := value[i]; b < 0x20 || b >= utf8.RuneSelf || b == '"' || b == '\\' ||
+			b == '<' || b == '>' || b == '&' {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return len(value) + 2 // the surrounding quotes
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		// Unreachable for a string, but a silent undercount here would be the
+		// one that matters, so fall back to the worst case: \uXXXX per byte.
+		return len(value)*6 + 2
+	}
+	return len(encoded)
 }
 
 // Repos returns the union of scanned and flow-derived repositories.

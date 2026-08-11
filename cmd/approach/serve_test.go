@@ -516,3 +516,22 @@ func TestRunServeRoundTripAndShutdown(t *testing.T) {
 		t.Fatalf("runServeContext() error = %v, want a clean return after cancellation", err)
 	}
 }
+
+func TestRunServeTrimsConfiguredToken(t *testing.T) {
+	// The token is compared against a trimmed header, so a padded env value
+	// that stayed padded would 401 every request with no diagnostic anywhere.
+	root := t.TempDir()
+	harness := startServe(t, []string{"approach", "serve", "--addr", "127.0.0.1:0"},
+		serveDeps(t, root, map[string]string{"APPROACH_API_TOKEN": "  padded-token\n"}))
+
+	status, _ := harness.query(t, `{ flows { title } }`, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer padded-token")
+	})
+	if status != http.StatusOK {
+		t.Errorf("padded env token status = %d, want 200", status)
+	}
+	status, _ = harness.query(t, `{ flows { title } }`)
+	if status != http.StatusUnauthorized {
+		t.Errorf("missing token status = %d, want 401 (a padded token must still be a token)", status)
+	}
+}

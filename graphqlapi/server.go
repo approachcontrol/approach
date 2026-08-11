@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/graphql-go/graphql"
@@ -36,8 +37,14 @@ type ServerOptions struct {
 	Flows FlowSource
 
 	// Token, when non-empty, is required on every /graphql request as either
-	// `Authorization: Bearer <token>` or `X-Approach-Token`. When it is empty
-	// the handler instead enforces a loopback Host allowlist.
+	// `Authorization: Bearer <token>` or `X-Approach-Token`.
+	//
+	// When it is empty the handler falls back to a loopback Host allowlist.
+	// That is an anti-DNS-rebinding measure for browsers, not an access
+	// control — Host is client-supplied. Leaving Token empty is only safe on a
+	// loopback bind, and enforcing that pairing is the caller's job;
+	// cmd/approach/serve.go refuses to open a non-loopback listener without a
+	// token.
 	Token string
 
 	// Logger receives one line per request plus sanitized failure detail. It
@@ -51,6 +58,13 @@ type ServerOptions struct {
 	// MaxInFlight caps concurrent snapshot construction. Zero means 8.
 	// Package-level seam; not a CLI flag.
 	MaxInFlight int
+
+	// beforeExecute is a test seam, run after the in-flight slot is taken and
+	// before graphql.Do. Two invariants — that the slot is held across
+	// execution, and that execution ignores client cancellation — are only
+	// observable from inside that window. Unexported so it is set at
+	// construction and never written while handler goroutines read it.
+	beforeExecute func()
 }
 
 type server struct {
@@ -61,6 +75,7 @@ type server struct {
 	logger         io.Writer
 	requestTimeout time.Duration
 	slots          chan struct{}
+	beforeExecute  func()
 }
 
 // NewServer builds the read-only GraphQL handler.
@@ -89,6 +104,7 @@ func NewServer(opts ServerOptions) (http.Handler, error) {
 		logger:         logger,
 		requestTimeout: timeout,
 		slots:          make(chan struct{}, inFlight),
+		beforeExecute:  opts.beforeExecute,
 	}, nil
 }
 
@@ -130,6 +146,13 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) int {
 		return writeGraphQLError(w, http.StatusUnauthorized, "unauthorized")
 	}
 
+	// Load-bearing beyond content negotiation: requiring application/json is
+	// what closes CSRF against the default token-less loopback server. A
+	// browser form or `no-cors` fetch can only send the three CORS-safelisted
+	// content types, so demanding this one forces a preflight — which gets a
+	// bare 405 with no Access-Control-* header and never reaches this handler.
+	// Accepting application/graphql or a form encoding here would silently
+	// open every local Flow record to any page the user visits.
 	if !hasJSONContentType(r.Header.Get("Content-Type")) {
 		return writeGraphQLError(w, http.StatusUnsupportedMediaType, "content-type must be application/json")
 	}
@@ -152,24 +175,45 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) int {
 	if strings.TrimSpace(request.Query) == "" {
 		return writeGraphQLError(w, http.StatusBadRequest, "query is required")
 	}
-	if err := inspectDocument(request.Query); err != nil {
+	document := parseQuery(request.Query)
+	if err := inspectDocument(document); err != nil {
 		return writeGraphQLError(w, http.StatusBadRequest, err.Error())
 	}
 
-	snap, outcome := s.acquireSnapshot(r.Context())
+	snap, release, outcome := s.acquireSnapshot(r.Context())
 	switch outcome {
 	case snapshotBusy:
 		return writeGraphQLError(w, http.StatusServiceUnavailable, "server busy")
 	case snapshotTimedOut:
 		return writeGraphQLError(w, http.StatusGatewayTimeout, "request timed out")
 	}
+	// The slot stays held across execution, not just snapshot construction:
+	// execution is where the cost is, so releasing it here would cap the cheap
+	// phase and leave the expensive one unbounded.
+	defer release()
 
+	// Only now is the cost limit decidable — it multiplies each list field by
+	// its real cardinality in this snapshot.
+	if err := inspectCost(&s.schema, document, snap.bounds()); err != nil {
+		return writeGraphQLError(w, http.StatusBadRequest, err.Error())
+	}
+
+	if s.beforeExecute != nil {
+		s.beforeExecute()
+	}
+
+	// Execution deliberately does not inherit the request's cancellation.
+	// graphql.Do returns on a cancelled context but leaves its execution
+	// goroutine running to completion, so honoring the disconnect would let a
+	// client fire and abandon requests to build up orphaned executions that no
+	// semaphore slot accounts for. Resolvers are pure in-memory reads over a
+	// cost-bounded result, so running to completion is bounded work.
 	result := graphql.Do(graphql.Params{
 		Schema:         s.schema,
 		RequestString:  request.Query,
 		VariableValues: request.Variables,
 		OperationName:  request.OperationName,
-		Context:        withSnapshot(r.Context(), snap),
+		Context:        withSnapshot(context.WithoutCancel(r.Context()), snap),
 	})
 	// Parse, validation, and execution failures are GraphQL errors, not
 	// transport errors: 200 with a populated errors array.
@@ -185,40 +229,49 @@ const (
 )
 
 // acquireSnapshot takes an in-flight slot, builds the snapshot in a goroutine,
-// and waits for it against the request timeout.
+// and waits for it against the request timeout. On snapshotReady it returns a
+// release func the caller must defer; on every other outcome release is nil
+// and there is nothing for the caller to release.
 //
-// On the timeout path the slot stays held until the scan finishes and the
-// goroutine releases it — never released by the handler. Releasing on handler
-// return would let a client that fires and abandons requests spawn unbounded
-// concurrent orphaned scans, with the 503 never firing: the semaphore and the
-// timeout would cancel each other out.
+// The slot is never released while work it accounts for is still running. On
+// the timeout path a watcher goroutine holds it until the scan finishes, so it
+// outlives the handler. Releasing on handler return would let a client that
+// fires and abandons requests spawn unbounded concurrent orphaned scans, with
+// the 503 never firing: the semaphore and the timeout would cancel each other
+// out.
 //
 // scanner.Scan and flowstore.List take no context, so the scan itself cannot
 // be interrupted; the timeout only bounds how long a client waits, and the
 // semaphore is the real backpressure control.
-func (s *server) acquireSnapshot(ctx context.Context) (*snapshot, snapshotOutcome) {
+func (s *server) acquireSnapshot(ctx context.Context) (*snapshot, func(), snapshotOutcome) {
 	select {
 	case s.slots <- struct{}{}:
 	default:
-		return nil, snapshotBusy
+		return nil, nil, snapshotBusy
 	}
+	var once sync.Once
+	release := func() { once.Do(func() { <-s.slots }) }
 
+	// Buffered, so the builder never blocks on a handler that has given up and
+	// exactly one of the two receives below consumes the result.
 	built := make(chan *snapshot, 1)
-	go func() {
-		defer func() { <-s.slots }()
-		built <- buildSnapshot(s.repos, s.flows, s.logf)
-	}()
+	go func() { built <- buildSnapshot(s.repos, s.flows, s.logf) }()
 
 	timer := time.NewTimer(s.requestTimeout)
 	defer timer.Stop()
 	select {
 	case snap := <-built:
-		return snap, snapshotReady
+		return snap, release, snapshotReady
 	case <-timer.C:
-		return nil, snapshotTimedOut
 	case <-ctx.Done():
-		return nil, snapshotTimedOut
 	}
+	// Abandoned: hand the slot to a watcher that releases it once the scan
+	// this slot is accounting for has actually finished.
+	go func() {
+		<-built
+		release()
+	}()
+	return nil, nil, snapshotTimedOut
 }
 
 func (s *server) authorized(r *http.Request) bool {
@@ -283,6 +336,10 @@ func isLoopbackHost(host string) bool {
 func writeJSON(w http.ResponseWriter, status int, payload any) int {
 	// No Access-Control-* header is ever emitted, on any status.
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Flow state is live and, over the tunnel the docs recommend, may pass
+	// through caches that would otherwise be free to store it.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		return status
