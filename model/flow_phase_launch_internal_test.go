@@ -215,7 +215,7 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(nil, Options{
+	m := newAutoAdvanceTestModel(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -226,7 +226,7 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		},
 	})
 
-	_, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	_, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want auto-launch command")
 	}
@@ -260,14 +260,14 @@ func TestFlowPhaseLaunchCoordinatorDrainIgnoresObsoleteSuppression(t *testing.T)
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(nil, Options{
+	m := newAutoAdvanceTestModel(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return current, nil
 		},
 	})
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want drain launch command")
 	}
@@ -293,7 +293,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 		{PhaseID: "implementation", Status: flowstore.PhaseReady, Order: 2},
 	}
 	var updates []flowstore.PhaseLaunchUpdate
-	m := NewWithOptions(nil, Options{
+	m := newAutoAdvanceTestModel(nil, Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -311,7 +311,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 		Terminal:    flowPhaseLaunchTestTerminal{state: "running"},
 	}}
 
-	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("prepareAutoFlowPhaseLaunch() returned command %T while source terminal was running", cmd)
 	}
@@ -323,7 +323,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	}
 
 	m.embeddedTerminals = nil
-	m, cmd = m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceDrain(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil after source terminal closed")
 	}

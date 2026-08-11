@@ -1152,6 +1152,15 @@ func autoFlowWithPhases(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
 	}
 }
 
+// autoAdvanceLaunchCommand drives one advance-poll drain and registers the
+// snapshot it feeds in as the authoritative read. AutoMode reads the exact Flow
+// it is about to launch, and these records never reach a pane, so without this
+// the read would fall through to the developer's live flow store.
+func autoAdvanceLaunchCommand(m model.Model, flows []flowstore.FlowRecord) (model.Model, tea.Cmd) {
+	recordTestFlowRecords(flows)
+	return model.AutoAdvanceLaunchCommandForTest(m, flows)
+}
+
 func autoLaunchFromFlowRefresh(t *testing.T, previous, current flowstore.FlowRecord) (model.FlowEmbeddedLaunchRequestedMsg, []flowstore.PhaseLaunchUpdate) {
 	t.Helper()
 	cmd, updates := autoLaunchCommandFromFlowRefresh(t, previous, current)
@@ -1187,7 +1196,7 @@ func autoLaunchCommandFromFlowRefresh(t *testing.T, previous, current flowstore.
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	_, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	return cmd, &updates
 }
 
@@ -1242,7 +1251,7 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	_, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto-advance should return auto-launch command")
 	}
@@ -1323,7 +1332,7 @@ func TestModel_FlowAutoLaunchWithCodexAppUsesExternalRouteWithoutEffort(t *testi
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	m, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto-advance should return auto-launch command")
 	}
@@ -2947,7 +2956,7 @@ func TestModel_PendingTrackedResumeDoesNotOccupyFlowAutoAdvance(t *testing.T) {
 		t.Fatal("manual tracked resume should return a persistence command")
 	}
 
-	_, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
+	_, autoCmd := autoAdvanceLaunchCommand(pending, []flowstore.FlowRecord{current})
 	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
 	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
 		t.Fatalf("auto launch while manual resume pending = %#v, want headless implementation", launches)
@@ -3027,7 +3036,7 @@ func TestModel_TrackedResumeAndAutoAdvanceRaceStartsEachTerminalOnce(t *testing.
 				if manualCmd == nil {
 					t.Fatal("manual resume should return a persistence command")
 				}
-				scheduled, autoCmd := model.AutoAdvanceLaunchCommandForTest(pending, []flowstore.FlowRecord{current})
+				scheduled, autoCmd := autoAdvanceLaunchCommand(pending, []flowstore.FlowRecord{current})
 				if autoCmd == nil {
 					t.Fatal("pending manual persistence should not suppress auto scheduling")
 				}
@@ -3159,12 +3168,12 @@ func TestModel_TrackedResumeTerminalDefersLaterAutoAdvancePollUntilExit(t *testi
 		t.Fatalf("updates after manual resume = %#v", updates)
 	}
 
-	deferred, autoCmd := model.AutoAdvanceLaunchCommandForTest(resumed, []flowstore.FlowRecord{current})
+	deferred, autoCmd := autoAdvanceLaunchCommand(resumed, []flowstore.FlowRecord{current})
 	if autoCmd != nil || len(updates) != 1 {
 		t.Fatalf("auto poll while resumed terminal runs: cmd=%T updates=%#v", autoCmd, updates)
 	}
 	deferred = model.ClearFlowEmbeddedTerminalsForTest(deferred)
-	_, autoCmd = model.AutoAdvanceLaunchCommandForTest(deferred, []flowstore.FlowRecord{current})
+	_, autoCmd = autoAdvanceLaunchCommand(deferred, []flowstore.FlowRecord{current})
 	launches := flowEmbeddedLaunchesFromCommand(t, autoCmd)
 	if len(launches) != 1 || launches[0].LaunchContext.FlowPhaseID != "implementation" || !launches[0].LaunchContext.Headless {
 		t.Fatalf("auto launch after resumed terminal exits = %#v", launches)
@@ -3229,7 +3238,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 		ListRequest: m.ListRequest(ui.ModeFlows),
 	})
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("completed phase with running terminal returned auto-launch command %T, want nil", cmd)
 	}
@@ -3238,7 +3247,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 	}
 
 	sourceTerm.state = "exited"
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("advance before exited terminal auto-closes returned command %T, want nil", cmd)
 	}
@@ -3257,7 +3266,7 @@ func TestModel_FlowAutoModeDefersLaunchWhileCompletedPhaseTerminalRuns(t *testin
 		t.Fatalf("source terminal should be dismissed after exited tick:\n%s", m.View())
 	}
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("advance poll after source terminal exit should prepare the deferred auto launch")
 	}
@@ -3340,7 +3349,7 @@ func TestModel_FlowAutoModeRefreshesOnSourceTerminalExitBeforeCompletionObserved
 		t.Fatalf("exit-triggered display refresh launch updates = %#v, want none", updates)
 	}
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("advance poll should prepare auto launch after observing completion")
 	}
@@ -3469,7 +3478,7 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 	})
 
 	sourceTerm.state = "exited"
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd != nil {
 		t.Fatalf("completion observed before exited terminal auto-closes returned command %T, want nil", cmd)
 	}
@@ -3481,7 +3490,7 @@ func TestModel_FlowAutoModeDefersWhenCompletionObservedAfterSourceTerminalExits(
 	if cmd == nil {
 		t.Fatal("auto-closing exited source terminal should schedule refresh")
 	}
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("advance poll after source terminal auto-close should prepare deferred launch")
 	}
@@ -3786,11 +3795,11 @@ func TestModel_FlowAutoModeSuppressionDoesNotBlockLaterLaunchID(t *testing.T) {
 		t.Fatalf("closing old failed source terminal returned command %T, want nil", cmd)
 	}
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{rerun})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{rerun})
 	if cmd != nil {
 		t.Fatalf("new launch running advance returned command %T, want nil", cmd)
 	}
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
 	if cmd == nil {
 		t.Fatal("completion for newer launch ID should auto-launch next phase")
 	}
@@ -3860,11 +3869,11 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 	})
 	staleTerm.state = "failed"
 
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{rerun})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{rerun})
 	if cmd != nil {
 		t.Fatalf("new launch running advance returned command %T, want nil", cmd)
 	}
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
 	if cmd != nil {
 		t.Fatalf("completion with stale flow terminal returned command %T, want nil", cmd)
 	}
@@ -3872,7 +3881,7 @@ func TestModel_FlowAutoModeStaleTerminalBlocksDrainUntilDismissed(t *testing.T) 
 		t.Fatalf("stale failed terminal should remain visible while it blocks the drain:\n%s", m.View())
 	}
 	m = model.ClearFlowEmbeddedTerminalsForTest(m)
-	m, cmd = model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{completed})
+	m, cmd = autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{completed})
 	if cmd == nil {
 		t.Fatal("completion should drain after stale terminal is dismissed")
 	}
@@ -4013,7 +4022,7 @@ func TestModel_FlowAutoModeLaunchesEveryEligibleFlowFromOneRefresh(t *testing.T)
 		},
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previousOne, previousTwo})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{currentOne, currentTwo})
+	_, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{currentOne, currentTwo})
 	if cmd == nil {
 		t.Fatal("two eligible auto-mode flows should return a batched launch command")
 	}
@@ -4077,7 +4086,7 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 		AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	m, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd := autoAdvanceLaunchCommand(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto mode completion should prepare a launch command before auto mode is disabled")
 	}

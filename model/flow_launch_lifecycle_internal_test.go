@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -141,7 +142,12 @@ func (h *manualLaunchHarness) options() Options {
 
 func (h *manualLaunchHarness) model() Model {
 	h.t.Helper()
-	m := NewWithOptions([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, h.options())
+	return h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, h.options())
+}
+
+func (h *manualLaunchHarness) modelWith(repos []scanner.Repo, opts Options) Model {
+	h.t.Helper()
+	m := NewWithOptions(repos, opts)
 	m.contentPane = ui.PaneBottom
 	m.bottomMode = ui.ModeFlows
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{h.record})
@@ -218,6 +224,223 @@ func manualLaunchFlowRecord() flowstore.FlowRecord {
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 1},
 		},
+	}
+}
+
+// --- AutoMode characterization ---
+//
+// These pin the AutoMode behaviour the lifecycle has to preserve when it takes
+// the path over. They are written against the drain as it exists today and must
+// survive the migration unchanged.
+
+func autoLaunchFlowRecord() flowstore.FlowRecord {
+	record := manualLaunchFlowRecord()
+	record.AutoMode = true
+	return record
+}
+
+// autoDrain arms the drain for this record and runs one advance poll, draining
+// every command the poll returns. Drain state is only meaningful once those
+// commands settle: the drain is disarmed at admission and re-armed when the
+// asynchronous failure lands, so an assertion taken before then reads a state
+// no user ever observes.
+func (h *manualLaunchHarness) autoDrain(m Model, record flowstore.FlowRecord) Model {
+	h.t.Helper()
+	m = m.armAutoAdvanceDrain(record.FlowID)
+	next, cmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
+	return h.drain(next, cmd, 0)
+}
+
+func (h *manualLaunchHarness) drainArmed(m Model, flowID string) bool {
+	h.t.Helper()
+	_, ok := m.autoAdvanceDrainFlows[flowID]
+	return ok
+}
+
+func TestAutoFlowLaunchIsHeadlessAndLeavesFocusAlone(t *testing.T) {
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored_headless_%v", stored), func(t *testing.T) {
+			record := autoLaunchFlowRecord()
+			record.Headless = stored
+			h := newManualLaunchHarness(t, record)
+			m := h.model()
+			m.terminalFocus = terminalFocusList
+
+			m = h.autoDrain(m, record)
+
+			if len(h.launchContexts) != 1 {
+				t.Fatalf("embedded launches = %d, want 1", len(h.launchContexts))
+			}
+			ctx := h.launchContexts[0]
+			if !ctx.Headless {
+				t.Fatalf("ctx.Headless = false, want AutoMode to ignore the persisted %v", stored)
+			}
+			if !ctx.FlowAutoLaunch {
+				t.Fatalf("ctx = %#v, want FlowAutoLaunch", ctx)
+			}
+			if len(h.launchUpdates) != 1 || !h.launchUpdates[0].AutoLaunch {
+				t.Fatalf("launch updates = %#v, want one AutoLaunch update", h.launchUpdates)
+			}
+			if m.terminalFocus != terminalFocusList {
+				t.Fatalf("terminal focus = %v, want AutoMode to leave the list focused", m.terminalFocus)
+			}
+		})
+	}
+}
+
+func TestAutoFlowLaunchSkipsOutdatedAutoLaunch(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.addLaunchIDErr = fmt.Errorf("auto launch target %q is not eligible: %w", "implementation", flowstore.ErrAutoLaunchOutdated)
+
+	m := h.autoDrain(h.model(), record)
+
+	if len(h.phaseUpdates) != 0 {
+		t.Fatalf("an outdated auto launch must not write the phase: %#v", h.phaseUpdates)
+	}
+	if len(h.launchContexts) != 0 {
+		t.Fatal("an outdated auto launch must not open a terminal")
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("an outdated auto launch must release its reservation")
+	}
+	if h.drainArmed(m, record.FlowID) {
+		t.Fatal("an outdated auto launch must not re-arm the drain")
+	}
+	if m.status.Text != "" {
+		t.Fatalf("status = %q, want an outdated auto launch to stay silent", m.status.Text)
+	}
+}
+
+func TestAutoFlowLaunchPreflightFailuresUseTransientAutoStatus(t *testing.T) {
+	planReview := autoLaunchFlowRecord()
+	planReview.Phases = []flowstore.FlowPhase{
+		{PhaseID: "plan-review", Title: "Plan review", Kind: flowstore.KindPlanReview, Status: flowstore.PhaseReady, Order: 1},
+	}
+
+	planPathFailure := autoLaunchFlowRecord()
+	planPathFailure.PlanID = "plan-1"
+
+	pathless := autoLaunchFlowRecord()
+	pathless.RepoPath = ""
+	pathless.WorktreePath = ""
+
+	tests := []struct {
+		name         string
+		record       flowstore.FlowRecord
+		repoless     bool
+		agentCommand string
+		planPath     func(string) (string, error)
+		want         string
+	}{
+		{
+			name:         "missing agent command",
+			record:       autoLaunchFlowRecord(),
+			agentCommand: " ",
+			want:         "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+		},
+		{
+			name:     "undeterminable launch path",
+			record:   pathless,
+			repoless: true,
+			want:     "Cannot determine launch path for this flow",
+		},
+		{
+			name:     "unresolvable plan path",
+			record:   planPathFailure,
+			planPath: func(string) (string, error) { return "", errors.New("plan path unavailable") },
+			want:     "plan path unavailable",
+		},
+		{
+			name:   "plan review without a linked plan",
+			record: planReview,
+			want:   "Plan Review needs a linked plan before launch",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newManualLaunchHarness(t, tc.record)
+			opts := h.options()
+			if tc.agentCommand != "" {
+				opts.AgentCommand = strings.TrimSpace(tc.agentCommand)
+			}
+			if tc.planPath != nil {
+				opts.PlanMarkdownPath = tc.planPath
+			}
+			repos := []scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}
+			if tc.repoless {
+				repos = nil
+			}
+			m := h.modelWith(repos, opts)
+
+			m = h.autoDrain(m, tc.record)
+
+			wantStatus := "Flow " + flowTitleForStatus(tc.record) + ": " + tc.want
+			if m.status.Text != wantStatus {
+				t.Fatalf("status = %q, want %q", m.status.Text, wantStatus)
+			}
+			if m.status.Source != statusFlowAutoAdvance {
+				t.Fatalf("status source = %v, want the transient AutoMode source", m.status.Source)
+			}
+			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+				t.Fatalf("a preflight failure persisted something: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
+			}
+			if !h.drainArmed(m, tc.record.FlowID) {
+				t.Fatal("a preflight failure must leave the drain armed for the next poll")
+			}
+			if _, ok := m.flowLaunchAttempt(tc.record.FlowID); ok {
+				t.Fatal("a preflight failure must not hold a reservation")
+			}
+		})
+	}
+}
+
+func TestAutoFlowLaunchFailureYieldsToDisplayStatus(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	opts := h.options()
+	opts.AgentCommand = ""
+	m := h.modelWith([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}}, opts)
+	m = m.setStatus(statusOther, "worktree fetch failed")
+
+	m = h.autoDrain(m, record)
+
+	if m.status.Text != "worktree fetch failed" {
+		t.Fatalf("status = %q, want the display status AutoMode may never stomp", m.status.Text)
+	}
+	if m.status.Source != statusOther {
+		t.Fatalf("status source = %v, want statusOther", m.status.Source)
+	}
+}
+
+func TestAutoFlowLaunchNeverLaunchesMergePhases(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	record.PR = flowstore.PullRequest{
+		Provider:   "github",
+		Number:     7,
+		URL:        "https://github.com/approachcontrol/approach/pull/7",
+		HeadBranch: "flow/one",
+		BaseBranch: "main",
+	}
+	record.Phases = []flowstore.FlowPhase{
+		{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseCompleted, Order: 1},
+		{PhaseID: "merge", Title: "Merge", Kind: flowstore.KindMerge, Status: flowstore.PhaseReady, Order: 2},
+	}
+	h := newManualLaunchHarness(t, record)
+
+	m := h.autoDrain(h.model(), record)
+
+	if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 {
+		t.Fatalf("AutoMode launched a merge phase: updates=%#v contexts=%#v", h.launchUpdates, h.launchContexts)
+	}
+	if h.drainArmed(m, record.FlowID) {
+		t.Fatal("a Flow with nothing auto-launchable must disarm its drain")
+	}
+	// The same phase is still a manual launch target, which is what makes the
+	// AutoMode-only refusal a real distinction rather than an unreachable one.
+	if _, _, ok := m.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: record.FlowID}); !ok {
+		t.Fatal("a ready merge phase should still be manually launchable")
 	}
 }
 
