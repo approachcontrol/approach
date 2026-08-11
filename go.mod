@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/vt v0.0.0-20260305213658-fe36e8c10185
 	github.com/creack/pty v1.1.24
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+	github.com/graphql-go/graphql v0.8.1
 	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.3.1
 )

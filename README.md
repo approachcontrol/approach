@@ -46,7 +46,14 @@ to `bin/approach`.
 
 # Run with a custom root
 WORKTREE_ROOT=~/projects ./bin/approach
+
+# Serve the read-only GraphQL API on 127.0.0.1:8787
+./bin/approach serve
 ```
+
+`approach serve` exposes repos and Flows over `POST /graphql` for external
+tools and dashboards. It is read-only, binds loopback by default, and requires
+a token on any other bind address. See `docs/graphql-api.md`.
 
 ### Getting Around
 

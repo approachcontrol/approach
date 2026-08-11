@@ -2312,3 +2312,52 @@ func savePlanArtifact(t *testing.T, root, planID string) {
 		t.Fatalf("SavePlan() error = %v", err)
 	}
 }
+
+// TestRunFlowPhaseNextPhaseJSONShapeUnchanged pins the agent-facing
+// `next_phase` JSON. The actionable-phase rule now lives in flowstore
+// (PhaseIsActionable / NextActionablePhase); the CLI-only "prefer the
+// just-updated phase" rule and the allowed_statuses field stay here.
+func TestRunFlowPhaseNextPhaseJSONShapeUnchanged(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	created := mustRunFlow(t, []string{"approach", "flow", "create", "--title", "Next Phase JSON", "--instructions", "pin it", "--repo-path", repoPath, "--json", "--state-root", root})
+
+	nextPhaseJSON := func(t *testing.T, args []string) string {
+		t.Helper()
+		var stdout bytes.Buffer
+		if err := run(args, noScanDeps(t, runDeps{stdout: &stdout})); err != nil {
+			t.Fatalf("run returned error: %v", err)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+		}
+		raw, ok := payload["next_phase"]
+		if !ok {
+			t.Fatalf("output has no next_phase key:\n%s", stdout.String())
+		}
+		return string(raw)
+	}
+
+	got := nextPhaseJSON(t, []string{
+		"approach", "flow", "phase", "complete",
+		"--flow-id", created.FlowID, "--phase-id", "plan",
+		"--summary", "Saved the plan.", "--state-root", root,
+	})
+	want := `{"phase_id":"plan-review","title":"Plan Review","status":"ready","allowed_statuses":["running","needs_attention","completed","blocked","skipped"]}`
+	if got != want {
+		t.Fatalf("next_phase after complete = %s\nwant %s", got, want)
+	}
+
+	// The CLI keeps its own rule: a just-updated phase that is still
+	// actionable stays the reported next phase.
+	got = nextPhaseJSON(t, []string{
+		"approach", "flow", "phase", "block",
+		"--flow-id", created.FlowID, "--phase-id", "plan-review",
+		"--notes", "Waiting on review.", "--state-root", root,
+	})
+	want = `{"phase_id":"plan-review","title":"Plan Review","status":"blocked","allowed_statuses":["running","skipped"]}`
+	if got != want {
+		t.Fatalf("next_phase after block = %s\nwant %s", got, want)
+	}
+}
