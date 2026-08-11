@@ -458,7 +458,15 @@ On a Flow row or an expanded phase row:
 - `g` launches the first launchable phase in the selected Flow's canonical
   phase order. This uses the selected Flow, so a highlighted pending phase row
   can still launch an earlier ready sibling; nothing is persisted when no
-  phase is launchable.
+  phase is launchable. The key press only submits a launch intent: the launch
+  lifecycle reserves the Flow, re-reads the persisted record, and decides from
+  it, so a launch the list advertised can still be refused once the fresh
+  record disagrees. A launch is rejected — not merely unadvertised — while an
+  embedded terminal, a pending repair, a pending phase resume, or another
+  launch already holds that Flow, and while a live session is attached to the
+  phase being launched. Dismiss or detach the Flow's terminal before launching
+  its next phase. Both `g` bindings (flows view and Active Flows) behave
+  identically.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal

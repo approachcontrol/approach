@@ -16,7 +16,7 @@ type flowPhaseLaunchTestTerminal struct {
 }
 
 func (t flowPhaseLaunchTestTerminal) VisibleLines(width, height int) []string { return nil }
-func (t flowPhaseLaunchTestTerminal) Write([]byte) (int, error)               { return 0, nil }
+func (t flowPhaseLaunchTestTerminal) Write(p []byte) (int, error)             { return len(p), nil }
 func (t flowPhaseLaunchTestTerminal) Resize(width, height int) error          { return nil }
 func (t flowPhaseLaunchTestTerminal) Terminate() error                        { return nil }
 func (t flowPhaseLaunchTestTerminal) Wait(context.Context) error              { return nil }

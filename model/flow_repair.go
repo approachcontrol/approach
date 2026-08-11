@@ -123,14 +123,7 @@ func phaseHasMatchingLiveSession(phase flowstore.FlowPhase) bool {
 		if _, ok := launches[strings.TrimSpace(session.LaunchID)]; !ok {
 			continue
 		}
-		status := strings.TrimSpace(session.Status)
-		if status != "" {
-			if status != "ended" {
-				return true
-			}
-			continue
-		}
-		if session.EndedAt.IsZero() {
+		if flowSessionLive(session.Status, session.EndedAt) {
 			return true
 		}
 	}
@@ -154,7 +147,9 @@ func (m Model) selectedFlowRepairReady() bool {
 	return ok &&
 		!m.hasFlowEmbeddedTerminalForFlow(record.FlowID) &&
 		!m.hasPendingFlowPhaseResumeForFlow(record.FlowID) &&
-		!m.hasPendingFlowRepairLaunch(record.FlowID)
+		!m.hasPendingFlowRepairLaunch(record.FlowID) &&
+		// A repair must not arm while the launch lifecycle holds this Flow.
+		!m.flowLaunchAttemptOccupied(record.FlowID)
 }
 
 func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {

@@ -38,7 +38,7 @@ func recordPageText(paged *[]string) func(string) (actions.TerminalLaunchSpec, e
 }
 
 func TestModel_EnterOnDirtyWorktreeFetchesDiffWithoutOverlay(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			t.Fatalf("PageText should not run until the diff result arrives, got %q", body)
 			return actions.TerminalLaunchSpec{}, nil
@@ -362,7 +362,7 @@ func TestModel_WorktreeMovePendingSelectionClampsWhenPathMissing(t *testing.T) {
 
 func TestModel_WorktreeDiffResultPagesDiff(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -419,7 +419,7 @@ func TestModel_WorktreeDiffFetchFailureCarriesIdentity(t *testing.T) {
 
 func TestModel_MatchingWorktreeDiffFetchFailureShowsStatusWithoutPaging(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -474,7 +474,7 @@ func TestModel_StaleWorktreeDiffFetchFailureIgnored(t *testing.T) {
 
 func TestModel_StaleWorktreeDiffResultDiscarded(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -494,7 +494,7 @@ func TestModel_StaleWorktreeDiffResultDiscarded(t *testing.T) {
 
 func TestModel_WorktreeDiffResultDiscardedIfWorktreePathChanged(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -520,7 +520,7 @@ func TestModel_WorktreeDiffResultDiscardedIfWorktreePathChanged(t *testing.T) {
 
 func TestModel_WorktreeDiffResultAfterEscapeStillPages(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -550,7 +550,7 @@ func TestModel_WorktreeDiffResultAfterEscapeStillPages(t *testing.T) {
 
 func TestModel_WorktreeDiffResultFromOlderRequestIgnoredAfterReopen(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -590,7 +590,7 @@ func TestModel_WorktreeDiffResultFromOlderRequestIgnoredAfterReopen(t *testing.T
 
 func TestModel_ViewResultAfterModeSwitchIgnored(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
@@ -612,7 +612,7 @@ func TestModel_ViewResultAfterModeSwitchIgnored(t *testing.T) {
 
 func TestModel_ViewResultAfterPaneFocusSwitchIgnored(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", Dirty: true},
@@ -796,7 +796,7 @@ func TestModel_FKey_BareRepoBranchesWithoutSelection_FiresFetchCmd(t *testing.T)
 
 func TestModel_LeftPaneFKeyFetchesFilteredReposOnly(t *testing.T) {
 	var fetched []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(path string) error {
 			fetched = append(fetched, path)
 			return nil
@@ -846,7 +846,7 @@ func TestModel_LeftPaneFKeyWithNoVisibleReposShowsStatus(t *testing.T) {
 }
 
 func TestModel_LeftPaneFKeyDuringVisibleRepoFetchDoesNotStartAnotherBatch(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -864,7 +864,7 @@ func TestModel_LeftPaneFKeyDuringVisibleRepoFetchDoesNotStartAnotherBatch(t *tes
 }
 
 func TestModel_VisibleRepoFetchProgressSurvivesOrdinaryKeypress(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -881,7 +881,7 @@ func TestModel_VisibleRepoFetchProgressSurvivesOrdinaryKeypress(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -909,7 +909,7 @@ func TestModel_VisibleRepoFetchProgressSuccessAndRefresh(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchRefreshesStoredTopModeAfterBottomPaneTakesFocus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -929,7 +929,7 @@ func TestModel_VisibleRepoFetchRefreshesStoredTopModeAfterBottomPaneTakesFocus(t
 }
 
 func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -948,7 +948,7 @@ func TestModel_VisibleRepoFetchFinalStatusExpires(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -975,7 +975,7 @@ func TestModel_VisibleRepoFetchFinalStatusFadesBeforeExpiry(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchFinalStatusStillClearsOnKeypress(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -992,7 +992,7 @@ func TestModel_VisibleRepoFetchFinalStatusStillClearsOnKeypress(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchStatusExpiryDoesNotClearNewerStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -1017,7 +1017,7 @@ func TestModel_VisibleRepoFetchPartialFailureSummaryIsCapped(t *testing.T) {
 		{Path: "/dev/delta", DisplayName: "delta"},
 		{Path: "/dev/echo", DisplayName: "echo"},
 	}
-	m := model.NewWithOptions(repos, model.Options{
+	m := newTestModel(repos, model.Options{
 		FetchRepo: func(path string) error {
 			if path == "/dev/alpha" {
 				return nil
@@ -1040,7 +1040,7 @@ func TestModel_VisibleRepoFetchPartialFailureSummaryIsCapped(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchStaleResultIgnoredByRequest(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 
@@ -1055,7 +1055,7 @@ func TestModel_VisibleRepoFetchStaleResultIgnoredByRequest(t *testing.T) {
 }
 
 func TestModel_VisibleRepoFetchRefreshesOnlyIfCurrentSelectionWasCaptured(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -1077,7 +1077,7 @@ func TestModel_VisibleRepoFetchRefreshesOnlyIfCurrentSelectionWasCaptured(t *tes
 }
 
 func TestModel_VisibleRepoFetchRefreshesChangedSelectionInsideCapturedBatch(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(string) error { return nil },
 	})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -1097,7 +1097,7 @@ func TestModel_VisibleRepoFetchRefreshesChangedSelectionInsideCapturedBatch(t *t
 
 func TestModel_RightPaneFetchUsesInjectedFetchRepo(t *testing.T) {
 	var fetched []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FetchRepo: func(path string) error {
 			fetched = append(fetched, path)
 			return nil
@@ -1426,7 +1426,7 @@ func TestModel_EnterFetchesBranchDiffWithoutOverlayForDirtyWorktree(t *testing.T
 
 func TestModel_BranchDiffResultForWrongWorktreePathIgnored(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inBranchesMode(m)
 	m, _ = update(m, model.BranchResultMsg{
 		RepoPath: "/dev/alpha",
@@ -1587,7 +1587,7 @@ func TestModel_EnterInHistoryNoCommitsIsNoOp(t *testing.T) {
 
 func TestModel_CommitDiffResultStoresDiff(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, _ = update(m, model.CommitResultMsg{RepoPath: "/dev/alpha", Commits: testCommits()})
@@ -1650,7 +1650,7 @@ func TestModel_CommitDiffFetchFailureMatchesHashAndRequest(t *testing.T) {
 
 func TestModel_YKeyCopiesHashInHistoryMode(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -1753,7 +1753,7 @@ func TestModel_EnterOnStashFetchesDiffWithoutOverlay(t *testing.T) {
 
 func TestModel_StashDiffResultStoresDiff(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
@@ -1786,7 +1786,7 @@ func TestModel_StashDiffResultStoresDiff(t *testing.T) {
 
 func TestModel_StaleStashDiffDoesNotLaunchAfterModeChange(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
@@ -1805,7 +1805,7 @@ func TestModel_StaleStashDiffDoesNotLaunchAfterModeChange(t *testing.T) {
 
 func TestModel_StaleStashDiffForOldIndexIgnored(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: testStashes()})
@@ -1841,7 +1841,7 @@ func TestModel_StaleStashDiffForChangedIdentityIgnored(t *testing.T) {
 	newStash := gitquery.Stash{Index: 0, Date: "2026-03-19 10:00:00 -0700", Message: "new stash"}
 
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m, _ = update(m, model.StashResultMsg{RepoPath: "/dev/alpha", Stashes: []gitquery.Stash{oldStash}})
@@ -3175,7 +3175,7 @@ func TestModel_TKey_WorktreeBranch_FiresCmd(t *testing.T) {
 
 func TestModel_TKey_UsesInjectedLaunchTerminal(t *testing.T) {
 	var gotPath string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchTerminal: func(path string) (actions.TerminalLaunchSpec, error) {
 			gotPath = path
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -3250,14 +3250,14 @@ func TestModel_NewHasUnsetAgent(t *testing.T) {
 }
 
 func TestModel_NewWithOptionsStoresAgent(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	if m.AgentCommand() != "codex" {
 		t.Fatalf("expected configured agent codex, got %q", m.AgentCommand())
 	}
 }
 
 func TestModel_NewWithOptionsStoresCodexAppAgent(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: " CoDeX-App "})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: " CoDeX-App "})
 	if m.AgentCommand() != "codex-app" {
 		t.Fatalf("expected configured agent codex-app, got %q", m.AgentCommand())
 	}
@@ -3303,7 +3303,7 @@ func TestModel_ShiftAAgentSelectPreselectsCurrentAgent(t *testing.T) {
 		{name: "claude", agent: "claude", wantSelected: "claude"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: tt.agent})
+			m := newTestModel(testRepos(), model.Options{AgentCommand: tt.agent})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
 			view := m.View()
 
@@ -3398,7 +3398,7 @@ func renderedPanelContainsPrompt(lines []string, bounds renderedSelectPanelBound
 
 func TestModel_AgentSelectSavesAndSetsCodex(t *testing.T) {
 	var saved string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SaveAgentCommand: func(command string) error {
 			saved = command
 			return nil
@@ -3422,7 +3422,7 @@ func TestModel_AgentSelectSavesAndSetsCodex(t *testing.T) {
 }
 
 func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -3438,7 +3438,7 @@ func TestModel_AgentSelectDownSavesAndSetsClaude(t *testing.T) {
 
 func TestModel_AgentSelectDownSavesAndSetsCodexApp(t *testing.T) {
 	var saved string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SaveAgentCommand: func(command string) error {
 			saved = command
 			return nil
@@ -3461,7 +3461,7 @@ func TestModel_AgentSelectDownSavesAndSetsCodexApp(t *testing.T) {
 
 func TestModel_AgentSelectUpWrapSavesAndSetsClaude(t *testing.T) {
 	var saved string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SaveAgentCommand: func(command string) error {
 			saved = command
 			return nil
@@ -3484,7 +3484,7 @@ func TestModel_AgentSelectUpWrapSavesAndSetsClaude(t *testing.T) {
 
 func TestModel_AgentSelectEscCancelsWithoutSaving(t *testing.T) {
 	saveCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "claude",
 		SaveAgentCommand: func(string) error {
 			saveCalled = true
@@ -3509,7 +3509,7 @@ func TestModel_AgentSelectEscCancelsWithoutSaving(t *testing.T) {
 }
 
 func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SaveAgentCommand: func(string) error { return errors.New("disk full") },
 	})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
@@ -3527,7 +3527,7 @@ func TestModel_AgentSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
 }
 
 func TestModel_F2OpensPromptTemplatePicker(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanPromptTemplate: "custom plan prompt",
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Plan: "custom flow plan",
@@ -3559,7 +3559,7 @@ func TestModel_F2OpensPromptTemplatePicker(t *testing.T) {
 
 func TestModel_PromptTemplateEditSavesRawValueAndReopensPicker(t *testing.T) {
 	var savedSection, savedKey, savedValue string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanPromptTemplate: "  custom plan\n",
 		SavePromptTemplate: func(section, key, value string) error {
 			savedSection = section
@@ -3614,7 +3614,7 @@ func TestModel_PromptTemplateEditUsesTallEditor(t *testing.T) {
 		"line 11",
 		"line 12",
 	}, "\n")
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanPromptTemplate: template,
 	})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 24})
@@ -3634,7 +3634,7 @@ func TestModel_PromptTemplateEditUsesTallEditor(t *testing.T) {
 }
 
 func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:       "codex",
 		PlanPromptTemplate: "old {title}",
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
@@ -3691,7 +3691,7 @@ func TestModel_PromptTemplateSaveFailurePreservesCurrentLaunchPrompt(t *testing.
 
 func TestModel_PromptTemplateResetClearsCustomValueAndReopensPicker(t *testing.T) {
 	var resetSection, resetKey string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FlowPromptTemplates: model.FlowPromptTemplates{
 			Plan: "custom flow plan",
 		},
@@ -3756,7 +3756,7 @@ func TestModel_PromptTemplateViewDefaultRendersBuiltInWithPlaceholders(t *testin
 
 func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	var savedCommand, savedEffort string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SaveAgentReasoningEffort: func(command, effort string) error {
 			savedCommand = command
@@ -3803,7 +3803,7 @@ func TestModel_FlowEffortPickerUsesCodexChoicesAndPersists(t *testing.T) {
 
 func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
 	var savedCommand, savedModel string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SaveAgentModel: func(command, selectedModel string) error {
 			savedCommand = command
@@ -3847,7 +3847,7 @@ func TestModel_FlowModelPickerUsesCodexChoicesAndPersists(t *testing.T) {
 }
 
 func TestModel_FlowModelPickerOpensFromLeftPane(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 	})
 	m, _ = switchTestMode(m, ui.ModeFlows)
@@ -3925,7 +3925,7 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := model.NewWithOptions(testRepos(), tt.options)
+			m := newTestModel(testRepos(), tt.options)
 			m = inRightPane(m)
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 			m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 12})
@@ -3959,7 +3959,7 @@ func TestModel_FlowsModeLabelsAgentAndEffortSeparately(t *testing.T) {
 }
 
 func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "claude"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "claude"})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
@@ -3977,7 +3977,7 @@ func TestModel_FlowEffortPickerUsesClaudeChoices(t *testing.T) {
 }
 
 func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
@@ -4013,7 +4013,7 @@ func TestModel_FlowEffortPickerDoesNotOpenDuringSearchOrModal(t *testing.T) {
 }
 
 func TestModel_FlowEffortSaveFailureKeepsSessionChoiceAndShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SaveAgentReasoningEffort: func(string, string) error {
 			return errors.New("disk full")
@@ -4058,7 +4058,7 @@ func TestModel_FlowEffortPickerRequiresSelectedAgent(t *testing.T) {
 }
 
 func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex-app"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex-app"})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
@@ -4076,7 +4076,7 @@ func TestModel_FlowEffortPickerReportsCodexAppDefault(t *testing.T) {
 }
 
 func TestModel_FlowModelPickerReportsCodexAppDefault(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex-app"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex-app"})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
@@ -4095,7 +4095,7 @@ func TestModel_FlowModelPickerReportsCodexAppDefault(t *testing.T) {
 
 func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 	var gotPath, gotCommand, gotModel, gotEffort string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:          "codex",
 		CodexModel:            "gpt-5.5",
 		CodexReasoningEffort:  "high",
@@ -4130,7 +4130,7 @@ func TestModel_AKeyLaunchesAgentFromWorktree(t *testing.T) {
 
 func TestModel_AKeyLaunchesCodexAppFromWorktree(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -4157,7 +4157,7 @@ func TestModel_AKeyLaunchesCodexAppFromWorktree(t *testing.T) {
 
 func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -4189,7 +4189,7 @@ func TestModel_AKeyLaunchesAgentWithSessionMetadata(t *testing.T) {
 
 func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
 	var gotPath, gotEffort string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:          "claude",
 		ClaudeReasoningEffort: "max",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -4219,7 +4219,7 @@ func TestModel_AKeyLaunchesAgentFromCheckedOutBranch(t *testing.T) {
 
 func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
 	t.Run("bare branch", func(t *testing.T) {
-		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 		m = inBranchesMode(m)
 		m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: []gitquery.Branch{{Name: "feat"}}})
 		_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
@@ -4228,7 +4228,7 @@ func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
 		}
 	})
 	t.Run("stale worktree", func(t *testing.T) {
-		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 		m = inRightPane(m)
 		m, _ = update(m, model.WorktreeResultMsg{RepoPath: "/dev/alpha", Worktrees: []gitquery.Worktree{
 			{Path: "/dev/gone", BranchName: "gone", Stale: true},
@@ -4239,7 +4239,7 @@ func TestModel_AKeyNoOpsForBareOrStaleTargets(t *testing.T) {
 		}
 	})
 	t.Run("stale branch row", func(t *testing.T) {
-		m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+		m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 		m = inBranchesMode(m)
 		m, _ = update(m, model.BranchResultMsg{
 			RepoPath: "/dev/alpha",
@@ -4270,7 +4270,7 @@ func TestModel_AKeyWithNoSelectedAgentShowsStatus(t *testing.T) {
 }
 
 func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{}, errors.New("agent unavailable")
@@ -4291,7 +4291,7 @@ func TestModel_AgentLaunchBuildErrorShowsStatus(t *testing.T) {
 
 func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 	cleanupCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{
@@ -4321,7 +4321,7 @@ func TestModel_AgentProcessErrorShowsStatus(t *testing.T) {
 
 func TestModel_AgentResultFinalizesLaunchedSession(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FinalizeAgentSession: func(ctx actions.AgentLaunchContext) error {
 			got = ctx
 			return nil
@@ -4353,7 +4353,7 @@ func TestModel_AgentResultFinalizesLaunchedSession(t *testing.T) {
 }
 
 func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
 			return errors.New("state unavailable")
 		},
@@ -4372,7 +4372,7 @@ func TestModel_AgentResultShowsFinalizeError(t *testing.T) {
 
 func TestModel_DetachedAgentResultDoesNotFinalize(t *testing.T) {
 	finalized := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
 			finalized = true
 			return nil
@@ -4393,7 +4393,7 @@ func TestModel_DetachedAgentResultDoesNotFinalize(t *testing.T) {
 }
 
 func TestModel_DetachedAgentResultShowsLaunchedStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	ctx := actions.AgentLaunchContext{Command: "codex", LaunchID: "launch-1"}
 
 	m, _ = update(m, model.AgentResultMsg{LaunchContext: ctx, Detached: true})
@@ -4408,7 +4408,7 @@ func TestModel_DetachedAgentResultShowsLaunchedStatus(t *testing.T) {
 
 func TestModel_DetachedAgentResultErrorTakesPrecedence(t *testing.T) {
 	finalized := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		FinalizeAgentSession: func(actions.AgentLaunchContext) error {
 			finalized = true
 			return nil
@@ -4434,7 +4434,7 @@ func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
 	want := []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "main", Summary: "Implement sessions"},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			gotFilter = filter
 			return want, nil
@@ -4470,7 +4470,7 @@ func TestModel_SixKeyFetchesSessionsForSelectedRepo(t *testing.T) {
 
 func TestModel_ChangingRepoRefetchesSessionsMode(t *testing.T) {
 	var filters []sessions.SessionFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			filters = append(filters, filter)
 			return []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: filepath.Base(filter.RepoPath), RepoPath: filter.RepoPath}}, nil
@@ -4513,7 +4513,7 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 	var paged []string
 	var gotProvider sessions.Provider
 	var gotSessionID string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: recordPageText(&paged),
 		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
 			gotProvider = provider
@@ -4556,7 +4556,7 @@ func TestModel_EnterOnSessionOpensTranscriptOverlay(t *testing.T) {
 func TestModel_OKeyOnSessionOpensTranscriptOverlay(t *testing.T) {
 	var gotProvider sessions.Provider
 	var gotSessionID string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ReadTranscript: func(provider sessions.Provider, sessionID string) ([]sessions.TranscriptEvent, error) {
 			gotProvider = provider
 			gotSessionID = sessionID
@@ -4585,7 +4585,7 @@ func TestModel_OKeyOnSessionOpensTranscriptOverlay(t *testing.T) {
 
 func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
@@ -4604,7 +4604,7 @@ func TestModel_SKeyShowsSelectedSessionSummary(t *testing.T) {
 
 func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
@@ -4622,7 +4622,7 @@ func TestModel_SKeyEmptySessionSummaryShowsFallback(t *testing.T) {
 }
 
 func TestModel_SKeySessionSummaryPagerFailureShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{}, errors.New("less not found")
 		},
@@ -4645,7 +4645,7 @@ func TestModel_SKeySessionSummaryPagerFailureShowsStatus(t *testing.T) {
 
 func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: recordPageText(&paged),
 		ReadTranscript: func(sessions.Provider, string) ([]sessions.TranscriptEvent, error) {
 			return []sessions.TranscriptEvent{{Role: "assistant", Text: "old transcript"}}, nil
@@ -4677,7 +4677,7 @@ func TestModel_SKeySessionSummaryInvalidatesPendingTranscript(t *testing.T) {
 }
 
 func TestModel_SKeySessionSummaryNoOpsOutsideSessionSelection(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}}) // plans: s has no meaning here
@@ -4699,7 +4699,7 @@ func TestModel_SKeySessionSummaryNoOpsOutsideSessionSelection(t *testing.T) {
 
 func TestModel_YKeyCopiesSelectedSessionID(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -4728,7 +4728,7 @@ func TestModel_YKeyCopiesSelectedSessionID(t *testing.T) {
 
 func TestModel_YKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
 	var copied []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(text string) error {
 			copied = append(copied, text)
 			return nil
@@ -4750,7 +4750,7 @@ func TestModel_YKeySessionCopyNoOpsOutsideSessionSelection(t *testing.T) {
 }
 
 func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		CopyToClipboard: func(string) error {
 			return errors.New("clipboard unavailable")
 		},
@@ -4773,7 +4773,7 @@ func TestModel_YKeySessionCopyErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_SessionScrollTreatsMultilineSummariesAsOneRow(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{})
+	m := newTestModel(testRepos(), model.Options{})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: ui.BranchContentOverhead + 3 + ui.TerminalChipRows})
@@ -4845,7 +4845,7 @@ func (t *fakeEmbeddedTerminal) State() string {
 func TestModel_RKeyResumeCLIEmbeddedTerminalShowsTerminalView(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}}
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SessionStateRoot: "/state/approach/sessions/v1",
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
@@ -4907,7 +4907,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 					return fakeTerm, nil
 				},
@@ -4946,7 +4946,7 @@ func TestModel_BackKeysForwardWhenSessionTerminalOwnsKeys(t *testing.T) {
 
 func TestModel_TabCyclesPaneFocusWhenSessionTerminalOwnsKeys(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -4992,7 +4992,7 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 		t.Skip("pty tests require a Unix-like platform")
 	}
 	var term *embeddedterm.Terminal
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			var err error
 			term, err = embeddedterm.NewManager().Start(context.Background(), embeddedterm.StartRequest{
@@ -5033,7 +5033,7 @@ func TestModel_EmbeddedTerminalViewRendersRealPTYOutput(t *testing.T) {
 
 func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return nil, pty.ErrUnsupported
 		},
@@ -5066,7 +5066,7 @@ func TestModel_RKeyResumeCLIFallsBackWhenEmbeddedTerminalUnsupported(t *testing.
 
 func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5120,7 +5120,7 @@ func TestModel_EmbeddedTerminalKeysRouteToActivePTY(t *testing.T) {
 func TestModel_EmbeddedTerminalUsesFullAppWidth(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{}
 	var started [2]int
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			started = [2]int{width, height}
 			return fakeTerm, nil
@@ -5272,7 +5272,7 @@ func openEmbeddedSessionForSizingTest(t *testing.T, width, height int) (model.Mo
 	t.Helper()
 	fakeTerm := &fakeEmbeddedTerminal{}
 	var started [2]int
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(_ actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			started = [2]int{width, height}
 			return fakeTerm, nil
@@ -5296,7 +5296,7 @@ func TestModel_TerminalPickerLoadsSessionsAfterRepoSwitchClearsCache(t *testing.
 		"bravo-session": {lines: []string{"bravo output"}, state: "running"},
 	}
 	var started []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (model.EmbeddedTerminal, error) {
 			started = append(started, ctx.ResumeSessionID)
 			return terms[ctx.ResumeSessionID], nil
@@ -5368,7 +5368,7 @@ func TestModel_EmbeddedTerminalPrefixPickerOpensSecondSession(t *testing.T) {
 		"claude-session-2": {lines: []string{"second output"}},
 	}
 	var started []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			started = append(started, ctx.ResumeSessionID)
 			return terms[ctx.ResumeSessionID], nil
@@ -5421,7 +5421,7 @@ func TestModel_EmbeddedTerminalPickerRestartsTickAfterAllPTYsExit(t *testing.T) 
 		"codex-session-1":  {lines: []string{"first output"}},
 		"claude-session-2": {lines: []string{"second output"}},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			return terms[ctx.ResumeSessionID], nil
 		},
@@ -5463,7 +5463,7 @@ func TestModel_EmbeddedTerminalPrefixSwitchesActiveTerminal(t *testing.T) {
 		"codex-session-1":  {lines: []string{"first output"}},
 		"claude-session-2": {lines: []string{"second output"}},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			return terms[ctx.ResumeSessionID], nil
 		},
@@ -5501,7 +5501,7 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 		"codex-session-2": {lines: []string{"second output"}},
 		"codex-session-3": {lines: []string{"third output"}},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			return terms[ctx.ResumeSessionID], nil
 		},
@@ -5571,7 +5571,7 @@ func TestModel_EmbeddedTerminalDismissRenumbersSessionTabs(t *testing.T) {
 
 func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"done"}, state: "exited"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5599,7 +5599,7 @@ func TestModel_EmbeddedTerminalPrefixDismissesExitedTerminal(t *testing.T) {
 
 func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"pty-live-output"}, state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5634,7 +5634,7 @@ func TestModel_EmbeddedTerminalPrefixConfirmsRunningTerminate(t *testing.T) {
 
 func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5679,7 +5679,7 @@ func TestModel_EmbeddedTerminalQuitConfirmsAndTerminatesRunningPTYs(t *testing.T
 
 func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5705,7 +5705,7 @@ func TestModel_EmbeddedTerminalResizeUpdatesAllPTYs(t *testing.T) {
 
 func TestModel_EmbeddedTerminalResizeSkipsExitedPTYs(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "exited"}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5729,7 +5729,7 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 	first := &fakeEmbeddedTerminal{}
 	second := &fakeEmbeddedTerminal{}
 	starts := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			starts++
 			if starts == 1 {
@@ -5769,7 +5769,7 @@ func TestModel_EmbeddedTerminalStaleTickDoesNotDuplicateRepaintLoop(t *testing.T
 
 func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
 			return fakeTerm, nil
 		},
@@ -5794,7 +5794,7 @@ func TestModel_EmbeddedTerminalTickStopsWhenAllPTYsExit(t *testing.T) {
 
 func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SessionStateRoot: "/state/approach/sessions/v1",
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
@@ -5849,7 +5849,7 @@ func TestModel_RKeyResumePrefersSessionCWD(t *testing.T) {
 
 func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *testing.T) {
 	var phaseUpdates []flowstore.PhaseUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowPhase: func(update flowstore.PhaseUpdate) (flowstore.FlowRecord, error) {
 			phaseUpdates = append(phaseUpdates, update)
 			return flowstore.FlowRecord{}, nil
@@ -5886,7 +5886,7 @@ func TestModel_RKeySessionResumeWithFlowMetadataRunFailureDoesNotUpdateFlow(t *t
 
 func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
 			return &fakeEmbeddedTerminal{}, nil
@@ -5911,7 +5911,7 @@ func TestModel_RKeyResumesSessionFromCWDWhenWorktreePathMissing(t *testing.T) {
 
 func TestModel_RKeyUsesCodexAppPreferenceForCodexSessionResume(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -5941,7 +5941,7 @@ func TestModel_RKeyUsesCodexAppPreferenceForCodexSessionResume(t *testing.T) {
 
 func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex-app",
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
 			got = ctx
@@ -5975,7 +5975,7 @@ func TestModel_RKeyKeepsClaudeProviderWhenCodexAppPreferenceSelected(t *testing.
 
 func TestModel_RKeySessionResumeNoOpsOutsideSessionSelection(t *testing.T) {
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			called = true
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -5999,7 +5999,7 @@ func TestModel_RKeySessionResumeNoOpsOutsideSessionSelection(t *testing.T) {
 
 func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			called = true
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -6026,7 +6026,7 @@ func TestModel_RKeyResumeMissingPathShowsStatus(t *testing.T) {
 
 func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			called = true
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -6053,7 +6053,7 @@ func TestModel_RKeyResumeBlankSessionIDShowsStatus(t *testing.T) {
 
 func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
 	called := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{{
 				Provider:     sessions.ProviderClaude,
@@ -6089,7 +6089,7 @@ func TestModel_InlineSessionResumeBlankSessionIDShowsStatus(t *testing.T) {
 
 func TestModel_XKeyOpensInlineSessionsForSelectedWorktree(t *testing.T) {
 	var gotFilter sessions.SessionFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			gotFilter = filter
 			return []sessions.SessionRecord{{
@@ -6136,7 +6136,7 @@ func TestModel_XKeyOpensInlineSessionsForSelectedWorktree(t *testing.T) {
 }
 
 func TestModel_ArrowKeysSelectInlineWorktreeSessions(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{
 				{Provider: sessions.ProviderCodex, SessionID: "codex-inline-1", RepoPath: filter.RepoPath, WorktreePath: filter.WorktreePath, Branch: "first"},
@@ -6170,7 +6170,7 @@ func TestModel_ArrowKeysSelectInlineWorktreeSessions(t *testing.T) {
 
 func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SessionStateRoot: "/state/approach/sessions/v1",
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{{
@@ -6232,7 +6232,7 @@ func TestModel_EnterResumesInlineWorktreeSession(t *testing.T) {
 }
 
 func TestModel_FilteringWorktreesClosesInlineSessions(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{{
 				Provider:     sessions.ProviderCodex,
@@ -6268,7 +6268,7 @@ func TestModel_FilteringWorktreesClosesInlineSessions(t *testing.T) {
 
 func TestModel_InlineWorktreeSessionFetchErrorShowsStatus(t *testing.T) {
 	calls := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			calls++
 			if calls == 1 {
@@ -6300,7 +6300,7 @@ func TestModel_InlineWorktreeSessionFetchErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_StaleInlineWorktreeSessionResultIsIgnored(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 			return []sessions.SessionRecord{{
 				Provider:     sessions.ProviderCodex,
@@ -6354,7 +6354,7 @@ func TestModel_SessionsFilterMatchesSessionFields(t *testing.T) {
 }
 
 func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ReadTranscript: func(sessions.Provider, string) ([]sessions.TranscriptEvent, error) {
 			return nil, errors.New("missing transcript")
 		},
@@ -6380,7 +6380,7 @@ func TestModel_SessionTranscriptReadErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_ShiftNOpensAgentWorktreeInput(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inWorktreesMode(m)
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	if m.Overlay() != ui.OverlayWorktreeInput {
@@ -6413,7 +6413,7 @@ func TestModel_ShiftNWithNoSelectedAgentShowsStatus(t *testing.T) {
 }
 
 func TestModel_AgentWorktreeInputRequestsLaunch(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inWorktreesMode(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("feat")})
@@ -6432,7 +6432,7 @@ func TestModel_AgentWorktreeInputRequestsLaunch(t *testing.T) {
 
 func TestModel_WorktreeCreatedWithLaunchRequestsAgent(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -6453,7 +6453,7 @@ func TestModel_WorktreeCreatedWithLaunchRequestsAgent(t *testing.T) {
 
 func TestModel_WorktreeCreatedWithLaunchDoesNotReuseOldBranchForDetachedRef(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			got = ctx
@@ -6779,7 +6779,7 @@ func TestModel_EnterInReflogFetchesDiffWithoutOverlay(t *testing.T) {
 
 func TestModel_ReflogDiffResultStoresDiff(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m, _ = update(m, model.ReflogResultMsg{RepoPath: "/dev/alpha", Reflogs: testReflogs()})
