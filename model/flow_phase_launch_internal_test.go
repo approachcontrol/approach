@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
 )
@@ -203,15 +201,11 @@ func TestFlowPhaseLaunchCoordinatorPreparesDirectAutoLaunchTarget(t *testing.T) 
 		},
 	})
 
-	_, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
+	m, cmd, _ := autoAdvancePrepare(m, []flowstore.FlowRecord{previous}, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("prepareAutoFlowPhaseLaunch() returned nil, want auto-launch command")
 	}
-	msg := cmd()
-	launch, ok := msg.(FlowEmbeddedLaunchRequestedMsg)
-	if !ok {
-		t.Fatalf("auto-launch command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
+	_, launch := firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if launch.LaunchContext.FlowPhaseID != "implementation" ||
 		len(updates) != 1 ||
 		!updates[0].AutoLaunch ||
@@ -304,13 +298,7 @@ func TestFlowPhaseLaunchCoordinatorDefersAutoLaunchUntilSourceTerminalCloses(t *
 	if cmd == nil {
 		t.Fatal("prepareAutoAdvanceDrainLaunches() returned nil after source terminal closed")
 	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok && len(batch) == 1 {
-		msg = batch[0]()
-	}
-	if _, ok := msg.(FlowEmbeddedLaunchRequestedMsg); !ok {
-		t.Fatalf("deferred auto-launch command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
-	}
+	firstFlowEmbeddedLaunchFromAutoAdvance(t, m, cmd)
 	if len(updates) != 1 || !updates[0].AutoLaunch || updates[0].PhaseID != "implementation" {
 		t.Fatalf("launch updates after source terminal closed = %#v, want auto implementation launch", updates)
 	}

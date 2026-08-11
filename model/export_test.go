@@ -3,6 +3,7 @@ package model
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/embeddedterm"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/ui"
@@ -81,6 +82,42 @@ func AutoAdvanceLaunchCommandForTest(m Model, flows []flowstore.FlowRecord) (Mod
 	m, cmd, _ = m.prepareAutoFlowPhaseLaunch(previous, current)
 	cmds = append(cmds, cmd)
 	return m, batchNonNil(cmds...)
+}
+
+// AutoFlowLaunchForTest is one prepared AutoMode launch: the context its route
+// carries, and the opaque lifecycle event that completes the launch when it is
+// fed back through Update.
+type AutoFlowLaunchForTest struct {
+	Context  actions.AgentLaunchContext
+	Embedded bool
+	Prepared tea.Msg
+}
+
+// AutoFlowLaunchesForTest drives the AutoMode launch lifecycle from the advance
+// poll's command to its prepared launches. Read events are applied through
+// Update — the hop that re-arms the drain and emits the transient status —
+// while the prepare hop is run without being applied, so a test observes the
+// context and the persisted launch ID without opening a terminal.
+func AutoFlowLaunchesForTest(m Model, cmd tea.Cmd) (Model, []AutoFlowLaunchForTest) {
+	m, prepared := preparedAutoFlowLaunches(m, cmd)
+	var launches []AutoFlowLaunchForTest
+	for _, event := range prepared {
+		if event.Err != "" || event.Skipped {
+			continue
+		}
+		launches = append(launches, AutoFlowLaunchForTest{
+			Context:  event.Context,
+			Embedded: event.Route == flowLaunchRouteEmbedded,
+			Prepared: event,
+		})
+	}
+	return m, launches
+}
+
+// SettleAutoFlowLaunchReadsForTest applies only the authoritative-read hop, for
+// tests that assert on the drain or the transient status a poll leaves behind.
+func SettleAutoFlowLaunchReadsForTest(m Model, cmd tea.Cmd) Model {
+	return settleAutoFlowLaunchReads(m, cmd)
 }
 
 func WithAutoAdvanceSnapshotForTest(m Model, flows []flowstore.FlowRecord) Model {

@@ -824,26 +824,25 @@ func TestAutoModePreparationReservesAgainstManualLaunch(t *testing.T) {
 
 	m, autoCmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
 	if autoCmd == nil {
-		t.Fatal("AutoMode drain should schedule preparation")
+		t.Fatal("AutoMode drain should schedule the authoritative read")
 	}
+	// AutoMode now reserves before the read rather than after preflight, so the
+	// window a manual g has to lose is the whole lifecycle, not just prepare.
 	attempt, ok := m.flowLaunchAttempt(record.FlowID)
-	if !ok || attempt.Kind != flowLaunchKindAutoPhase || attempt.State != flowLaunchStatePreparing {
-		t.Fatalf("AutoMode preparation attempt = %#v ok=%v", attempt, ok)
+	if !ok || attempt.Kind != flowLaunchKindAutoPhase || attempt.State != flowLaunchStateReading {
+		t.Fatalf("AutoMode read attempt = %#v ok=%v", attempt, ok)
 	}
 
 	manual, manualCmd := m.handleLaunchNextFlowPhase()
 	m = manual.(Model)
 	if manualCmd != nil {
-		t.Fatal("manual launch should be refused while AutoMode prepares")
+		t.Fatal("manual launch should be refused while AutoMode holds the Flow")
 	}
 	if got := m.status.Text; got != noLaunchableFlowPhaseStatus {
 		t.Fatalf("manual refusal = %q, want %q", got, noLaunchableFlowPhaseStatus)
 	}
 
-	preparedMsg := autoCmd()
-	next, handoffCmd := m.Update(preparedMsg)
-	m = next.(Model)
-	_ = handoffCmd
+	m = h.drain(m, autoCmd, 0)
 	if len(h.launchUpdates) != 1 || len(h.launchContexts) != 1 {
 		t.Fatalf("AutoMode launch updates=%d terminals=%d, want one each", len(h.launchUpdates), len(h.launchContexts))
 	}
@@ -864,13 +863,14 @@ func TestAutoModePreparationFailureReleasesReservation(t *testing.T) {
 
 	m, autoCmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
 	if autoCmd == nil {
-		t.Fatal("AutoMode drain should schedule preparation")
+		t.Fatal("AutoMode drain should schedule the authoritative read")
 	}
-	failedMsg := autoCmd()
-	next, _ := m.Update(failedMsg)
-	m = next.(Model)
+	m = h.drain(m, autoCmd, 0)
 	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
 		t.Fatal("failed AutoMode preparation stranded its reservation")
+	}
+	if !h.drainArmed(m, record.FlowID) {
+		t.Fatal("a pre-mutation AutoMode failure must re-arm the drain")
 	}
 }
 
