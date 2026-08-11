@@ -286,7 +286,7 @@ func (m Model) embeddedTerminalTabs() []ui.EmbeddedTerminalTab {
 func (m Model) flowTerminalActivity() []ui.FlowTerminalActivity {
 	activity := make([]ui.FlowTerminalActivity, 0, len(m.embeddedTerminals))
 	for _, slot := range m.embeddedTerminals {
-		if !embeddedTerminalRunning(slot.Terminal) || slot.FlowID == "" {
+		if !flowTerminalRetainedForFlow(slot) {
 			continue
 		}
 		activity = append(activity, ui.FlowTerminalActivity{
@@ -295,6 +295,10 @@ func (m Model) flowTerminalActivity() []ui.FlowTerminalActivity {
 		})
 	}
 	return activity
+}
+
+func flowTerminalRetainedForFlow(slot embeddedTerminalSlot) bool {
+	return slot.FlowID != "" && (slot.Scope == embeddedTerminalScopeSession || embeddedTerminalRunning(slot.Terminal))
 }
 
 func (m Model) activeTerminalRepoPaths() map[string]bool {
@@ -320,7 +324,7 @@ func (m Model) syncActiveFlowTerminalToSelectedFlow() Model {
 	activeNum := m.activeTerminalNum
 	newestMatchingNum := 0
 	for _, slot := range m.embeddedTerminals {
-		if slot.PrefillPending || slot.FlowID != flowID || !embeddedTerminalRunning(slot.Terminal) {
+		if slot.PrefillPending || slot.FlowID != flowID || !flowTerminalRetainedForFlow(slot) {
 			continue
 		}
 		if slot.Number == activeNum {

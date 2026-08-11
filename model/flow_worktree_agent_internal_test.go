@@ -81,7 +81,7 @@ func TestFlowWorktreeAgentStartsFromParentFlowWithoutPhaseTracking(t *testing.T)
 	}
 }
 
-func TestFlowWorktreeAgentReadsFlowAfterSessionPreflight(t *testing.T) {
+func TestFlowWorktreeAgentUsesRefreshedFlowMetadata(t *testing.T) {
 	initial := flowstore.FlowRecord{
 		FlowID:       "flow-1",
 		RepoPath:     "/repo",
@@ -93,15 +93,13 @@ func TestFlowWorktreeAgentReadsFlowAfterSessionPreflight(t *testing.T) {
 	updated.WorktreePath = t.TempDir()
 	updated.Branch = "flow/updated"
 	updated.Commit = "updated"
-	current := initial
 	var launched actions.AgentLaunchContext
 	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			return []flowstore.FlowRecord{current}, nil
+			return []flowstore.FlowRecord{updated}, nil
 		},
 		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
-			current = updated
 			return nil, nil
 		},
 		StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, _, _ int) (EmbeddedTerminal, error) {
@@ -156,6 +154,47 @@ func TestFlowWorktreeAgentRejectsActivePersistedSessionAndReleasesLease(t *testi
 	}
 }
 
+func TestFlowWorktreeAgentPreflightReadsSessionsAfterFlowRefresh(t *testing.T) {
+	worktree := t.TempDir()
+	record := flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree}
+	flowRefreshed := false
+	started := false
+	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
+		AgentCommand: "claude",
+		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+			flowRefreshed = true
+			return []flowstore.FlowRecord{record}, nil
+		},
+		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			if !flowRefreshed {
+				return nil, nil
+			}
+			return []sessions.SessionRecord{{FlowID: record.FlowID, Status: "active"}}, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (EmbeddedTerminal, error) {
+			started = true
+			return internalFakeEmbeddedTerminal{}, nil
+		},
+	})
+	m = modelWithModeForTest(m, ui.ModeFlows)
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+	m.activePane = ui.PaneBottom
+
+	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd == nil {
+		t.Fatal("worktree-agent launch did not queue preflight")
+	}
+	nextModel, _ = nextModel.(Model).Update(cmd())
+	next := nextModel.(Model)
+
+	if started || len(next.embeddedTerminals) != 0 {
+		t.Fatal("session persisted during Flow refresh did not block terminal startup")
+	}
+	if next.flowLaunchLeaseOccupied(record.FlowID) {
+		t.Fatal("late session occupancy rejection retained the Flow lease")
+	}
+}
+
 func TestFlowWorktreeAgentReadinessUsesKnownActiveSessionSnapshot(t *testing.T) {
 	worktree := t.TempDir()
 	record := flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree}
@@ -169,6 +208,21 @@ func TestFlowWorktreeAgentReadinessUsesKnownActiveSessionSnapshot(t *testing.T) 
 	m.sessions = m.sessions.SetItems([]sessions.SessionRecord{{FlowID: record.FlowID, Status: "ended"}})
 	if !m.selectedFlowWorktreeAgentReady() {
 		t.Fatal("known ended saved session should not hide the worktree-agent shortcut")
+	}
+}
+
+func TestFlowWorktreeAgentReadinessUsesCachedWorktreeMetadata(t *testing.T) {
+	record := flowstore.FlowRecord{
+		FlowID:       "flow-1",
+		RepoPath:     "/repo",
+		WorktreePath: filepath.Join(t.TempDir(), "not-created"),
+	}
+	m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{AgentCommand: "codex"}), ui.ModeFlows)
+	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
+	m.activePane = ui.PaneBottom
+
+	if !m.selectedFlowWorktreeAgentReady() {
+		t.Fatal("non-empty cached worktree metadata should expose the worktree-agent shortcut")
 	}
 }
 

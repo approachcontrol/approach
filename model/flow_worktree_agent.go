@@ -31,7 +31,7 @@ func (m Model) selectedFlowWorktreeAgentReady() bool {
 		return false
 	}
 	record, ok := m.selectedFlow()
-	if !ok || strings.TrimSpace(record.FlowID) == "" || !flowWorktreeDirectoryUsable(record.WorktreePath) {
+	if !ok || strings.TrimSpace(record.FlowID) == "" || strings.TrimSpace(record.WorktreePath) == "" {
 		return false
 	}
 	if _, occupied := m.flowLaunchLease(record.FlowID); occupied || m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
@@ -95,12 +95,6 @@ func (m Model) handleStartSelectedFlowWorktreeAgent() (tea.Model, tea.Cmd) {
 	listSessions := m.listSessions
 	return m, func() tea.Msg {
 		msg := flowWorktreeAgentPreflightMsg{FlowID: flowID, Token: token, Command: command}
-		var err error
-		msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: flowID})
-		if err != nil {
-			msg.Err = fmt.Errorf("list sessions for Flow %s: %w", flowID, err)
-			return msg
-		}
 		flows, err := listFlows(flowstore.FlowFilter{})
 		if err != nil {
 			msg.Err = fmt.Errorf("refresh Flow before starting agent: %w", err)
@@ -116,6 +110,11 @@ func (m Model) handleStartSelectedFlowWorktreeAgent() (tea.Model, tea.Cmd) {
 		}
 		if !found {
 			msg.Err = fmt.Errorf("Flow %s no longer exists", flowID)
+			return msg
+		}
+		msg.Sessions, err = listSessions(sessions.SessionFilter{FlowID: flowID})
+		if err != nil {
+			msg.Err = fmt.Errorf("list sessions for Flow %s: %w", flowID, err)
 			return msg
 		}
 		return msg
