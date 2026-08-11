@@ -43,6 +43,12 @@ type flowLaunchIntent struct {
 	FlowID  string
 	PhaseID string
 	Origin  flowLaunchOrigin
+	// FlowTitle is the submitter's snapshot title, already resolved through
+	// flowTitleForStatus. It exists so a failed authoritative read still renders
+	// "Flow <title>: <err>"; admission has no other source, because AutoMode
+	// deliberately skips the display cache and the fresh record does not exist
+	// yet. Manual launch leaves it empty.
+	FlowTitle string
 }
 
 func (m Model) flowLaunchOrigin() flowLaunchOrigin {

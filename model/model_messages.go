@@ -610,7 +610,6 @@ type ActionFailedMsg struct {
 	Err                     string
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
-	AutoAdvanceLaunchID     string
 }
 
 // --- Message handlers ---
@@ -1291,19 +1290,12 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
-	if msg.AutoAdvanceLaunchID != "" {
-		if attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
-			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
-		}
-		// An outdated AutoMode command is an intentional no-op. It returns this
-		// message only so the async reservation can be released in Update.
-		if msg.Err == "" {
-			return m, nil
-		}
-	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {
+		// Unfenced at consumption, and safe only because the sole producer of
+		// this metadata is failFlowLaunch, which runs behind
+		// matchingFlowLaunchAttempt. A superseded attempt never emits one.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {

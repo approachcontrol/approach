@@ -307,8 +307,10 @@ func TestAutoFlowLaunchSkipsOutdatedAutoLaunch(t *testing.T) {
 	if h.drainArmed(m, record.FlowID) {
 		t.Fatal("an outdated auto launch must not re-arm the drain")
 	}
-	if m.status.Text != "" {
-		t.Fatalf("status = %q, want an outdated auto launch to stay silent", m.status.Text)
+	// The queued transient may already have fired — preflight did pass — but an
+	// outdated launch is an intentional no-op and must never report a failure.
+	if m.status.Source == statusOther {
+		t.Fatalf("status = %#v, want no sticky failure status", m.status)
 	}
 }
 

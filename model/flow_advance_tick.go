@@ -17,11 +17,6 @@ const autoAdvanceTickInterval = time.Second
 
 type autoAdvanceTickMsg struct{}
 
-type autoAdvanceLaunchedPhase struct {
-	FlowTitle string
-	PhaseID   string
-}
-
 // AutoAdvanceResultMsg carries the advance poll's unscoped flow snapshot. A
 // listFlows failure arrives as Err instead of a FetchErrorMsg so the loop
 // always reschedules and never stomps display status.
@@ -74,7 +69,6 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 
 	previous := cloneFlowRecords(m.autoAdvanceSnapshot)
 	current := cloneFlowRecords(msg.Flows)
-	m.autoAdvanceLaunchedPhases = nil
 
 	var cmds []tea.Cmd
 	var autoCmd tea.Cmd
@@ -82,13 +76,12 @@ func (m Model) handleAutoAdvanceResult(msg AutoAdvanceResultMsg) (Model, tea.Cmd
 	cmds = append(cmds, autoCmd)
 	m.autoAdvanceSnapshot = current
 
-	statuses := autoAdvanceStatusEvents(previous, m.autoAdvanceLaunchedPhases, current)
+	statuses := autoAdvanceStatusEvents(previous, current)
 	if len(statuses) > 0 {
 		var statusCmd tea.Cmd
 		m, statusCmd = m.setAutoAdvanceStatus(statuses[len(statuses)-1])
 		cmds = append(cmds, statusCmd)
 	}
-	m.autoAdvanceLaunchedPhases = nil
 
 	var tickCmd tea.Cmd
 	m, tickCmd = m.finishAutoAdvanceFetch(msg.Request)
@@ -146,16 +139,11 @@ func autoAdvanceDisplayRecordRefreshesBaseline(previous, current flowstore.FlowR
 	return false
 }
 
-func autoAdvanceStatusEvents(previous []flowstore.FlowRecord, launched []autoAdvanceLaunchedPhase, current []flowstore.FlowRecord) []string {
+// autoAdvanceStatusEvents reports the transitions the poll observed. The queued
+// announcement is not among them: it is emitted by the launch lifecycle's read
+// success branch, which is the hop that knows preflight passed.
+func autoAdvanceStatusEvents(previous, current []flowstore.FlowRecord) []string {
 	var events []string
-	for _, launch := range launched {
-		title := strings.TrimSpace(launch.FlowTitle)
-		if title == "" {
-			continue
-		}
-		events = append(events, "Flow "+title+": "+autoAdvancePhaseLabel(launch.PhaseID)+" queued")
-	}
-
 	previousByFlowID := make(map[string]flowstore.FlowRecord, len(previous))
 	for _, record := range previous {
 		if record.FlowID != "" {

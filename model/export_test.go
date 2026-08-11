@@ -76,7 +76,6 @@ func AutoAdvanceLaunchCommandForTest(m Model, flows []flowstore.FlowRecord) (Mod
 	previous := cloneFlowRecords(m.autoAdvanceSnapshot)
 	current := cloneFlowRecords(flows)
 	m.autoAdvanceSnapshot = current
-	m.autoAdvanceLaunchedPhases = nil
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	m, cmd, _ = m.prepareAutoFlowPhaseLaunch(previous, current)

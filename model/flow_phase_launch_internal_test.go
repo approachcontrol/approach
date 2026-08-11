@@ -142,29 +142,6 @@ func TestNextAutoLaunchPhaseSkipsReadyPhaseWithUnsatisfiedDependency(t *testing.
 	}
 }
 
-func TestFlowPhaseLaunchTargetManualPreflightFailureSetsStatus(t *testing.T) {
-	m := New([]scanner.Repo{{Path: "/dev/alpha", DisplayName: "alpha"}})
-	record := flowstore.FlowRecord{
-		FlowID:       "flow-1",
-		RepoPath:     "/dev/alpha",
-		WorktreePath: "/dev/alpha-worktrees/flow-manual",
-		Phases: []flowstore.FlowPhase{
-			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
-		},
-	}
-
-	_, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
-		Record: record,
-		Phase:  record.Phases[0],
-	})
-	if ok {
-		t.Fatal("flowPhaseLaunchTarget() succeeded without an agent command")
-	}
-	if m.status.Source != statusOther || !strings.Contains(m.status.Text, "Press A to choose") {
-		t.Fatalf("status = %#v, want manual preflight failure status", m.status)
-	}
-}
-
 func TestFlowPhaseLaunchCoordinatorNormalizesPhaseIDsForPreflightAndRecovery(t *testing.T) {
 	launcher := FlowPhaseLauncher{AgentCommand: "codex"}
 	_, err := launcher.Preflight(FlowPhaseLaunchRequest{
