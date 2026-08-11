@@ -169,13 +169,23 @@ func TestServerHostAllowlistWithoutToken(t *testing.T) {
 	handler := newTestServer(t, ServerOptions{})
 	body := queryBody(t, `{ repos { id } }`)
 
-	for _, host := range []string{"localhost:8787", "127.0.0.1:8787", "[::1]:8787", "localhost", "127.0.0.1"} {
+	// Every host here is one cmd/approach/serve.go would let bind without a
+	// token, so rejecting any of them would make that address unreachable.
+	for _, host := range []string{
+		"localhost:8787", "127.0.0.1:8787", "[::1]:8787", "localhost", "127.0.0.1",
+		"127.0.0.2:8787", "127.1.2.3", "[0:0:0:0:0:0:0:1]:8787", "LOCALHOST:8787",
+	} {
 		recorder := serve(handler, newGraphQLRequest(body, func(r *http.Request) { r.Host = host }))
 		if recorder.Code != http.StatusOK {
 			t.Errorf("Host %q = %d, want 200", host, recorder.Code)
 		}
 	}
-	for _, host := range []string{"evil.test", "approach.trycloudflare.com", "192.168.1.5:8787", ""} {
+	// A rebound Host is a name, never an IP literal, so a name that merely
+	// reads like a loopback address is still rejected.
+	for _, host := range []string{
+		"evil.test", "approach.trycloudflare.com", "192.168.1.5:8787", "",
+		"127.0.0.1.evil.test", "0.0.0.0:8787", "10.0.0.1",
+	} {
 		recorder := serve(handler, newGraphQLRequest(body, func(r *http.Request) { r.Host = host }))
 		if recorder.Code != http.StatusForbidden {
 			t.Errorf("Host %q = %d, want 403", host, recorder.Code)
@@ -781,6 +791,32 @@ func TestServerChargesAliasBytes(t *testing.T) {
 	recorder := serve(handler, newGraphQLRequest(queryBody(t, "{ repos { flows { phases { x: id } } } }")))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("short alias = %d, want 200 (body %s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestServerChargesAliasOfAnEmptyList(t *testing.T) {
+	// A list field's response key is written once per parent object even when
+	// the list resolves to nothing, so charging the key inside the cardinality
+	// multiplier makes the whole field free on a snapshot whose lists are
+	// empty. A store with many repos and no Flows yet is the ordinary shape of
+	// a fresh install, and there `"<55 KiB alias>":[]` per repo is tens of
+	// megabytes of response from a request that fits the 64 KiB body cap.
+	handler := bigSnapshotServer(t, 400, 0, 0)
+	alias := strings.Repeat("a", 55<<10)
+	query := fmt.Sprintf("{ repos { %s: flows { id } } }", alias)
+	if len(queryBody(t, query)) > MaxRequestBytes {
+		t.Fatalf("fixture is %d bytes, which the body cap would have rejected first", len(queryBody(t, query)))
+	}
+	if measured := measure(t, query); measured.depth > maxQueryDepth || measured.nodes > maxQueryNodes {
+		t.Fatalf("fixture depth=%d nodes=%d trips a structural limit", measured.depth, measured.nodes)
+	}
+	assertRejected(t, handler, query, errResponseTooLarge)
+
+	// The same shape with an ordinary key stays served: it is the alias width,
+	// not the empty list, that has to cost something.
+	recorder := serve(handler, newGraphQLRequest(queryBody(t, "{ repos { flows { id } } }")))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unaliased empty list = %d, want 200 (body %s)", recorder.Code, recorder.Body.String())
 	}
 }
 

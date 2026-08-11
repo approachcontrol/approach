@@ -315,7 +315,14 @@ func hasJSONContentType(header string) bool {
 	return mediaType == "application/json"
 }
 
-// isLoopbackHost accepts localhost, 127.0.0.1, and [::1] on any port.
+// isLoopbackHost accepts localhost and any loopback IP literal, on any port.
+//
+// It applies net.IP.IsLoopback, the same rule cmd/approach/serve.go uses to
+// decide a bind address may run without a token. Anything narrower makes an
+// address that starts token-free — 127.0.0.2, or an expanded spelling of ::1 —
+// 403 every request that reaches it. Widening the rule to the whole loopback
+// range costs nothing against DNS rebinding either: rebinding resolves a
+// hostname, and a rebound Host is a name, never an IP literal.
 func isLoopbackHost(host string) bool {
 	if host == "" {
 		return false
@@ -325,12 +332,11 @@ func isLoopbackHost(host string) bool {
 		name = hostPart
 	}
 	name = strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
-	switch strings.ToLower(name) {
-	case "localhost", "127.0.0.1", "::1":
+	if strings.EqualFold(name, "localhost") {
 		return true
-	default:
-		return false
 	}
+	ip := net.ParseIP(name)
+	return ip != nil && ip.IsLoopback()
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) int {

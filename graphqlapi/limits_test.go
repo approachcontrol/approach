@@ -330,6 +330,23 @@ func TestInspectCostCountsAliasesSeparately(t *testing.T) {
 	}
 }
 
+func TestInspectCostChargesKeysOfEmptyLists(t *testing.T) {
+	// A field's response key is written once per parent object, whatever its
+	// list resolves to, so an empty list must not zero out the key. Charging
+	// the key inside the multiplier made `{ repos { <big alias>: flows { id } } }`
+	// free on any snapshot with no Flows.
+	bounds := resultBounds{repos: 400, flows: 0, flowsPerRepo: 0, values: fieldValueBytes{}}
+	alias := strings.Repeat("a", 55<<10)
+	if err := costOf(t, "{ repos { "+alias+": flows { id } } }", bounds); !errors.Is(err, errResponseTooLarge) {
+		t.Fatalf("inspectCost(aliased empty list) error = %v, want errResponseTooLarge", err)
+	}
+	// It is the alias width that costs, not the empty list itself: an ordinary
+	// key over the same shape stays well inside the budget.
+	if err := costOf(t, "{ repos { x: flows { id } } }", bounds); err != nil {
+		t.Fatalf("inspectCost(short key, empty list) error = %v, want nil", err)
+	}
+}
+
 func TestInspectCostExemptsIntrospection(t *testing.T) {
 	// Introspection resolves against the schema, which is small and fixed, so
 	// snapshot size must not make client codegen start failing.

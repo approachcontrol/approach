@@ -74,8 +74,13 @@ curl -s -H 'Content-Type: application/json' \
 ## Auth posture
 
 - On a **loopback** bind the token is optional. When no token is configured the
-  handler instead enforces a `Host` allowlist (`localhost`, `127.0.0.1`, `[::1]`,
-  any port) to blunt DNS rebinding.
+  handler instead enforces a `Host` allowlist (`localhost` or any loopback IP
+  literal — `net.IP.IsLoopback`, so `127.0.0.2` and expanded spellings of `::1`
+  count — on any port) to blunt DNS rebinding. It is deliberately the same rule
+  the bind address is classified with, so no address that starts token-free
+  403s every request that reaches it. Widening past `127.0.0.1` costs nothing
+  against rebinding: rebinding resolves a hostname, and a rebound `Host` is a
+  name, never an IP literal.
 - On **any non-loopback** bind a token is required, and startup fails *before*
   the listener opens if it is missing.
 - The token is accepted as `Authorization: Bearer <token>` or
@@ -105,7 +110,7 @@ rejects any parsed operation whose type is not `query` before execution.
 | Method | `POST` only on `/graphql`; `GET` only on `/healthz` | 405 |
 | Unknown path | Anything other than `/graphql` and `/healthz` | 404 |
 | Content-type | `application/json` required; a `charset` parameter is allowed | 415 |
-| `Host` header | Loopback allowlist, **only when no token is configured** | 403 |
+| `Host` header | `localhost` or a loopback IP literal, **only when no token is configured** | 403 |
 | Body size | 64 KiB | 413 |
 | Query depth | Max nesting 12, measured on the parsed AST with fragments resolved | 400 |
 | Introspection depth | Max nesting 20 inside a `__schema` / `__type` subtree | 400 |
@@ -168,6 +173,13 @@ are load-bearing, and each was a hole before it was closed:
 - The byte charge for a field's key uses its **alias** when it has one. An
   alias is client-chosen and unbounded, so charging the field name would leave
   a 55 KiB alias under a list traversal free.
+- That key is charged **once per parent object, outside the cardinality
+  multiplier**, because that is how often JSON writes it — a list field's key
+  appears once whether the list holds zero elements or a thousand. Charging it
+  inside the multiplier instead makes the field free wherever the list is empty
+  in this snapshot, and `"<55 KiB alias>":[]` repeated across 400 repos is a
+  22 MB response from a request that fits the 64 KiB body cap. Only the
+  resolved value and its subtree scale with cardinality.
 - **`__typename` is not exempt from the cost limit**, unlike `__schema` and
   `__type`. It resolves once per snapshot object rather than against the fixed
   schema, so it is a data-proportional leaf that happens to start with `__`.

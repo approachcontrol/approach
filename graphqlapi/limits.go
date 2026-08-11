@@ -47,6 +47,10 @@ const (
 	// each response key. Scalar widths already include their own quotes, since
 	// fieldValueBytes measures the encoded form.
 	fieldNameOverheadBytes = 4
+	// elementOverheadBytes covers the separator between two resolved values
+	// plus the braces around an object one. It is charged per resolved
+	// occurrence, where fieldNameOverheadBytes is charged per response key.
+	elementOverheadBytes = 3
 	// typenameField resolves per object instance rather than against the
 	// schema, so it is exempt from the depth limit but not the cost limit.
 	typenameField = "__typename"
@@ -399,8 +403,8 @@ func (m costMeasure) plus(other costMeasure) costMeasure {
 }
 
 // scaledBy repeats a measure once per element of the list its field resolves
-// to. Callers fold in the field's own contribution first, so the whole
-// occurrence — key, value, and subtree — scales together.
+// to. Callers fold in the field's own value first, so value and subtree scale
+// together; the response key stays outside, because it is written once.
 func (m costMeasure) scaledBy(multiplier int64) costMeasure {
 	return costMeasure{
 		values: scaleCost(multiplier, m.values, maxQueryCost),
@@ -502,7 +506,13 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 		if err != nil {
 			return costMeasure{}, err
 		}
-		return cost.plus(w.ownCost(node, parent, child != nil)).scaledBy(multiplier), nil
+		// The response key is written once per parent object however many
+		// elements the field resolves to, so it is charged outside the
+		// multiplier while the value and its subtree are charged inside it.
+		// Scaling the key too would make a field free whenever its list is
+		// empty in this snapshot — and `"<60 KiB alias>":[]` repeated across
+		// every repo is tens of megabytes the multiplier alone cannot see.
+		return keyCost(node).plus(cost.plus(w.ownCost(node, parent, child != nil)).scaledBy(multiplier)), nil
 	case *ast.InlineFragment:
 		// The schema has no interfaces or unions, so an inline fragment's type
 		// condition is always the enclosing type; anything else is a
@@ -518,14 +528,24 @@ func (w *costWalker) costOfSelection(selection ast.Selection, parent *graphql.Ob
 	}
 }
 
-// ownCost is what one occurrence of the field contributes before its subtree:
-// one resolved value, plus the bytes it serializes to. Object-typed fields
-// carry only the key and braces — their scalar leaves carry the payload.
+// keyCost is the response key's contribution. It is charged once per parent
+// object, because that is how often the key is written — the key of a list
+// field appears once whether the list resolves to zero elements or a thousand.
+//
+// The key is the alias when there is one, and an alias is client-chosen and
+// unbounded, so charging the field name instead would leave a 60 KiB alias
+// under a list traversal free.
+func keyCost(node *ast.Field) costMeasure {
+	return costMeasure{bytes: int64(fieldNameOverheadBytes + len(responseKey(node)))}
+}
+
+// ownCost is what one resolved *occurrence* of the field contributes before
+// its subtree: one resolved value, plus the bytes that value serializes to.
+// Object-typed values carry only their braces — their scalar leaves carry the
+// payload. The response key is deliberately not here; keyCost charges it once
+// per parent, outside the list multiplier.
 func (w *costWalker) ownCost(node *ast.Field, parent *graphql.Object, isObject bool) costMeasure {
-	// The response key is the alias when there is one, and it is client-chosen
-	// and unbounded. Charging the field name instead would leave a 60 KiB
-	// alias under a list traversal free.
-	bytes := int64(fieldNameOverheadBytes + len(responseKey(node)))
+	bytes := int64(elementOverheadBytes)
 	if isObject || parent == nil || node.Name == nil {
 		return costMeasure{values: 1, bytes: bytes}
 	}
