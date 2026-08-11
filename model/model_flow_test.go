@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -8,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -6981,7 +6981,7 @@ func TestModel_RKeyOnSelectedFlowPhaseResumesLatestSession(t *testing.T) {
 	}
 }
 
-func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *testing.T) {
+func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForSQLiteWriterInUpdate(t *testing.T) {
 	root := t.TempDir()
 	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
 	if err != nil {
@@ -7026,19 +7026,22 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
 	m = selectFlowPhaseByID(t, m, "review-loop")
 
-	lockPath := filepath.Join(root, "flows", ".locks", record.FlowID+".lock")
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	contender, err := sql.Open("sqlite", "file:"+filepath.Join(root, "approach.db")+"?_txlock=immediate")
 	if err != nil {
-		t.Fatalf("open flow lock: %v", err)
+		t.Fatalf("open contending SQLite handle: %v", err)
 	}
 	lockHeld := true
+	heldTx, err := contender.Begin()
+	if err != nil {
+		t.Fatalf("begin contending SQLite writer: %v", err)
+	}
 	var updateDone <-chan struct{}
 	var persistenceDone <-chan tea.Msg
 	t.Cleanup(func() {
 		if lockHeld {
-			_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+			_ = heldTx.Rollback()
 		}
-		_ = lockFile.Close()
+		_ = contender.Close()
 		if updateDone != nil {
 			select {
 			case <-updateDone:
@@ -7052,10 +7055,6 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 			}
 		}
 	})
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatalf("flock flow lock: %v", err)
-	}
-
 	type updateResult struct {
 		model model.Model
 		cmd   tea.Cmd
@@ -7121,8 +7120,8 @@ func TestModel_RKeyOnSelectedFlowPhaseDoesNotWaitForFlowStoreLockInUpdate(t *tes
 		t.Fatal("terminal started while resume persistence waited for the lock")
 	}
 
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
-		t.Fatalf("unlock flow lock: %v", err)
+	if err := heldTx.Rollback(); err != nil {
+		t.Fatalf("release contending SQLite writer: %v", err)
 	}
 	lockHeld = false
 	var persisted tea.Msg

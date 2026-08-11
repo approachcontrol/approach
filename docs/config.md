@@ -35,7 +35,7 @@ exist:
 | TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1` |
 | Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
-| Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/flows/...`) |
+| Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/approach.db`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
@@ -300,8 +300,8 @@ Custom presets must form an acyclic top-level graph, may include multiple root
 phases, and may include at most one `merge`-kind phase. Child implementation
 phases are still created dynamically with `approach flow phase add-child`; they are
 not declared in config. Records created from a named preset persist
-`preset_name` so Approach can restore missing `depends_on` edges if an older binary
-partially rewrites the record.
+`preset_name` so the one-time legacy migrator can restore missing `depends_on`
+edges before SQLite becomes authoritative.
 
 ### `[sessions]`
 
@@ -321,7 +321,7 @@ Relative roots other than `~`/`~/...` fail config parsing.
 
 `[sessions].root` doubles as the **agent-artifact root**: sessions, saved plans,
 and Flow records are stored under `<root>/sessions/...`,
-`<root>/plans/<plan-id>/`, and `<root>/flows/<flow-id>/`. There is no separate
+`<root>/plans/<plan-id>/`, and `<root>/approach.db`. There is no separate
 plans or flows config in v1. **Moving or cleaning the sessions root therefore
 also moves or removes saved plans and Flow records.**
 
@@ -379,9 +379,10 @@ Codex/Claude skill directories.
 ## Flows
 
 Flow records are task-centric workflow records created by the TUI or explicitly
-through `approach flow`. Each record is stored as
-`<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
-(`0700` directories, `0600` files) and atomic writes. They appear in the TUI
+through `approach flow`. Records are stored in `<artifact-root>/approach.db`, a
+`0600` pure-Go SQLite database inside the `0700` artifact root. Runtime uses WAL
+and a five-second busy timeout by default; writers serialize database-wide while
+WAL readers continue. They appear in the TUI
 flows pane (bottom-pane keyboard `3`), which is stored at startup below
 Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
 toggle per-Flow auto mode and the per-Flow headless preference, resume attached phase sessions, record a manual
@@ -389,6 +390,94 @@ GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
 Flow terminals are documented in `docs/tui-guide.md`. Other phase and
 progression mutation remains CLI/agent-driven in v1.
+
+On first open when `approach.db` is absent and legacy `<artifact-root>/flows/`
+records exist, Approach canonicalizes the readable legacy corpus into a closed
+staged database, validates it, and atomically promotes the database. `flows/`
+is **left exactly where it is** and a notice naming it is reported (see below).
+Moving it is invisible to this build but silently empties the Flow list of any
+build still on the file store, including one launched by accident against a
+shared state root, so both representations are allowed to coexist until every
+build in use is on the SQLite backend. Remove `flows/` by hand once that is
+true. Interrupted cutovers resume from the staged database, which is validated
+for schema and integrity only — the resume deliberately does not re-derive
+records from the legacy source, so editing presets after an interrupted cutover
+cannot wedge it; if that stage is unusable and `flows/` is still present, the
+stage is discarded and rebuilt from source instead. Once `approach.db` exists,
+it is authoritative and no legacy directory affects runtime reads. Saved plans
+and agent sessions remain file-backed.
+
+The cutover writes what it did to stderr **and** to
+`<artifact-root>/FLOW-MIGRATION-NOTICE.txt`, because the TUI takes the alternate
+screen immediately after startup and the stderr copy is easy to miss. The notice
+reports how many of the records found were migrated, names anything skipped, and
+names any Flow whose phase graph could not be rebuilt. It is advisory; delete it
+once read.
+
+Migration failure modes:
+
+- A legacy `meta.json` that cannot be read (permissions, I/O errors) **aborts
+  the migration** and names the offending Flow. Nothing is moved or promoted,
+  so `flows/` stays authoritative; fix the cause and start Approach again.
+- A legacy `meta.json` that cannot be decoded (corrupt JSON, a mismatched
+  `flow_id`, an unsupported `schema_version`) is skipped and named in the
+  notice. Such a record was already invisible to the file-backed store, so
+  nothing that used to work stops working, and the original bytes stay under
+  `flows/`. Note that repairing it no longer brings the Flow back on the next
+  launch: `flows/` is not read again once `approach.db` exists. Recovering it
+  means repairing the file and re-running the cutover, which is only safe
+  immediately after the migration — see the rollback warning below.
+- A Flow that names a preset missing from your config keeps its
+  `missing_edges_unresolved` marker, which blocks phase mutation on it. Preset
+  edge recovery runs **only** during migration, so restoring the preset later
+  does not heal the record on its own. The notice names these Flows, and
+  **immediately after the migration** — while `approach.db` holds nothing but
+  what was just imported — you can restore the presets, move `approach.db`
+  aside, and restart to re-run the cutover from `flows/`. Do not do this later:
+  `flows/` is a snapshot frozen at migration time, not a live mirror, so
+  re-running the cutover once you have created or changed Flows discards all of
+  them. After that point the remedies are to recreate the Flow, or to repair it
+  directly in `approach.db` — the `flows` table stores each record as JSON in
+  its `record` column, and the repair takes **two** edits: set `depends_on` on
+  the phases *and* delete the `graph_recovery` object holding
+  `missing_edges_unresolved`. The fence keys off that marker, not off the edges,
+  so setting `depends_on` alone leaves the Flow blocked.
+- If the cutover is interrupted, the next launch resumes from the staged
+  database when it validates. When it does not, and `flows/` is still present
+  (or there is nothing to migrate at all), the stage is discarded and rebuilt —
+  an interrupted first bootstrap never blocks startup. `flows/` is never moved
+  or modified by Approach, so it always remains a complete copy of the records
+  as they stood on migration day — but see the rollback warning below before
+  treating that as a general undo.
+- **A resumed cutover promotes the stage exactly as it was built.** It is
+  deliberately not re-derived from `flows/`, so any Flow *added to* or *changed
+  in* `flows/` between the interrupted run and the resume — which happens if you
+  fall back to a pre-SQLite build in between — is not in the database. The
+  notice names the additions it can detect; changes to already-staged records
+  keep their pre-change form and cannot be detected by ID. Re-running the
+  cutover picks them up, subject to the rollback warning below.
+- If `approach.db` fails validation, the error names `flows/` when it is still
+  there: move `approach.db` aside — keep it, it holds anything created since the
+  migration and may be repairable by hand — and restart to re-migrate from the
+  originals. Note that this check covers schema *shape* as well as readability,
+  so a database whose data is perfectly intact can land here; the rollback
+  warning below applies in full. A database written by a *newer* Approach is
+  reported separately and carries no such advice: it is not damaged, and the
+  only correct action is to upgrade.
+- A root migrated by an earlier build that did rename `flows/` still has a
+  `flows.legacy/` directory. It is a copy of the original and is never read once
+  `approach.db` exists; keep or remove it as you like.
+
+> **Re-running the cutover is not an undo.** Approach never writes to `flows/`
+> after the migration, so it stays frozen at migration-day state. Moving
+> `approach.db` aside and restarting rebuilds the database from that snapshot,
+> which silently discards every Flow created or changed since. It is the right
+> move in the minutes after a migration, while the database holds nothing else —
+> and the wrong move at any later point. The migration notice says so where it
+> offers it; nothing else in Approach will ever suggest it.
+
+The database carries `PRAGMA user_version`, so a database written by a newer
+Approach is reported as needing an upgrade rather than as corruption.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and

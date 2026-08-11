@@ -1,8 +1,8 @@
 // Package flowstore persists task-centric Flow records beside the agent-session store.
 //
 // Agents persist Flow changes through the `approach flow` CLI
-// (cmd/approach/flow.go), never by editing meta.json by hand — hand edits
-// bypass the store's locking, validation, and phase-ID normalization.
+// (cmd/approach/flow.go), never by editing approach.db — direct edits bypass
+// the store's transactions, validation, and phase-ID normalization.
 package flowstore
 
 import (
@@ -78,7 +78,7 @@ const (
 	GraphRecoveryMissingEdgesUnresolved = "missing_edges_unresolved"
 )
 
-// Store reads and writes flow records under an artifact root.
+// Store reads and writes Flow rows in the artifact root's approach.db.
 type Store struct {
 	backend  backend
 	planSync planPhaseSyncer
@@ -87,16 +87,25 @@ type Store struct {
 	// SetPlanLink still resolves plan paths and constructs a planstore.Store
 	// inline. Finishing that extraction is follow-up work, not part of the
 	// storage seam.
+	//
+	// This is the CONFIGURED root, deliberately not the symlink-resolved one the
+	// SQLite bootstrap canonicalizes for the database, lease, and reserved child
+	// paths. Plan paths are user-facing strings: SetPlanLink derives one from
+	// this root and requires an exact match against any --plan-path the caller
+	// supplies, and it persists that string in the record. Resolving here would
+	// reject the paths launchers build from the configured root, and rewrite
+	// every stored plan_path, on any root with a symlink component — which the
+	// file backend accepted and this cutover keeps accepting.
 	root                      string
 	now                       func() time.Time
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
-	presets                   map[string]Preset
 }
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
-	Root        string
-	Now         func() time.Time
+	Root string
+	Now  func() time.Time
+	// LockTimeout bounds bootstrap lease and SQLite writer acquisition waits.
 	LockTimeout time.Duration
 	Presets     []Preset
 }
@@ -244,12 +253,10 @@ type FlowRecord struct {
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
 	GraphRecovery GraphRecoveryState `json:"-"`
-
-	preserveMissingDependsOn map[string]bool
 }
 
-// GraphRecoveryState reports non-persisted recovery performed while reading a
-// Flow record whose persisted graph metadata was missing or degraded.
+// GraphRecoveryState reports an unresolved graph discovered during one-time
+// legacy migration. The SQLite storage codec persists the unresolved marker.
 type GraphRecoveryState struct {
 	Status string
 }
@@ -351,14 +358,14 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Ordering is load-bearing: the backend's EnsureCollection failure must
-	// still surface before a bad preset does. Only the lockTimeout default is
-	// hoisted, because the backend needs it at construction.
+	// Ordering is load-bearing: a backend bootstrap failure must still surface
+	// before a bad preset does. Only the lockTimeout default is hoisted, because
+	// the backend needs it at construction.
 	lockTimeout := opts.LockTimeout
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	store, err := newFileBackend(root, lockTimeout)
+	store, err := newSQLiteStoreBackend(root, lockTimeout, opts.Presets)
 	if err != nil {
 		return nil, err
 	}
@@ -366,17 +373,27 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	presets, err := presetRegistry(opts.Presets)
-	if err != nil {
-		return nil, err
-	}
 	return &Store{
 		backend:  store,
 		planSync: planstoreSyncer{root: root},
 		root:     root,
 		now:      now,
-		presets:  presets,
 	}, nil
+}
+
+// Close releases the Store's database handles. A Store holds a pooled
+// connection for its whole life, so callers that build one per operation must
+// Close it or leak descriptors; long-lived callers may Close at shutdown or not
+// at all. Using the Store after Close returns an error rather than panicking.
+// It is safe to call more than once.
+//
+// Callers that discard the error are not being sloppy: every record a caller
+// wrote is already durable when its mutation returned, so a Close failure can
+// only mean the final WAL checkpoint did not run. Turning that into a non-zero
+// exit would report a successful mutation as a failure, which is the worse
+// outcome for a CLI whose caller is usually an agent.
+func (s *Store) Close() error {
+	return s.backend.close()
 }
 
 // DefaultRoot returns the default artifact root, matching sessions and plans.
@@ -487,7 +504,10 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, err
 	}
-	record, ok := s.readRecord(flowID)
+	record, ok, err := s.readRecord(flowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(flowID)
 	}
@@ -501,11 +521,14 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
-		stored, ok := sess.get()
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
 		if !ok {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
-		record := s.hydrate(stored, true)
+		record := stored.record
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -699,6 +722,26 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 	return phase
 }
 
+// syncLinkedPlanPhase mirrors a completed Flow phase into its linked plan.
+//
+// It runs INSIDE the backend writer section, which under SQLite is the
+// database-wide write lock rather than the file backend's per-Flow lock. That
+// is deliberate: clause 2 of the backend.update contract makes the
+// needs_attention compensation durable in the same transaction as the phase
+// change, so a sync failure can never leave a completed phase without its
+// marker. The cost is that a contended plan-store file lock stalls every Flow
+// write, not just this one. Lock order is flow-db-writer -> plan-file-lock and
+// is never taken in reverse, so this cannot deadlock — it can only wait.
+//
+// The second cost is ordering: the plan file is durable the moment this returns,
+// while the Flow row is not durable until the commit that follows. A crash or a
+// failed commit in that window leaves the plan phase completed and the Flow
+// phase not. The file backend had the opposite skew (Flow durable first, plan
+// second) — there was never cross-store atomicity — and this direction is the
+// safer of the two: the authoritative store commits last, and re-running the
+// phase completion re-marks the plan phase, which is idempotent. Closing the
+// window for real needs an outbox or a second compensating transaction; that is
+// tracked with the blast-radius work in approach-80e.5, not solved here.
 func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
 	planID := strings.TrimSpace(record.PlanID)
 	if planID == "" || phase.Status != PhaseCompleted {
@@ -824,11 +867,14 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
-		stored, ok := sess.get()
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
 		if !ok {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
-		record := s.hydrate(stored, true)
+		record := stored.record
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -1317,7 +1363,7 @@ func launchPrecedes(launchIDs []string, candidate, current string) bool {
 	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
-// Delete removes only the persisted Flow record directory.
+// Delete removes only the requested Flow row.
 func (s *Store) Delete(flowID string) error {
 	if err := validateFlowID(flowID); err != nil {
 		return err
@@ -1335,17 +1381,20 @@ func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, ti
 
 func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
-		stored, ok := sess.get()
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
 		if !ok {
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
-		record := s.hydrate(stored, selfHealOnRead)
+		record := stored.record
 		if selfHealOnRead {
 			if err := validatePhaseGraphResolved(record); err != nil {
 				return FlowRecord{}, err
 			}
 		}
-		record, err := mutate(record, s.now())
+		record, err = mutate(record, s.now())
 		if err != nil {
 			return FlowRecord{}, err
 		}
@@ -1358,15 +1407,53 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 	})
 }
 
-func validatePhaseGraphResolved(record FlowRecord) error {
+// fencingPresetName returns the normalized preset name when a record's phase
+// graph could not be rebuilt from it, which fences phase mutation on that
+// record, and "" when the record is not fenced.
+func fencingPresetName(record FlowRecord) string {
 	if record.GraphRecovery.Status != GraphRecoveryMissingEdgesUnresolved {
-		return nil
+		return ""
 	}
 	preset := normalizePresetName(record.PresetName)
 	if preset == "" || preset == "default" {
+		return ""
+	}
+	return preset
+}
+
+func mutationFencedByPreset(record FlowRecord) bool {
+	return fencingPresetName(record) != ""
+}
+
+func validatePhaseGraphResolved(record FlowRecord) error {
+	preset := fencingPresetName(record)
+	if preset == "" {
 		return nil
 	}
-	return fmt.Errorf("flow %q has unresolved missing dependencies; restore preset %q or explicit depends_on before mutating phases", record.FlowID, preset)
+	// Two things this deliberately does NOT say.
+	//
+	// "Restore the preset and retry" is false: under the file store edge recovery
+	// re-ran on every read and restoring the preset really did heal the record,
+	// but records are canonical at write time now, so recovery ran once during
+	// migration and never runs again.
+	//
+	// "Remove approach.db and re-run the migration" is worse than false — it
+	// works, and it destroys data. flows/ is a snapshot frozen at migration time,
+	// not a live mirror; nothing has written to it since. Re-running the cutover
+	// discards every Flow created or changed since that day. It is only safe in
+	// the minutes after the migration, which is the one place it is offered (see
+	// reportCutover), and it must never be offered here, where by definition the
+	// database has been in use.
+	// The manual repair names BOTH edits on purpose. This check keys off the
+	// graph_recovery marker, not off the edges, so setting depends_on alone
+	// leaves the record fenced exactly as before — a half-stated recipe reads as
+	// a complete one and sends the operator away convinced the product is broken.
+	return fmt.Errorf("flow %q has unresolved missing dependencies from preset %q;"+
+		" its phase graph could not be rebuilt during the one-time legacy migration and cannot be"+
+		" rebuilt now, because preset edge recovery does not run again — recreate this Flow, or repair"+
+		" it directly in the flow database by setting depends_on on its phases AND removing the"+
+		" %q marker from its stored record (see docs/config.md)",
+		record.FlowID, preset, GraphRecoveryMissingEdgesUnresolved)
 }
 
 func appendUnique(values []string, value string) []string {
@@ -1380,21 +1467,14 @@ func appendUnique(values []string, value string) []string {
 
 // List returns records matching filter, sorted by UpdatedAt descending.
 func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
-	stored, err := s.backend.list()
+	stored, err := s.backend.list(filter)
 	if err != nil {
 		return nil, err
 	}
 	var records []FlowRecord
 	for _, flow := range stored {
-		// List reaches hydration through readRecord today, so it self-heals.
-		record := s.hydrate(flow, true)
-		if matchesFilter(record, filter) {
-			records = append(records, record)
-		}
+		records = append(records, flow.record)
 	}
-	sort.SliceStable(records, func(i, j int) bool {
-		return records[i].UpdatedAt.After(records[j].UpdatedAt)
-	})
 	return records, nil
 }
 
@@ -1974,27 +2054,27 @@ func (s *Store) saveSession(sess flowSession, record FlowRecord) error {
 	return sess.save(record)
 }
 
-func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
-	stored, ok := s.backend.get(flowID)
-	if !ok {
-		return FlowRecord{}, false
+func (s *Store) readRecord(flowID string) (FlowRecord, bool, error) {
+	stored, ok, err := s.backend.get(flowID)
+	if err != nil {
+		return FlowRecord{}, false, err
 	}
-	return s.hydrate(stored, true), true
+	if !ok {
+		return FlowRecord{}, false, nil
+	}
+	return stored.record, true, nil
 }
 
-// hydrate turns a decoded record plus its raw encoding hints into the domain
-// record the public API returns: legacy field defaults, graph recovery,
-// normalization, readiness, and derived status.
-func (s *Store) hydrate(stored storedFlow, selfHealOnRead bool) FlowRecord {
+// canonicalizeLegacyFlow performs the one-time healing applied while importing
+// historical meta.json records. Runtime SQLite reads only validate and decode.
+func canonicalizeLegacyFlow(stored legacyStoredFlow, presets map[string]Preset) FlowRecord {
 	record := stored.record
-	presence := stored.dependsOnHints()
-	// Legacy records predate per-flow headless and stored no field for it, so
-	// they read back as headless rather than as Go's zero value.
-	if stored.legacyEncoding && !stored.headlessPresent {
+	presence := stored.dependsOnPresence
+	if !stored.headlessPresent {
 		record.Headless = true
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
-	record = s.restoreMissingDependsOn(record, presence)
+	record = restoreLegacyMissingDependsOn(record, presence, presets)
 	unresolvedGraph := false
 	if record.GraphRecovery.Status == GraphRecoveryPresetEdgesRestored {
 		selfHeal = true
@@ -2002,29 +2082,22 @@ func (s *Store) hydrate(stored storedFlow, selfHealOnRead bool) FlowRecord {
 		selfHeal = false
 		unresolvedGraph = true
 	}
-	if selfHealOnRead {
-		if unresolvedGraph {
-			record = normalizeRecordBase(record)
-			record = normalizeReviewOutcomes(record)
-		} else {
-			record = normalizeRecord(record, selfHeal)
-		}
-	} else {
+	if unresolvedGraph {
 		record = normalizeRecordBase(record)
-		if unresolvedGraph {
-			record.preserveMissingDependsOn = missingTopLevelDependsOnByID(record.Phases, presence)
-		}
+		record = normalizeReviewOutcomes(record)
+	} else {
+		record = normalizeRecord(record, selfHeal)
 	}
 	record.Status = DeriveStatus(record)
 	return record
 }
 
-func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDependsOnState) FlowRecord {
+func restoreLegacyMissingDependsOn(record FlowRecord, presence []rawDependsOnState, presets map[string]Preset) FlowRecord {
 	if rawDependsOnPresentForEveryTopLevel(record.Phases, presence) {
 		record.Phases = normalizeDependsOnValues(record.Phases)
 		return record
 	}
-	if preset, ok := s.presetForRecovery(record); ok && presetMatchesRecord(preset, record) {
+	if preset, ok := presetForLegacyRecovery(record, presets); ok && presetMatchesRecord(preset, record) {
 		record.Phases = applyPresetDependsOn(record.Phases, preset)
 		record.GraphRecovery.Status = GraphRecoveryPresetEdgesRestored
 		return record
@@ -2038,12 +2111,12 @@ func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDepends
 	return record
 }
 
-func (s *Store) presetForRecovery(record FlowRecord) (Preset, bool) {
+func presetForLegacyRecovery(record FlowRecord, presets map[string]Preset) (Preset, bool) {
 	name := normalizePresetName(record.PresetName)
-	if name == "" || name == "default" || s.presets == nil {
+	if name == "" || name == "default" || presets == nil {
 		return Preset{}, false
 	}
-	preset, ok := s.presets[name]
+	preset, ok := presets[name]
 	return preset, ok
 }
 
@@ -2111,26 +2184,6 @@ func rawDependsOnPresentForEveryTopLevel(phases []FlowPhase, presence []rawDepen
 	return seenTopLevel
 }
 
-func missingTopLevelDependsOnByID(phases []FlowPhase, presence []rawDependsOnState) map[string]bool {
-	missing := make(map[string]bool)
-	for i, phase := range phases {
-		if phase.ParentPhaseID != "" {
-			continue
-		}
-		if i < len(presence) && presence[i].Present {
-			continue
-		}
-		id := artifacts.NormalizePhaseID(phase.PhaseID)
-		if id != "" {
-			missing[id] = true
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return missing
-}
-
 func flowNotFoundError(flowID string) error {
 	return fmt.Errorf("flow %q not found: %w", flowID, errFlowNotFound)
 }
@@ -2147,13 +2200,6 @@ func validatePhaseID(phaseID string) error {
 		return fmt.Errorf("invalid phase id %q", phaseID)
 	}
 	return nil
-}
-
-func matchesFilter(record FlowRecord, filter FlowFilter) bool {
-	if filter.RepoPath != "" && filepath.Clean(record.RepoPath) != filepath.Clean(filter.RepoPath) {
-		return false
-	}
-	return true
 }
 
 func defaultTime(value, fallback time.Time) time.Time {

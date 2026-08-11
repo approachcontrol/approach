@@ -166,6 +166,7 @@ func runFlowCreate(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.CreateWithOptions(flowstore.FlowRecord{
 		Title:        *title,
 		Instructions: body,
@@ -259,6 +260,7 @@ func runFlowList(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	records, err := store.List(flowstore.FlowFilter{RepoPath: *repoPath})
 	if err != nil {
 		return err
@@ -305,6 +307,7 @@ func runFlowRead(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.Read(*flowID)
 	if err != nil {
 		return err
@@ -465,6 +468,7 @@ func runFlowPhaseSet(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.SetPhase(flowstore.PhaseUpdate{
 		FlowID:  *flowID,
 		PhaseID: *phaseID,
@@ -527,6 +531,7 @@ func runFlowPhaseAction(args []string, deps runDeps, spec flowPhaseActionSpec) e
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	actionOutcome := strings.TrimSpace(*outcome)
 	if actionOutcome == "" {
 		record, err := store.Read(*flowID)
@@ -604,6 +609,7 @@ func runFlowPhaseRestart(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	note := strings.TrimSpace(*notes)
 	if note == "" {
 		note = fmt.Sprintf("Rerunning %s after addressing prior findings.", defaultPhaseTitle(*phaseID))
@@ -652,6 +658,7 @@ func runFlowPhaseReset(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{
 		FlowID:  *flowID,
 		PhaseID: *phaseID,
@@ -868,6 +875,7 @@ func runFlowPhaseAddChild(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
 		FlowID:        *flowID,
 		ParentPhaseID: *parentPhaseID,
@@ -951,6 +959,7 @@ func runFlowPlanSet(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.SetPlanLink(flowstore.PlanLinkUpdate{
 		FlowID:   *flowID,
 		PlanID:   *planID,
@@ -1043,6 +1052,7 @@ func runFlowIssueSet(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.SetIssue(flowstore.IssueUpdate{
 		FlowID:   *flowID,
 		Provider: *provider,
@@ -1137,6 +1147,7 @@ func runFlowPRSet(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.SetPR(flowstore.PRUpdate{
 		FlowID:     *flowID,
 		Provider:   *provider,
@@ -1239,6 +1250,7 @@ func runFlowMergeSet(args []string, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = store.Close() }()
 	record, err := store.SetMerge(flowstore.MergeUpdate{
 		FlowID:   *flowID,
 		Status:   *status,

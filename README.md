@@ -194,6 +194,12 @@ Flows. The full reference — models and reasoning effort, Flow
 presets, prompt templates, bootstrap hooks, sessions storage, terminal
 settings, and environment variables — is in [docs/config.md](docs/config.md).
 
+Flows are stored in `<artifact-root>/approach.db` using SQLite WAL mode. On the
+first open after upgrading, Approach migrates legacy `<artifact-root>/flows/`
+records, leaving that directory unchanged in place and reporting what it did
+both on stderr and in `<artifact-root>/FLOW-MIGRATION-NOTICE.txt`. Saved plans
+and agent sessions remain file-backed.
+
 ## Development
 
 ```bash
