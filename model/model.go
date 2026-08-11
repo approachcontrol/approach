@@ -1028,7 +1028,7 @@ func (m Model) View() string {
 		EmbeddedTerminalLines:        m.embeddedTerminalLines(),
 		EmbeddedTerminalPrefix:       m.terminalPrefixActive,
 		EmbeddedTerminalVisible:      m.terminalDockVisible,
-		EmbeddedTerminalFocused:      m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal,
+		EmbeddedTerminalFocused:      m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal,
 		Plans:                        plans,
 		PlanSelected:                 planSelected,
 		PlanScroll:                   planScroll,
@@ -1415,7 +1415,13 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if !m.terminalEffectivelyExpanded() && m.terminalFocus == terminalFocusTerminal {
+			m.activePane = m.contentPane
+			m.terminalFocus = terminalFocusList
+			m.terminalPrefixActive = false
+		}
 		m = m.resizeEmbeddedTerminals()
+		m = m.reflowForTerminalDock()
 		m = m.clampSelectionsAfterFilter()
 	case embeddedSessionPickerSelectedMsg:
 		return m.handleEmbeddedSessionPickerSelected(msg)

@@ -25,7 +25,7 @@ import (
 
 func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
@@ -8508,9 +8508,8 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
-	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(18-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	wantStartWidth := ui.EmbeddedTerminalPTYWidth(140)
-	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
+	wantStartHeight := ui.ResolveEmbeddedTerminalDock(24, true).BackendPTYRows
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
 	}
@@ -8522,10 +8521,9 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
-	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
-	_, terminalResizeOuterHeight := ui.EmbeddedTerminalDockHeights(20-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 23})
 	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(160)
-	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
+	wantResizeHeight := ui.ResolveEmbeddedTerminalDock(23, true).BackendPTYRows
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
 		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
@@ -9206,7 +9204,7 @@ func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t
 	}
 	m, _ = update(m, cmd())
 
-	wantHeight := flowTerminalPTYHeightForViewport(18)
+	wantHeight := flowTerminalPTYHeightForViewport(24)
 	wantSearchSize := [2]int{
 		ui.EmbeddedTerminalPTYWidth(140),
 		wantHeight,
@@ -9256,8 +9254,7 @@ func requireLatestResize(t *testing.T, fakeTerm *fakeEmbeddedTerminal, want [2]i
 }
 
 func flowTerminalPTYHeightForViewport(height int) int {
-	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
-	return ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
+	return ui.ResolveEmbeddedTerminalDock(height, true).BackendPTYRows
 }
 
 func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
@@ -11620,7 +11617,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 			m, _ = switchTestMode(m, ui.ModeFlows)
 
 			m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
@@ -11985,7 +11982,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)

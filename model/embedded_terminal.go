@@ -325,12 +325,15 @@ func (m Model) embeddedTerminalTabsFiltered() []ui.EmbeddedTerminalTab {
 }
 
 func (m Model) embeddedTerminalLines() []string {
+	allocation := m.embeddedTerminalDockAllocation()
+	if allocation.State != ui.EmbeddedTerminalDockExpanded || allocation.RenderPTYRows <= 0 {
+		return nil
+	}
 	slot, _, ok := m.activeTerminal()
 	if !ok || slot.Terminal == nil {
 		return nil
 	}
-	height := m.embeddedTerminalContentHeight()
-	return slot.Terminal.VisibleLines(m.embeddedTerminalWidth(), height)
+	return slot.Terminal.VisibleLines(m.embeddedTerminalWidth(), allocation.RenderPTYRows)
 }
 
 func (m Model) embeddedTerminalOuterWidth() int {
@@ -341,19 +344,20 @@ func (m Model) embeddedTerminalWidth() int {
 	return ui.EmbeddedTerminalPTYWidth(m.embeddedTerminalOuterWidth())
 }
 
-// embeddedTerminalOuterHeight is the height the top-level dock partition works
-// from. It is mode-independent so the terminal keeps one size across views.
-func (m Model) embeddedTerminalOuterHeight() int {
-	height := m.height - ui.BranchContentOverhead
-	if height > 0 {
-		return height
-	}
-	return 0
+func (m Model) embeddedTerminalContentHeight() int {
+	return m.embeddedTerminalDockAllocation().BackendPTYRows
 }
 
-func (m Model) embeddedTerminalContentHeight() int {
-	_, terminalHeight := ui.EmbeddedTerminalDockHeights(m.embeddedTerminalOuterHeight(), ui.EmbeddedTerminalDockExpanded)
-	return ui.EmbeddedTerminalPTYHeight(terminalHeight)
+func (m Model) embeddedTerminalDockAllocation() ui.EmbeddedTerminalDockAllocation {
+	return ui.ResolveEmbeddedTerminalDock(m.height, len(m.embeddedTerminals) > 0 && m.terminalDockVisible)
+}
+
+func (m Model) prospectiveEmbeddedTerminalDockAllocation(expansionRequested bool) ui.EmbeddedTerminalDockAllocation {
+	return ui.ResolveEmbeddedTerminalDock(m.height, expansionRequested)
+}
+
+func (m Model) terminalEffectivelyExpanded() bool {
+	return len(m.embeddedTerminals) > 0 && m.embeddedTerminalDockAllocation().State == ui.EmbeddedTerminalDockExpanded
 }
 
 func (m Model) nextEmbeddedTerminalNumber() (int, bool) {
@@ -373,13 +377,29 @@ func (m Model) nextEmbeddedTerminalNumber() (int, bool) {
 }
 
 func (m Model) openEmbeddedTerminal(ctx actions.AgentLaunchContext, record sessions.SessionRecord) (Model, bool, error) {
-	next, opened, err, _ := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), "", "", m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
+	requested := true
+	height := m.prospectiveEmbeddedTerminalDockAllocation(requested).BackendPTYRows
+	next, opened, err, _ := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeSession, string(record.Provider), embeddedTerminalIdentity(record), "", "", m.embeddedTerminalWidth(), height)
+	if opened {
+		next.terminalDockVisible = requested
+		next = next.reflowForTerminalDock()
+	}
 	return next, opened, err
 }
 
 func (m Model) openFlowEmbeddedTerminal(ctx actions.AgentLaunchContext) (Model, bool, error, tea.Cmd) {
 	activeNum := m.activeTerminalNum
-	next, opened, err, prefillCmd := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), m.embeddedTerminalContentHeight())
+	requested := m.terminalDockVisible
+	if !ctx.FlowAutoLaunch && !ctx.Headless {
+		requested = true
+	}
+	height := m.prospectiveEmbeddedTerminalDockAllocation(requested).BackendPTYRows
+	next, opened, err, prefillCmd := m.openEmbeddedTerminalWithLabel(ctx, embeddedTerminalScopeFlow, ctx.Command, flowEmbeddedTerminalIdentity(ctx), ctx.FlowID, ctx.FlowPhaseID, m.embeddedTerminalWidth(), height)
+	if opened {
+		next.terminalDockVisible = requested
+		next = next.resizeEmbeddedTerminals()
+		next = next.reflowForTerminalDock()
+	}
 	if opened && prefillCmd == nil && ctx.FlowAutoLaunch && activeNum != 0 {
 		next.activeTerminalNum = activeNum
 	}
@@ -572,10 +592,11 @@ func cleanEmbeddedTerminalPath(path string) string {
 }
 
 func (m Model) resizeEmbeddedTerminals() Model {
-	if len(m.embeddedTerminals) == 0 || !m.terminalDockVisible {
+	if len(m.embeddedTerminals) == 0 {
 		return m
 	}
 	width := m.embeddedTerminalWidth()
+	height := m.embeddedTerminalDockAllocation().BackendPTYRows
 	for _, slot := range m.embeddedTerminals {
 		if slot.Terminal == nil {
 			continue
@@ -583,7 +604,7 @@ func (m Model) resizeEmbeddedTerminals() Model {
 		if !embeddedTerminalRunning(slot.Terminal) {
 			continue
 		}
-		if err := slot.Terminal.Resize(width, m.embeddedTerminalContentHeight()); err != nil {
+		if err := slot.Terminal.Resize(width, height); err != nil {
 			m = m.setStatus(statusOther, err.Error())
 		}
 	}
@@ -592,14 +613,16 @@ func (m Model) resizeEmbeddedTerminals() Model {
 
 func (m Model) focusEmbeddedTerminalInput() Model {
 	m.activePane = m.contentPane
-	m.terminalFocus = terminalFocusTerminal
-	m.terminalPrefixActive = false
-	if m.terminalDockVisible {
-		return m
-	}
 	m.terminalDockVisible = true
+	m.terminalPrefixActive = false
 	m = m.resizeEmbeddedTerminals()
-	return m.reflowForTerminalDock()
+	m = m.reflowForTerminalDock()
+	if m.terminalEffectivelyExpanded() {
+		m.terminalFocus = terminalFocusTerminal
+	} else {
+		m.terminalFocus = terminalFocusList
+	}
+	return m
 }
 
 func embeddedTerminalIdentity(record sessions.SessionRecord) string {
@@ -683,7 +706,7 @@ func (m Model) cycleEmbeddedTerminal(direction int) Model {
 }
 
 func (m Model) handleEmbeddedTerminalKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	if m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal() {
+	if m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal() {
 		return m.handleFocusedEmbeddedTerminalKey(msg)
 	}
 	return m, nil, false

@@ -122,6 +122,46 @@ func TestEmbeddedTerminalDockHeights(t *testing.T) {
 	}
 }
 
+func TestResolveEmbeddedTerminalDock(t *testing.T) {
+	tests := []struct {
+		name          string
+		height        int
+		requested     bool
+		wantState     EmbeddedTerminalDockState
+		wantDock      int
+		wantRenderPTY int
+		wantBackend   int
+		wantShared    int
+	}{
+		{name: "preferred tall", height: 65, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 45, wantRenderPTY: 42, wantBackend: 42, wantShared: 19},
+		{name: "capped tall", height: 64, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 44, wantRenderPTY: 41, wantBackend: 41, wantShared: 19},
+		{name: "minimum expanded", height: 24, requested: true, wantState: EmbeddedTerminalDockExpanded, wantDock: 4, wantRenderPTY: 1, wantBackend: 1, wantShared: 19},
+		{name: "auto collapsed", height: 23, requested: true, wantState: EmbeddedTerminalDockCollapsed, wantDock: 1, wantBackend: 1, wantShared: 21},
+		{name: "small collapsed", height: 7, requested: true, wantState: EmbeddedTerminalDockCollapsed, wantDock: 1, wantBackend: 1, wantShared: 5},
+		{name: "chip suppressed", height: 6, requested: true, wantState: EmbeddedTerminalDockCollapsed, wantBackend: 1, wantShared: 5},
+		{name: "manually hidden", height: 65, wantState: EmbeddedTerminalDockCollapsed, wantDock: 1, wantBackend: 1, wantShared: 63},
+		{name: "zero", requested: true, wantState: EmbeddedTerminalDockCollapsed, wantBackend: 1},
+		{name: "negative", height: -5, requested: true, wantState: EmbeddedTerminalDockCollapsed, wantBackend: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveEmbeddedTerminalDock(tt.height, tt.requested)
+			if got.State != tt.wantState || got.DockRows != tt.wantDock || got.RenderPTYRows != tt.wantRenderPTY || got.BackendPTYRows != tt.wantBackend || got.SharedOuterRows != tt.wantShared {
+				t.Fatalf("allocation = %#v, want state=%d dock=%d render=%d backend=%d shared=%d", got, tt.wantState, tt.wantDock, tt.wantRenderPTY, tt.wantBackend, tt.wantShared)
+			}
+			viewport := max(tt.height, 0)
+			statusRows := min(1, viewport)
+			if tt.height >= 0 && statusRows+got.DockRows+got.SharedOuterRows != tt.height {
+				t.Fatalf("allocation does not conserve %d rows: status=%d allocation=%#v", tt.height, statusRows, got)
+			}
+			if got.DockRows+got.SharedOuterRows > viewport {
+				t.Fatalf("allocation exceeds viewport %d: %#v", viewport, got)
+			}
+		})
+	}
+}
+
 func forceTrueColor(t *testing.T) {
 	t.Helper()
 	previousProfile := lipgloss.ColorProfile()
@@ -528,7 +568,7 @@ func TestRender_SessionsModeShowsSessionRowsAboveEmbeddedTerminalDock(t *testing
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
-		Height:   14,
+		Height:   24,
 		Mode:     ModeSessions,
 		Sessions: []sessions.SessionRecord{{
 			Provider:  sessions.ProviderCodex,
@@ -555,8 +595,8 @@ func TestRender_SessionsModeShowsSessionRowsAboveEmbeddedTerminalDock(t *testing
 		}
 	}
 	lines := strippedLines(view)
-	if len(lines) != 14 {
-		t.Fatalf("rendered line count = %d, want 14:\n%s", len(lines), view)
+	if len(lines) != 24 {
+		t.Fatalf("rendered line count = %d, want 24:\n%s", len(lines), view)
 	}
 	for i, line := range lines {
 		if width := lipgloss.Width(line); width > 180 {
@@ -625,7 +665,7 @@ func TestRender_EmbeddedTerminalDockPersistsUnderNonFlowLists(t *testing.T) {
 			p.Repos = []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}
 			p.Selected = 0
 			p.Width = 180
-			p.Height = 18
+			p.Height = 24
 			p.ActivePane = PaneTop
 			p.EmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "dock", State: "running", Active: true}}
 			p.EmbeddedTerminalLines = []string{"persistent terminal output"}
@@ -643,8 +683,8 @@ func TestRender_EmbeddedTerminalDockPersistsUnderNonFlowLists(t *testing.T) {
 }
 
 func TestEmbeddedTerminalDockRows(t *testing.T) {
-	if got := EmbeddedTerminalDockRows(20, EmbeddedTerminalDockExpanded); got != 11 {
-		t.Fatalf("expanded dock rows = %d, want 11", got)
+	if got := EmbeddedTerminalDockRows(24, EmbeddedTerminalDockExpanded); got != 4 {
+		t.Fatalf("expanded dock rows = %d, want 4", got)
 	}
 	if got := EmbeddedTerminalDockRows(20, EmbeddedTerminalDockCollapsed); got != TerminalChipRows {
 		t.Fatalf("collapsed dock rows = %d, want %d", got, TerminalChipRows)
@@ -659,7 +699,7 @@ func TestRenderEmbeddedTerminalDockPaneShowsCollapsedChip(t *testing.T) {
 		{Number: 1, Provider: "codex", Identity: "session", State: "running"},
 		{Number: 2, Provider: "claude", Identity: "review", State: "exited", Active: true},
 	}
-	lines := stripLines(renderEmbeddedTerminalDockPane(tabs, nil, false, false, 80, TerminalChipRows, EmbeddedTerminalDockCollapsed))
+	lines := stripLines(renderEmbeddedTerminalDockPane(tabs, nil, false, false, false, 80, TerminalChipRows, EmbeddedTerminalDockCollapsed))
 	if len(lines) != TerminalChipRows {
 		t.Fatalf("collapsed dock line count = %d, want %d: %#v", len(lines), TerminalChipRows, lines)
 	}
@@ -679,7 +719,7 @@ func TestRenderExpandedTerminalDockIsTopLevelFullWidthPane(t *testing.T) {
 		Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:                0,
 		Width:                   120,
-		Height:                  20,
+		Height:                  24,
 		Mode:                    ModeSessions,
 		ActivePane:              PaneTop,
 		Sessions:                []sessions.SessionRecord{{Provider: sessions.ProviderCodex, Branch: "feature/dock"}},
@@ -718,6 +758,82 @@ func TestRenderExpandedTerminalDockIsTopLevelFullWidthPane(t *testing.T) {
 		if strings.HasPrefix(line, "┌") && !strings.Contains(line, "┐┌") {
 			t.Fatalf("pane row line %d looks like a nested full-width terminal frame: %q", i, line)
 		}
+	}
+}
+
+func TestRenderResponsiveTerminalPreservesStackedPanesAtThreshold(t *testing.T) {
+	worktrees := make([]gitquery.Worktree, 6)
+	flows := make([]flowstore.FlowRecord, 6)
+	for i := range 6 {
+		worktrees[i] = gitquery.Worktree{Path: fmt.Sprintf("/dev/wt-%d", i+1), BranchName: fmt.Sprintf("top-%d", i+1)}
+		flows[i] = flowstore.FlowRecord{FlowID: fmt.Sprintf("flow-%d", i+1), Title: fmt.Sprintf("bottom-%d", i+1), Branch: fmt.Sprintf("bottom-%d", i+1), WorktreePath: fmt.Sprintf("/dev/bottom-%d", i+1), Status: flowstore.StatusPending}
+	}
+	p := RenderParams{
+		Repos:                   []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:                0,
+		Width:                   180,
+		Height:                  24,
+		Mode:                    ModeFlows,
+		TopMode:                 ModeWorktrees,
+		BottomMode:              ModeFlows,
+		ContentPane:             PaneBottom,
+		ActivePane:              PaneBottom,
+		Worktrees:               worktrees,
+		Flows:                   flows,
+		EmbeddedTerminals:       []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}},
+		EmbeddedTerminalLines:   []string{"threshold output"},
+		EmbeddedTerminalVisible: true,
+	}
+
+	plain := ansi.Strip(Render(p))
+	for _, want := range []string{"[1] git", "[3] flows", "top-1", "top-6", "Status", "bottom-1", "bottom-5", "threshold output"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("threshold render missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "bottom-6") {
+		t.Fatalf("bottom pane exceeded its six-row list allocation (table header plus five records):\n%s", plain)
+	}
+	if got := len(strings.Split(plain, "\n")); got != p.Height {
+		t.Fatalf("threshold render height = %d, want %d", got, p.Height)
+	}
+}
+
+func TestRenderAutoCollapsedTerminalChipAndShortcutRailAgree(t *testing.T) {
+	p := RenderParams{
+		Repos:                 []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
+		Selected:              0,
+		Width:                 180,
+		Height:                23,
+		Mode:                  ModeSessions,
+		TopMode:               ModeWorktrees,
+		BottomMode:            ModeSessions,
+		ContentPane:           PaneBottom,
+		ActivePane:            PaneBottom,
+		EmbeddedTerminals:     []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}},
+		EmbeddedTerminalLines: []string{"invisible output"},
+	}
+
+	p.EmbeddedTerminalVisible = true
+	autoCollapsed := ansi.Strip(Render(p))
+	for _, want := range []string{"auto-collapsed · ctrl+t hide", "ctrl+t hide terminal"} {
+		if !strings.Contains(autoCollapsed, want) {
+			t.Fatalf("requested-open collapsed surface missing %q:\n%s", want, autoCollapsed)
+		}
+	}
+	if strings.Contains(autoCollapsed, "invisible output") {
+		t.Fatalf("auto-collapsed terminal rendered PTY output:\n%s", autoCollapsed)
+	}
+
+	p.EmbeddedTerminalVisible = false
+	manuallyHidden := ansi.Strip(Render(p))
+	for _, want := range []string{"ctrl+t show", "ctrl+t show terminal"} {
+		if !strings.Contains(manuallyHidden, want) {
+			t.Fatalf("manually hidden surface missing %q:\n%s", want, manuallyHidden)
+		}
+	}
+	if strings.Contains(manuallyHidden, "auto-collapsed") {
+		t.Fatalf("manually hidden terminal was labelled auto-collapsed:\n%s", manuallyHidden)
 	}
 }
 
@@ -883,7 +999,7 @@ func TestRenderEmptyTerminalDockChipIsFullWidthAboveStatusBar(t *testing.T) {
 func TestRenderEmbeddedTerminalChipDegradesWithoutOverflow(t *testing.T) {
 	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
 	for width := 1; width <= 40; width++ {
-		chip := renderEmbeddedTerminalChip(tabs, width)
+		chip := renderEmbeddedTerminalChip(tabs, false, width)
 		if got := lipgloss.Width(chip); got > width {
 			t.Fatalf("width %d chip overflowed to %d columns: %q", width, got, ansi.Strip(chip))
 		}
@@ -895,14 +1011,14 @@ func TestRenderEmbeddedTerminalChipDegradesWithoutOverflow(t *testing.T) {
 
 func TestRenderEmbeddedTerminalChipOnlyAppearsForCollapsedDock(t *testing.T) {
 	tabs := []EmbeddedTerminalTab{{Number: 1, Provider: "codex", State: "running", Active: true}}
-	expanded := strings.Join(stripLines(renderEmbeddedTerminalDockPane(tabs, nil, false, false, 40, 6, EmbeddedTerminalDockExpanded)), "\n")
+	expanded := strings.Join(stripLines(renderEmbeddedTerminalDockPane(tabs, nil, false, false, true, 40, 6, EmbeddedTerminalDockExpanded)), "\n")
 	if strings.Contains(expanded, "ctrl+t show") {
 		t.Fatalf("expanded dock rendered collapsed chip:\n%s", expanded)
 	}
 }
 
 func TestRenderEmbeddedTerminalDockPaneShowsEmptyChipWithoutTerminals(t *testing.T) {
-	lines := stripLines(renderEmbeddedTerminalDockPane(nil, nil, false, false, 40, TerminalChipRows, EmbeddedTerminalDockCollapsed))
+	lines := stripLines(renderEmbeddedTerminalDockPane(nil, nil, false, false, false, 40, TerminalChipRows, EmbeddedTerminalDockCollapsed))
 	if len(lines) != TerminalChipRows {
 		t.Fatalf("empty dock line count = %d, want %d: %#v", len(lines), TerminalChipRows, lines)
 	}
@@ -917,7 +1033,7 @@ func TestRenderEmbeddedTerminalDockPaneShowsEmptyChipWithoutTerminals(t *testing
 
 func TestRenderEmbeddedTerminalChipDegradesWithoutTerminals(t *testing.T) {
 	for width := 1; width <= 40; width++ {
-		chip := renderEmbeddedTerminalChip(nil, width)
+		chip := renderEmbeddedTerminalChip(nil, false, width)
 		if got := lipgloss.Width(chip); got > width {
 			t.Fatalf("width %d empty chip overflowed to %d columns: %q", width, got, ansi.Strip(chip))
 		}
@@ -1125,7 +1241,7 @@ func TestRender_SessionsEmbeddedTerminalShowsPrefixCue(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    180,
-		Height:   10,
+		Height:   24,
 		Mode:     ModeSessions,
 		EmbeddedTerminals: []EmbeddedTerminalTab{{
 			Number:   1,
@@ -5124,7 +5240,7 @@ func TestRender_CollapsedRepoPaneHidesRestoreHintWhileTerminalOwnsInput(t *testi
 			params.Repos = []scanner.Repo{{Path: "/a", DisplayName: "alpha"}}
 			params.Selected = 0
 			params.Width = 100
-			params.Height = 10
+			params.Height = 24
 			params.ActivePane = PaneTop
 			params.RepoPaneCollapsed = true
 

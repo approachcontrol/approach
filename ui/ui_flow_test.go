@@ -205,7 +205,7 @@ func TestRender_FlowsModeSplitsListAndEmbeddedTerminal(t *testing.T) {
 		Repos:    []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected: 0,
 		Width:    260,
-		Height:   18,
+		Height:   29,
 		Mode:     ModeFlows,
 		Flows: []flowstore.FlowRecord{{
 			FlowID: "flow-1",
@@ -258,7 +258,7 @@ func TestRender_ActiveFlowsSplitPaneShowsRepoColumn(t *testing.T) {
 		Repos:       []scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}},
 		Selected:    0,
 		Width:       240,
-		Height:      14,
+		Height:      24,
 		Mode:        ModeSessions,
 		ActiveFlows: true,
 		ActivePane:  PaneBottom,
@@ -1577,6 +1577,7 @@ func TestRender_FlowsModeShowsDestructiveModeAndDeleteShortcuts(t *testing.T) {
 	terminalFocused.EmbeddedTerminals = []EmbeddedTerminalTab{{Number: 1, Provider: "codex", Identity: "implementation", State: "running", Active: true}}
 	terminalFocused.EmbeddedTerminalVisible = true
 	terminalFocused.EmbeddedTerminalFocused = true
+	terminalFocused.Height = 24
 	if pane := shortcutPaneText(Render(terminalFocused)); strings.Contains(pane, "d      delete") {
 		t.Fatalf("focused Flow terminal should not expose delete shortcut:\n%s", pane)
 	}
