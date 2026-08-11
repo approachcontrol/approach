@@ -2,7 +2,8 @@ package model
 
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
-// than constants; only flowLaunchKindManualPhase is implemented today.
+// than constants; flowLaunchKindManualPhase and flowLaunchKindAutoPhase are
+// implemented today and requestFlowLaunch refuses the rest.
 type flowLaunchKind int
 
 const (

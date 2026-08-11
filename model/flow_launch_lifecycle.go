@@ -32,9 +32,12 @@ const (
 
 // flowLaunchOutcome classifies what an autoPhase read stage decided. It exists
 // so the handler can release, re-arm, or drop without matching on error text.
-// The zero value is inert on purpose: flowLaunchPrepareCmd builds the prepared
-// event by copying the read event, so a plain iota would silently promote every
-// prepared auto event to "ok".
+// The zero value is inert on purpose, so that an auto read event built without
+// explicitly classifying itself falls into handleAutoFlowLaunchRead's default
+// branch and releases the attempt. Starting the enum at "ok" would make that
+// same omission launch instead, which is the one outcome a misclassified event
+// must never reach. What keeps the field from being read on the prepared hop is
+// the Stage switch in handleFlowLaunchEvent, not this ordering.
 type flowLaunchOutcome int
 
 const (
@@ -585,9 +588,12 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 		// The re-arm sits behind matchingFlowLaunchAttempt, so a superseded
 		// attempt cannot re-arm a drain a newer one owns. The status is the
 		// 3 s transient today's synchronous preflight failure already sets;
-		// its expiry command has to be returned or it never fires.
+		// its expiry command has to be returned or it never fires. The re-arm
+		// is also what makes this failure repeat on the next poll, which is why
+		// it reports through the yielding setter: it will be back, and the
+		// transition it would otherwise overwrite will not.
 		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID)
-		return m.setAutoAdvanceStatus("Flow " + msg.FlowTitle + ": " + msg.Err)
+		return m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + msg.Err)
 	case flowLaunchOutcomeRetry:
 		// The blocker clears on its own, so re-arming is what makes the launch
 		// resume without waiting for another completion edge.
@@ -605,12 +611,14 @@ func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunc
 	prepareCmd := m.flowLaunchPrepareCmd(msg, attempt.Settings)
 	// The queued announcement lands here rather than at admission, so it still
 	// means "preflight passed" and cannot repeat every poll for a Flow that is
-	// refused before it launches. The blank-title guard is on the record: the
+	// refused before it launches. Arriving a hop after the transition statuses
+	// its own poll computed is why it announces through the yielding setter
+	// rather than the replacing one. The blank-title guard is on the record: the
 	// event's title has already fallen back to the Flow ID, so guarding on it
 	// would be dead code that ships a status a titleless Flow never had.
 	var statusCmd tea.Cmd
 	if strings.TrimSpace(msg.Record.Title) != "" {
-		m, statusCmd = m.setAutoAdvanceStatus("Flow " + msg.FlowTitle + ": " + autoAdvancePhaseLabel(msg.PhaseID) + " queued")
+		m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + autoAdvancePhaseLabel(msg.PhaseID) + " queued")
 	}
 	return m, batchNonNil(statusCmd, prepareCmd)
 }

@@ -19,6 +19,15 @@ import (
 // the lifecycle performs would resolve against the developer's live state root.
 // Registration happens wherever a test feeds records into the poll, which is
 // also what lets the authoritative record change between polls.
+//
+// It is package-global because the seam it feeds is installed at construction,
+// before a test has anywhere to hang per-test state. Tests reuse Flow IDs like
+// "flow-1", so newAutoAdvanceTestModel clears it: without that, a record left
+// behind by an earlier test would answer a later test's authoritative read for
+// a Flow it never registered, and the test would pass on borrowed state. Every
+// registration path runs against an already-constructed model, so clearing at
+// construction cannot drop a record a live test still needs. Sharing one map
+// does forbid t.Parallel() in the tests that use it.
 var autoAdvanceTestFlows = map[string]flowstore.FlowRecord{}
 
 func recordAutoAdvanceTestFlows(records []flowstore.FlowRecord) {
@@ -37,6 +46,7 @@ func autoAdvanceTestReadFlow(flowID string) (flowstore.FlowRecord, error) {
 }
 
 func newAutoAdvanceTestModel(repos []scanner.Repo, opts Options) Model {
+	clear(autoAdvanceTestFlows)
 	if opts.ReadFlow == nil {
 		opts.ReadFlow = autoAdvanceTestReadFlow
 	}
@@ -1154,10 +1164,12 @@ func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *te
 	}
 }
 
-// Decision 11's accepted ordering delta. The queued line used to be built
-// synchronously and shadowed by any transition in the same poll; it now lands
-// with the authoritative read and wins instead. Both are 3 s transients from
-// the same source, so only their order changes.
+// Decision 11's ordering delta, and the rank that absorbs it. AutoMode's launch
+// messages used to be built synchronously and shadowed by any transition in the
+// same poll; they now land a hop later, with the authoritative read. Both are
+// 3 s transients from one source, so arrival order alone would have inverted
+// the precedence — hence autoAdvanceRankTransition, which keeps the observable
+// outcome the same as before the launch lifecycle owned this.
 func TestModel_AutoAdvanceAsyncStatusLandsAfterSamePollTransitions(t *testing.T) {
 	launchingPrevious := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,
@@ -1178,43 +1190,71 @@ func TestModel_AutoAdvanceAsyncStatusLandsAfterSamePollTransitions(t *testing.T)
 	})
 	attention.Title = "Charlie Flow"
 
+	// Both AutoMode launch messages land a hop after the transitions computed by
+	// their own poll, and both repeat while the drain stays armed. A transition
+	// is reported once, on the edge, so it outranks them — otherwise a routine
+	// launch on Bravo would erase Charlie's needs_attention, and nothing would
+	// ever raise it again. `withoutLaunch` is the same poll with no launch to
+	// report, which is what shows each message is emitted at all rather than
+	// merely suppressed everywhere.
 	tests := []struct {
-		name         string
-		agentCommand string
-		want         string
+		name          string
+		agentCommand  string
+		withoutLaunch string
 	}{
 		{
-			name:         "queued announcement",
-			agentCommand: "codex",
-			want:         "Flow Bravo Flow: implementation queued",
+			name:          "queued announcement",
+			agentCommand:  "codex",
+			withoutLaunch: "Flow Bravo Flow: implementation queued",
 		},
 		{
-			name: "preflight failure",
-			want: "Flow Bravo Flow: Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+			name:          "preflight failure",
+			withoutLaunch: "Flow Bravo Flow: Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
 		},
 	}
 
+	const transition = "Flow Charlie Flow: needs attention"
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
-				AgentCommand: tc.agentCommand,
-				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
-					return launching, nil
-				},
-			})
+			options := func() Options {
+				return Options{
+					AgentCommand: tc.agentCommand,
+					AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+						return launching, nil
+					},
+				}
+			}
+
+			m := newAutoAdvanceTestModel(flowRefreshTestRepos(), options())
 			m.autoAdvanceSnapshot = []flowstore.FlowRecord{launchingPrevious, attentionPrevious}
 
 			m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{launching, attention})
-			if got := m.status.Text; got != "Flow Charlie Flow: needs attention" {
+			if got := m.status.Text; got != transition {
 				t.Fatalf("status right after the poll = %q, want the synchronous transition", got)
 			}
 
 			m = settleAutoFlowLaunchReads(m, cmd)
-			if got := m.status.Text; got != tc.want {
-				t.Fatalf("status after the read settled = %q, want %q", got, tc.want)
+			if got := m.status.Text; got != transition {
+				t.Fatalf("status after the read settled = %q, want the transition to survive", got)
 			}
 			if m.status.Source != statusFlowAutoAdvance {
 				t.Fatalf("status source = %v, want the transient AutoMode source", m.status.Source)
+			}
+
+			// The same poll with Charlie quiet: the launch message is emitted,
+			// so the assertion above is precedence and not silence.
+			quiet := newAutoAdvanceTestModel(flowRefreshTestRepos(), options())
+			quiet.autoAdvanceSnapshot = []flowstore.FlowRecord{launchingPrevious, attentionPrevious}
+
+			quiet, quietCmd := runAutoAdvanceResultForTest(t, quiet, []flowstore.FlowRecord{launching, attentionPrevious})
+			if got := quiet.status.Text; got != "" {
+				t.Fatalf("status right after the quiet poll = %q, want nothing yet", got)
+			}
+
+			quiet = settleAutoFlowLaunchReads(quiet, quietCmd)
+			if got := quiet.status.Text; got != tc.withoutLaunch {
+				t.Fatalf("status after the quiet read settled = %q, want %q", got, tc.withoutLaunch)
 			}
 		})
 	}

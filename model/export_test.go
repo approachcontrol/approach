@@ -114,12 +114,6 @@ func AutoFlowLaunchesForTest(m Model, cmd tea.Cmd) (Model, []AutoFlowLaunchForTe
 	return m, launches
 }
 
-// SettleAutoFlowLaunchReadsForTest applies only the authoritative-read hop, for
-// tests that assert on the drain or the transient status a poll leaves behind.
-func SettleAutoFlowLaunchReadsForTest(m Model, cmd tea.Cmd) Model {
-	return settleAutoFlowLaunchReads(m, cmd)
-}
-
 func WithAutoAdvanceSnapshotForTest(m Model, flows []flowstore.FlowRecord) Model {
 	m.autoAdvanceSnapshot = cloneFlowRecords(flows)
 	return m

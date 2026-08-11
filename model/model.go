@@ -207,6 +207,9 @@ type statusError struct {
 	FetchKind FetchKind
 	Mode      ui.Mode
 	FadeStep  int
+	// AutoRank orders the messages that share statusFlowAutoAdvance. It is
+	// meaningless for every other source.
+	AutoRank autoAdvanceStatusRank
 }
 
 type visibleRepoFetchState struct {

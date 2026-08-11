@@ -482,6 +482,16 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 			m = m.disarmAutoAdvanceDrain(flowID)
 			continue
 		}
+		// The snapshot half of the lifecycle's session check, and the reason a
+		// stalled phase does not cost a session-store walk every second: the
+		// lifecycle's own check re-arms the drain, so without this the next
+		// poll would re-admit and call ListFlowSessions again at 1 Hz for as
+		// long as the session stays live. The mirrored sessions the poll
+		// already carries answer the common case for free. Deferral is silent
+		// and leaves the drain armed, exactly as the lifecycle's retry does.
+		if phaseHasMatchingLiveSession(phase) {
+			continue
+		}
 		next, cmd, admitted := m.requestFlowLaunch(flowLaunchIntent{
 			Kind:      flowLaunchKindAutoPhase,
 			FlowID:    record.FlowID,

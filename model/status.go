@@ -79,7 +79,58 @@ func (m Model) setVisibleRepoFetchSummaryStatus(text string) Model {
 	)
 }
 
+// autoAdvanceStatusRank orders the two kinds of message that share
+// statusFlowAutoAdvance. Both are 3 s transients and either may be the newer
+// one, so recency cannot separate them.
+//
+// A transition — needs_attention, merge-ready — is reported on its edge and
+// never again; miss it and the user is never told. Launch reporting is emitted
+// once per launch attempt and there is always another attempt. So transitions
+// outrank launch reporting, while equal ranks still replace each other, which
+// is what keeps a launch on one Flow from being hidden by an announcement about
+// another that is merely still on screen.
+//
+// The rank is compared against whatever is live, not against the poll that set
+// it, and that is a deliberate divergence from the pre-lifecycle drain. There,
+// a transition and a launch message from the same poll were one ordered slice
+// and only the last survived, so a transition outranked a launch message from
+// its own poll and no other. Here a transition also suppresses a queued
+// announcement raised within its 3 s lifetime, and since admission disarms the
+// drain that announcement is not retried — the launch still happens and still
+// shows in the Flows list, but it is never announced. Scoping the guard to a
+// poll generation would remove that, at the cost of threading the generation
+// through the intent and both event hops. Losing an announcement is worth less
+// than the alert it would otherwise erase, so the coarser rule stands.
+// Launch failures are unaffected: both failure paths re-arm the drain, so they
+// re-report on the next poll and appear as soon as the transition expires.
+type autoAdvanceStatusRank int
+
+const (
+	autoAdvanceRankLaunch autoAdvanceStatusRank = iota
+	autoAdvanceRankTransition
+)
+
+// setAutoAdvanceStatus reports a transition the poll observed. It yields to any
+// live status from another source and outranks everything within its own.
 func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {
+	return m.setRankedAutoAdvanceStatus(autoAdvanceRankTransition, text)
+}
+
+// setAutoAdvanceLaunchStatus reports what one launch attempt did — queued, or
+// failed. It differs from setAutoAdvanceStatus only in yielding to a live
+// transition.
+//
+// Without the rank these two would be ordered by arrival, and the migration
+// inverted that: both messages were once set before autoAdvanceStatusEvents ran
+// and were overwritten by the poll's transitions, and both now land a hop after
+// them. Ordering by arrival alone would let a routine launch on one Flow erase a
+// needs_attention raised by another, which is the only prompt the user gets
+// that a Flow wants a human.
+func (m Model) setAutoAdvanceLaunchStatus(text string) (Model, tea.Cmd) {
+	return m.setRankedAutoAdvanceStatus(autoAdvanceRankLaunch, text)
+}
+
+func (m Model) setRankedAutoAdvanceStatus(rank autoAdvanceStatusRank, text string) (Model, tea.Cmd) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return m, nil
@@ -87,7 +138,11 @@ func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {
 	if m.status.isSet() && m.status.Source != statusFlowAutoAdvance {
 		return m, nil
 	}
+	if m.status.isSet() && m.status.AutoRank > rank {
+		return m, nil
+	}
 	m = m.setStatusNow(statusFlowAutoAdvance, text)
+	m.status.AutoRank = rank
 	return m, m.currentStatusTimer().Expire(m.status.Seq, statusLifetime)
 }
 

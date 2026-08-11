@@ -44,6 +44,8 @@ type manualLaunchHarness struct {
 	sessionRecords []sessions.SessionRecord
 	sessionsErr    error
 
+	sessionListCalls int
+
 	persistedRecord   flowstore.FlowRecord
 	persistedRecordOK bool
 }
@@ -81,6 +83,10 @@ func (h *manualLaunchHarness) options() Options {
 			return []flowstore.FlowRecord{h.record}, nil
 		},
 		ListSessions: func(sessions.SessionFilter) ([]sessions.SessionRecord, error) {
+			// Counted because the real seam lists the entire session store and
+			// filters client-side, so "how often is this reached" is a
+			// behavioural property, not an implementation detail.
+			h.sessionListCalls++
 			if h.sessionsErr != nil {
 				return nil, h.sessionsErr
 			}
@@ -444,6 +450,105 @@ func TestAutoFlowLaunchNeverLaunchesMergePhases(t *testing.T) {
 	if _, _, ok := m.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: record.FlowID}); !ok {
 		t.Fatal("a ready merge phase should still be manually launchable")
 	}
+}
+
+// TestAutoFlowLaunchNeverLaunchesAutoreviewRecovery covers the second half of
+// flowLaunchCandidatePhase's manual-only rule. Autoreview recovery is the one
+// launch target that is not `ready`: a needs_attention or blocked autoreview
+// phase on a Flow with a PR target. Re-running it costs a review cycle and the
+// human asked for attention, so AutoMode must leave it alone even though the
+// phase satisfies flowPhaseCanLaunch.
+func TestAutoFlowLaunchNeverLaunchesAutoreviewRecovery(t *testing.T) {
+	for _, status := range []string{flowstore.PhaseNeedsAttention, flowstore.PhaseBlocked} {
+		t.Run(status, func(t *testing.T) {
+			record := autoLaunchFlowRecord()
+			record.PR = flowstore.PullRequest{
+				Provider:   "github",
+				Number:     7,
+				URL:        "https://github.com/approachcontrol/approach/pull/7",
+				HeadBranch: "flow/one",
+				BaseBranch: "main",
+			}
+			record.Phases = []flowstore.FlowPhase{
+				{PhaseID: "pr-creation", Title: "PR creation", Kind: flowstore.KindPRCreation, Status: flowstore.PhaseCompleted, Order: 1},
+				{PhaseID: "autoreview", Title: "Autoreview", Kind: flowstore.KindAutoreview, Status: status, Order: 2, DependsOn: []string{"pr-creation"}},
+			}
+			h := newManualLaunchHarness(t, record)
+
+			m := h.autoDrain(h.model(), record)
+
+			if len(h.launchUpdates) != 0 || len(h.launchContexts) != 0 || len(h.agentContexts) != 0 {
+				t.Fatalf("AutoMode relaunched an autoreview phase in %s: updates=%#v embedded=%#v external=%#v",
+					status, h.launchUpdates, h.launchContexts, h.agentContexts)
+			}
+			if h.drainArmed(m, record.FlowID) {
+				t.Fatal("a Flow with nothing auto-launchable must disarm its drain")
+			}
+			// Naming the phase explicitly bypasses the drain's own first-ready
+			// selection, so this is the resolver refusing rather than the
+			// candidate never being reached.
+			if _, ok := flowLaunchCandidatePhase(flowLaunchKindAutoPhase, record, "autoreview"); ok {
+				t.Fatal("the auto resolver accepted an autoreview recovery target")
+			}
+			if _, _, ok := m.previewFlowLaunch(flowLaunchIntent{Kind: flowLaunchKindManualPhase, FlowID: record.FlowID}); !ok {
+				t.Fatal("autoreview recovery should still be manually launchable")
+			}
+		})
+	}
+}
+
+// TestAutoFlowLaunchSuccessReleasesOwnership pins the failure that would be
+// worst and quietest: an auto launch that works but keeps its reservation. The
+// Flow would then be permanently occupied for admission, so AutoMode and manual
+// launch would both refuse it forever with no status and nothing to see in the
+// UI. The manual kind is covered by TestFlowLaunchEmbeddedInstallTransfersOwnership
+// and TestFlowLaunchExternalRouteRetainsOwnershipUntilResult; AutoMode reaches
+// the same two handoffs through a different admission and read stage, so it
+// needs its own pins.
+func TestAutoFlowLaunchSuccessReleasesOwnership(t *testing.T) {
+	t.Run("embedded route hands the Flow to the slot", func(t *testing.T) {
+		record := autoLaunchFlowRecord()
+		h := newManualLaunchHarness(t, record)
+
+		m := h.autoDrain(h.model(), record)
+
+		if len(h.launchContexts) != 1 {
+			t.Fatalf("embedded launches = %d, want 1", len(h.launchContexts))
+		}
+		if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+			t.Fatal("a successful auto launch must release its reservation")
+		}
+		if !m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
+			t.Fatal("the slot must own the Flow the instant the attempt is dropped")
+		}
+		if !m.flowLaunchAdmissionOccupied(record.FlowID) {
+			t.Fatal("the Flow should stay occupied by the slot, not by a stranded attempt")
+		}
+		if h.drainArmed(m, record.FlowID) {
+			t.Fatal("a successful auto launch must leave the drain disarmed")
+		}
+	})
+
+	t.Run("external route releases on the agent result", func(t *testing.T) {
+		record := autoLaunchFlowRecord()
+		h := newManualLaunchHarness(t, record)
+		h.agentCommand = "codex-app"
+
+		m := h.autoDrain(h.model(), record)
+
+		if len(h.agentContexts) != 1 {
+			t.Fatalf("external launches = %d, want 1", len(h.agentContexts))
+		}
+		if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+			t.Fatal("the agent result must release the auto attempt; otherwise the Flow is unlaunchable forever")
+		}
+		if m.flowLaunchAdmissionOccupied(record.FlowID) {
+			t.Fatal("a detached external auto launch leaves nothing owning the Flow")
+		}
+		if h.drainArmed(m, record.FlowID) {
+			t.Fatal("a successful auto launch must leave the drain disarmed")
+		}
+	})
 }
 
 // --- AutoMode lifecycle matrix ---
@@ -840,6 +945,61 @@ func TestAutoFlowLaunchStallsSilentlyOnAnUnendedSession(t *testing.T) {
 	}
 }
 
+// TestAutoFlowLaunchStalledPhaseCostsNoSessionScan is the bound on the previous
+// test's stall. Because the lifecycle's session refusal re-arms the drain, a
+// stalled phase is re-admitted on every poll, and the authoritative session
+// check lists the whole session store each time. When the mirrored sessions the
+// poll already carries answer the question, the drain must refuse before
+// admission so a Flow that stalls for hours does not walk the session store
+// once a second for the duration.
+func TestAutoFlowLaunchStalledPhaseCostsNoSessionScan(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	record.Phases[0].LaunchIDs = []string{"launch-source"}
+	record.Phases[0].Sessions = []flowstore.Session{
+		{SessionID: "s-1", LaunchID: "launch-source", Status: "running"},
+	}
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+
+	for poll := range 3 {
+		m = h.autoDrain(m, record)
+		if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+			t.Fatalf("poll %d persisted something: launches=%#v phases=%#v", poll, h.launchUpdates, h.phaseUpdates)
+		}
+		if m.status.Text != "" {
+			t.Fatalf("poll %d set status %q, want silence", poll, m.status.Text)
+		}
+		if !h.drainArmed(m, record.FlowID) {
+			t.Fatalf("poll %d disarmed the drain, want the Flow still waiting", poll)
+		}
+		if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+			t.Fatalf("poll %d reserved the Flow for a launch it never made", poll)
+		}
+	}
+	if h.sessionListCalls != 0 {
+		t.Fatalf("session store listed %d times, want the snapshot to answer for free", h.sessionListCalls)
+	}
+
+	// The refusal is a deferral, not a disarm: once the mirrored session ends,
+	// the very next poll launches without needing a fresh completion edge.
+	ended := record
+	ended.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	ended.Phases[0].Sessions = []flowstore.Session{
+		{SessionID: "s-1", LaunchID: "launch-source", Status: "ended"},
+	}
+	h.record = ended
+	h.persistedFlows = []flowstore.FlowRecord{ended}
+
+	m = h.autoDrain(m, ended)
+
+	if len(h.launchUpdates) != 1 {
+		t.Fatalf("launch updates = %#v, want the deferred launch to resume", h.launchUpdates)
+	}
+	if h.drainArmed(m, record.FlowID) {
+		t.Fatal("the resumed launch must disarm the drain")
+	}
+}
+
 func TestAutoFlowLaunchQueuedAnnouncement(t *testing.T) {
 	titleless := autoLaunchFlowRecord()
 	titleless.Title = ""
@@ -887,6 +1047,64 @@ func TestAutoFlowLaunchQueuedAnnouncement(t *testing.T) {
 	}
 }
 
+// TestAutoFlowLaunchQueuedAnnouncementYieldsToTransitions pins the precedence
+// the drain used to get from ordering alone. The announcement now arrives a hop
+// after the transition statuses computed by the same poll, so if it replaced
+// its own source a routine launch on one Flow would erase a needs_attention
+// raised by a different one — the only prompt the user gets that a Flow wants a
+// human, and it is not repeated.
+func TestAutoFlowLaunchQueuedAnnouncementYieldsToTransitions(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+
+	const alert = "Flow two: needs attention"
+	m, _ := h.model().setAutoAdvanceStatus(alert)
+	if m.status.Text != alert {
+		t.Fatalf("precondition: status = %q, want the transition status", m.status.Text)
+	}
+
+	m, autoCmd := h.autoPoll(m, record)
+	if autoCmd == nil {
+		t.Fatal("AutoMode should have been admitted")
+	}
+	m = h.drain(m, autoCmd, 0)
+
+	if m.status.Text != alert {
+		t.Fatalf("status = %q, want the needs-attention alert to survive the launch", m.status.Text)
+	}
+	// Yielding the announcement must not cost the launch itself.
+	if len(h.launchUpdates) != 1 || len(h.launchContexts) != 1 {
+		t.Fatalf("launch updates = %d, contexts = %d, want the launch to proceed", len(h.launchUpdates), len(h.launchContexts))
+	}
+}
+
+// TestAutoFlowLaunchQueuedAnnouncementReplacesItsOwnKind is the bound on the
+// test above. Yielding is a rank rule, not a first-writer-wins rule: the queued
+// announcement is emitted once per launch and never re-reported, because
+// admission disarms the drain and the read's success branch never re-arms it.
+// If it also yielded to a live announcement, a second Flow launching inside the
+// same 3 s window would never be announced at all.
+func TestAutoFlowLaunchQueuedAnnouncementReplacesItsOwnKind(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+
+	const earlier = "Flow zero: implementation queued"
+	m, _ := h.model().setAutoAdvanceLaunchStatus(earlier)
+	if m.status.Text != earlier {
+		t.Fatalf("precondition: status = %q, want the earlier announcement", m.status.Text)
+	}
+
+	m, autoCmd := h.autoPoll(m, record)
+	if autoCmd == nil {
+		t.Fatal("AutoMode should have been admitted")
+	}
+	m = h.drain(m, autoCmd, 0)
+
+	if m.status.Text != "Flow Flow one: implementation queued" {
+		t.Fatalf("status = %q, want this launch to replace the earlier announcement", m.status.Text)
+	}
+}
+
 func TestAutoFlowLaunchDelayedEventsAreIgnored(t *testing.T) {
 	record := autoLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
@@ -923,6 +1141,27 @@ func TestAutoFlowLaunchDelayedEventsAreIgnored(t *testing.T) {
 				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
 				FlowID: record.FlowID, Stage: flowLaunchStageRead,
 				Outcome: flowLaunchOutcomeFailed, FlowTitle: "Flow one", Err: "store unavailable",
+			},
+		},
+		{
+			// Retry is the branch that actually re-arms, so a superseded one is
+			// the only delayed event that could hand a drain back to a Flow a
+			// newer attempt is already launching.
+			name:  "retry from a superseded attempt",
+			model: live,
+			event: flowLaunchEventMsg{
+				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
+				FlowID: record.FlowID, Stage: flowLaunchStageRead,
+				Outcome: flowLaunchOutcomeRetry, FlowTitle: "Flow one",
+			},
+		},
+		{
+			name:  "retry for a released attempt",
+			model: base,
+			event: flowLaunchEventMsg{
+				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
+				FlowID: record.FlowID, Stage: flowLaunchStageRead,
+				Outcome: flowLaunchOutcomeRetry, FlowTitle: "Flow one",
 			},
 		},
 		{

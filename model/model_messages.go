@@ -1293,9 +1293,16 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {
-		// Unfenced at consumption, and safe only because the sole producer of
-		// this metadata is failFlowLaunch, which runs behind
-		// matchingFlowLaunchAttempt. A superseded attempt never emits one.
+		// Fenced at production, not at consumption. The sole producer of this
+		// metadata is failFlowLaunch, which runs behind
+		// matchingFlowLaunchAttempt, so a superseded attempt never emits one.
+		// That is weaker than a consumption-time fence — an attempt admitted
+		// between emission and delivery would have its freshly disarmed drain
+		// re-armed by the older message — and it holds only because this
+		// message is dispatched immediately while the poll that could admit a
+		// successor runs a second later. Re-arming a drain is idempotent and
+		// costs at most one extra poll, so the residual race is a deferral
+		// rather than a double launch.
 		m = m.armAutoAdvanceDrain(msg.AutoAdvanceRetryFlowID)
 	}
 	if m.activeFlowSurfaceVisible() || m.isCurrentRepo(msg.RepoPath) {
@@ -1309,8 +1316,12 @@ func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
 	if strings.TrimSpace(title) == "" {
 		title = msg.AutoAdvanceRetryFlowID
 	}
+	// The prepare-stage sibling of the read-stage failure in
+	// handleAutoFlowLaunchRead, and ranked with it: this path re-armed the drain
+	// above, so the failure repeats on the next poll and must not displace a
+	// transition edge that will not.
 	var statusCmd tea.Cmd
-	m, statusCmd = m.setAutoAdvanceStatus("Flow " + title + ": " + msg.Err)
+	m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + title + ": " + msg.Err)
 	return m, statusCmd
 }
 
