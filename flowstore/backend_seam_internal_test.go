@@ -1,8 +1,12 @@
 package flowstore
 
 import (
+	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -10,8 +14,8 @@ import (
 )
 
 var (
-	_ backend         = (*fileBackend)(nil)
-	_ flowSession     = fileSession{}
+	_ backend         = (*sqliteBackend)(nil)
+	_ flowSession     = sqliteSession{}
 	_ planPhaseSyncer = planstoreSyncer{}
 	_ planPhaseWriter = planstorePhaseWriter{}
 )
@@ -171,7 +175,10 @@ func TestBackendSaveDoesNotTakeTheFlowLock(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := store.backend.update(record.FlowID, func(sess flowSession) (FlowRecord, error) {
-			stored, ok := sess.get()
+			stored, ok, err := sess.get()
+			if err != nil {
+				return FlowRecord{}, err
+			}
 			if !ok {
 				return FlowRecord{}, errors.New("seeded record missing")
 			}
@@ -194,19 +201,141 @@ func TestBackendSaveDoesNotTakeTheFlowLock(t *testing.T) {
 	}
 }
 
-// TestFileBackendSatisfiesContract runs the shared seam contract against the
-// only implementation that exists today. When the SQLite backend lands it
-// should call testBackendContract with its own factory rather than
-// hand-verifying the clauses on backend.update again.
-func TestFileBackendSatisfiesContract(t *testing.T) {
+func TestSQLiteBackendSatisfiesContract(t *testing.T) {
 	testBackendContract(t, func(t *testing.T) backend {
 		t.Helper()
-		b, err := newFileBackend(t.TempDir(), time.Second)
+		store, err := NewStore(StoreOptions{Root: t.TempDir(), LockTimeout: 50 * time.Millisecond})
 		if err != nil {
-			t.Fatalf("newFileBackend() error = %v", err)
+			t.Fatalf("NewStore() error = %v", err)
 		}
-		return b
+		b := store.backend.(*sqliteBackend)
+		t.Cleanup(func() { _ = b.db.Close() })
+		return store.backend
 	})
+}
+
+func TestSQLiteUpdateCommitFailureTakesPrecedence(t *testing.T) {
+	commitErr := errors.New("commit exploded")
+	rollbackErr := errors.New("rollback also exploded")
+	tx := &failingCommitTransaction{commitErr: commitErr, rollbackErr: rollbackErr}
+	b := &sqliteBackend{beginTx: func(context.Context) (sqliteTransaction, error) { return tx, nil }}
+	callbackErr := errors.New("domain callback failed")
+	want := FlowRecord{FlowID: "commit-failure", Title: "must be zeroed"}
+
+	got, err := b.update("commit-failure", func(flowSession) (FlowRecord, error) {
+		return want, callbackErr
+	})
+	if !reflect.DeepEqual(got, FlowRecord{}) {
+		t.Fatalf("update() record = %#v, want zero because durability is unknown", got)
+	}
+	if !errors.Is(err, commitErr) || errors.Is(err, callbackErr) {
+		t.Fatalf("update() error = %v, want commit classification only", err)
+	}
+	for _, context := range []string{"callback error: domain callback failed", "rollback error: rollback also exploded"} {
+		if !strings.Contains(err.Error(), context) {
+			t.Fatalf("update() error = %v, want context %q", err, context)
+		}
+	}
+	if !tx.rollbackCalled {
+		t.Fatal("commit failure did not attempt rollback")
+	}
+	if IsNotFound(err) || IsAutoLaunchOutdated(err) {
+		t.Fatalf("commit failure was misclassified as a domain error: %v", err)
+	}
+}
+
+func TestSQLiteUpdateBeginFailureDoesNotInvokeCallback(t *testing.T) {
+	beginErr := errors.New("begin exploded")
+	b := &sqliteBackend{beginTx: func(context.Context) (sqliteTransaction, error) { return nil, beginErr }}
+	calls := 0
+	_, err := b.update("begin-failure", func(flowSession) (FlowRecord, error) {
+		calls++
+		return FlowRecord{}, nil
+	})
+	if !errors.Is(err, beginErr) || calls != 0 {
+		t.Fatalf("update() error/calls = %v/%d, want begin error and zero callback calls", err, calls)
+	}
+}
+
+func TestSQLitePrimaryKeyArbitratesAutomaticIDRaceWithoutRetry(t *testing.T) {
+	store, err := NewStore(StoreOptions{Root: t.TempDir(), LockTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := store.backend.(*sqliteBackend)
+	t.Cleanup(func() { _ = b.db.Close() })
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	firstID, err := b.allocateID("Racing Flow", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := b.allocateID("Racing Flow", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstID != secondID {
+		t.Fatalf("pre-write allocations = %q/%q, want the race candidate to match", firstID, secondID)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	callbackCalls := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		go func(worker int) {
+			<-start
+			calls := 0
+			_, err := b.update(firstID, func(sess flowSession) (FlowRecord, error) {
+				calls++
+				exists, err := sess.exists()
+				if err != nil {
+					return FlowRecord{}, err
+				}
+				if exists {
+					return FlowRecord{}, fmt.Errorf("flow %q already exists", firstID)
+				}
+				record := FlowRecord{
+					SchemaVersion: schemaVersion, FlowID: firstID, Title: fmt.Sprintf("worker-%d", worker),
+					Status: StatusPending, RepoPath: "/tmp/repo", Phases: []FlowPhase{}, CreatedAt: now, UpdatedAt: now,
+				}
+				return record, sess.save(record)
+			})
+			callbackCalls <- calls
+			results <- err
+		}(i)
+	}
+	close(start)
+	successes, collisions := 0, 0
+	for i := 0; i < 2; i++ {
+		if err := <-results; err == nil {
+			successes++
+		} else if strings.Contains(err.Error(), "already exists") {
+			collisions++
+		} else {
+			t.Fatalf("race error = %v", err)
+		}
+		if calls := <-callbackCalls; calls != 1 {
+			t.Fatalf("worker callback calls = %d, want exactly one", calls)
+		}
+	}
+	if successes != 1 || collisions != 1 {
+		t.Fatalf("race results = %d successes/%d collisions, want 1/1", successes, collisions)
+	}
+}
+
+type failingCommitTransaction struct {
+	commitErr      error
+	rollbackErr    error
+	rollbackCalled bool
+}
+
+func (t *failingCommitTransaction) QueryRow(string, ...any) *sql.Row { return nil }
+func (t *failingCommitTransaction) Exec(string, ...any) (sql.Result, error) {
+	return nil, errors.New("unexpected Exec")
+}
+func (t *failingCommitTransaction) Commit() error { return t.commitErr }
+func (t *failingCommitTransaction) Rollback() error {
+	t.rollbackCalled = true
+	return t.rollbackErr
 }
 
 // testBackendContract asserts the clauses documented on the backend interface.
@@ -242,13 +371,13 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		return record
 	}
 
-	t.Run("get reports every read failure as a miss", func(t *testing.T) {
+	t.Run("get distinguishes absence from invalid input", func(t *testing.T) {
 		b := newBackend(t)
-		if _, ok := b.get("absent-flow"); ok {
+		if _, ok, err := b.get("absent-flow"); err != nil || ok {
 			t.Fatal("get() on an absent flow = true, want a miss")
 		}
-		if _, ok := b.get("../escape"); ok {
-			t.Fatal("get() on an invalid id = true, want a miss")
+		if _, _, err := b.get("../escape"); err == nil {
+			t.Fatal("get() on an invalid id error = nil")
 		}
 	})
 
@@ -260,24 +389,21 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		record := seed(t, b, "future-schema")
 		record.SchemaVersion = schemaVersion + 1
 		save(t, b, record)
-		if _, ok := b.get("future-schema"); ok {
-			t.Fatal("get() on a future schema version = true, want a miss")
+		if _, _, err := b.get("future-schema"); err == nil {
+			t.Fatal("get() on a future schema version error = nil")
 		}
-		flows, err := b.list()
-		if err != nil {
-			t.Fatalf("list() error = %v", err)
-		}
-		for _, flow := range flows {
-			if flow.record.FlowID == "future-schema" {
-				t.Fatal("list() returned a record with a foreign schema version")
-			}
+		if _, err := b.list(FlowFilter{}); err == nil {
+			t.Fatal("list() error = nil for a foreign schema version")
 		}
 	})
 
 	t.Run("save then get round-trips", func(t *testing.T) {
 		b := newBackend(t)
 		want := seed(t, b, "round-trip")
-		got, ok := b.get("round-trip")
+		got, ok, err := b.get("round-trip")
+		if err != nil {
+			t.Fatalf("get() error = %v", err)
+		}
 		if !ok {
 			t.Fatal("get() = false, want the saved record")
 		}
@@ -286,21 +412,6 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		}
 		if len(got.record.Phases) != len(want.Phases) {
 			t.Fatalf("get() phases = %d, want %d", len(got.record.Phases), len(want.Phases))
-		}
-		if got.legacyEncoding && len(got.dependsOnPresence) != len(got.record.Phases) {
-			t.Fatalf("legacy backend returned %d presence entries for %d phases; a short slice reads as depends_on absent",
-				len(got.dependsOnPresence), len(got.record.Phases))
-		}
-		// Whatever the encoding, hydrate must not be told depends_on is missing
-		// on a record that was written with edges.
-		hints := got.dependsOnHints()
-		if len(hints) != len(got.record.Phases) {
-			t.Fatalf("dependsOnHints() = %d entries, want %d", len(hints), len(got.record.Phases))
-		}
-		for i, hint := range hints {
-			if !hint.Present {
-				t.Fatalf("dependsOnHints()[%d].Present = false, want true for a record saved with edges", i)
-			}
 		}
 	})
 
@@ -347,7 +458,10 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 			// Every production closure opens with sess.get, so it must neither
 			// block on the section update is already holding nor return a stale
 			// snapshot.
-			before, ok := sess.get()
+			before, ok, err := sess.get()
+			if err != nil {
+				t.Fatalf("sess.get() error = %v", err)
+			}
 			if !ok {
 				t.Fatal("sess.get() = false at the top of the section")
 			}
@@ -359,7 +473,10 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 			if err := sess.save(next); err != nil {
 				t.Fatalf("sess.save() error = %v", err)
 			}
-			after, ok := sess.get()
+			after, ok, err := sess.get()
+			if err != nil {
+				t.Fatalf("sess.get() error = %v", err)
+			}
 			if !ok {
 				t.Fatal("sess.get() = false after an in-section save")
 			}
@@ -404,7 +521,7 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		}
 	})
 
-	t.Run("clause 5: updates to different flows do not block each other", func(t *testing.T) {
+	t.Run("clause 5: writer acquisition serializes different flows before callback", func(t *testing.T) {
 		b := newBackend(t)
 		seed(t, b, "alpha-flow")
 		seed(t, b, "beta-flow")
@@ -421,19 +538,24 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		}()
 		<-holding
 		second := make(chan error, 1)
+		secondCalls := 0
 		go func() {
 			_, err := b.update("beta-flow", func(sess flowSession) (FlowRecord, error) {
+				secondCalls++
 				return FlowRecord{}, nil
 			})
 			second <- err
 		}()
 		select {
 		case err := <-second:
-			if err != nil {
-				t.Fatalf("update() on a different flow error = %v", err)
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "locked") {
+				t.Fatalf("contended update error = %v, want SQLite locked/busy failure", err)
 			}
 		case <-time.After(3 * time.Second):
-			t.Fatal("update() on a different flow blocked behind an unrelated flow's section")
+			t.Fatal("contended update did not honor the bounded busy timeout")
+		}
+		if secondCalls != 0 {
+			t.Fatalf("contended callback calls = %d, want 0 because acquisition failed first", secondCalls)
 		}
 		close(release)
 		if err := <-done; err != nil {
@@ -456,7 +578,10 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("update() error = %v, want %v", err, sentinel)
 		}
-		got, ok := b.get("durable")
+		got, ok, err := b.get("durable")
+		if err != nil {
+			t.Fatalf("get() error = %v", err)
+		}
 		if !ok {
 			t.Fatal("get() = false, want the record the failed mutate saved")
 		}
@@ -501,7 +626,10 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		}); err != nil {
 			t.Fatalf("update() with three saves error = %v", err)
 		}
-		got, ok := b.get("many")
+		got, ok, err := b.get("many")
+		if err != nil {
+			t.Fatalf("get() error = %v", err)
+		}
 		if !ok {
 			t.Fatal("get() = false, want the last saved record")
 		}
@@ -545,21 +673,21 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		if err := b.delete("doomed"); err != nil {
 			t.Fatalf("delete() error = %v", err)
 		}
-		if _, ok := b.get("doomed"); ok {
+		if _, ok, err := b.get("doomed"); err != nil || ok {
 			t.Fatal("get() = true after delete, want a miss")
 		}
 	})
 
 	t.Run("list returns every saved record", func(t *testing.T) {
 		b := newBackend(t)
-		if got, err := b.list(); err != nil {
+		if got, err := b.list(FlowFilter{}); err != nil {
 			t.Fatalf("list() error = %v", err)
 		} else if len(got) != 0 {
 			t.Fatalf("list() = %d records on an empty store, want 0", len(got))
 		}
 		seed(t, b, "alpha")
 		seed(t, b, "beta")
-		got, err := b.list()
+		got, err := b.list(FlowFilter{})
 		if err != nil {
 			t.Fatalf("list() error = %v", err)
 		}
@@ -584,7 +712,7 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		for _, id := range []string{"tie-a", "tie-b", "tie-c", "tie-d"} {
 			seed(t, b, id)
 		}
-		first, err := b.list()
+		first, err := b.list(FlowFilter{})
 		if err != nil {
 			t.Fatalf("list() error = %v", err)
 		}
@@ -597,7 +725,7 @@ func testBackendContract(t *testing.T, newBackend func(t *testing.T) backend) {
 		}
 		want := order(first)
 		for i := 0; i < 3; i++ {
-			again, err := b.list()
+			again, err := b.list(FlowFilter{})
 			if err != nil {
 				t.Fatalf("list() error = %v", err)
 			}

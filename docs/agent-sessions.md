@@ -100,6 +100,11 @@ Provider session IDs are stored in hashed directory names instead of raw path
 components. Hook payloads without a usable session ID are rejected at capture
 time, so no unusable session records are stored.
 
+Flow records share this root but use the `0600` SQLite database `approach.db`;
+the `0700` root contains its WAL/SHM sidecars. Legacy `flows/` records migrate
+once and are retained unchanged as `flows.legacy/`. Session transcripts and
+saved plans remain ordinary restrictive files.
+
 Hook transcript paths must resolve to regular files inside the provider-owned
 transcript root. Codex uses `$CODEX_HOME/sessions` (default
 `$HOME/.codex/sessions`); Claude uses `$CLAUDE_CONFIG_DIR/projects` (default

@@ -1,8 +1,8 @@
 // Package flowstore persists task-centric Flow records beside the agent-session store.
 //
 // Agents persist Flow changes through the `approach flow` CLI
-// (cmd/approach/flow.go), never by editing meta.json by hand — hand edits
-// bypass the store's locking, validation, and phase-ID normalization.
+// (cmd/approach/flow.go), never by editing approach.db — direct edits bypass
+// the store's transactions, validation, and phase-ID normalization.
 package flowstore
 
 import (
@@ -78,7 +78,7 @@ const (
 	GraphRecoveryMissingEdgesUnresolved = "missing_edges_unresolved"
 )
 
-// Store reads and writes flow records under an artifact root.
+// Store reads and writes Flow rows in the artifact root's approach.db.
 type Store struct {
 	backend  backend
 	planSync planPhaseSyncer
@@ -90,13 +90,13 @@ type Store struct {
 	root                      string
 	now                       func() time.Time
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
-	presets                   map[string]Preset
 }
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
-	Root        string
-	Now         func() time.Time
+	Root string
+	Now  func() time.Time
+	// LockTimeout bounds bootstrap lease and SQLite writer acquisition waits.
 	LockTimeout time.Duration
 	Presets     []Preset
 }
@@ -239,12 +239,10 @@ type FlowRecord struct {
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
 	GraphRecovery GraphRecoveryState `json:"-"`
-
-	preserveMissingDependsOn map[string]bool
 }
 
-// GraphRecoveryState reports non-persisted recovery performed while reading a
-// Flow record whose persisted graph metadata was missing or degraded.
+// GraphRecoveryState reports an unresolved graph discovered during one-time
+// legacy migration. The SQLite storage codec persists the unresolved marker.
 type GraphRecoveryState struct {
 	Status string
 }
@@ -353,7 +351,7 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
 	}
-	store, err := newFileBackend(root, lockTimeout)
+	store, err := newSQLiteStoreBackend(root, lockTimeout, opts.Presets)
 	if err != nil {
 		return nil, err
 	}
@@ -361,16 +359,11 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	presets, err := presetRegistry(opts.Presets)
-	if err != nil {
-		return nil, err
-	}
 	return &Store{
 		backend:  store,
 		planSync: planstoreSyncer{root: root},
 		root:     root,
 		now:      now,
-		presets:  presets,
 	}, nil
 }
 
@@ -482,7 +475,10 @@ func (s *Store) Read(flowID string) (FlowRecord, error) {
 	if err := validateFlowID(flowID); err != nil {
 		return FlowRecord{}, err
 	}
-	record, ok := s.readRecord(flowID)
+	record, ok, err := s.readRecord(flowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
 	if !ok {
 		return FlowRecord{}, flowNotFoundError(flowID)
 	}
@@ -496,11 +492,14 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
-		stored, ok := sess.get()
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
 		if !ok {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
-		record := s.hydrate(stored, true)
+		record := stored.record
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -819,11 +818,14 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
-		stored, ok := sess.get()
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
 		if !ok {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
-		record := s.hydrate(stored, true)
+		record := stored.record
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -1312,7 +1314,7 @@ func launchPrecedes(launchIDs []string, candidate, current string) bool {
 	return candidateIndex >= 0 && currentIndex >= 0 && candidateIndex < currentIndex
 }
 
-// Delete removes only the persisted Flow record directory.
+// Delete removes only the requested Flow row.
 func (s *Store) Delete(flowID string) error {
 	if err := validateFlowID(flowID); err != nil {
 		return err
@@ -1330,17 +1332,20 @@ func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, ti
 
 func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
-		stored, ok := sess.get()
+		stored, ok, err := sess.get()
+		if err != nil {
+			return FlowRecord{}, err
+		}
 		if !ok {
 			return FlowRecord{}, flowNotFoundError(flowID)
 		}
-		record := s.hydrate(stored, selfHealOnRead)
+		record := stored.record
 		if selfHealOnRead {
 			if err := validatePhaseGraphResolved(record); err != nil {
 				return FlowRecord{}, err
 			}
 		}
-		record, err := mutate(record, s.now())
+		record, err = mutate(record, s.now())
 		if err != nil {
 			return FlowRecord{}, err
 		}
@@ -1375,21 +1380,14 @@ func appendUnique(values []string, value string) []string {
 
 // List returns records matching filter, sorted by UpdatedAt descending.
 func (s *Store) List(filter FlowFilter) ([]FlowRecord, error) {
-	stored, err := s.backend.list()
+	stored, err := s.backend.list(filter)
 	if err != nil {
 		return nil, err
 	}
 	var records []FlowRecord
 	for _, flow := range stored {
-		// List reaches hydration through readRecord today, so it self-heals.
-		record := s.hydrate(flow, true)
-		if matchesFilter(record, filter) {
-			records = append(records, record)
-		}
+		records = append(records, flow.record)
 	}
-	sort.SliceStable(records, func(i, j int) bool {
-		return records[i].UpdatedAt.After(records[j].UpdatedAt)
-	})
 	return records, nil
 }
 
@@ -1969,27 +1967,27 @@ func (s *Store) saveSession(sess flowSession, record FlowRecord) error {
 	return sess.save(record)
 }
 
-func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
-	stored, ok := s.backend.get(flowID)
-	if !ok {
-		return FlowRecord{}, false
+func (s *Store) readRecord(flowID string) (FlowRecord, bool, error) {
+	stored, ok, err := s.backend.get(flowID)
+	if err != nil {
+		return FlowRecord{}, false, err
 	}
-	return s.hydrate(stored, true), true
+	if !ok {
+		return FlowRecord{}, false, nil
+	}
+	return stored.record, true, nil
 }
 
-// hydrate turns a decoded record plus its raw encoding hints into the domain
-// record the public API returns: legacy field defaults, graph recovery,
-// normalization, readiness, and derived status.
-func (s *Store) hydrate(stored storedFlow, selfHealOnRead bool) FlowRecord {
+// canonicalizeLegacyFlow performs the one-time healing applied while importing
+// historical meta.json records. Runtime SQLite reads only validate and decode.
+func canonicalizeLegacyFlow(stored legacyStoredFlow, presets map[string]Preset) FlowRecord {
 	record := stored.record
-	presence := stored.dependsOnHints()
-	// Legacy records predate per-flow headless and stored no field for it, so
-	// they read back as headless rather than as Go's zero value.
-	if stored.legacyEncoding && !stored.headlessPresent {
+	presence := stored.dependsOnPresence
+	if !stored.headlessPresent {
 		record.Headless = true
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
-	record = s.restoreMissingDependsOn(record, presence)
+	record = restoreLegacyMissingDependsOn(record, presence, presets)
 	unresolvedGraph := false
 	if record.GraphRecovery.Status == GraphRecoveryPresetEdgesRestored {
 		selfHeal = true
@@ -1997,29 +1995,22 @@ func (s *Store) hydrate(stored storedFlow, selfHealOnRead bool) FlowRecord {
 		selfHeal = false
 		unresolvedGraph = true
 	}
-	if selfHealOnRead {
-		if unresolvedGraph {
-			record = normalizeRecordBase(record)
-			record = normalizeReviewOutcomes(record)
-		} else {
-			record = normalizeRecord(record, selfHeal)
-		}
-	} else {
+	if unresolvedGraph {
 		record = normalizeRecordBase(record)
-		if unresolvedGraph {
-			record.preserveMissingDependsOn = missingTopLevelDependsOnByID(record.Phases, presence)
-		}
+		record = normalizeReviewOutcomes(record)
+	} else {
+		record = normalizeRecord(record, selfHeal)
 	}
 	record.Status = DeriveStatus(record)
 	return record
 }
 
-func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDependsOnState) FlowRecord {
+func restoreLegacyMissingDependsOn(record FlowRecord, presence []rawDependsOnState, presets map[string]Preset) FlowRecord {
 	if rawDependsOnPresentForEveryTopLevel(record.Phases, presence) {
 		record.Phases = normalizeDependsOnValues(record.Phases)
 		return record
 	}
-	if preset, ok := s.presetForRecovery(record); ok && presetMatchesRecord(preset, record) {
+	if preset, ok := presetForLegacyRecovery(record, presets); ok && presetMatchesRecord(preset, record) {
 		record.Phases = applyPresetDependsOn(record.Phases, preset)
 		record.GraphRecovery.Status = GraphRecoveryPresetEdgesRestored
 		return record
@@ -2033,12 +2024,12 @@ func (s *Store) restoreMissingDependsOn(record FlowRecord, presence []rawDepends
 	return record
 }
 
-func (s *Store) presetForRecovery(record FlowRecord) (Preset, bool) {
+func presetForLegacyRecovery(record FlowRecord, presets map[string]Preset) (Preset, bool) {
 	name := normalizePresetName(record.PresetName)
-	if name == "" || name == "default" || s.presets == nil {
+	if name == "" || name == "default" || presets == nil {
 		return Preset{}, false
 	}
-	preset, ok := s.presets[name]
+	preset, ok := presets[name]
 	return preset, ok
 }
 
@@ -2104,26 +2095,6 @@ func rawDependsOnPresentForEveryTopLevel(phases []FlowPhase, presence []rawDepen
 		}
 	}
 	return seenTopLevel
-}
-
-func missingTopLevelDependsOnByID(phases []FlowPhase, presence []rawDependsOnState) map[string]bool {
-	missing := make(map[string]bool)
-	for i, phase := range phases {
-		if phase.ParentPhaseID != "" {
-			continue
-		}
-		if i < len(presence) && presence[i].Present {
-			continue
-		}
-		id := artifacts.NormalizePhaseID(phase.PhaseID)
-		if id != "" {
-			missing[id] = true
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return missing
 }
 
 func flowNotFoundError(flowID string) error {

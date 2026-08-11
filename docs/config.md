@@ -35,7 +35,7 @@ exist:
 | TUI artifact root | `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | `$XDG_STATE_HOME/approach/sessions/v1` or `~/.local/state/approach/sessions/v1` |
 | Session hook root | `--state-root` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root |
 | Plan state root | `--state-root` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/plans/...`) |
-| Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/flows/...`) |
+| Flow state root | `--state-root` > `APPROACH_FLOW_STATE_ROOT` > `APPROACH_PLAN_STATE_ROOT` > `APPROACH_SESSION_STATE_ROOT` | `[sessions].root` | same as sessions root (`<root>/approach.db`) |
 | Bootstrap hook timeout | none | `[bootstrap].timeout_seconds` or hook override | `120` seconds |
 
 `[scan].root` and `[sessions].root` support `~` and `~/...` expansion.
@@ -300,8 +300,8 @@ Custom presets must form an acyclic top-level graph, may include multiple root
 phases, and may include at most one `merge`-kind phase. Child implementation
 phases are still created dynamically with `approach flow phase add-child`; they are
 not declared in config. Records created from a named preset persist
-`preset_name` so Approach can restore missing `depends_on` edges if an older binary
-partially rewrites the record.
+`preset_name` so the one-time legacy migrator can restore missing `depends_on`
+edges before SQLite becomes authoritative.
 
 ### `[sessions]`
 
@@ -321,7 +321,7 @@ Relative roots other than `~`/`~/...` fail config parsing.
 
 `[sessions].root` doubles as the **agent-artifact root**: sessions, saved plans,
 and Flow records are stored under `<root>/sessions/...`,
-`<root>/plans/<plan-id>/`, and `<root>/flows/<flow-id>/`. There is no separate
+`<root>/plans/<plan-id>/`, and `<root>/approach.db`. There is no separate
 plans or flows config in v1. **Moving or cleaning the sessions root therefore
 also moves or removes saved plans and Flow records.**
 
@@ -379,9 +379,10 @@ Codex/Claude skill directories.
 ## Flows
 
 Flow records are task-centric workflow records created by the TUI or explicitly
-through `approach flow`. Each record is stored as
-`<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
-(`0700` directories, `0600` files) and atomic writes. They appear in the TUI
+through `approach flow`. Records are stored in `<artifact-root>/approach.db`, a
+`0600` pure-Go SQLite database inside the `0700` artifact root. Runtime uses WAL
+and a five-second busy timeout by default; writers serialize database-wide while
+WAL readers continue. They appear in the TUI
 flows pane (bottom-pane keyboard `3`), which is stored at startup below
 Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
 toggle per-Flow auto mode and the per-Flow headless preference, resume attached phase sessions, record a manual
@@ -389,6 +390,14 @@ GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
 Flow terminals are documented in `docs/tui-guide.md`. Other phase and
 progression mutation remains CLI/agent-driven in v1.
+
+On first open when `approach.db` is absent and legacy `<artifact-root>/flows/`
+records exist, Approach canonicalizes the readable legacy corpus into a closed
+staged database, validates it, renames `flows/` to the unchanged
+`flows.legacy/` tombstone, and atomically promotes the database. Interrupted
+cutovers resume from the staged database and tombstone. Once `approach.db`
+exists, it is authoritative and neither legacy directory affects runtime reads.
+Saved plans and agent sessions remain file-backed.
 
 ```bash
 # Create a flow. --repo-path must be absolute, instructions are required, and
