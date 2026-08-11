@@ -1966,10 +1966,14 @@ func (m Model) selectedFlowHasLaunchablePhase() bool {
 	if !ok {
 		return false
 	}
+	// An in-flight headless write makes admission refuse, so the footer has to
+	// stop advertising for as long as it is outstanding.
+	if m.flowHeadlessWritePending(record.FlowID) {
+		return false
+	}
 	_, _, ok = m.previewFlowLaunch(flowLaunchIntent{
 		Kind:   flowLaunchKindManualPhase,
 		FlowID: record.FlowID,
-		Origin: m.flowLaunchOrigin(),
 	})
 	return ok
 }

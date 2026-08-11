@@ -35,14 +35,16 @@ func (state flowLaunchState) String() string {
 
 // flowLaunchAttempt reserves one Flow for one launch. It is the only per-Flow
 // launch reservation the lifecycle owns; a retained embedded terminal slot owns
-// the Flow instead once installed, so no attempt outlives slot installation.
+// the Flow instead once installed, so a successful launch's attempt does not
+// outlive slot installation. The prefill-failure path is the one exception: it
+// re-reserves while the slot it is about to dismiss is still installed, which
+// is what keeps the Flow owned across the correction.
 type flowLaunchAttempt struct {
 	Token   string
 	Kind    flowLaunchKind
 	State   flowLaunchState
 	FlowID  string
 	PhaseID string
-	Session flowLaunchSessionRef
 	// MutatedPhase records that AddPhaseLaunchID succeeded, so a later failure
 	// has a persisted running phase to correct. Without it a failure between
 	// phase resolution and persistence would clobber a still-ready phase.
@@ -115,16 +117,25 @@ func (m Model) transitionFlowLaunchAttempt(flowID, token string, from, to flowLa
 	return m.withFlowLaunchAttempt(attempt), true
 }
 
-// markFlowLaunchAttemptMutatedPhase records that this attempt persisted a
-// launch ID, which is what makes its failure path responsible for correcting
-// the phase status.
-func (m Model) markFlowLaunchAttemptMutatedPhase(flowID, token string) Model {
+// updateFlowLaunchAttempt edits the attempt this Flow and token name. Unlike
+// transitionFlowLaunchAttempt it does not fence on state, so it is only for
+// fields that are true regardless of where the attempt has reached.
+func (m Model) updateFlowLaunchAttempt(flowID, token string, mutate func(*flowLaunchAttempt)) Model {
 	attempt, ok := m.flowLaunchAttempt(flowID)
 	if !ok || attempt.Token != strings.TrimSpace(token) {
 		return m
 	}
-	attempt.MutatedPhase = true
+	mutate(&attempt)
 	return m.withFlowLaunchAttempt(attempt)
+}
+
+// markFlowLaunchAttemptMutatedPhase records that this attempt persisted a
+// launch ID, which is what makes its failure path responsible for correcting
+// the phase status.
+func (m Model) markFlowLaunchAttemptMutatedPhase(flowID, token string) Model {
+	return m.updateFlowLaunchAttempt(flowID, token, func(attempt *flowLaunchAttempt) {
+		attempt.MutatedPhase = true
+	})
 }
 
 // releaseFlowLaunchAttempt frees the Flow. It matches on the token alone and is

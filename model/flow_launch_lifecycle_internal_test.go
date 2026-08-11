@@ -226,18 +226,46 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 	blocked.Phases[0].Status = flowstore.PhaseCompleted
 
 	tests := []struct {
-		name         string
-		record       flowstore.FlowRecord
-		agentCommand string
-		headlessWait bool
-		wantStatus   string
+		name          string
+		record        flowstore.FlowRecord
+		agentCommand  string
+		headlessWait  bool
+		occupy        bool
+		wantStatus    string
+		wantAdvertise bool
 	}{
 		{
-			name:         "pending headless write wins over everything",
+			// Dismissing the terminal would reveal nothing to launch, so
+			// naming it as the obstacle would send the user to do nothing.
+			name:         "no launchable phase wins over occupancy",
+			record:       blocked,
+			agentCommand: "",
+			occupy:       true,
+			wantStatus:   "No launchable Flow phase",
+		},
+		{
+			name:         "occupancy reported once a phase is launchable",
 			record:       launchable,
 			agentCommand: "",
+			occupy:       true,
+			wantStatus:   flowLaunchBusyStatus,
+		},
+		{
+			name:         "occupancy wins over a pending headless write",
+			record:       launchable,
+			agentCommand: "",
+			occupy:       true,
 			headlessWait: true,
-			wantStatus:   flowHeadlessWritePendingStatus,
+			wantStatus:   flowLaunchBusyStatus,
+		},
+		{
+			// The Flow is not waiting on the write when it has nothing to
+			// launch, so reporting the write would name the wrong obstacle.
+			name:         "no launchable phase wins over a pending headless write",
+			record:       blocked,
+			agentCommand: "",
+			headlessWait: true,
+			wantStatus:   "No launchable Flow phase",
 		},
 		{
 			name:         "no launchable phase wins over unset agent",
@@ -246,10 +274,18 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			wantStatus:   "No launchable Flow phase",
 		},
 		{
-			name:         "unset agent reported once a phase is launchable",
+			name:         "pending headless write reported once a phase is launchable",
 			record:       launchable,
 			agentCommand: "",
-			wantStatus:   "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+			headlessWait: true,
+			wantStatus:   flowHeadlessWritePendingStatus,
+		},
+		{
+			name:          "unset agent reported once a phase is launchable",
+			record:        launchable,
+			agentCommand:  "",
+			wantStatus:    "Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+			wantAdvertise: true,
 		},
 	}
 
@@ -269,7 +305,20 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 					enabled:  true,
 				})
 			}
+			if tc.occupy {
+				m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+					Scope:    embeddedTerminalScopeFlow,
+					FlowID:   tc.record.FlowID,
+					Terminal: flowPhaseLaunchTestTerminal{state: "running"},
+				})
+			}
 
+			// Whatever the reason, the footer must not advertise a launch the
+			// key press is about to refuse. Only the unset-agent case is
+			// advertised: pressing A then g is the documented recovery.
+			if got := m.selectedFlowHasLaunchablePhase(); got != tc.wantAdvertise {
+				t.Fatalf("footer advertised launch = %v, want %v", got, tc.wantAdvertise)
+			}
 			next, _ := m.handleLaunchNextFlowPhase()
 			if got := next.(Model).status.Text; got != tc.wantStatus {
 				t.Fatalf("status = %q, want %q", got, tc.wantStatus)
@@ -461,8 +510,8 @@ func TestFlowLaunchDuplicateIntentIsRefused(t *testing.T) {
 	if secondCmd != nil {
 		t.Fatal("second launch should not start any work")
 	}
-	if got := second.status.Text; got != noLaunchableFlowPhaseStatus {
-		t.Fatalf("second launch status = %q, want %q", got, noLaunchableFlowPhaseStatus)
+	if got := second.status.Text; got != flowLaunchBusyStatus {
+		t.Fatalf("second launch status = %q, want %q", got, flowLaunchBusyStatus)
 	}
 	if again, _ := h.attempt(second, record.FlowID); again.Token != attempt.Token {
 		t.Fatalf("second launch replaced the live attempt: %#v", again)
@@ -530,8 +579,8 @@ func TestFlowLaunchAdmissionRejectsLegacyOccupancy(t *testing.T) {
 			if cmd != nil {
 				t.Fatal("occupied Flow should not start any launch work")
 			}
-			if got := next.status.Text; got != noLaunchableFlowPhaseStatus {
-				t.Fatalf("status = %q, want %q", got, noLaunchableFlowPhaseStatus)
+			if got := next.status.Text; got != flowLaunchBusyStatus {
+				t.Fatalf("status = %q, want %q", got, flowLaunchBusyStatus)
 			}
 			if _, ok := h.attempt(next, record.FlowID); ok {
 				t.Fatal("occupied Flow must not reserve an attempt")
@@ -568,6 +617,48 @@ func TestLegacySourcesRejectWhileLifecycleHoldsFlow(t *testing.T) {
 	})
 	if resumeCmd != nil || len(resumed.pendingFlowPhaseResumes) != 0 {
 		t.Fatal("phase resume must not start while a launch attempt holds the Flow")
+	}
+}
+
+// Repair reads the persisted headless preference, so it refuses while a write
+// is in flight. The footer has to withdraw for exactly as long, and the refusal
+// has to name the durable obstacle when there is one.
+func TestRepairFooterAndAdmissionAgreeOnPendingHeadlessWrite(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	record.Phases[0].Status = flowstore.PhaseNeedsAttention
+	h := newManualLaunchHarness(t, record)
+	base := h.model()
+	base.activeFlowSurface = false
+	if !base.selectedFlowRepairReady() {
+		t.Fatal("fixture should be repairable before anything holds the Flow")
+	}
+
+	pending := base.markFlowHeadlessWritePending(pendingFlowHeadlessWrite{
+		flowID:   record.FlowID,
+		repoPath: record.RepoPath,
+		enabled:  false,
+	})
+	if pending.selectedFlowRepairReady() {
+		t.Fatal("footer must withdraw repair while a headless write is in flight")
+	}
+	next, cmd := pending.handleRepairSelectedFlow()
+	if cmd != nil {
+		t.Fatal("a refused repair should start no work")
+	}
+	if got := next.(Model).status.Text; got != flowHeadlessWritePendingStatus {
+		t.Fatalf("status = %q, want %q", got, flowHeadlessWritePendingStatus)
+	}
+
+	occupied := pending
+	occupied.embeddedTerminals = append(occupied.embeddedTerminals, embeddedTerminalSlot{
+		Scope:    embeddedTerminalScopeFlow,
+		FlowID:   record.FlowID,
+		Terminal: flowPhaseLaunchTestTerminal{state: "running"},
+	})
+	next, _ = occupied.handleRepairSelectedFlow()
+	const wantTerminal = "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"
+	if got := next.(Model).status.Text; got != wantTerminal {
+		t.Fatalf("status = %q, want the terminal obstacle %q", got, wantTerminal)
 	}
 }
 
@@ -756,8 +847,10 @@ func TestFlowLaunchLiveSessionScope(t *testing.T) {
 			if launched != tc.wantLaunch {
 				t.Fatalf("launch persisted = %v, want %v (status %q)", launched, tc.wantLaunch, m.status.Text)
 			}
-			if !tc.wantLaunch && m.status.Text != noLaunchableFlowPhaseStatus {
-				t.Fatalf("status = %q, want %q", m.status.Text, noLaunchableFlowPhaseStatus)
+			// Every blocking case here is a live session, which holds the
+			// launch slot rather than making the phase unlaunchable.
+			if !tc.wantLaunch && m.status.Text != flowLaunchBusyStatus {
+				t.Fatalf("status = %q, want %q", m.status.Text, flowLaunchBusyStatus)
 			}
 		})
 	}

@@ -149,7 +149,10 @@ func (m Model) selectedFlowRepairReady() bool {
 		!m.hasPendingFlowPhaseResumeForFlow(record.FlowID) &&
 		!m.hasPendingFlowRepairLaunch(record.FlowID) &&
 		// A repair must not arm while the launch lifecycle holds this Flow.
-		!m.flowLaunchAttemptOccupied(record.FlowID)
+		!m.flowLaunchAttemptOccupied(record.FlowID) &&
+		// Repair refuses while a headless write is in flight, so the footer
+		// must stop advertising it for as long as one is.
+		!m.flowHeadlessWritePending(record.FlowID)
 }
 
 func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
@@ -157,11 +160,9 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	// Repair reads the persisted headless preference asynchronously, so it must
-	// wait for an in-flight toggle exactly as a phase launch does.
-	if m.flowHeadlessWritePending(record.FlowID) {
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
-	}
+	// Every unready reason is named explicitly, ordered so the durable
+	// obstacles come before the transient one: a headless write clears on its
+	// own, an open terminal does not.
 	if !m.selectedFlowRepairReady() {
 		if m.hasPendingFlowRepairLaunch(record.FlowID) {
 			return m.setStatus(statusOther, "A repair launch is already pending for this Flow"), nil
@@ -169,7 +170,12 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		if m.hasPendingFlowPhaseResumeForFlow(record.FlowID) {
 			return m.setStatus(statusOther, "A phase resume is already pending for this Flow"), nil
 		}
-		return m.setStatus(statusOther, "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"), nil
+		if m.hasFlowEmbeddedTerminalForFlow(record.FlowID) || m.flowLaunchAttemptOccupied(record.FlowID) {
+			return m.setStatus(statusOther, "Close, detach, or dismiss the existing Flow terminal before repairing this Flow"), nil
+		}
+		// Repair reads the persisted headless preference asynchronously, so it
+		// must wait for an in-flight toggle exactly as a phase launch does.
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
 	}
 
 	command, modelName, reasoningEffort := m.flowLaunchAgentSettings()

@@ -13,11 +13,17 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-// noLaunchableFlowPhaseStatus covers every reason a launch is refused before it
-// reaches preflight: no eligible phase, an occupied Flow, or a live session on
-// the phase. Occupancy deliberately reuses this text so the migration adds no
-// user-visible strings.
+// noLaunchableFlowPhaseStatus is refusal for a Flow that has no eligible phase
+// at all: nothing is ready, or the fresh record disagrees with the list row.
 const noLaunchableFlowPhaseStatus = "No launchable Flow phase"
+
+// flowLaunchBusyStatus is refusal for a Flow whose launch slot is already taken
+// — by another lifecycle attempt, an embedded terminal, a pending repair or
+// phase resume, or a live session on the phase being launched. It is
+// deliberately distinct from noLaunchableFlowPhaseStatus: the phase is
+// launchable and reporting otherwise would be false, and the remedy the guide
+// documents (dismiss the terminal) is only actionable if the refusal names it.
+const flowLaunchBusyStatus = "Flow is busy; dismiss its terminal or wait for the running session"
 
 // flowLaunchStage names the two asynchronous hops the lifecycle emits. Handoff
 // results and failure persistence arrive on messages that already exist, so
@@ -61,15 +67,25 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 	}
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
-	if flowID != "" && m.flowHeadlessWritePending(flowID) {
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
-	}
 	if flowID == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
-	record, phase, ok := m.previewFlowLaunch(intent)
+	// Each refusal names the obstacle the user can actually act on, so every
+	// check is ordered by whether clearing it would change the answer. A Flow
+	// with nothing to launch stays unlaunchable however busy it is, so
+	// launchability is answered first; telling someone to dismiss a terminal
+	// that would reveal no ready phase sends them to do nothing.
+	record, phase, ok := m.cachedFlowLaunchTarget(intent)
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+	}
+	if m.flowLaunchAdmissionOccupied(flowID) {
+		return m.setStatus(statusOther, flowLaunchBusyStatus), nil
+	}
+	// After launchability, so a Flow with nothing to launch reports that rather
+	// than a transient write it is not waiting on.
+	if m.flowHeadlessWritePending(flowID) {
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
 	}
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
@@ -85,13 +101,18 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 		Kind:    intent.Kind,
 		FlowID:  record.FlowID,
 		PhaseID: phase.PhaseID,
-		Session: intent.Session,
 	}, flowLaunchStateReserved)
 	if !reserved {
-		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.setStatus(statusOther, flowLaunchBusyStatus), nil
 	}
 	m = next
-	m, _ = m.transitionFlowLaunchAttempt(record.FlowID, token, flowLaunchStateReserved, flowLaunchStateReading)
+	// A failure here would leave the attempt in reserved, where no event fence
+	// matches, and the Flow would be held forever. Release rather than continue.
+	next, advanced := m.transitionFlowLaunchAttempt(record.FlowID, token, flowLaunchStateReserved, flowLaunchStateReading)
+	if !advanced {
+		return m.releaseFlowLaunchAttempt(record.FlowID, token).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+	}
+	m = next
 	return m, m.flowLaunchReadCmd(intent, token)
 }
 
@@ -100,11 +121,19 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 // rather than whatever happens to be selected, so a preview and an admission
 // always speak about the same Flow.
 func (m Model) previewFlowLaunch(intent flowLaunchIntent) (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
-	record, ok := m.cachedFlowRecord(intent.FlowID)
-	if !ok || strings.TrimSpace(record.FlowID) == "" {
+	record, phase, ok := m.cachedFlowLaunchTarget(intent)
+	if !ok || m.flowLaunchAdmissionOccupied(record.FlowID) {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
-	if m.flowLaunchAdmissionOccupied(record.FlowID) {
+	return record, phase, true
+}
+
+// cachedFlowLaunchTarget is the launchability half of the preview, without the
+// occupancy half. Admission needs the two separately so it can name whichever
+// one is actually blocking; the footer only needs their conjunction.
+func (m Model) cachedFlowLaunchTarget(intent flowLaunchIntent) (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
+	record, ok := m.cachedFlowRecord(intent.FlowID)
+	if !ok || strings.TrimSpace(record.FlowID) == "" {
 		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
 	}
 	phase, ok := flowLaunchablePhase(record, intent.PhaseID)
@@ -208,9 +237,8 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string) tea.Cmd 
 			return event
 		}
 		if flowLaunchPhaseSessionOccupied(phase, records) {
-			// A live session on the phase means it is effectively still
-			// running, which is what the existing text already says.
-			event.Err = noLaunchableFlowPhaseStatus
+			// The phase is launchable; a live session on it is holding the slot.
+			event.Err = flowLaunchBusyStatus
 			return event
 		}
 		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{
@@ -354,8 +382,9 @@ func (m Model) installFlowLaunchEmbedded(attempt flowLaunchAttempt, msg flowLaun
 
 // handoffFlowLaunchExternal calls launchAgent directly rather than through
 // launchAgentWithContext: that helper swallows a synchronous launch error
-// without ever emitting an AgentResultMsg, which would leave the attempt in
-// handoffPending forever.
+// without ever emitting an AgentResultMsg. Splitting the call lets the error
+// reach failFlowLaunch instead of stranding the attempt in preparing, which is
+// where it would sit with no message left to move it.
 func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	ctx := msg.Context
 	launch, err := m.launchAgent(ctx)
@@ -364,6 +393,11 @@ func (m Model) handoffFlowLaunchExternal(attempt flowLaunchAttempt, msg flowLaun
 	}
 	if next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStatePreparing, flowLaunchStateHandoffPending); ok {
 		m = next
+	} else {
+		// The attempt moved on between prepare and handoff. The agent is already
+		// launched so there is nothing to undo, but leaving the attempt behind
+		// would strand it: no AgentResultMsg fence matches any other state.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
 	}
 	m, launchCmd := m.runAgentLaunchWithContext(ctx, launch)
 	var fetchCmd tea.Cmd
@@ -417,6 +451,15 @@ func flowLaunchFailurePersistCmd(
 // dismisses the slot before persisting the failure, so the Flow is briefly
 // unowned while its phase is still persisted running. Classify, re-reserve,
 // then dismiss.
+//
+// This runs for every phase-tracked prefill failure, not only lifecycle ones,
+// because any tracked context has a persisted running phase to correct. The
+// re-reservation is therefore labelled manualPhase even when the launch came
+// from AutoMode or the initial Plan launch; nothing fences on Kind here, and
+// the attempt is released by the unconditional persistence message, so the only
+// effect is that repair and AutoMode defer for the length of one write. Repair
+// contexts never reach it: their empty phase ID makes flowLaunchFailureUpdate
+// return false.
 func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg) (Model, tea.Cmd) {
 	ctx := msg.LaunchContext
 	errText := msg.Err.Error()
@@ -444,12 +487,9 @@ func (m Model) handleFlowLaunchPrefillFailure(msg embeddedPromptPrefillResultMsg
 }
 
 func (m Model) withFlowLaunchAttemptPhase(flowID, token, phaseID string) Model {
-	attempt, ok := m.flowLaunchAttempt(flowID)
-	if !ok || attempt.Token != strings.TrimSpace(token) {
-		return m
-	}
-	attempt.PhaseID = phaseID
-	return m.withFlowLaunchAttempt(attempt)
+	return m.updateFlowLaunchAttempt(flowID, token, func(attempt *flowLaunchAttempt) {
+		attempt.PhaseID = phaseID
+	})
 }
 
 func (seams flowLaunchSeams) newLaunchID() string {
