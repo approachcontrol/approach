@@ -302,6 +302,15 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	// be wrong, because the most likely failure is a bootstrap lock held by
 	// another approach process mid-cutover, and that clears on its own. A
 	// permanent cache would leave the TUI unable to write any Flow until restart.
+	//
+	// OWNERSHIP: a store built here is owned by the Model and lives until the
+	// process exits — nothing closes it, because a value-type Bubble Tea model has
+	// no lifecycle hook to close it from. That is bounded at one pool per Model
+	// that actually performs a fallback write, and the TUI never builds one:
+	// cmd/approach opens the process store and injects it as Options.FlowStore, so
+	// this branch is reached only by tests and embedders, which build few Models
+	// and exit. Anything that constructs Models repeatedly in a long-lived process
+	// must inject Options.FlowStore and close it itself.
 	var (
 		flowStoreMu sync.Mutex
 		flowStore   *flowstore.Store

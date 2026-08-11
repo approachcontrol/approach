@@ -87,6 +87,15 @@ type Store struct {
 	// SetPlanLink still resolves plan paths and constructs a planstore.Store
 	// inline. Finishing that extraction is follow-up work, not part of the
 	// storage seam.
+	//
+	// This is the CONFIGURED root, deliberately not the symlink-resolved one the
+	// SQLite bootstrap canonicalizes for the database, lease, and reserved child
+	// paths. Plan paths are user-facing strings: SetPlanLink derives one from
+	// this root and requires an exact match against any --plan-path the caller
+	// supplies, and it persists that string in the record. Resolving here would
+	// reject the paths launchers build from the configured root, and rewrite
+	// every stored plan_path, on any root with a symlink component — which the
+	// file backend accepted and this cutover keeps accepting.
 	root                      string
 	now                       func() time.Time
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
@@ -718,6 +727,16 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 // marker. The cost is that a contended plan-store file lock stalls every Flow
 // write, not just this one. Lock order is flow-db-writer -> plan-file-lock and
 // is never taken in reverse, so this cannot deadlock — it can only wait.
+//
+// The second cost is ordering: the plan file is durable the moment this returns,
+// while the Flow row is not durable until the commit that follows. A crash or a
+// failed commit in that window leaves the plan phase completed and the Flow
+// phase not. The file backend had the opposite skew (Flow durable first, plan
+// second) — there was never cross-store atomicity — and this direction is the
+// safer of the two: the authoritative store commits last, and re-running the
+// phase completion re-marks the plan phase, which is idempotent. Closing the
+// window for real needs an outbox or a second compensating transaction; that is
+// tracked with the blast-radius work in approach-80e.5, not solved here.
 func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
 	planID := strings.TrimSpace(record.PlanID)
 	if planID == "" || phase.Status != PhaseCompleted {
