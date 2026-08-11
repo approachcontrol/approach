@@ -126,6 +126,16 @@ func (m Model) setAutoAdvanceStatus(text string) (Model, tea.Cmd) {
 // them. Ordering by arrival alone would let a routine launch on one Flow erase a
 // needs_attention raised by another, which is the only prompt the user gets
 // that a Flow wants a human.
+// Queued and failed deliberately share one rank rather than splitting into two.
+// Ranking failure above queued would invert the rule the rest of this enum is
+// built on — a message reported once outranks one that will be back — because
+// admission disarms the drain, so a queued announcement is never retried, while
+// both failure paths re-arm and re-report every poll. The cost of sharing is
+// bounded and self-clearing: an off-repo failure batched alongside a queued
+// announcement for a different Flow can land first and be replaced, and the
+// re-armed failure replaces it again about a second later. The cost of
+// splitting is not: a Flow failing every second would suppress the only
+// announcement another Flow ever gets.
 func (m Model) setAutoAdvanceLaunchStatus(text string) (Model, tea.Cmd) {
 	return m.setRankedAutoAdvanceStatus(autoAdvanceRankLaunch, text)
 }
