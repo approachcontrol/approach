@@ -1898,6 +1898,58 @@ func TestViewMarksRepoWithRunningTerminalByCleanRepoPath(t *testing.T) {
 	}
 }
 
+func TestFlowTerminalActivityIncludesFlowAssociatedSessionScope(t *testing.T) {
+	m := Model{
+		embeddedTerminals: []embeddedTerminalSlot{
+			{
+				Scope:       embeddedTerminalScopeSession,
+				FlowID:      "flow-1",
+				FlowPhaseID: "implementation",
+				Terminal:    internalFakeEmbeddedTerminal{},
+			},
+			{
+				Scope:    embeddedTerminalScopeSession,
+				Terminal: internalFakeEmbeddedTerminal{},
+			},
+		},
+	}
+
+	activity := m.flowTerminalActivity()
+
+	if len(activity) != 1 || activity[0].FlowID != "flow-1" || activity[0].PhaseID != "implementation" {
+		t.Fatalf("Flow terminal activity = %#v, want resumed session for flow-1/implementation", activity)
+	}
+}
+
+func TestSyncActiveFlowTerminalToSelectedFlowIncludesFlowAssociatedSessionScope(t *testing.T) {
+	m := internalFlowsModel(
+		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
+		flowstore.FlowRecord{FlowID: "flow-2", RepoPath: "/dev/alpha", Title: "Flow two"},
+	)
+	m.activeTerminalNum = 1
+	m.embeddedTerminals = []embeddedTerminalSlot{
+		{
+			Number:   1,
+			Scope:    embeddedTerminalScopeFlow,
+			FlowID:   "flow-1",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+		{
+			Number:   2,
+			Scope:    embeddedTerminalScopeSession,
+			FlowID:   "flow-2",
+			Terminal: internalFakeEmbeddedTerminal{},
+		},
+	}
+	m.flows = m.flows.Move(1, 20, 80)
+
+	m = m.syncActiveFlowTerminalToSelectedFlow()
+
+	if m.activeTerminalNum != 2 {
+		t.Fatalf("active Flow terminal = %d, want resumed session terminal 2", m.activeTerminalNum)
+	}
+}
+
 func TestSyncActiveFlowTerminalToSelectedFlowSelectsNewestMatchingTerminal(t *testing.T) {
 	m := internalFlowsModel(
 		flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/dev/alpha", Title: "Flow one"},
