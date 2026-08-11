@@ -43,7 +43,7 @@ func TestModel_LaunchIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	updated.UpdatedAt = time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)
 
 	var reservations []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			return updated, nil
@@ -64,7 +64,7 @@ func TestModel_LaunchIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	// The persistence command has not run yet, so the store still holds the old
 	// preference. A launch now would reserve the phase and start the agent in
 	// the stale mode.
-	m, launchCmd := update(m, flowLaunchKey())
+	m, launchCmd := flowLaunchFromKey(t, m)
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 0 {
 		t.Fatalf("reserved %#v while the headless write was in flight, want no launch", reservations)
@@ -75,7 +75,7 @@ func TestModel_LaunchIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 
 	// Once the write lands the launch proceeds with the persisted preference.
 	m, _ = update(m, headlessCmd())
-	m, launchCmd = update(m, flowLaunchKey())
+	m, launchCmd = flowLaunchFromKey(t, m)
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 1 {
 		t.Fatalf("reservations = %#v, want one launch after the headless write completed", reservations)
@@ -88,7 +88,7 @@ func TestModel_LaunchIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 func TestModel_FailedHeadlessWriteReleasesTheLaunchFence(t *testing.T) {
 	flow := launchableFlow()
 	var reservations []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, errFlowHeadlessWrite
@@ -107,7 +107,7 @@ func TestModel_FailedHeadlessWriteReleasesTheLaunchFence(t *testing.T) {
 	}
 	m, _ = update(m, headlessCmd())
 
-	m, launchCmd := update(m, flowLaunchKey())
+	m, launchCmd := flowLaunchFromKey(t, m)
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 1 {
 		t.Fatalf("reservations = %#v, want the fence released after the write failed", reservations)
@@ -123,7 +123,7 @@ func TestModel_OverlappingHeadlessWritesKeepTheLaunchFenced(t *testing.T) {
 	updated.Headless = false
 
 	var reservations []flowstore.PhaseLaunchUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			result := updated
@@ -155,14 +155,14 @@ func TestModel_OverlappingHeadlessWritesKeepTheLaunchFenced(t *testing.T) {
 	if followUp == nil {
 		t.Fatal("completing the first write should persist the queued toggle")
 	}
-	m, launchCmd := update(m, flowLaunchKey())
+	m, launchCmd := flowLaunchFromKey(t, m)
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 0 {
 		t.Fatalf("reserved %#v while the queued headless write was outstanding, want no launch", reservations)
 	}
 
 	m, _ = update(m, followUp())
-	m, launchCmd = update(m, flowLaunchKey())
+	m, launchCmd = flowLaunchFromKey(t, m)
 	m = settleModelCommands(t, m, launchCmd, 4)
 	if len(reservations) != 1 {
 		t.Fatalf("reservations = %#v, want one launch after every headless write completed", reservations)
@@ -176,7 +176,7 @@ func TestModel_QueuedHeadlessTogglesAlternateFromThePendingValue(t *testing.T) {
 	}
 
 	var writes []flowstore.HeadlessUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			writes = append(writes, update)
 			result := flow
@@ -222,7 +222,7 @@ func TestModel_QueuedHeadlessToggleKeepsItsOwnSurfaceScope(t *testing.T) {
 	flow := flowWithPhaseDetails()
 
 	var writes []flowstore.HeadlessUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			writes = append(writes, update)
 			result := flow
@@ -270,7 +270,7 @@ func TestModel_QueuedHeadlessToggleKeepsItsOwnSurfaceScope(t *testing.T) {
 func TestModel_CoalescedHeadlessToggleKeepsTheLatestSurfaceScope(t *testing.T) {
 	flow := flowWithPhaseDetails()
 
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			result := flow
 			result.Headless = update.Enabled
@@ -308,7 +308,7 @@ func TestModel_CoalescedHeadlessToggleKeepsTheLatestSurfaceScope(t *testing.T) {
 func TestModel_QueuedHeadlessToggleKeepsGlobalScopeAcrossTheChain(t *testing.T) {
 	flow := flowWithPhaseDetails()
 
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			result := flow
 			result.Headless = update.Enabled
@@ -358,7 +358,7 @@ func TestModel_FailedWriteReportsDroppedQueuedHeadlessToggles(t *testing.T) {
 	flow := flowWithPhaseDetails()
 
 	var writes []flowstore.HeadlessUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			writes = append(writes, update)
 			return flowstore.FlowRecord{}, errFlowHeadlessWrite
@@ -384,7 +384,7 @@ func TestModel_FailedWriteReportsDroppedQueuedHeadlessToggles(t *testing.T) {
 	if flows := m.Flows(); len(flows) != 1 || !flows[0].Headless {
 		t.Fatalf("Flows() = %#v, want the stored preference unchanged", flows)
 	}
-	if _, cmd := update(m, flowLaunchKey()); cmd == nil {
+	if _, cmd := flowLaunchFromKey(t, m); cmd == nil {
 		t.Fatal("launch stayed fenced after the failed write")
 	}
 }
@@ -393,7 +393,7 @@ func TestModel_QueuedHeadlessTogglesCoalesceToTheLastIntent(t *testing.T) {
 	flow := flowWithPhaseDetails()
 
 	var writes []flowstore.HeadlessUpdate
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			writes = append(writes, update)
 			result := flow
@@ -420,7 +420,7 @@ func TestModel_QueuedHeadlessTogglesCoalesceToTheLastIntent(t *testing.T) {
 	if got := m.Flows(); len(got) != 1 || got[0].Headless {
 		t.Fatalf("Flows() = %#v, want three toggles to leave headless mode off", got)
 	}
-	if _, cmd := update(m, flowLaunchKey()); cmd == nil {
+	if _, cmd := flowLaunchFromKey(t, m); cmd == nil {
 		t.Fatal("launch stayed fenced after the coalesced toggle settled")
 	}
 }
@@ -433,7 +433,7 @@ func TestModel_RepairIsFencedBehindPendingHeadlessWrite(t *testing.T) {
 	updated.Headless = false
 
 	var listCalls int
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
 			return updated, nil

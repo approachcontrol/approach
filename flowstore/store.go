@@ -217,23 +217,28 @@ type HeadlessUpdate struct {
 
 // FlowRecord is the persisted task workflow record.
 type FlowRecord struct {
-	SchemaVersion int                `json:"schema_version"`
-	FlowID        string             `json:"flow_id"`
-	Title         string             `json:"title"`
-	Instructions  string             `json:"instructions"`
-	Status        string             `json:"status"`
-	RepoPath      string             `json:"repo_path"`
-	WorktreePath  string             `json:"worktree_path,omitempty"`
-	Branch        string             `json:"branch,omitempty"`
-	BaseRef       string             `json:"base_ref,omitempty"`
-	Commit        string             `json:"commit,omitempty"`
-	PresetName    string             `json:"preset_name,omitempty"`
-	PlanID        string             `json:"plan_id,omitempty"`
-	PlanPath      string             `json:"plan_path,omitempty"`
-	Issue         Issue              `json:"issue,omitempty"`
-	PR            PullRequest        `json:"pr,omitempty"`
-	Merge         Merge              `json:"merge,omitempty"`
-	AutoMode      bool               `json:"auto_mode,omitempty"`
+	SchemaVersion int         `json:"schema_version"`
+	FlowID        string      `json:"flow_id"`
+	Title         string      `json:"title"`
+	Instructions  string      `json:"instructions"`
+	Status        string      `json:"status"`
+	RepoPath      string      `json:"repo_path"`
+	WorktreePath  string      `json:"worktree_path,omitempty"`
+	Branch        string      `json:"branch,omitempty"`
+	BaseRef       string      `json:"base_ref,omitempty"`
+	Commit        string      `json:"commit,omitempty"`
+	PresetName    string      `json:"preset_name,omitempty"`
+	PlanID        string      `json:"plan_id,omitempty"`
+	PlanPath      string      `json:"plan_path,omitempty"`
+	Issue         Issue       `json:"issue,omitempty"`
+	PR            PullRequest `json:"pr,omitempty"`
+	Merge         Merge       `json:"merge,omitempty"`
+	AutoMode      bool        `json:"auto_mode,omitempty"`
+	// Headless is the per-Flow manual-launch preference. Like AutoMode, it is
+	// forced on at creation and can only be changed afterwards through
+	// SetHeadless or CreateOptions.Headless — a value set on a record passed to
+	// Create is ignored. It is written without omitempty so an explicit false
+	// stays distinguishable from a legacy record that predates the field.
 	Headless      bool               `json:"headless"`
 	Phases        []FlowPhase        `json:"phases"`
 	CreatedAt     time.Time          `json:"created_at"`

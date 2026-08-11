@@ -32,8 +32,9 @@ func (b *fileBackend) get(flowID string) (storedFlow, bool) {
 	if err != nil {
 		return storedFlow{}, false
 	}
-	presence := rawDependsOnPresence(data)
-	headlessPresent := rawFieldPresent(data, "headless")
+	raw := decodeRawFlowFields(data)
+	presence := raw.dependsOnPresence()
+	headlessPresent := raw.present("headless")
 	var record FlowRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return storedFlow{}, false
@@ -295,34 +296,44 @@ func flowPhaseForWriteFrom(phase FlowPhase, omitDependsOn bool) flowPhaseForWrit
 	}
 }
 
-// rawDependsOnPresence records, positionally, whether each persisted phase
-// object carried a depends_on key at all — the distinction between a legacy
-// record with no edges and an edge-aware record with empty edges.
-func rawDependsOnPresence(data []byte) []rawDependsOnState {
-	var raw struct {
-		Phases []map[string]json.RawMessage `json:"phases"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+// rawFlowFields is the on-disk object decoded once. Reads that must tell an
+// absent field from its zero value need the undecoded form, and a record read
+// needs two such answers; sharing one decode keeps a list refresh at two parses
+// per Flow rather than three.
+type rawFlowFields map[string]json.RawMessage
+
+func decodeRawFlowFields(data []byte) rawFlowFields {
+	var fields rawFlowFields
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil
 	}
-	presence := make([]rawDependsOnState, len(raw.Phases))
-	for i, phase := range raw.Phases {
+	return fields
+}
+
+// present reports whether the persisted record carried a top-level key at all,
+// so the read path can tell a legacy record with no field from one that stored
+// the zero value.
+func (raw rawFlowFields) present(field string) bool {
+	_, ok := raw[field]
+	return ok
+}
+
+// dependsOnPresence records, positionally, whether each persisted phase object
+// carried a depends_on key at all — the distinction between a legacy record
+// with no edges and an edge-aware record with empty edges.
+func (raw rawFlowFields) dependsOnPresence() []rawDependsOnState {
+	var phases []map[string]json.RawMessage
+	if encoded, ok := raw["phases"]; ok {
+		if err := json.Unmarshal(encoded, &phases); err != nil {
+			return nil
+		}
+	}
+	presence := make([]rawDependsOnState, len(phases))
+	for i, phase := range phases {
 		_, ok := phase["depends_on"]
 		presence[i] = rawDependsOnState{
 			Present: ok,
 		}
 	}
 	return presence
-}
-
-// rawFieldPresent reports whether the persisted record carried a top-level key
-// at all, so the read path can tell a legacy record with no field from one that
-// stored the zero value.
-func rawFieldPresent(data []byte, field string) bool {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return false
-	}
-	_, ok := raw[field]
-	return ok
 }

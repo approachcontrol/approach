@@ -21,7 +21,7 @@ func TestModel_Key7SwitchesToPlansAndFetches(t *testing.T) {
 	want := []planstore.PlanRecord{
 		{PlanID: "plan-1", Title: "Persist plans", RepoPath: "/dev/alpha", Branch: "main", Status: "draft"},
 	}
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListPlans: func(filter planstore.PlanFilter) ([]planstore.PlanRecord, error) {
 			gotFilter = filter
 			return want, nil
@@ -57,7 +57,7 @@ func TestModel_Key7SwitchesToPlansAndFetches(t *testing.T) {
 
 func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 	var filters []planstore.PlanFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListPlans: func(filter planstore.PlanFilter) ([]planstore.PlanRecord, error) {
 			filters = append(filters, filter)
 			return []planstore.PlanRecord{{PlanID: filepath.Base(filter.RepoPath), RepoPath: filter.RepoPath, Title: "T", Status: "draft"}}, nil
@@ -97,7 +97,7 @@ func TestModel_ChangingRepoRefetchesPlansMode(t *testing.T) {
 }
 
 func TestModel_StalePlanResultIgnored(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListPlans: func(planstore.PlanFilter) ([]planstore.PlanRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
@@ -114,7 +114,7 @@ func TestModel_StalePlanResultIgnored(t *testing.T) {
 }
 
 func TestModel_PlanListErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ListPlans: func(planstore.PlanFilter) ([]planstore.PlanRecord, error) {
 			return nil, errors.New("plans unavailable")
 		},
@@ -133,7 +133,7 @@ func TestModel_PlanListErrorShowsStatus(t *testing.T) {
 
 func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	var launched bool
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(planID string) (string, error) {
@@ -186,7 +186,7 @@ func TestModel_IKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 
 func TestModel_AKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 	var launched bool
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand: "codex",
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
@@ -225,7 +225,7 @@ func TestModel_AKeyOpensPlanLaunchInstructionsInput(t *testing.T) {
 }
 
 func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:       "codex",
 		PlanPromptTemplate: "Do {title} ({plan_id}) from {plan_path} in {repo_path} at {worktree_path}; keep {unknown}",
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
@@ -253,7 +253,7 @@ func TestModel_PlanPromptTemplateReplacesSupportedPlaceholders(t *testing.T) {
 
 func TestModel_PlanPromptTemplateAppliesToSelectedPlanPhase(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:       "codex",
 		PlanPromptTemplate: "Do phase {phase_id}: {phase_title} ({phase_status}) for {title} from {plan_path} in {repo_path} at {worktree_path}; keep {unknown}",
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
@@ -303,7 +303,7 @@ func TestModel_PlanPromptTemplateAppliesToSelectedPlanPhase(t *testing.T) {
 }
 
 func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:       "codex",
 		PlanPromptTemplate: "   ",
 		PlanMarkdownPath:   func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
@@ -327,7 +327,7 @@ func TestModel_PlanPromptTemplateBlankFallsBackToDefault(t *testing.T) {
 
 func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:         "codex",
 		CodexReasoningEffort: "xhigh",
 		SessionStateRoot:     "/state/approach/sessions/v1",
@@ -400,7 +400,7 @@ func TestModel_PlanLaunchInstructionsSubmitLaunchesAgent(t *testing.T) {
 
 func TestModel_PlanLaunchInstructionsEscCancels(t *testing.T) {
 	var launched bool
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -429,7 +429,7 @@ func TestModel_PlanLaunchInstructionsEscCancels(t *testing.T) {
 }
 
 func TestModel_PlanLaunchInstructionsRejectsBlankSubmit(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
@@ -456,7 +456,7 @@ func TestModel_PlanLaunchInstructionsRejectsBlankSubmit(t *testing.T) {
 
 func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(planID string) (string, error) {
@@ -523,7 +523,7 @@ func TestModel_IKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 
 func TestModel_AKeyLaunchesAgentFromSelectedPlanPhase(t *testing.T) {
 	var got actions.AgentLaunchContext
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		SessionStateRoot: "/state/approach/sessions/v1",
 		PlanMarkdownPath: func(string) (string, error) {
@@ -597,7 +597,7 @@ func TestModel_XKeyTogglesPlanPhaseRows(t *testing.T) {
 }
 
 func TestModel_IKeyNoOpsWithNoSelectedPlan(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
+	m := newTestModel(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -649,7 +649,7 @@ func TestModel_IKeyLaunchPathFallsBackFromPlanRepoToSelectedRepo(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var got actions.AgentLaunchContext
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				AgentCommand:     "codex",
 				PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -682,7 +682,7 @@ func TestModel_IKeyLaunchPathFallsBackFromPlanRepoToSelectedRepo(t *testing.T) {
 }
 
 func TestModel_IKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "", errors.New("bad plan path") },
 	})
@@ -703,7 +703,7 @@ func TestModel_IKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(nil, model.Options{
+	m := newTestModel(nil, model.Options{
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 	})
@@ -724,7 +724,7 @@ func TestModel_IKeyMissingPlanLaunchPathShowsStatus(t *testing.T) {
 }
 
 func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		AgentCommand:     "codex",
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 		LaunchAgent: func(actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -757,7 +757,7 @@ func TestModel_IKeyLaunchErrorShowsStatus(t *testing.T) {
 
 func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 	var copied string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
@@ -791,7 +791,7 @@ func TestModel_YKeyCopiesSelectedPlanMarkdownPath(t *testing.T) {
 func TestModel_EKeyEditsSelectedPlanAndRefreshesPlansAfterExit(t *testing.T) {
 	var editedPaths []string
 	var filters []planstore.PlanFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanMarkdownPath: func(planID string) (string, error) {
 			if planID != "plan-1" {
 				t.Fatalf("resolver planID = %q, want plan-1", planID)
@@ -842,7 +842,7 @@ func TestModel_EKeyEditsSelectedPlanAndRefreshesPlansAfterExit(t *testing.T) {
 }
 
 func TestModel_EKeyPlanEditorErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 		EditFile: func(string) (actions.TerminalLaunchSpec, error) {
 			return actions.TerminalLaunchSpec{}, errors.New("editor unavailable")
@@ -903,7 +903,7 @@ func TestModel_PlanEditResultRefreshesStoredPlansWhileTopPaneFocused(t *testing.
 func TestModel_YKeyUsesDefaultPlanMarkdownPathResolver(t *testing.T) {
 	root := t.TempDir()
 	var copied string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		SessionStateRoot: root,
 		CopyToClipboard: func(text string) error {
 			copied = text
@@ -941,7 +941,7 @@ func TestModel_YKeyNoOpsWithNoSelectedPlan(t *testing.T) {
 }
 
 func TestModel_YKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanMarkdownPath: func(string) (string, error) { return "", errors.New("cannot resolve plan path") },
 	})
 	m = inRightPane(m)
@@ -961,7 +961,7 @@ func TestModel_YKeyPlanPathResolverErrorShowsStatus(t *testing.T) {
 }
 
 func TestModel_YKeyPlanClipboardErrorShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PlanMarkdownPath: func(string) (string, error) { return "/state/plans/plan-1/plan.md", nil },
 		CopyToClipboard:  func(string) error { return errors.New("clipboard unavailable") },
 	})
@@ -985,7 +985,7 @@ func TestModel_YKeyPlanClipboardErrorShowsStatus(t *testing.T) {
 func TestModel_YKeyHistoryAndReflogCopyUseInjectedClipboard(t *testing.T) {
 	t.Run("history", func(t *testing.T) {
 		var copied string
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			CopyToClipboard: func(text string) error {
 				copied = text
 				return nil
@@ -1006,7 +1006,7 @@ func TestModel_YKeyHistoryAndReflogCopyUseInjectedClipboard(t *testing.T) {
 	})
 	t.Run("reflog", func(t *testing.T) {
 		var copied string
-		m := model.NewWithOptions(testRepos(), model.Options{
+		m := newTestModel(testRepos(), model.Options{
 			CopyToClipboard: func(text string) error {
 				copied = text
 				return nil

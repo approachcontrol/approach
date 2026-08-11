@@ -458,12 +458,22 @@ On a Flow row or an expanded phase row:
 - `g` launches the first launchable phase in the selected Flow's canonical
   phase order. This uses the selected Flow, so a highlighted pending phase row
   can still launch an earlier ready sibling; nothing is persisted when no
-  phase is launchable.
+  phase is launchable. The key press only submits a launch intent: the launch
+  lifecycle reserves the Flow, re-reads the persisted record, and decides from
+  it, so a launch the list advertised can still be refused once the fresh
+  record disagrees. A launch is rejected — not merely unadvertised — while an
+  embedded terminal, a pending repair, a pending phase resume, or another
+  launch already holds that Flow, and while a live session is attached to the
+  phase being launched. Dismiss or detach the Flow's terminal before launching
+  its next phase. Both `g` bindings (flows view and Active Flows) behave
+  identically.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal
-  slot is occupied, and the Flow is not completed, merged, abandoned, or at a
-  ready/manual Merge boundary.
+  slot is occupied, no headless write for that Flow is in flight, and the Flow
+  is not completed, merged, abandoned, or at a ready/manual Merge boundary.
+  Like `g`, a refusal names the obstacle, preferring a durable one (a pending
+  repair, a pending resume, an open terminal) over the transient write.
 - `i` opens the linked GitHub issue and `p` opens the linked PR in the
   browser, when that metadata exists.
 - `c` copies the selected Flow ID; `y` copies the selected Flow worktree path.
@@ -476,7 +486,10 @@ On a Flow row or an expanded phase row:
   remain manual until toggled on.
 - `h` toggles the selected Flow's persisted manual-launch preference. It works
   from the Flow row or an expanded phase row and is hidden when no Flow is
-  selected; changing one Flow does not affect another.
+  selected; changing one Flow does not affect another. Launches read the
+  preference from the store, so while the write is in flight that Flow's `g`
+  is withdrawn from the footer and refuses with a retry hint rather than
+  launching in the previous mode.
 - `m` on an eligible Flow row marks a GitHub PR that was merged manually:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
