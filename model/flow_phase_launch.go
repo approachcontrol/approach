@@ -273,9 +273,18 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 				Err:                     err.Error(),
 				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
 				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+				AutoAdvanceLaunchID:     target.LaunchID,
 			}
 		}
 		if result.Skipped {
+			if target.AutoAdvanceRetryFlowID != "" {
+				return ActionFailedMsg{
+					RepoPath:                target.RepoPath,
+					AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
+					AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+					AutoAdvanceLaunchID:     target.LaunchID,
+				}
+			}
 			return nil
 		}
 		return m.flowPhaseLaunchMessage(result)
@@ -527,9 +536,19 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 			cmds = append(cmds, statusCmd)
 			continue
 		}
-		m = m.disarmAutoAdvanceDrain(record.FlowID)
 		target.AutoAdvanceRetryFlowID = record.FlowID
 		target.AutoAdvanceRetryPhaseID = phase.PhaseID
+		next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+			Token:   target.LaunchID,
+			Kind:    flowLaunchKindAutoPhase,
+			FlowID:  record.FlowID,
+			PhaseID: phase.PhaseID,
+			Origin:  flowLaunchOriginAutoMode,
+		}, flowLaunchStatePreparing)
+		if !reserved {
+			continue
+		}
+		m = next.disarmAutoAdvanceDrain(record.FlowID)
 		m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
 			FlowTitle: record.Title,
 			PhaseID:   phase.PhaseID,

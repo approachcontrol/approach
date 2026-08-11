@@ -4077,7 +4077,7 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 		AddFlowPhaseLaunchID: store.AddPhaseLaunchID,
 	})
 	m = model.WithAutoAdvanceSnapshotForTest(m, []flowstore.FlowRecord{previous})
-	_, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
+	m, cmd := model.AutoAdvanceLaunchCommandForTest(m, []flowstore.FlowRecord{current})
 	if cmd == nil {
 		t.Fatal("auto mode completion should prepare a launch command before auto mode is disabled")
 	}
@@ -4086,7 +4086,7 @@ func TestModel_FlowAutoModeStaleCommandNoopsAfterAutoModeDisabled(t *testing.T) 
 	}
 
 	if msg := cmd(); msg != nil {
-		t.Fatalf("stale auto launch command returned %T, want nil", msg)
+		m, _ = update(m, msg)
 	}
 	read, err := store.Read(current.FlowID)
 	if err != nil {

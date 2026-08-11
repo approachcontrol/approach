@@ -591,6 +591,64 @@ func TestFlowLaunchDuplicateIntentIsRefused(t *testing.T) {
 	}
 }
 
+func TestAutoModePreparationReservesAgainstManualLaunch(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	record.AutoMode = true
+	h := newManualLaunchHarness(t, record)
+	m := h.model().armAutoAdvanceDrain(record.FlowID)
+
+	m, autoCmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
+	if autoCmd == nil {
+		t.Fatal("AutoMode drain should schedule preparation")
+	}
+	attempt, ok := m.flowLaunchAttempt(record.FlowID)
+	if !ok || attempt.Kind != flowLaunchKindAutoPhase || attempt.State != flowLaunchStatePreparing {
+		t.Fatalf("AutoMode preparation attempt = %#v ok=%v", attempt, ok)
+	}
+
+	manual, manualCmd := m.handleLaunchNextFlowPhase()
+	m = manual.(Model)
+	if manualCmd != nil {
+		t.Fatal("manual launch should be refused while AutoMode prepares")
+	}
+	if got := m.status.Text; got != noLaunchableFlowPhaseStatus {
+		t.Fatalf("manual refusal = %q, want %q", got, noLaunchableFlowPhaseStatus)
+	}
+
+	preparedMsg := autoCmd()
+	next, handoffCmd := m.Update(preparedMsg)
+	m = next.(Model)
+	_ = handoffCmd
+	if len(h.launchUpdates) != 1 || len(h.launchContexts) != 1 {
+		t.Fatalf("AutoMode launch updates=%d terminals=%d, want one each", len(h.launchUpdates), len(h.launchContexts))
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("embedded slot should replace the AutoMode preparation attempt")
+	}
+	if !m.hasFlowEmbeddedTerminalForFlow(record.FlowID) {
+		t.Fatal("embedded slot should own the Flow after AutoMode handoff")
+	}
+}
+
+func TestAutoModePreparationFailureReleasesReservation(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	record.AutoMode = true
+	h := newManualLaunchHarness(t, record)
+	h.addLaunchIDErr = errors.New("store unavailable")
+	m := h.model().armAutoAdvanceDrain(record.FlowID)
+
+	m, autoCmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
+	if autoCmd == nil {
+		t.Fatal("AutoMode drain should schedule preparation")
+	}
+	failedMsg := autoCmd()
+	next, _ := m.Update(failedMsg)
+	m = next.(Model)
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("failed AutoMode preparation stranded its reservation")
+	}
+}
+
 func TestFlowLaunchAdmissionRejectsLegacyOccupancy(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	tests := []struct {

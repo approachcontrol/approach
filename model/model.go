@@ -1671,6 +1671,20 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
+		if attempt, ok := m.matchingFlowLaunchAttempt(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
+			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
+			attempt.MutatedPhase = true
+			return m.handoffFlowLaunchExternal(attempt, flowLaunchEventMsg{
+				Token:    attempt.Token,
+				Kind:     attempt.Kind,
+				From:     attempt.State,
+				FlowID:   attempt.FlowID,
+				PhaseID:  attempt.PhaseID,
+				Context:  msg.LaunchContext,
+				Route:    flowLaunchRouteExternal,
+				RepoPath: msg.LaunchContext.RepoPath,
+			})
+		}
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			return m, nil
 		}
@@ -1682,6 +1696,20 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
+		if attempt, ok := m.matchingFlowLaunchAttempt(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
+			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
+			attempt.MutatedPhase = true
+			return m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+				Token:    attempt.Token,
+				Kind:     attempt.Kind,
+				From:     attempt.State,
+				FlowID:   attempt.FlowID,
+				PhaseID:  attempt.PhaseID,
+				Context:  msg.LaunchContext,
+				Route:    flowLaunchRouteEmbedded,
+				RepoPath: msg.LaunchContext.RepoPath,
+			})
+		}
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
 				return m, nil
