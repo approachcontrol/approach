@@ -183,8 +183,10 @@ phase-affecting mutation can safely re-derive readiness from explicit edges.
 
 AutoMode is drain-based for DAGs. A successful phase completion arms an
 in-memory drain for that Flow; each poll launches the first ready non-merge
-launchable phase only when no phase in that Flow is `running` and no
-flow-scoped embedded terminal is still open or auto-closing. This serializes
+launchable phase only when no phase in that Flow is `running`, no flow-scoped
+embedded terminal is still open or auto-closing, no manual resume or repair on
+that Flow is mid-write, and no session recorded against the candidate phase is
+still live. This serializes
 branches so parallel agents do not collide in one worktree. Skipped phases do
 not arm the drain, even when skip-with-notes readies successors. Resetting a
 phase back to `ready` also does not arm the drain. Completing an

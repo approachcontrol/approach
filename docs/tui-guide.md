@@ -542,6 +542,11 @@ first ready non-merge phase in display order. Auto-launched CLI phases are
 always headless and do not change the current view or focus. Approach launches
 at most one phase per Flow at a time: if any phase is running or any
 Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
+It also waits while a manual phase resume or a repair on that Flow is still
+being written, and while a session recorded against the phase it would launch
+has not ended. Each of those defers the launch silently and it resumes on a
+later poll, so an agent that crashes without its session ever being recorded as
+ended leaves that Flow's auto mode waiting.
 A 3 s status message announces auto-launches, `needs_attention`, and
 merge-ready transitions unless another status message is active. Skipped,
 blocked, needs-attention, failed-launch, or missing-PR-metadata states do not
