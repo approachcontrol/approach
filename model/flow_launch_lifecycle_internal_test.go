@@ -446,6 +446,537 @@ func TestAutoFlowLaunchNeverLaunchesMergePhases(t *testing.T) {
 	}
 }
 
+// --- AutoMode lifecycle matrix ---
+
+// autoPoll arms the drain and runs one advance poll without draining what it
+// returns, so a test can inspect the synchronous admission decision on its own.
+func (h *manualLaunchHarness) autoPoll(m Model, record flowstore.FlowRecord) (Model, tea.Cmd) {
+	h.t.Helper()
+	m = m.armAutoAdvanceDrain(record.FlowID)
+	return m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
+}
+
+func autoLaunchGatedRecord() flowstore.FlowRecord {
+	record := autoLaunchFlowRecord()
+	record.Phases = []flowstore.FlowPhase{
+		{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhaseCompleted, Order: 1, DependsOn: []string{}},
+		{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2, DependsOn: []string{"plan"}},
+	}
+	return record
+}
+
+func TestAutoFlowLaunchStaleCandidateIsDroppedNotRetried(t *testing.T) {
+	tests := []struct {
+		name    string
+		record  flowstore.FlowRecord
+		persist func(flowstore.FlowRecord) flowstore.FlowRecord
+	}{
+		{
+			name:   "candidate completed between poll and read",
+			record: autoLaunchFlowRecord(),
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseCompleted
+				return record
+			},
+		},
+		{
+			// Another source took the candidate. That source produces its own
+			// completion or stop edge, which is what re-arms the drain.
+			name:   "candidate started by another source",
+			record: autoLaunchFlowRecord(),
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseRunning
+				return record
+			},
+		},
+		{
+			name:   "candidate gate reopened",
+			record: autoLaunchGatedRecord(),
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Status = flowstore.PhaseRunning
+				return record
+			},
+		},
+		{
+			name:   "auto mode turned off between poll and read",
+			record: autoLaunchFlowRecord(),
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.AutoMode = false
+				return record
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := tc.record
+			persisted := record
+			persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+			persisted = tc.persist(persisted)
+
+			h := newManualLaunchHarness(t, record)
+			h.persistedFlows = []flowstore.FlowRecord{persisted}
+
+			m := h.autoDrain(h.model(), record)
+
+			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+				t.Fatalf("a stale candidate persisted something: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("a stale candidate must release its reservation")
+			}
+			if h.drainArmed(m, record.FlowID) {
+				t.Fatal("a stale candidate must not re-arm the drain")
+			}
+			if m.status.Source == statusOther {
+				t.Fatalf("status = %#v, want no sticky status from a stale candidate", m.status)
+			}
+		})
+	}
+}
+
+// Dropping a stale candidate disarms the drain rather than disabling it: the
+// source that took the candidate produces its own completion edge, and that is
+// what starts the next phase.
+func TestAutoFlowLaunchStaleCandidateResumesOnTheNextCompletionEdge(t *testing.T) {
+	record := autoLaunchGatedRecord()
+	record.Phases = append(record.Phases, flowstore.FlowPhase{
+		PhaseID: "review-loop", Title: "Review loop", Kind: flowstore.KindReviewLoop,
+		Status: flowstore.PhasePending, Order: 3, DependsOn: []string{"implementation"},
+	})
+	taken := record
+	taken.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	taken.Phases[1].Status = flowstore.PhaseRunning
+
+	h := newManualLaunchHarness(t, record)
+	h.persistedFlows = []flowstore.FlowRecord{taken}
+
+	m := h.autoDrain(h.model(), record)
+	if h.drainArmed(m, record.FlowID) {
+		t.Fatal("a stale candidate must leave the drain disarmed")
+	}
+
+	finished := record
+	finished.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	finished.Phases[1].Status = flowstore.PhaseCompleted
+	finished.Phases[2].Status = flowstore.PhaseReady
+	h.persistedFlows = []flowstore.FlowRecord{finished}
+
+	m, cmd, _ := m.prepareAutoFlowPhaseLaunch([]flowstore.FlowRecord{taken}, []flowstore.FlowRecord{finished})
+	if cmd == nil {
+		t.Fatal("the completion edge that superseded the candidate should drain the successor")
+	}
+	h.drain(m, cmd, 0)
+	if len(h.launchUpdates) != 1 || h.launchUpdates[0].PhaseID != "review-loop" {
+		t.Fatalf("launch updates = %#v, want the successor phase", h.launchUpdates)
+	}
+}
+
+// An earlier phase becoming ready between poll and read leaves the candidate
+// perfectly launchable, and the store would accept it. Requiring the candidate
+// to still be first would strand the launch until the next completion edge.
+func TestAutoFlowLaunchCandidateNeedNotStillBeFirst(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	record.Phases = []flowstore.FlowPhase{
+		{PhaseID: "alpha", Title: "Alpha", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 1, DependsOn: []string{}},
+		{PhaseID: "beta", Title: "Beta", Kind: flowstore.KindImplementation, Status: flowstore.PhaseReady, Order: 2, DependsOn: []string{}},
+	}
+	persisted := record
+	persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	persisted.Phases[0].Status = flowstore.PhaseReady
+
+	h := newManualLaunchHarness(t, record)
+	h.persistedFlows = []flowstore.FlowRecord{persisted}
+
+	h.autoDrain(h.model(), record)
+
+	if len(h.launchUpdates) != 1 || h.launchUpdates[0].PhaseID != "beta" {
+		t.Fatalf("launch updates = %#v, want the original beta candidate", h.launchUpdates)
+	}
+}
+
+func TestAutoFlowLaunchRefusedSilentlyWhileAnotherSourceHoldsFlow(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+	m = m.setStatus(statusOther, "keep this")
+
+	manual, manualCmd := h.press(m)
+	if manualCmd == nil {
+		t.Fatal("the manual launch this test races should have been admitted")
+	}
+	m = manual
+
+	next, autoCmd := h.autoPoll(m, record)
+	if autoCmd != nil {
+		t.Fatal("AutoMode must not start work while a manual attempt holds the Flow")
+	}
+	// Unlike the manual refusal, this one is silent: the poll runs at 1 Hz and
+	// would otherwise repaint over the display every second.
+	if next.status.Text != "keep this" {
+		t.Fatalf("status = %q, want a silent AutoMode refusal", next.status.Text)
+	}
+	if !h.drainArmed(next, record.FlowID) {
+		t.Fatal("a refused AutoMode poll must leave the drain armed")
+	}
+	if len(h.launchUpdates) != 0 {
+		t.Fatalf("a refused AutoMode poll persisted %#v", h.launchUpdates)
+	}
+
+	// The window is bounded: once the other source releases the Flow, the very
+	// next poll launches.
+	attempt, _ := next.flowLaunchAttempt(record.FlowID)
+	released := next.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+	if _, autoCmd = h.autoPoll(released, record); autoCmd == nil {
+		t.Fatal("the next poll should launch once the Flow is free")
+	}
+}
+
+func TestAutoFlowLaunchOccupancyRefusedAtAdmission(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	tests := []struct {
+		name    string
+		occupy  func(Model) Model
+		release func(Model) Model
+	}{
+		{
+			name: "pending repair launch",
+			occupy: func(m Model) Model {
+				return m.withPendingFlowRepairLaunch(record.FlowID, "repair-1")
+			},
+			release: func(m Model) Model {
+				return m.withoutPendingFlowRepairLaunch(record.FlowID)
+			},
+		},
+		{
+			// Registered synchronously on the r key press, before its write
+			// lands, so AutoMode defers rather than racing a resume mid-write.
+			name: "pending phase resume",
+			occupy: func(m Model) Model {
+				key, _ := newFlowPhaseResumeKey(record.FlowID, record.Phases[0].PhaseID)
+				return m.withPendingFlowPhaseResume(key, "resume-1")
+			},
+			release: func(m Model) Model {
+				key, _ := newFlowPhaseResumeKey(record.FlowID, record.Phases[0].PhaseID)
+				return m.withoutPendingFlowPhaseResume(key)
+			},
+		},
+		{
+			name: "flow embedded terminal",
+			occupy: func(m Model) Model {
+				m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+					Scope:    embeddedTerminalScopeFlow,
+					FlowID:   record.FlowID,
+					Terminal: flowPhaseLaunchTestTerminal{state: "running"},
+				})
+				return m
+			},
+			release: func(m Model) Model {
+				m.embeddedTerminals = nil
+				return m
+			},
+		},
+		{
+			name: "flow repair terminal",
+			occupy: func(m Model) Model {
+				m.embeddedTerminals = append(m.embeddedTerminals, embeddedTerminalSlot{
+					Scope:      embeddedTerminalScopeFlow,
+					FlowID:     record.FlowID,
+					FlowRepair: true,
+					Terminal:   flowPhaseLaunchTestTerminal{state: "running"},
+				})
+				return m
+			},
+			release: func(m Model) Model {
+				m.embeddedTerminals = nil
+				return m
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newManualLaunchHarness(t, record)
+			m := tc.occupy(h.model())
+			m = m.setStatus(statusOther, "keep this")
+
+			m, autoCmd := h.autoPoll(m, record)
+			if autoCmd != nil {
+				t.Fatal("an occupied Flow must not start AutoMode work")
+			}
+			if m.status.Text != "keep this" {
+				t.Fatalf("status = %q, want a silent refusal", m.status.Text)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("a refused AutoMode poll must not reserve an attempt")
+			}
+			if !h.drainArmed(m, record.FlowID) {
+				t.Fatal("a refused AutoMode poll must leave the drain armed")
+			}
+
+			m, autoCmd = h.autoPoll(tc.release(m), record)
+			if autoCmd == nil {
+				t.Fatal("the next poll should launch once the blocker clears")
+			}
+			h.drain(m, autoCmd, 0)
+			if len(h.launchUpdates) != 1 {
+				t.Fatalf("launch updates = %#v, want exactly one", h.launchUpdates)
+			}
+		})
+	}
+}
+
+func TestAutoFlowLaunchOccupancyRefusedAtRead(t *testing.T) {
+	sessionBlocked := autoLaunchFlowRecord()
+	sessionBlocked.Phases[0].LaunchIDs = []string{"launch-source"}
+
+	tests := []struct {
+		name    string
+		record  flowstore.FlowRecord
+		persist func(flowstore.FlowRecord) flowstore.FlowRecord
+		stored  []sessions.SessionRecord
+	}{
+		{
+			name:   "live session on the candidate",
+			record: sessionBlocked,
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases[0].Sessions = []flowstore.Session{
+					{SessionID: "s-1", LaunchID: "launch-source", Status: "running"},
+				}
+				return record
+			},
+		},
+		{
+			name:    "live session known only to the store",
+			record:  sessionBlocked,
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord { return record },
+			stored: []sessions.SessionRecord{
+				{SessionID: "s-1", LaunchID: "launch-source", FlowID: "flow-1", Status: "running"},
+			},
+		},
+		{
+			name:   "another phase started between poll and read",
+			record: autoLaunchGatedRecord(),
+			persist: func(record flowstore.FlowRecord) flowstore.FlowRecord {
+				record.Phases = append(record.Phases, flowstore.FlowPhase{
+					PhaseID: "review-loop", Title: "Review loop", Kind: flowstore.KindReviewLoop,
+					Status: flowstore.PhaseRunning, Order: 3, DependsOn: []string{"plan"},
+				})
+				return record
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := tc.record
+			persisted := record
+			persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+			persisted = tc.persist(persisted)
+
+			h := newManualLaunchHarness(t, record)
+			h.persistedFlows = []flowstore.FlowRecord{persisted}
+			h.sessionRecords = tc.stored
+			m := h.model().setStatus(statusOther, "keep this")
+
+			m = h.autoDrain(m, record)
+
+			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+				t.Fatalf("a read-stage refusal persisted something: launches=%#v phases=%#v", h.launchUpdates, h.phaseUpdates)
+			}
+			if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+				t.Fatal("a read-stage refusal must release the attempt")
+			}
+			if m.status.Text != "keep this" {
+				t.Fatalf("status = %q, want a silent read-stage refusal", m.status.Text)
+			}
+			// The blocker clears on its own, so this re-arms rather than
+			// dropping the launch until another completion edge.
+			if !h.drainArmed(m, record.FlowID) {
+				t.Fatal("a read-stage refusal must re-arm the drain")
+			}
+
+			h.persistedFlows = []flowstore.FlowRecord{record}
+			h.sessionRecords = nil
+			m, autoCmd := m.prepareAutoAdvanceDrainLaunches([]flowstore.FlowRecord{record})
+			if autoCmd == nil {
+				t.Fatal("the re-armed drain should launch on the next poll")
+			}
+			h.drain(m, autoCmd, 0)
+			if len(h.launchUpdates) != 1 {
+				t.Fatalf("launch updates = %#v, want exactly one", h.launchUpdates)
+			}
+		})
+	}
+}
+
+// A crashed agent whose session record never reaches "ended" stalls the Flow's
+// AutoMode indefinitely and silently. That is accepted for now, and pinned here
+// so a future change to liveness has a test to answer to.
+func TestAutoFlowLaunchStallsSilentlyOnAnUnendedSession(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	record.Phases[0].LaunchIDs = []string{"launch-source"}
+	persisted := record
+	persisted.Phases = append([]flowstore.FlowPhase(nil), record.Phases...)
+	persisted.Phases[0].Sessions = []flowstore.Session{
+		{SessionID: "s-1", LaunchID: "launch-source", Status: "running"},
+	}
+
+	h := newManualLaunchHarness(t, record)
+	h.persistedFlows = []flowstore.FlowRecord{persisted}
+	m := h.model()
+
+	for poll := range 3 {
+		m = h.autoDrain(m, record)
+		if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+			t.Fatalf("poll %d persisted something: launches=%#v phases=%#v", poll, h.launchUpdates, h.phaseUpdates)
+		}
+		if m.status.Text != "" {
+			t.Fatalf("poll %d set status %q, want silence", poll, m.status.Text)
+		}
+		if !h.drainArmed(m, record.FlowID) {
+			t.Fatalf("poll %d disarmed the drain, want the Flow still waiting", poll)
+		}
+	}
+}
+
+func TestAutoFlowLaunchQueuedAnnouncement(t *testing.T) {
+	titleless := autoLaunchFlowRecord()
+	titleless.Title = ""
+
+	tests := []struct {
+		name   string
+		record flowstore.FlowRecord
+		want   string
+	}{
+		{
+			name:   "titled Flow announces once preflight has passed",
+			record: autoLaunchFlowRecord(),
+			want:   "Flow Flow one: implementation queued",
+		},
+		{
+			// The event's title has already fallen back to the Flow ID, so a
+			// guard written against it would ship a status this Flow never had.
+			name:   "titleless Flow announces nothing",
+			record: titleless,
+			want:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newManualLaunchHarness(t, tc.record)
+			m := h.model()
+
+			m, autoCmd := h.autoPoll(m, tc.record)
+			if autoCmd == nil {
+				t.Fatal("AutoMode should have been admitted")
+			}
+			if m.status.Text != "" {
+				t.Fatalf("admission announced %q before preflight ran", m.status.Text)
+			}
+
+			m = h.drain(m, autoCmd, 0)
+			if m.status.Text != tc.want {
+				t.Fatalf("status = %q, want %q", m.status.Text, tc.want)
+			}
+			if tc.want != "" && m.status.Source != statusFlowAutoAdvance {
+				t.Fatalf("status source = %v, want the transient AutoMode source", m.status.Source)
+			}
+		})
+	}
+}
+
+func TestAutoFlowLaunchDelayedEventsAreIgnored(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	base := h.model()
+
+	live, ok := base.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token:   "token-2",
+		Kind:    flowLaunchKindAutoPhase,
+		FlowID:  record.FlowID,
+		PhaseID: record.Phases[0].PhaseID,
+	}, flowLaunchStateReading)
+	if !ok {
+		t.Fatal("reservation should succeed")
+	}
+
+	tests := []struct {
+		name  string
+		model Model
+		event flowLaunchEventMsg
+	}{
+		{
+			name:  "read failure for a released attempt",
+			model: base,
+			event: flowLaunchEventMsg{
+				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
+				FlowID: record.FlowID, Stage: flowLaunchStageRead,
+				Outcome: flowLaunchOutcomeFailed, FlowTitle: "Flow one", Err: "store unavailable",
+			},
+		},
+		{
+			name:  "read failure from a superseded attempt",
+			model: live,
+			event: flowLaunchEventMsg{
+				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStateReading,
+				FlowID: record.FlowID, Stage: flowLaunchStageRead,
+				Outcome: flowLaunchOutcomeFailed, FlowTitle: "Flow one", Err: "store unavailable",
+			},
+		},
+		{
+			name:  "prepared failure from a superseded attempt",
+			model: live,
+			event: flowLaunchEventMsg{
+				Token: "token-1", Kind: flowLaunchKindAutoPhase, From: flowLaunchStatePreparing,
+				FlowID: record.FlowID, PhaseID: record.Phases[0].PhaseID, Stage: flowLaunchStagePrepared,
+				Record: record, Err: "failed to mark flow phase running: store unavailable",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			next, cmd := tc.model.handleFlowLaunchEvent(tc.event)
+			if cmd != nil {
+				t.Fatalf("a delayed event produced a command %T", cmd)
+			}
+			if h.drainArmed(next, record.FlowID) {
+				t.Fatal("a delayed event re-armed a drain it does not own")
+			}
+			if next.status.Text != "" {
+				t.Fatalf("a delayed event set status %q", next.status.Text)
+			}
+			if len(h.launchUpdates) != 0 || len(h.phaseUpdates) != 0 {
+				t.Fatal("a delayed event persisted something")
+			}
+		})
+	}
+}
+
+func TestAutoFlowLaunchExternalRouteKeepsAutoLaunchContext(t *testing.T) {
+	record := autoLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	h.agentCommand = "codex-app"
+
+	h.autoDrain(h.model(), record)
+
+	if len(h.agentContexts) != 1 {
+		t.Fatalf("external launches = %d, want 1", len(h.agentContexts))
+	}
+	ctx := h.agentContexts[0]
+	if !ctx.FlowAutoLaunch {
+		t.Fatalf("external auto context = %#v, want FlowAutoLaunch", ctx)
+	}
+	if ctx.Embedded || ctx.FlowLaunchTracked || ctx.Headless {
+		t.Fatalf("external auto context = %#v, want embedded/tracked/headless unset", ctx)
+	}
+	if len(h.launchContexts) != 0 {
+		t.Fatal("the external route must not open an embedded terminal")
+	}
+}
+
 func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 	launchable := manualLaunchFlowRecord()
 	blocked := manualLaunchFlowRecord()

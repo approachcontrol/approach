@@ -1154,6 +1154,72 @@ func TestModel_AutoAdvanceQueuedStatusDoesNotClaimStartedBeforeCommandRuns(t *te
 	}
 }
 
+// Decision 11's accepted ordering delta. The queued line used to be built
+// synchronously and shadowed by any transition in the same poll; it now lands
+// with the authoritative read and wins instead. Both are 3 s transients from
+// the same source, so only their order changes.
+func TestModel_AutoAdvanceAsyncStatusLandsAfterSamePollTransitions(t *testing.T) {
+	launchingPrevious := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseRunning,
+		"implementation": flowstore.PhasePending,
+	})
+	launching := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
+		"plan":           flowstore.PhaseCompleted,
+		"plan-review":    flowstore.PhaseCompleted,
+		"implementation": flowstore.PhaseReady,
+	})
+	attentionPrevious := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+		"implementation": flowstore.PhaseRunning,
+	})
+	attentionPrevious.Title = "Charlie Flow"
+	attention := autoAdvanceTestFlow("flow-2", "/dev/bravo", true, map[string]string{
+		"implementation": flowstore.PhaseNeedsAttention,
+	})
+	attention.Title = "Charlie Flow"
+
+	tests := []struct {
+		name         string
+		agentCommand string
+		want         string
+	}{
+		{
+			name:         "queued announcement",
+			agentCommand: "codex",
+			want:         "Flow Bravo Flow: implementation queued",
+		},
+		{
+			name: "preflight failure",
+			want: "Flow Bravo Flow: Press A to choose " + ui.AgentInputPlaceholder + " before launching an agent",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newAutoAdvanceTestModel(flowRefreshTestRepos(), Options{
+				AgentCommand: tc.agentCommand,
+				AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					return launching, nil
+				},
+			})
+			m.autoAdvanceSnapshot = []flowstore.FlowRecord{launchingPrevious, attentionPrevious}
+
+			m, cmd := runAutoAdvanceResultForTest(t, m, []flowstore.FlowRecord{launching, attention})
+			if got := m.status.Text; got != "Flow Charlie Flow: needs attention" {
+				t.Fatalf("status right after the poll = %q, want the synchronous transition", got)
+			}
+
+			m = settleAutoFlowLaunchReads(m, cmd)
+			if got := m.status.Text; got != tc.want {
+				t.Fatalf("status after the read settled = %q, want %q", got, tc.want)
+			}
+			if m.status.Source != statusFlowAutoAdvance {
+				t.Fatalf("status source = %v, want the transient AutoMode source", m.status.Source)
+			}
+		})
+	}
+}
+
 func TestModel_AutoAdvancePreflightFailureDoesNotStompExistingStatus(t *testing.T) {
 	previous := autoAdvanceTestFlow("flow-1", "/dev/bravo", true, map[string]string{
 		"plan":           flowstore.PhaseCompleted,
