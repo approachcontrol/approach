@@ -117,8 +117,24 @@ func describeUnusableDatabase(root string, cause error) error {
 	}
 	databasePath := filepath.Join(root, databaseFilename)
 	legacyPath := filepath.Join(root, "flows")
+	tombstonePath := filepath.Join(root, "flows.legacy")
 	legacy, err := inspectReservedDirectory(legacyPath)
 	if err != nil || !legacy {
+		// A root migrated by the older rename-based build retained its corpus as
+		// flows.legacy/, so "no flows/" is not the same as "nothing to recover".
+		// Offering an empty rebuild here reads as "your Flows are gone" while every
+		// one of them is still on disk under the other name.
+		// Only when flows/ is confirmed absent: an inspection error means the path
+		// exists as something that is not a usable directory, and `mv` onto it would
+		// either fail or bury the sole retained corpus inside it.
+		tombstone, tombstoneErr := inspectReservedDirectory(tombstonePath)
+		if err == nil && tombstoneErr == nil && tombstone {
+			return fmt.Errorf("%w (your pre-migration Flows are still in %q. Move %q aside — keep it, it holds"+
+				" anything created since the migration, and may be repairable by hand. Rebuilding from the"+
+				" retained copy needs it back under its original name first: run `mv %s %s`. %s)",
+				cause, tombstonePath, databasePath, shellQuote(tombstonePath), shellQuote(legacyPath),
+				rollbackAdvice(databasePath, legacyPath))
+		}
 		return fmt.Errorf("%w (move %q aside — keep it — and start approach again to rebuild an empty one)",
 			cause, databasePath)
 	}
@@ -131,6 +147,14 @@ func describeUnusableDatabase(root string, cause error) error {
 	return fmt.Errorf("%w (your pre-migration Flows are still in %q. Move %q aside — keep it, it holds"+
 		" anything created since the migration, and may be repairable by hand. %s)",
 		cause, legacyPath, databasePath, rollbackAdvice(databasePath, legacyPath))
+}
+
+// shellQuote renders a path as a single POSIX shell token. These messages hand
+// the operator a command to copy, and %q is Go quoting, not shell quoting: a
+// state root holding $VAR or $(...) expands or executes inside the double
+// quotes %q emits, so a copied recovery command could move the wrong directory.
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
 func secureCanonicalRoot(root string) (string, error) {
@@ -239,8 +263,8 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset)
 		// The tombstone is a byte-identical copy of the legacy source, so renaming
 		// it back is lossless and lets the cutover run again from scratch.
 		return fmt.Errorf("flow database cutover is incomplete: %q exists without a staged database; "+
-			"your Flows are intact there — run `mv %q %q` and start approach again",
-			tombstonePath, tombstonePath, legacyPath)
+			"your Flows are intact there — run `mv %s %s` and start approach again",
+			tombstonePath, shellQuote(tombstonePath), shellQuote(legacyPath))
 	}
 
 	if state.stage {
@@ -271,8 +295,8 @@ func completeCutover(root string, state cutoverState, presets map[string]Preset)
 			// the "cutover is incomplete" branch above.
 			return fmt.Errorf("validate interrupted staged flow database: %w"+
 				" (the original records are still in %q. To redo the cutover from them, remove %q AND"+
-				" run `mv %q %q`, then start approach again)",
-				err, tombstonePath, stagePath, tombstonePath, legacyPath)
+				" run `mv %s %s`, then start approach again)",
+				err, tombstonePath, stagePath, shellQuote(tombstonePath), shellQuote(legacyPath))
 		default:
 			// Either flows/ is still in place and authoritative, or there is no
 			// legacy source at all. In both cases an unusable stage from an

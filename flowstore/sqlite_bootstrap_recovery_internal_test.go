@@ -874,3 +874,97 @@ func TestCleanupReservedSQLiteFilesRefusesToDeleteAuthoritativeDatabase(t *testi
 		t.Fatalf("authoritative database was removed: %v", err)
 	}
 }
+
+// A root migrated by the older build that renamed flows/ keeps its pre-migration
+// corpus in flows.legacy/. If that database later fails validation, an unusable-
+// database error that inspects only flows/ tells the operator their records are
+// gone and invites them to rebuild an empty store, while the whole corpus is
+// still sitting next to it under the other name.
+func TestUnusableDatabaseErrorNamesTheInheritedTombstone(t *testing.T) {
+	// A root name carrying shell metacharacters is legal on disk and reachable
+	// through configuration, so it also pins that the copyable command is quoted
+	// for a shell rather than for Go.
+	root := renameMigratedRootWithUnusableDatabase(t, "state$root")
+	legacyPath := filepath.Join(root, "flows")
+	tombstonePath := filepath.Join(root, "flows.legacy")
+
+	_, err := NewStore(StoreOptions{Root: root})
+	if err == nil {
+		t.Fatal("NewStore() error = nil, want the schema check to reject it")
+	}
+	message := err.Error()
+	if !strings.Contains(message, tombstonePath) {
+		t.Fatalf("NewStore() error = %q, want it to name the retained %q", message, tombstonePath)
+	}
+	if strings.Contains(message, "rebuild an empty one") {
+		t.Fatalf("NewStore() error = %q, want it to stop offering an empty rebuild while the"+
+			" pre-migration corpus is still in %q", message, tombstonePath)
+	}
+	wantCommand := fmt.Sprintf("mv '%s' '%s'", tombstonePath, legacyPath)
+	if !strings.Contains(message, wantCommand) {
+		t.Fatalf("NewStore() error = %q, want the shell-quoted restore command %q", message, wantCommand)
+	}
+	assertRollbackIsBounded(t, "describeUnusableDatabase with an inherited tombstone", message)
+}
+
+// The rename advice is only safe when flows/ is absent. If the path exists as
+// something that is not a usable directory, `mv` either fails or buries the sole
+// retained corpus inside it, so the message must not offer the rename at all.
+func TestUnusableDatabaseErrorWithheldWhenLegacyPathIsUnusable(t *testing.T) {
+	root := renameMigratedRootWithUnusableDatabase(t, "occupied")
+	if err := os.WriteFile(filepath.Join(root, "flows"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewStore(StoreOptions{Root: root})
+	if err == nil {
+		t.Fatal("NewStore() error = nil, want the schema check to reject it")
+	}
+	if strings.Contains(err.Error(), "mv ") {
+		t.Fatalf("NewStore() error = %q, want no rename advice while %q is not a usable directory",
+			err, filepath.Join(root, "flows"))
+	}
+}
+
+// renameMigratedRootWithUnusableDatabase reproduces a root migrated by the older
+// build that renamed flows/: an authoritative database that fails validation,
+// beside the retained corpus under its tombstone name. It returns the canonical
+// root, because bootstrap messages name canonical paths.
+func renameMigratedRootWithUnusableDatabase(t *testing.T, name string) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	writeLegacyFlow(t, root, "migrated-flow", legacyRecord("migrated-flow", now))
+	captureBootstrapWarnings(t)
+	store, err := NewStore(StoreOptions{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(canonicalRoot, "flows"), filepath.Join(canonicalRoot, "flows.legacy")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A readable database with live data, but the wrong schema shape.
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(canonicalRoot, databaseFilename),
+		map[string][]string{"mode": {"rw"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DROP INDEX idx_flows_status_updated"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return canonicalRoot
+}
