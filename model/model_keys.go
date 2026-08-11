@@ -1987,14 +1987,15 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
-	if record, ok := m.selectedFlow(); ok && m.flowHeadlessWritePending(record.FlowID) {
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
-	}
-	target, ok, next := m.selectedFlowNextLaunchTarget()
+	record, ok := m.selectedFlow()
 	if !ok {
-		return next, nil
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
-	return next.launchFlowPhaseTarget(target)
+	return m.requestFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+		Origin: m.flowLaunchOrigin(),
+	})
 }
 
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
@@ -2557,6 +2558,7 @@ func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchCo
 	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
 	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasPendingFlowRepairLaunch(key.FlowID) ||
 		m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) ||
+		m.flowLaunchAttemptOccupied(key.FlowID) ||
 		m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
 		return m, nil
 	}
@@ -2769,6 +2771,13 @@ func (m Model) startFlowLaunchFailure(ctx actions.AgentLaunchContext, errText st
 }
 
 func (m Model) handleFlowLaunchFailurePersisted(msg flowLaunchFailurePersistedMsg) (Model, tea.Cmd) {
+	ctx := msg.LaunchContext
+	// A mismatch skips only the release: this message is shared with every
+	// source that has no lifecycle attempt, and returning early would swallow
+	// their status and Flow surface refresh.
+	if _, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateFailurePersisting); ok {
+		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
+	}
 	errText := msg.OriginalErr
 	if msg.PersistErr != nil {
 		if errText != "" {

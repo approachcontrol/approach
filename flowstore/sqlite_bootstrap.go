@@ -705,8 +705,9 @@ func readAndCanonicalizeLegacy(root, collection string, presets map[string]Prese
 }
 
 func decodeLegacyFlow(flowID string, data []byte) (legacyStoredFlow, bool) {
-	presence := rawDependsOnPresence(data)
-	headlessPresent := rawFieldPresent(data, "headless")
+	raw := decodeRawFlowFields(data)
+	presence := raw.dependsOnPresence()
+	headlessPresent := raw.present("headless")
 	var record FlowRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return legacyStoredFlow{}, false

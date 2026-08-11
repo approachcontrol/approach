@@ -38,7 +38,7 @@ func TestModel_F5DuringModalOrSearchDoesNotRefresh(t *testing.T) {
 		},
 	}
 
-	searchModel := model.NewWithOptions(testRepos(), opts)
+	searchModel := newTestModel(testRepos(), opts)
 	searchModel, _ = update(searchModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	searchModel, cmd := update(searchModel, tea.KeyMsg{Type: tea.KeyF5})
 	if cmd != nil {
@@ -51,7 +51,7 @@ func TestModel_F5DuringModalOrSearchDoesNotRefresh(t *testing.T) {
 		t.Fatal("f5 should leave search input active")
 	}
 
-	modalModel := model.NewWithOptions(testRepos(), opts)
+	modalModel := newTestModel(testRepos(), opts)
 	modalModel = inRightPane(modalModel)
 	modalModel, _ = update(modalModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	if modalModel.Overlay() == ui.OverlayNone {
@@ -67,7 +67,7 @@ func TestModel_F5DuringModalOrSearchDoesNotRefresh(t *testing.T) {
 }
 
 func TestModel_RepoRefreshFailureLeavesReposAndShowsStatus(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return nil, errors.New("scan failed")
 		},
@@ -96,7 +96,7 @@ func TestModel_RepoRefreshFailureLeavesReposAndShowsStatus(t *testing.T) {
 }
 
 func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return []scanner.Repo{
 				{Path: "/dev/alpha", DisplayName: "alpha"},
@@ -132,7 +132,7 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 
 func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *testing.T) {
 	var gotFilters []sessions.SessionFilter
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return testRepos(), nil
 		},
@@ -193,7 +193,7 @@ func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *
 }
 
 func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return []scanner.Repo{
 				{Path: "/dev/bravo", DisplayName: "bravo"},
@@ -241,7 +241,7 @@ func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *t
 }
 
 func TestModel_RepoRefreshKeepsFilterAndHandlesZeroVisibleRepos(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return []scanner.Repo{{Path: "/dev/delta", DisplayName: "delta"}}, nil
 		},
@@ -357,7 +357,7 @@ func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testin
 
 func TestModel_StaleRepoRefreshResultAndFailureIgnored(t *testing.T) {
 	scans := 0
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) {
 			scans++
 			if scans == 1 {

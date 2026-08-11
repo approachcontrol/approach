@@ -183,7 +183,7 @@ func TestModel_ListFetchModesShareRequestAndStaleResultBehavior(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			loadCount := 0
-			m := model.NewWithOptions(testRepos(), model.Options{
+			m := newTestModel(testRepos(), model.Options{
 				ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 					loadCount++
 					if filter.RepoPath != selectedRepo {

@@ -239,25 +239,6 @@ func nextAutoLaunchPhase(record flowstore.FlowRecord) (flowstore.FlowPhase, bool
 	return phase, ok
 }
 
-func (m Model) selectedFlowNextLaunchablePhase() (flowstore.FlowRecord, flowstore.FlowPhase, bool) {
-	record, ok := m.selectedFlow()
-	if !ok || record.FlowID == "" {
-		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-	}
-	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.hasFlowRepairEmbeddedTerminalForFlow(record.FlowID) {
-		return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-	}
-	ordered := flowstore.OrderedPhases(record.Phases)
-	orderedRecord := record
-	orderedRecord.Phases = ordered
-	for i, phase := range ordered {
-		if flowPhaseCanLaunchAtIndex(orderedRecord, i) {
-			return record, phase, true
-		}
-	}
-	return flowstore.FlowRecord{}, flowstore.FlowPhase{}, false
-}
-
 type flowPhaseLaunchTarget struct {
 	FlowPhaseLaunchPreparedRequest
 	AutoAdvanceRetryFlowID  string
@@ -267,24 +248,6 @@ type flowPhaseLaunchTarget struct {
 type repairAutoDrainMarker struct {
 	MinimumRequest uint64
 	CleanExit      bool
-}
-
-func (m Model) selectedFlowNextLaunchTarget() (flowPhaseLaunchTarget, bool, Model) {
-	record, phase, ok := m.selectedFlowNextLaunchablePhase()
-	if !ok {
-		m = m.setStatus(statusOther, "No launchable Flow phase")
-		return flowPhaseLaunchTarget{}, false, m
-	}
-	target, ok, m, _ := m.flowPhaseLaunchTarget(FlowPhaseLaunchRequest{
-		Record:   record,
-		Phase:    phase,
-		Headless: record.Headless,
-	})
-	return target, ok, m
-}
-
-func (m Model) launchFlowPhaseTarget(target flowPhaseLaunchTarget) (tea.Model, tea.Cmd) {
-	return m, m.prepareFlowPhaseLaunch(target)
 }
 
 func (m Model) flowPhaseLaunchTarget(req FlowPhaseLaunchRequest) (flowPhaseLaunchTarget, bool, Model, tea.Cmd) {
@@ -310,9 +273,18 @@ func (m Model) prepareFlowPhaseLaunch(target flowPhaseLaunchTarget) tea.Cmd {
 				Err:                     err.Error(),
 				AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
 				AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+				AutoAdvanceLaunchID:     target.LaunchID,
 			}
 		}
 		if result.Skipped {
+			if target.AutoAdvanceRetryFlowID != "" {
+				return ActionFailedMsg{
+					RepoPath:                target.RepoPath,
+					AutoAdvanceRetryFlowID:  target.AutoAdvanceRetryFlowID,
+					AutoAdvanceRetryPhaseID: target.AutoAdvanceRetryPhaseID,
+					AutoAdvanceLaunchID:     target.LaunchID,
+				}
+			}
 			return nil
 		}
 		return m.flowPhaseLaunchMessage(result)
@@ -564,9 +536,19 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 			cmds = append(cmds, statusCmd)
 			continue
 		}
-		m = m.disarmAutoAdvanceDrain(record.FlowID)
 		target.AutoAdvanceRetryFlowID = record.FlowID
 		target.AutoAdvanceRetryPhaseID = phase.PhaseID
+		next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+			Token:   target.LaunchID,
+			Kind:    flowLaunchKindAutoPhase,
+			FlowID:  record.FlowID,
+			PhaseID: phase.PhaseID,
+			Origin:  flowLaunchOriginAutoMode,
+		}, flowLaunchStatePreparing)
+		if !reserved {
+			continue
+		}
+		m = next.disarmAutoAdvanceDrain(record.FlowID)
 		m.autoAdvanceLaunchedPhases = append(m.autoAdvanceLaunchedPhases, autoAdvanceLaunchedPhase{
 			FlowTitle: record.Title,
 			PhaseID:   phase.PhaseID,
@@ -579,7 +561,7 @@ func (m Model) prepareAutoAdvanceDrainLaunches(records []flowstore.FlowRecord) (
 }
 
 func (m Model) flowAutoAdvanceOccupied(record flowstore.FlowRecord) bool {
-	if m.hasPendingFlowRepairLaunch(record.FlowID) {
+	if m.hasPendingFlowRepairLaunch(record.FlowID) || m.flowLaunchAttemptOccupied(record.FlowID) {
 		return true
 	}
 	for _, phase := range record.Phases {

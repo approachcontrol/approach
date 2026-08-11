@@ -610,6 +610,7 @@ type ActionFailedMsg struct {
 	Err                     string
 	AutoAdvanceRetryFlowID  string
 	AutoAdvanceRetryPhaseID string
+	AutoAdvanceLaunchID     string
 }
 
 // --- Message handlers ---
@@ -1290,6 +1291,16 @@ func (m Model) handleFetchError(msg FetchErrorMsg) Model {
 }
 
 func (m Model) handleActionFailed(msg ActionFailedMsg) (Model, tea.Cmd) {
+	if msg.AutoAdvanceLaunchID != "" {
+		if attempt, ok := m.matchingFlowLaunchAttempt(msg.AutoAdvanceRetryFlowID, msg.AutoAdvanceLaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		}
+		// An outdated AutoMode command is an intentional no-op. It returns this
+		// message only so the async reservation can be released in Update.
+		if msg.Err == "" {
+			return m, nil
+		}
+	}
 	autoAdvanceRetry := msg.AutoAdvanceRetryFlowID != "" && msg.AutoAdvanceRetryPhaseID != ""
 	autoAdvanceFailure := autoAdvanceRetry
 	if msg.AutoAdvanceRetryFlowID != "" {
@@ -1493,7 +1504,7 @@ func (m Model) handleFlowHeadlessSet(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
 	if !sameRepoPath(msg.Flow.RepoPath, msg.RepoPath) {
 		return m, followUp
 	}
-	return m.replaceFlowHeadlessRecord(msg.Flow), followUp
+	return m.replaceFlowRecord(msg.Flow, flowMutationHeadless, flowHeadlessOverlay(msg.Flow.Headless)), followUp
 }
 
 func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
@@ -1519,52 +1530,6 @@ func (m Model) handleFlowHeadlessSetFailed(msg FlowHeadlessSetFailedMsg) Model {
 		errText += "; headless mode is unchanged, press h again to retry"
 	}
 	return m.setStatus(statusOther, errText)
-}
-
-func (m Model) replaceFlowHeadlessRecord(flow flowstore.FlowRecord) Model {
-	m = m.rememberFlowMutation(flow, flowMutationHeadless, flowHeadlessOverlay(flow.Headless))
-	selectedFlowID := ""
-	if record, ok := m.flows.Selected(); ok {
-		selectedFlowID = record.FlowID
-	}
-	expandedFlowID := m.expandedFlowID
-	selectedFlowPhaseID := m.selectedFlowPhaseID
-	items := append([]flowstore.FlowRecord(nil), m.flows.Items()...)
-	replacedFlows := false
-	for i := range items {
-		if items[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(items[i].UpdatedAt) {
-			continue
-		}
-		items[i] = flow
-		replacedFlows = true
-		break
-	}
-	if replacedFlows {
-		m.flows = m.flows.SetItems(items)
-		if selectedFlowID != "" {
-			m.flows = m.flows.SelectFunc(func(record flowstore.FlowRecord) bool { return record.FlowID == selectedFlowID })
-		}
-		m = m.restoreExpandedFlowSelection(expandedFlowID, selectedFlowPhaseID)
-	}
-
-	activeRecords := append([]flowstore.FlowRecord(nil), m.activeFlowRecords...)
-	replacedActive := false
-	for i := range activeRecords {
-		if activeRecords[i].FlowID != flow.FlowID || flow.UpdatedAt.Before(activeRecords[i].UpdatedAt) {
-			continue
-		}
-		activeRecords[i] = flow
-		replacedActive = true
-		break
-	}
-	if replacedActive {
-		m.activeFlowRecords = activeRecords
-		m = m.syncActiveFlowsFromCache()
-	}
-	if !replacedFlows && !replacedActive {
-		return m
-	}
-	return m.clampSelectionsAfterFilter()
 }
 
 func (m Model) handleFlowManualMergeSet(msg FlowManualMergeSetMsg) Model {

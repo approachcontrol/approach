@@ -31,7 +31,7 @@ func plansInRightPaneAtSize(t *testing.T, m model.Model, records []planstore.Pla
 
 func TestModel_EnterOnPlanExpandsPhasesWithoutReadingPlan(t *testing.T) {
 	readCalled := false
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ReadPlan: func(planID string) (string, error) {
 			readCalled = true
 			return "# Persist plans\n\nfull body\n", nil
@@ -62,7 +62,7 @@ func TestModel_EnterOnPlanExpandsPhasesWithoutReadingPlan(t *testing.T) {
 
 func TestModel_OKeyOnPlanOpensPlanText(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		PageText: func(body string) (actions.TerminalLaunchSpec, error) {
 			paged = append(paged, body)
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true")}, nil
@@ -495,7 +495,7 @@ func TestModel_PlanListReplacementClearsExpandedPhases(t *testing.T) {
 }
 
 func TestModel_PlanRefetchStartClearsExpandedPhases(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
+	m := newTestModel(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) { return testRepos(), nil },
 	})
 	m = plansInRightPane(t, m, []planstore.PlanRecord{

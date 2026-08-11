@@ -33,6 +33,35 @@ func testStashes() []gitquery.Stash {
 	}
 }
 
+// testFlowRecords mirrors every Flow record a test feeds into a pane so the
+// authoritative ReadFlow seam can answer with the same record the surface
+// shows. Package tests never run in parallel, so one registry is enough.
+var testFlowRecords = map[string]flowstore.FlowRecord{}
+
+func recordTestFlowRecords(records []flowstore.FlowRecord) {
+	for _, record := range records {
+		if record.FlowID != "" {
+			testFlowRecords[record.FlowID] = record
+		}
+	}
+}
+
+// newTestModel builds a Model and, unless the test supplies its own, points the
+// authoritative Flow read at the records the test feeds into its panes. Tests
+// that need the persisted record to diverge from the cached snapshot set
+// Options.ReadFlow explicitly.
+func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
+	if opts.ReadFlow == nil {
+		opts.ReadFlow = func(flowID string) (flowstore.FlowRecord, error) {
+			if record, ok := testFlowRecords[flowID]; ok {
+				return record, nil
+			}
+			return flowstore.FlowRecord{}, fmt.Errorf("flow %s not found", flowID)
+		}
+	}
+	return model.NewWithOptions(repos, opts)
+}
+
 // update sends a message and returns the concrete Model.
 func update(m model.Model, msg tea.Msg) (model.Model, tea.Cmd) {
 	msg = stampListRequest(m, msg)
@@ -71,11 +100,13 @@ func stampListRequest(m model.Model, msg tea.Msg) tea.Msg {
 		if msg.ListRequest == 0 {
 			msg.ListRequest = m.ListRequest(ui.ModeFlows)
 		}
+		recordTestFlowRecords(msg.Flows)
 		return msg
 	case model.ActiveFlowResultMsg:
 		if msg.ListRequest == 0 {
 			msg.ListRequest = m.ListRequest(ui.ModeActiveFlows)
 		}
+		recordTestFlowRecords(msg.Flows)
 		return msg
 	case model.FetchErrorMsg:
 		if msg.Kind == model.FetchList && msg.ListRequest == 0 {

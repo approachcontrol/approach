@@ -1145,7 +1145,7 @@ func TestModel_ViewReflogModeShowsReflogContent(t *testing.T) {
 
 func TestModel_ReflogEmptyDiffPagesMessage(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -1166,7 +1166,7 @@ func TestModel_ReflogEmptyDiffPagesMessage(t *testing.T) {
 
 func TestModel_ReflogDiffPagesContent(t *testing.T) {
 	var paged []string
-	m := model.NewWithOptions(testRepos(), model.Options{PageText: recordPageText(&paged)})
+	m := newTestModel(testRepos(), model.Options{PageText: recordPageText(&paged)})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = inRightPane(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})

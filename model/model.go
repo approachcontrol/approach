@@ -166,6 +166,8 @@ type Model struct {
 
 	pendingRepairAutoDrainFlowIDs map[string]repairAutoDrainMarker
 	pendingFlowRepairLaunchIDs    map[string]string
+	flowLaunchAttempts            map[string]flowLaunchAttempt
+	launchSeams                   flowLaunchSeams
 
 	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen   uint64
@@ -248,6 +250,7 @@ type Options struct {
 	CountClosedBeads         func(repoPath string) (int, error)
 	CreateFlow               func(FlowStartRequest) (FlowStartResult, error)
 	StartFlowPlan            func(FlowStartRequest) (FlowStartResult, error)
+	ReadFlow                 func(flowID string) (flowstore.FlowRecord, error)
 	SetFlowPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
 	SetFlowAutoMode          func(flowstore.AutoModeUpdate) (flowstore.FlowRecord, error)
 	SetFlowHeadless          func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error)
@@ -405,6 +408,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	countClosedBeads := opts.CountClosedBeads
 	if countClosedBeads == nil {
 		countClosedBeads = beadsquery.CountClosed
+	}
+	readFlow := opts.ReadFlow
+	if readFlow == nil {
+		readFlow = func(flowID string) (flowstore.FlowRecord, error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, err
+			}
+			return store.Read(flowID)
+		}
 	}
 	setFlowPhase := opts.SetFlowPhase
 	if setFlowPhase == nil {
@@ -620,11 +633,19 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			listInProgressBeads,
 			listClosedBeads,
 		},
-		showBead:                 showBead,
-		countClosedBeads:         countClosedBeads,
-		createFlow:               createFlowForRepo,
-		startFlowPlan:            startFlowPlan,
-		setFlowPhase:             setFlowPhase,
+		showBead:         showBead,
+		countClosedBeads: countClosedBeads,
+		createFlow:       createFlowForRepo,
+		startFlowPlan:    startFlowPlan,
+		setFlowPhase:     setFlowPhase,
+		launchSeams: newFlowLaunchSeams(
+			readFlow,
+			listSessions,
+			addFlowPhaseLaunchID,
+			setFlowPhase,
+			planMarkdownPath,
+			readPlan,
+		),
 		setFlowAutoMode:          setFlowAutoMode,
 		setFlowHeadless:          setFlowHeadless,
 		lookupPRMerge:            lookupPRMerge,
@@ -1480,8 +1501,7 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		if msg.Err != nil {
-			m = m.dismissEmbeddedTerminalForReason(msg.ID, embeddedTerminalRemovalPrefillFailure)
-			return m.startFlowLaunchFailure(msg.LaunchContext, msg.Err.Error())
+			return m.handleFlowLaunchPrefillFailure(msg)
 		}
 		m = m.activateEmbeddedTerminal(msg.ID)
 		return m.updateFlowTerminalFocusAfterLaunch(msg.LaunchContext), nil
@@ -1695,6 +1715,20 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
+		if attempt, ok := m.matchingFlowLaunchAttempt(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
+			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
+			attempt.MutatedPhase = true
+			return m.handoffFlowLaunchExternal(attempt, flowLaunchEventMsg{
+				Token:    attempt.Token,
+				Kind:     attempt.Kind,
+				From:     attempt.State,
+				FlowID:   attempt.FlowID,
+				PhaseID:  attempt.PhaseID,
+				Context:  msg.LaunchContext,
+				Route:    flowLaunchRouteExternal,
+				RepoPath: msg.LaunchContext.RepoPath,
+			})
+		}
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			return m, nil
 		}
@@ -1706,6 +1740,20 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
+		if attempt, ok := m.matchingFlowLaunchAttempt(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
+			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
+			attempt.MutatedPhase = true
+			return m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+				Token:    attempt.Token,
+				Kind:     attempt.Kind,
+				From:     attempt.State,
+				FlowID:   attempt.FlowID,
+				PhaseID:  attempt.PhaseID,
+				Context:  msg.LaunchContext,
+				Route:    flowLaunchRouteEmbedded,
+				RepoPath: msg.LaunchContext.RepoPath,
+			})
+		}
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
 				return m, nil
@@ -1742,6 +1790,8 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleAgentResultAfterFinalization(msg, nil)
 	case agentSessionFinalizedMsg:
 		return m.handleAgentResultAfterFinalization(msg.Result, msg.Err)
+	case flowLaunchEventMsg:
+		return m.handleFlowLaunchEvent(msg)
 	case flowLaunchFailurePersistedMsg:
 		return m.handleFlowLaunchFailurePersisted(msg)
 	case DeleteFailedMsg:
@@ -1771,6 +1821,16 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 		} else {
 			resultErr = fmt.Sprintf("finalize session: %v", finalizeErr)
 		}
+	}
+	ctx := msg.LaunchContext
+	// Only a lifecycle handoff releases here; every other source funnels
+	// through this handler with no attempt and must reach main's behaviour
+	// below unchanged.
+	if attempt, ok := m.matchingFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID, 0, flowLaunchStateHandoffPending); ok {
+		if resultErr != "" {
+			return m.failFlowLaunch(attempt, ctx, ctx.RepoPath, resultErr)
+		}
+		m = m.releaseFlowLaunchAttempt(ctx.FlowID, ctx.LaunchID)
 	}
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
@@ -1970,8 +2030,23 @@ func flowPhaseHasStaleRunningLatestLaunch(phase flowstore.FlowPhase) bool {
 		(flowstore.PhaseAwaitingSession(phase) || flowstore.PhaseLatestLaunchEnded(phase))
 }
 
+// selectedFlowHasLaunchablePhase drives footer availability through the same
+// preview admission uses, so what the footer advertises and what g accepts can
+// never disagree.
 func (m Model) selectedFlowHasLaunchablePhase() bool {
-	_, _, ok := m.selectedFlowNextLaunchablePhase()
+	record, ok := m.selectedFlow()
+	if !ok {
+		return false
+	}
+	// An in-flight headless write makes admission refuse, so the footer has to
+	// stop advertising for as long as it is outstanding.
+	if m.flowHeadlessWritePending(record.FlowID) {
+		return false
+	}
+	_, _, ok = m.previewFlowLaunch(flowLaunchIntent{
+		Kind:   flowLaunchKindManualPhase,
+		FlowID: record.FlowID,
+	})
 	return ok
 }
 
