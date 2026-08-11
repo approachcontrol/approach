@@ -3,6 +3,7 @@ package flowstore
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,7 @@ func TestSQLiteFreshRootUsesSecureWALDatabase(t *testing.T) {
 	}
 }
 
-func TestSQLiteMigrationIsOneTimeAndLeavesTombstoneUnchanged(t *testing.T) {
+func TestSQLiteMigrationIsOneTimeAndLeavesLegacySourceInPlace(t *testing.T) {
 	root := t.TempDir()
 	flowID := "20260811T120000Z-legacy"
 	legacyPath := writeLegacyFixtureInternal(t, root, "flows", flowID)
@@ -65,29 +66,36 @@ func TestSQLiteMigrationIsOneTimeAndLeavesTombstoneUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var warnings []string
+	restoreWarn := bootstrapWarnf
+	bootstrapWarnf = func(format string, args ...any) { warnings = append(warnings, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { bootstrapWarnf = restoreWarn })
+
 	store, err := NewStore(StoreOptions{Root: root})
 	if err != nil {
 		t.Fatalf("NewStore() migration error = %v", err)
 	}
 	t.Cleanup(func() { _ = store.backend.(*sqliteBackend).db.Close() })
-	if _, err := os.Lstat(filepath.Join(root, "flows")); !os.IsNotExist(err) {
-		t.Fatalf("legacy source still authoritative after migration: %v", err)
+	if _, err := os.Lstat(filepath.Join(root, "flows.legacy")); !os.IsNotExist(err) {
+		t.Fatalf("migration moved production files to flows.legacy: %v", err)
 	}
-	tombstonePath := filepath.Join(root, "flows.legacy", flowID, "meta.json")
-	legacyAfter, err := os.ReadFile(tombstonePath)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "left in place and is no longer read") {
+		t.Fatalf("migration warnings = %#v, want one retained-source warning", warnings)
+	}
+	legacyAfter, err := os.ReadFile(legacyPath)
 	if err != nil {
-		t.Fatalf("read tombstone: %v", err)
+		t.Fatalf("read retained legacy source: %v", err)
 	}
 	if string(legacyAfter) != string(legacyBefore) {
-		t.Fatal("migration mutated legacy source while tombstoning it")
+		t.Fatal("migration mutated the legacy source it left in place")
 	}
 	first, err := store.Read(flowID)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
 
-	if err := os.WriteFile(tombstonePath, []byte(`{"schema_version":1,"flow_id":"changed"}`), 0o600); err != nil {
-		t.Fatalf("mutate tombstone fixture: %v", err)
+	if err := os.WriteFile(legacyPath, []byte(`{"schema_version":1,"flow_id":"changed"}`), 0o600); err != nil {
+		t.Fatalf("mutate retained legacy fixture: %v", err)
 	}
 	reopened, err := NewStore(StoreOptions{Root: root})
 	if err != nil {
@@ -99,7 +107,7 @@ func TestSQLiteMigrationIsOneTimeAndLeavesTombstoneUnchanged(t *testing.T) {
 		t.Fatalf("Read(reopen) error = %v", err)
 	}
 	if second.Title != first.Title || second.FlowID != first.FlowID {
-		t.Fatalf("reopen read tombstone changes: first=%#v second=%#v", first, second)
+		t.Fatalf("reopen read retained legacy changes: first=%#v second=%#v", first, second)
 	}
 }
 
@@ -148,15 +156,19 @@ func TestSQLiteCutoverRecoveryMatrix(t *testing.T) {
 		}
 	})
 
-	t.Run("interrupted post-rename migration resumes", func(t *testing.T) {
+	// This build never creates flows.legacy/ — it leaves flows/ where it is. The
+	// directory can only come from a root migrated by a build that did rename,
+	// so this covers that inherited state, not a state the current cutover
+	// produces. Naming it "post-rename" previously implied otherwise.
+	t.Run("stage left beside an inherited flows.legacy tombstone is promoted", func(t *testing.T) {
 		root := t.TempDir()
 		flowID := "20260811T120000Z-resume"
 		writeLegacyFixtureInternal(t, root, "flows.legacy", flowID)
-		records, err := readAndCanonicalizeLegacy(root, "flows.legacy", nil)
+		imported, err := readAndCanonicalizeLegacy(root, "flows.legacy", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := buildStagedDatabase(filepath.Join(root, stageFilename), records); err != nil {
+		if err := buildStagedDatabase(filepath.Join(root, stageFilename), imported.records); err != nil {
 			t.Fatal(err)
 		}
 		store, err := NewStore(StoreOptions{Root: root})

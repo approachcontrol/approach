@@ -243,12 +243,12 @@ func TestStoreReadLegacyRecordWithoutHeadlessDefaultsOnWithoutRewriting(t *testi
 	if !read.Headless {
 		t.Fatalf("legacy Read().Headless = false: %#v", read)
 	}
-	after, err := os.ReadFile(filepath.Join(root, "flows.legacy", flowID, "meta.json"))
+	after, err := os.ReadFile(legacyPath)
 	if err != nil {
 		t.Fatalf("ReadFile(meta.json) after read error = %v", err)
 	}
 	if string(after) != string(before) {
-		t.Fatalf("legacy tombstone changed during migration/read\n--- before ---\n%s\n--- after ---\n%s", before, after)
+		t.Fatalf("retained legacy source changed during migration/read\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 }
 

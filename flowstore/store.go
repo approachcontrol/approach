@@ -344,9 +344,9 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Ordering is load-bearing: the backend's EnsureCollection failure must
-	// still surface before a bad preset does. Only the lockTimeout default is
-	// hoisted, because the backend needs it at construction.
+	// Ordering is load-bearing: a backend bootstrap failure must still surface
+	// before a bad preset does. Only the lockTimeout default is hoisted, because
+	// the backend needs it at construction.
 	lockTimeout := opts.LockTimeout
 	if lockTimeout <= 0 {
 		lockTimeout = defaultLockTimeout
@@ -365,6 +365,21 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		root:     root,
 		now:      now,
 	}, nil
+}
+
+// Close releases the Store's database handles. A Store holds a pooled
+// connection for its whole life, so callers that build one per operation must
+// Close it or leak descriptors; long-lived callers may Close at shutdown or not
+// at all. Using the Store after Close returns an error rather than panicking.
+// It is safe to call more than once.
+//
+// Callers that discard the error are not being sloppy: every record a caller
+// wrote is already durable when its mutation returned, so a Close failure can
+// only mean the final WAL checkpoint did not run. Turning that into a non-zero
+// exit would report a successful mutation as a failure, which is the worse
+// outcome for a CLI whose caller is usually an agent.
+func (s *Store) Close() error {
+	return s.backend.close()
 }
 
 // DefaultRoot returns the default artifact root, matching sessions and plans.
@@ -693,6 +708,16 @@ func markPhaseSyncNeedsAttention(phase FlowPhase, err error, now time.Time) Flow
 	return phase
 }
 
+// syncLinkedPlanPhase mirrors a completed Flow phase into its linked plan.
+//
+// It runs INSIDE the backend writer section, which under SQLite is the
+// database-wide write lock rather than the file backend's per-Flow lock. That
+// is deliberate: clause 2 of the backend.update contract makes the
+// needs_attention compensation durable in the same transaction as the phase
+// change, so a sync failure can never leave a completed phase without its
+// marker. The cost is that a contended plan-store file lock stalls every Flow
+// write, not just this one. Lock order is flow-db-writer -> plan-file-lock and
+// is never taken in reverse, so this cannot deadlock — it can only wait.
 func (s *Store) syncLinkedPlanPhase(record FlowRecord, phase FlowPhase) error {
 	planID := strings.TrimSpace(record.PlanID)
 	if planID == "" || phase.Status != PhaseCompleted {
@@ -1358,15 +1383,53 @@ func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, muta
 	})
 }
 
-func validatePhaseGraphResolved(record FlowRecord) error {
+// fencingPresetName returns the normalized preset name when a record's phase
+// graph could not be rebuilt from it, which fences phase mutation on that
+// record, and "" when the record is not fenced.
+func fencingPresetName(record FlowRecord) string {
 	if record.GraphRecovery.Status != GraphRecoveryMissingEdgesUnresolved {
-		return nil
+		return ""
 	}
 	preset := normalizePresetName(record.PresetName)
 	if preset == "" || preset == "default" {
+		return ""
+	}
+	return preset
+}
+
+func mutationFencedByPreset(record FlowRecord) bool {
+	return fencingPresetName(record) != ""
+}
+
+func validatePhaseGraphResolved(record FlowRecord) error {
+	preset := fencingPresetName(record)
+	if preset == "" {
 		return nil
 	}
-	return fmt.Errorf("flow %q has unresolved missing dependencies; restore preset %q or explicit depends_on before mutating phases", record.FlowID, preset)
+	// Two things this deliberately does NOT say.
+	//
+	// "Restore the preset and retry" is false: under the file store edge recovery
+	// re-ran on every read and restoring the preset really did heal the record,
+	// but records are canonical at write time now, so recovery ran once during
+	// migration and never runs again.
+	//
+	// "Remove approach.db and re-run the migration" is worse than false — it
+	// works, and it destroys data. flows/ is a snapshot frozen at migration time,
+	// not a live mirror; nothing has written to it since. Re-running the cutover
+	// discards every Flow created or changed since that day. It is only safe in
+	// the minutes after the migration, which is the one place it is offered (see
+	// reportCutover), and it must never be offered here, where by definition the
+	// database has been in use.
+	// The manual repair names BOTH edits on purpose. This check keys off the
+	// graph_recovery marker, not off the edges, so setting depends_on alone
+	// leaves the record fenced exactly as before — a half-stated recipe reads as
+	// a complete one and sends the operator away convinced the product is broken.
+	return fmt.Errorf("flow %q has unresolved missing dependencies from preset %q;"+
+		" its phase graph could not be rebuilt during the one-time legacy migration and cannot be"+
+		" rebuilt now, because preset edge recovery does not run again — recreate this Flow, or repair"+
+		" it directly in the flow database by setting depends_on on its phases AND removing the"+
+		" %q marker from its stored record (see docs/config.md)",
+		record.FlowID, preset, GraphRecoveryMissingEdgesUnresolved)
 }
 
 func appendUnique(values []string, value string) []string {
@@ -2113,13 +2176,6 @@ func validatePhaseID(phaseID string) error {
 		return fmt.Errorf("invalid phase id %q", phaseID)
 	}
 	return nil
-}
-
-func matchesFilter(record FlowRecord, filter FlowFilter) bool {
-	if filter.RepoPath != "" && filepath.Clean(record.RepoPath) != filepath.Clean(filter.RepoPath) {
-		return false
-	}
-	return true
 }
 
 func defaultTime(value, fallback time.Time) time.Time {

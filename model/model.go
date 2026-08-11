@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -273,8 +274,15 @@ type Options struct {
 	StartEmbeddedTerminal    EmbeddedTerminalStarter
 	FinalizeAgentSession     func(actions.AgentLaunchContext) error
 	SessionStateRoot         string
-	BootstrapHookForRepo     func(string) (actions.BootstrapHook, bool)
-	RunBootstrapHook         func(actions.BootstrapContext, actions.BootstrapHook) error
+	// FlowStore is the process's already-open Flow store. When set, the fallback
+	// mutators below reuse it instead of opening a second one against the same
+	// approach.db: two pools would bootstrap twice and then contend for SQLite's
+	// single writer through nothing but busy_timeout, so a write from one could
+	// fail with "database is locked" while the other holds the writer. Tests and
+	// callers that leave it nil still get the lazily-built cached store.
+	FlowStore            *flowstore.Store
+	BootstrapHookForRepo func(string) (actions.BootstrapHook, bool)
+	RunBootstrapHook     func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 // New creates a Model from discovered repos.
@@ -284,11 +292,38 @@ func New(repos []scanner.Repo) Model {
 
 // NewWithOptions creates a Model from discovered repos and startup options.
 func NewWithOptions(repos []scanner.Repo, opts Options) Model {
+	// A flowstore.Store owns a pooled SQLite handle for its whole life, so the
+	// fallback mutators below must share one rather than build a store per
+	// operation the way they did when the backend was plain files — that pattern
+	// was free against files and leaks descriptors against SQLite.
+	//
+	// Only success is cached. These closures run on tea.Cmd goroutines, so the
+	// mutex makes the lazy construction race-free; caching the error too would
+	// be wrong, because the most likely failure is a bootstrap lock held by
+	// another approach process mid-cutover, and that clears on its own. A
+	// permanent cache would leave the TUI unable to write any Flow until restart.
+	var (
+		flowStoreMu sync.Mutex
+		flowStore   *flowstore.Store
+	)
 	newFlowStore := func() (*flowstore.Store, error) {
-		return flowstore.NewStore(flowstore.StoreOptions{
+		if opts.FlowStore != nil {
+			return opts.FlowStore, nil
+		}
+		flowStoreMu.Lock()
+		defer flowStoreMu.Unlock()
+		if flowStore != nil {
+			return flowStore, nil
+		}
+		store, err := flowstore.NewStore(flowstore.StoreOptions{
 			Root:    opts.SessionStateRoot,
 			Presets: opts.FlowPresets,
 		})
+		if err != nil {
+			return nil, err
+		}
+		flowStore = store
+		return flowStore, nil
 	}
 	saveAgent := opts.SaveAgentCommand
 	if saveAgent == nil {

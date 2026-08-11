@@ -167,14 +167,23 @@ destroying recorded work on a malformed hand-authored record. Index-aware launch
 eligibility prevents stale duplicate rows from being selected for manual or
 AutoMode launches.
 
-Records created from named custom presets persist `preset_name`. If a record is
-later read with missing `depends_on` keys, Approach uses the named preset as a
-recovery hint when the preset is available and its phase IDs still match. The
-non-persisted `GraphRecovery.Status` values are:
+Records created from named custom presets persist `preset_name`. Edge recovery
+uses it as a hint when a legacy record's `depends_on` keys are missing — but
+that recovery runs **only during the one-time migration into `approach.db`**,
+not on every read as it did under the file store. Records are canonical at write
+time now, so what the migration decided is what the record carries from then on.
 
-- `preset_edges_restored`: missing edges were restored from the named preset.
-- `missing_edges_unresolved`: Approach refused to invent a graph. Re-select or
-  recreate the preset, or repair the record manually.
+One recovery marker is persisted: `missing_edges_unresolved`, meaning Approach
+refused to invent a graph because the named preset was unavailable or its phase
+IDs no longer matched. It fences phase mutation on that record, and it does not
+clear when the preset is restored later. The migration notice names every Flow
+in this state at the one moment it is cheap to fix — see `docs/config.md`. After
+that, the remedies are to recreate the Flow or to repair it directly in the
+database, which requires setting `depends_on` on the phases **and** deleting the
+`graph_recovery` marker: the fence keys off the marker, not off the edges, so
+editing `depends_on` alone leaves the Flow blocked. Re-running the cutover is
+**not** a safe remedy once the database has been in use, because `flows/` is a
+snapshot frozen at migration time rather than a live mirror.
 
 Default-preset records still use legacy linear backfill when `depends_on` is
 absent. Edge-less custom records without a recoverable preset remain readable
@@ -224,10 +233,23 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 ## Compatibility and migration
 
 - `schema_version` stays `1` and no status strings were added, removed, or
-  renamed. New records always persist the metadata field `headless`. Existing
-  Flow JSON needs no migration: a missing legacy field normalizes to `true` on
-  read without forcing a rewrite, while an explicit `false` remains false and
-  is serialized by the next ordinary write.
+  renamed. New records always persist the metadata field `headless`, and a
+  legacy record that omitted it migrates to `true`.
+- Records themselves are migrated once, on first open: `flows/<id>/meta.json`
+  is imported into `approach.db` and the old tree is left untouched in place.
+  See `docs/config.md` for the cutover's guarantees. Phase and
+  status semantics are unchanged by that move — only the storage medium is.
+- Preset-based `depends_on` recovery is part of that one-time migration and no
+  longer re-runs on read. A record whose preset was missing at migration keeps
+  its `missing_edges_unresolved` marker permanently, and restoring the preset
+  afterwards does not clear it; the migration notice names such Flows while
+  re-running the cutover is still safe, and the mutation-fence error afterwards
+  offers only remedies that do not discard post-migration Flows.
+- Records are canonical at write time rather than re-derived on every read, so
+  a rejected `approach flow phase reset` now leaves the record untouched
+  instead of demoting the phase to `pending` as a side effect. A reset blocked
+  by unsatisfied predecessors reports `requires satisfied predecessors` rather
+  than the older, less precise `requires running recoverable phase`.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
   `ResetRecoverableRunningPhase`) re-derive readiness for any graph. Records

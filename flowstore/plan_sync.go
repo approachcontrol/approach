@@ -1,6 +1,8 @@
 package flowstore
 
 import (
+	"time"
+
 	"github.com/approachcontrol/approach/planstore"
 )
 
@@ -21,12 +23,30 @@ type planPhaseWriter interface {
 	markPhaseCompleted(planID, phaseID string) error
 }
 
+// nestedPlanLockTimeout bounds the plan lock wait taken INSIDE the Flow write
+// transaction. It must stay well under the Flow busy timeout (defaultLockTimeout,
+// 5s), and that gap is the whole point.
+//
+// planstore's mutation lock is a single GLOBAL file lock across every plan and
+// every process, and it is acquired while this process holds SQLite's
+// database-wide write lock. At planstore's own 5s default the two budgets are
+// equal, so a Flow writer parked on the plan lock is guaranteed to burn another
+// Flow writer's entire busy timeout — measured: an unrelated Flow with no linked
+// plan at all failing outright with "database is locked". Capping the nested
+// wait at 1s means the outer writer always releases with ~4s of the other
+// writer's budget left, and the plan-lock failure degrades into the
+// needs_attention compensation that already exists for exactly this case.
+const nestedPlanLockTimeout = time.Second
+
 // planstoreSyncer is the production syncer: plans are files under the same
 // artifact root as flows.
 type planstoreSyncer struct{ root string }
 
 func (s planstoreSyncer) open() (planPhaseWriter, error) {
-	store, err := planstore.NewStore(planstore.StoreOptions{Root: s.root})
+	store, err := planstore.NewStore(planstore.StoreOptions{
+		Root:        s.root,
+		LockTimeout: nestedPlanLockTimeout,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -24,15 +24,19 @@ type backend interface {
 	// flow_id ASC. Any malformed authoritative row fails the whole call.
 	list(filter FlowFilter) ([]storedFlow, error)
 
-	// delete acquires the same critical section as update, then removes the
-	// record. It returns flowNotFoundError(flowID) when the record is absent.
+	// delete removes the record, serialized against update by whatever mechanism
+	// the implementation uses for its writer. The SQLite backend relies on
+	// SQLite's own single-writer rule rather than opening an explicit
+	// transaction. It returns flowNotFoundError(flowID) when the record is absent.
 	delete(flowID string) error
 
 	// update runs mutate inside the database writer section and returns what
 	// mutate returned.
 	//
 	// CONTRACT — binding on every implementation:
-	//   1. mutate is invoked EXACTLY ONCE. Implementations MUST NOT retry it,
+	//   1. mutate is invoked AT MOST ONCE, and never more than once. An
+	//      implementation that cannot enter the writer section at all (a failed
+	//      BEGIN) returns without calling it. Implementations MUST NOT retry it,
 	//      not even on a spurious lock or transient store error, because the
 	//      closures are not idempotent: CreateWithOptions rewrites depends_on
 	//      through the caller's shared phase array, so a second pass sees the
@@ -55,14 +59,30 @@ type backend interface {
 	//   5. Writer acquisition happens before mutate. Updates are serialized
 	//      database-wide and readers remain available under WAL.
 	//
-	// A commit failure is the sole exception to clause 3: durability is then
-	// unknown, so update returns a zero record and a classifying storage error.
+	//      BLAST RADIUS: this is database-wide, not per-record. The file backend
+	//      this replaced locked one Flow at a time, so anything slow inside
+	//      mutate delayed only that Flow. Store.SetPhase and MarkManualMerge run
+	//      the linked-plan sync inside mutate, which takes planstore's own file
+	//      lock — lock order is flow-db-writer -> plan-file-lock, and nothing
+	//      takes them the other way round, so it cannot deadlock. It can still
+	//      hold the global Flow writer for as long as that plan lock is
+	//      contended. See flowstore/store.go syncLinkedPlanPhase.
+	//
+	// A commit failure is the sole exception to clauses 2 and 3: durability is
+	// then unknown, so update returns a zero record and a classifying storage
+	// error, and no save is guaranteed to have landed.
 	update(flowID string, mutate func(sess flowSession) (FlowRecord, error)) (FlowRecord, error)
 
 	// allocateID returns an id no existing record is using, derived from title
 	// and now. It is called OUTSIDE the critical section, before update, so two
 	// concurrent Creates can still race for an id exactly as they do today.
 	allocateID(title string, now time.Time) (string, error)
+
+	// close releases whatever handles the implementation holds. Unlike the file
+	// backend it replaced, the SQLite backend owns a pooled *sql.DB for the life
+	// of the Store, so callers that build short-lived Stores need a way to give
+	// the descriptors back. It is safe to call more than once.
+	close() error
 }
 
 // flowSession is the handle a mutate closure uses inside the critical section.

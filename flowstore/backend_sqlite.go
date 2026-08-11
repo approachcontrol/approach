@@ -22,6 +22,20 @@ const (
 	stageFilename    = "approach.db.migrating"
 )
 
+// databaseSchemaVersion is stamped into PRAGMA user_version. It exists so a
+// future schema change has something to branch on, and so an older binary can
+// tell "a newer approach wrote this" apart from "this file is corrupt" —
+// without it, both surface as a raw column-set mismatch dump.
+const databaseSchemaVersion = 1
+
+// errDatabaseFromNewerBuild marks the one validation failure that is NOT a
+// damaged database. The file is fine; this binary is old. It must stay
+// distinguishable, because the recovery advice attached to a corrupt database —
+// move it aside and re-migrate from flows/ — would silently roll a perfectly
+// good corpus back to its migration-day snapshot. The only correct action is
+// the one the message already states: upgrade approach.
+var errDatabaseFromNewerBuild = errors.New("flow database was written by a newer version of approach")
+
 const flowSchemaSQL = `
 CREATE TABLE IF NOT EXISTS flows (
     flow_id TEXT PRIMARY KEY,
@@ -39,10 +53,11 @@ CREATE INDEX IF NOT EXISTS idx_flows_status_updated
 `
 
 type sqliteBackend struct {
-	db          *sql.DB
-	root        string
-	lockTimeout time.Duration
-	beginTx     func(context.Context) (sqliteTransaction, error)
+	db *sql.DB
+	// root is the canonical, symlink-resolved store root. Kept because it is the
+	// evidence that secureCanonicalRoot's resolution reached the backend.
+	root    string
+	beginTx func(context.Context) (sqliteTransaction, error)
 }
 
 type sqliteTransaction interface {
@@ -76,6 +91,15 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("open flow database: %w", err)
 	}
+	// Secure the main file BEFORE switching to WAL: SQLite copies the database
+	// file's mode onto the -wal and -shm it creates, and those sidecars hold
+	// recently written Flow records. Chmod'ing afterwards would leave a database
+	// that arrived with a loose mode (a tarball restored under a default umask)
+	// with world-readable sidecars while the main file looked correctly locked
+	// down. The 0700 root is still the real boundary; this is defence in depth.
+	if err := os.Chmod(path, artifacts.FilePerm); err != nil {
+		return nil, fmt.Errorf("secure flow database: %w", err)
+	}
 	var journalMode string
 	if err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
 		return nil, fmt.Errorf("enable flow database WAL: %w", err)
@@ -83,18 +107,74 @@ func openSQLiteBackend(root string, lockTimeout time.Duration) (*sqliteBackend, 
 	if !strings.EqualFold(journalMode, "wal") {
 		return nil, fmt.Errorf("enable flow database WAL: SQLite reported %q", journalMode)
 	}
+	if err := secureExistingSidecars(path); err != nil {
+		return nil, err
+	}
 	if err := validateSQLiteSchema(db); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(path, artifacts.FilePerm); err != nil {
-		return nil, fmt.Errorf("secure flow database: %w", err)
+	if err := stampSchemaVersionIfUnset(db); err != nil {
+		return nil, err
 	}
+	// The cap must be far ABOVE the realistic concurrent-writer count, and it must
+	// exist. Both halves were learned the hard way:
+	//
+	// Too tight starves readers. With _txlock=immediate a writer issues BEGIN
+	// IMMEDIATE at BeginTx and then HOLDS its pooled connection for the whole
+	// busy_timeout while it waits its turn. At a cap of 4, four parked writers own
+	// the entire pool and a read — which under WAL must never block on a writer —
+	// queues in database/sql instead: measured 2.74s for List() versus ~1ms with
+	// headroom. The TUI's Flows pane is exactly that read.
+	//
+	// No cap at all leaks descriptors permanently. SQLite's unix VFS cannot close
+	// an fd while the process holds POSIX locks on that inode, so under WAL it
+	// parks fds on a pending list instead of closing them. Idle-closing a pooled
+	// connection therefore does NOT return its descriptor: measured, 300
+	// concurrent reads left 285 fds held for the life of the process, and a second
+	// burst grew that to 294 — the default MaxIdleConns does not bound it or slow
+	// it down. Sharing one Store per process bounds the number of POOLS, not the
+	// descriptors one pool accumulates. Store.Close does reclaim all of them,
+	// which is why the per-operation CLI paths close.
+	//
+	// 64 holds the fd set at ~68 and clears any fan-out this app produces (every
+	// newFlowStore caller in model/ is per-user-action; nothing batches). Note it
+	// is a cliff, not a gradient: reads stall once parked writers reach cap-1.
+	// The structural alternative, if that ever binds, is two handles on the same
+	// file — a writer pool capped at 1 so writers queue in Go instead of parking
+	// in BEGIN IMMEDIATE, plus a small reader pool.
+	db.SetMaxOpenConns(64)
 	closeOnError = false
-	backend := &sqliteBackend{db: db, root: root, lockTimeout: lockTimeout}
+	backend := &sqliteBackend{db: db, root: root}
 	backend.beginTx = func(ctx context.Context) (sqliteTransaction, error) {
 		return db.BeginTx(ctx, nil)
 	}
 	return backend, nil
+}
+
+// secureExistingSidecars tightens WAL/SHM files that a previous process may have
+// created under a looser mode. Absent sidecars are not an error: SQLite drops
+// them on a clean close and recreates them, inheriting the now-correct mode.
+func secureExistingSidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := path + suffix
+		info, err := os.Lstat(sidecar)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect flow database sidecar %q: %w", sidecar, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("flow database sidecar %q must be a real regular file", sidecar)
+		}
+		if info.Mode().Perm() == artifacts.FilePerm {
+			continue
+		}
+		if err := os.Chmod(sidecar, artifacts.FilePerm); err != nil {
+			return fmt.Errorf("secure flow database sidecar %q: %w", sidecar, err)
+		}
+	}
+	return nil
 }
 
 func sqliteBusyTimeoutMillis(timeout time.Duration) (int64, error) {
@@ -130,10 +210,61 @@ func initializeSQLiteSchema(db *sql.DB) error {
 	if _, err := db.Exec(flowSchemaSQL); err != nil {
 		return fmt.Errorf("initialize flow database schema: %w", err)
 	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)); err != nil {
+		return fmt.Errorf("stamp flow database schema version: %w", err)
+	}
 	return validateSQLiteSchema(db)
 }
 
+// stampSchemaVersionIfUnset upgrades a database written before the stamp
+// existed. Databases from a newer approach are rejected by validateSQLiteSchema
+// before this runs, so this only ever moves 0 forward.
+func stampSchemaVersionIfUnset(db *sql.DB) error {
+	version, err := readSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	if version != 0 {
+		return nil
+	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)); err != nil {
+		return fmt.Errorf("stamp flow database schema version: %w", err)
+	}
+	return nil
+}
+
+func readSchemaVersion(db *sql.DB) (int64, error) {
+	var version int64
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return 0, fmt.Errorf("read flow database schema version: %w", err)
+	}
+	return version, nil
+}
+
 func validateSQLiteSchema(db *sql.DB) error {
+	// Version first, so a database from a newer approach reports that plainly
+	// instead of dumping a column-set diff the operator cannot interpret. A 0
+	// means "written before the stamp existed" and is accepted: the column and
+	// index checks below are the real compatibility gate for that generation.
+	version, err := readSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	if version > databaseSchemaVersion {
+		return fmt.Errorf("%w (database schema %d, this build supports %d); upgrade approach",
+			errDatabaseFromNewerBuild, version, databaseSchemaVersion)
+	}
+	// An empty file reads as version 0 with no tables, so the version check above
+	// cannot catch it and the column comparison below would report it as a diff
+	// against an empty column set — the unreadable dump this check exists to
+	// avoid. Name the real condition instead.
+	var tables int
+	if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table'").Scan(&tables); err != nil {
+		return fmt.Errorf("validate flow database contents: %w", err)
+	}
+	if tables == 0 {
+		return fmt.Errorf("flow database is empty or was never initialized")
+	}
 	rows, err := db.Query("PRAGMA table_info(flows)")
 	if err != nil {
 		return fmt.Errorf("validate flow database schema: %w", err)
@@ -303,6 +434,12 @@ func (b *sqliteBackend) update(flowID string, mutate func(sess flowSession) (Flo
 	if err != nil {
 		return FlowRecord{}, fmt.Errorf("begin flow update %q: %w", flowID, err)
 	}
+	// Only a panic in mutate can reach this: after a normal return the Commit
+	// below has already finished the transaction, so Rollback yields ErrTxDone.
+	// Without it a panicking mutate would abandon a BEGIN IMMEDIATE and leave
+	// the connection holding the database-wide write lock, so every later write
+	// would fail with SQLITE_BUSY while reads kept working.
+	defer func() { _ = tx.Rollback() }()
 	record, callbackErr := mutate(sqliteSession{tx: tx, flowID: flowID})
 	if err := tx.Commit(); err != nil {
 		rollbackErr := tx.Rollback()
@@ -318,9 +455,17 @@ func (b *sqliteBackend) update(flowID string, mutate func(sess flowSession) (Flo
 	return record, callbackErr
 }
 
+func (b *sqliteBackend) close() error {
+	if err := b.db.Close(); err != nil {
+		return fmt.Errorf("close flow database: %w", err)
+	}
+	return nil
+}
+
 func (b *sqliteBackend) allocateID(title string, now time.Time) (string, error) {
 	opts := artifacts.IDOptions{Title: title, FallbackSlug: "flow", Kind: "flow", Now: now}
-	for _, candidate := range artifacts.TimestampedIDCandidates(opts) {
+	candidates := artifacts.TimestampedIDCandidates(opts)
+	for _, candidate := range candidates {
 		var exists int
 		if err := b.db.QueryRow("SELECT EXISTS(SELECT 1 FROM flows WHERE flow_id = ?)", candidate).Scan(&exists); err != nil {
 			return "", fmt.Errorf("check flow id collision: %w", err)
@@ -329,7 +474,7 @@ func (b *sqliteBackend) allocateID(title string, now time.Time) (string, error) 
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("could not allocate a unique flow id for %q after %d attempts", title, 1000)
+	return "", fmt.Errorf("could not allocate a unique flow id for %q after %d attempts", title, len(candidates))
 }
 
 type sqliteSession struct {

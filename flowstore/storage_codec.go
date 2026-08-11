@@ -47,6 +47,20 @@ type storedFlowDTO struct {
 	GraphRecovery *storageGraphRecovery `json:"graph_recovery,omitempty"`
 }
 
+// storageGraphRecoveryStatusEncodable lists the statuses encode understands.
+// PresetEdgesRestored is knowingly dropped rather than persisted — it means the
+// edges were rebuilt, so there is nothing left to mark. An UNRECOGNIZED status
+// is different: decode errors on one, so letting encode drop it silently would
+// make a future status vanish on the next save with no diagnostic anywhere.
+func storageGraphRecoveryStatusEncodable(status string) bool {
+	return storageGraphRecoveryStatusPersisted(status) || status == GraphRecoveryPresetEdgesRestored
+}
+
+// storageGraphRecoveryStatusPersisted is the set that survives a round trip.
+func storageGraphRecoveryStatusPersisted(status string) bool {
+	return status == "" || status == GraphRecoveryMissingEdgesUnresolved
+}
+
 func storageDTOFromRecord(record FlowRecord) storedFlowDTO {
 	dto := storedFlowDTO{
 		SchemaVersion: record.SchemaVersion,
@@ -108,6 +122,10 @@ func (dto storedFlowDTO) record() FlowRecord {
 }
 
 func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
+	if !storageGraphRecoveryStatusEncodable(record.GraphRecovery.Status) {
+		return nil, flowProjection{}, fmt.Errorf("encode flow %q: unknown graph recovery status %q",
+			record.FlowID, record.GraphRecovery.Status)
+	}
 	updatedAt, err := formatStorageTime(record.UpdatedAt)
 	if err != nil {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
@@ -129,6 +147,8 @@ func decodeStoredFlow(flowID, repoPath, status, updatedAt string, data []byte) (
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
 	}
+	// A present marker must carry the one value encode ever writes; an explicitly
+	// empty or unrecognized one is corruption, not a tolerable variant.
 	if dto.GraphRecovery != nil && dto.GraphRecovery.Status != GraphRecoveryMissingEdgesUnresolved {
 		return storedFlow{}, fmt.Errorf("flow %q has unknown graph recovery status %q", flowID, dto.GraphRecovery.Status)
 	}
