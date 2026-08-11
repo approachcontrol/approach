@@ -82,9 +82,11 @@ const (
 type Store struct {
 	backend  backend
 	planSync planPhaseSyncer
-	// root outlives the storage seam because linked plans are still files under
-	// the same artifact root: SetPlanLink resolves plan paths and reads plans
-	// directly through planstore.
+	// root outlives the storage seam because the plan side is only half behind
+	// it: SetPhase syncs through planSync (which captures root itself), but
+	// SetPlanLink still resolves plan paths and constructs a planstore.Store
+	// inline. Finishing that extraction is follow-up work, not part of the
+	// storage seam.
 	root                      string
 	now                       func() time.Time
 	beforeLinkedPlanPhaseSync func(planID, phaseID string)
@@ -415,18 +417,18 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	} else if err := validateFlowID(record.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	var out FlowRecord
-	err := s.backend.update(record.FlowID, func(tx flowTx) error {
-		out = FlowRecord{}
-		if exists, err := tx.exists(); err != nil {
-			return fmt.Errorf("check flow id collision: %w", err)
+	return s.backend.update(record.FlowID, func(sess flowSession) (FlowRecord, error) {
+		if exists, err := sess.exists(); err != nil {
+			return FlowRecord{}, fmt.Errorf("check flow id collision: %w", err)
 		} else if exists {
-			return fmt.Errorf("flow %q already exists", record.FlowID)
+			return FlowRecord{}, fmt.Errorf("flow %q already exists", record.FlowID)
 		}
 
-		// Build from a fresh copy each time: mutate must stay re-runnable, so
-		// nothing here may depend on a previous pass having already seeded
-		// phases or normalized the graph.
+		// draft is a shallow copy: draft.Phases still aliases the caller's
+		// array, and backfillLinearDependsOnForCreate rewrites depends_on
+		// through it. That makes this closure single-use — a second pass would
+		// see the first pass's edges and take the authoritative-graph branch
+		// instead. Clause 1 on backend.update is what makes that safe.
 		draft := record
 		now := s.now()
 		draft.SchemaVersion = schemaVersion
@@ -438,7 +440,7 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 			draft.Headless = *opts.Headless
 		}
 		if opts.Preset != nil && len(draft.Phases) > 0 {
-			return fmt.Errorf("preset cannot be used with declared phases")
+			return FlowRecord{}, fmt.Errorf("preset cannot be used with declared phases")
 		}
 		if len(draft.Phases) == 0 {
 			preset := DefaultPreset()
@@ -447,37 +449,32 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 				draft.PresetName = strings.ToLower(strings.TrimSpace(preset.Name))
 			}
 			if err := validatePreset(preset); err != nil {
-				return err
+				return FlowRecord{}, err
 			}
 			draft.Phases = seedPhases(preset.Phases, draft.CreatedAt, draft.UpdatedAt)
 			draft = refreshPhaseReadiness(draft, now)
 		} else {
 			if err := validateDeclaredPhaseDependencies(draft.Phases); err != nil {
-				return err
+				return FlowRecord{}, err
 			}
 			authoritativeEdges := graphHasAuthoritativeEdges(draft.Phases)
 			draft.Phases = backfillLinearDependsOnForCreate(draft.Phases)
 			if err := validateUniqueMergePhaseKind(draft.Phases); err != nil {
-				return err
+				return FlowRecord{}, err
 			}
 			if authoritativeEdges {
 				if err := validatePhaseGraph(draft.Phases); err != nil {
-					return err
+					return FlowRecord{}, err
 				}
 			}
 		}
 		draft = normalizeRecord(draft, false)
 		draft.Status = DeriveStatus(draft)
-		if err := s.saveTx(tx, draft); err != nil {
-			return err
+		if err := s.saveSession(sess, draft); err != nil {
+			return FlowRecord{}, err
 		}
-		out = draft
-		return nil
+		return draft, nil
 	})
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	return out, nil
 }
 
 // Read returns one flow record by ID.
@@ -498,30 +495,28 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	var out FlowRecord
-	err := s.backend.update(update.FlowID, func(tx flowTx) error {
-		out = FlowRecord{}
-		stored, ok := tx.get()
+	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok := sess.get()
 		if !ok {
-			return flowNotFoundError(update.FlowID)
+			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := s.hydrate(stored, true)
 		if err := validatePhaseGraphResolved(record); err != nil {
-			return err
+			return FlowRecord{}, err
 		}
 		// When a legacy record still holds duplicate rows for this logical phase,
 		// the first row wins: it is validated, updated, and kept, while the others
 		// are merged into it by collapseDuplicatePhaseRows below.
 		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
 		if phaseIndex < 0 {
-			return fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
 		}
 
 		now := s.now()
 		phase := record.Phases[phaseIndex]
 		originalStatus := phase.Status
 		if err := validatePhaseUpdate(phase, update); err != nil {
-			return err
+			return FlowRecord{}, err
 		}
 		phase.Status = update.Status
 		if clearsPhaseOutcome(update.Status) {
@@ -544,13 +539,12 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
-		if err := s.saveTx(tx, record); err != nil {
-			return err
+		if err := s.saveSession(sess, record); err != nil {
+			return FlowRecord{}, err
 		}
 		if err := s.syncLinkedPlanPhase(record, phase); err != nil {
 			if originalStatus == PhaseCompleted {
-				out = record
-				return nil
+				return record, nil
 			}
 			// The compensating write below must survive this error: see the
 			// durability clause on backend.update.
@@ -561,20 +555,16 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			record.UpdatedAt = now
 			record = refreshPhaseReadiness(record, now)
 			record.Status = DeriveStatus(record)
-			if writeErr := s.saveTx(tx, record); writeErr != nil {
-				out = FlowRecord{}
-				return fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+			if writeErr := s.saveSession(sess, record); writeErr != nil {
+				return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
 			}
-			out = FlowRecord{}
-			return err
+			// Deliberately a ZERO record beside the error, unlike
+			// MarkManualMerge, which returns the compensated record. Both are
+			// pinned by tests; see clause 3 on backend.update.
+			return FlowRecord{}, err
 		}
-		out = record
-		return nil
+		return record, nil
 	})
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	return out, nil
 }
 
 // RestartPhase atomically restarts a blocked or needs-attention phase as running.
@@ -828,31 +818,28 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 	if err := validateFlowID(update.FlowID); err != nil {
 		return FlowRecord{}, err
 	}
-	var out FlowRecord
-	updateErr := s.backend.update(update.FlowID, func(tx flowTx) error {
-		out = FlowRecord{}
-		stored, ok := tx.get()
+	return s.backend.update(update.FlowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok := sess.get()
 		if !ok {
-			return flowNotFoundError(update.FlowID)
+			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := s.hydrate(stored, true)
 		if err := validatePhaseGraphResolved(record); err != nil {
-			return err
+			return FlowRecord{}, err
 		}
 		phaseIndex := mergePhaseIndex(record)
 		if phaseIndex < 0 {
-			return fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
+			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", "merge", update.FlowID)
 		}
 		phase := record.Phases[phaseIndex]
 		merge, err := validateManualMergeUpdate(record, phase, update)
 		if err != nil {
-			return err
+			return FlowRecord{}, err
 		}
 		if record.PR.Status == MergeMerged &&
 			phase.Status == PhaseCompleted &&
 			mergeEqual(record.Merge, merge) {
-			out = record
-			return nil
+			return record, nil
 		}
 
 		now := s.now()
@@ -872,8 +859,8 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 		record.UpdatedAt = now
 		record = refreshPhaseReadiness(record, now)
 		record.Status = DeriveStatus(record)
-		if err := s.saveTx(tx, record); err != nil {
-			return err
+		if err := s.saveSession(sess, record); err != nil {
+			return FlowRecord{}, err
 		}
 		if err := s.syncLinkedPlanPhase(record, phase); err != nil {
 			// The compensating write below must survive this error: see the
@@ -887,22 +874,16 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			record.UpdatedAt = now
 			record = refreshPhaseReadiness(record, now)
 			record.Status = DeriveStatus(record)
-			if writeErr := s.saveTx(tx, record); writeErr != nil {
-				out = FlowRecord{}
-				return fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
+			if writeErr := s.saveSession(sess, record); writeErr != nil {
+				return FlowRecord{}, fmt.Errorf("%w; additionally failed to persist needs_attention state: %v", err, writeErr)
 			}
-			// Unlike SetPhase, this path returns the compensated record
-			// alongside the error.
-			out = record
-			return err
+			// Deliberately the COMPENSATED record beside the error, unlike
+			// SetPhase, which returns a zero record. Both are pinned by tests;
+			// see clause 3 on backend.update.
+			return record, err
 		}
-		out = record
-		return nil
+		return record, nil
 	})
-	if updateErr != nil {
-		return out, updateErr
-	}
-	return out, nil
 }
 
 // SetAutoMode enables or disables TUI-owned automatic phase launching for one Flow.
@@ -1348,35 +1329,28 @@ func (s *Store) updateFlowMetadataOnly(flowID string, mutate func(FlowRecord, ti
 }
 
 func (s *Store) updateFlowWithReadiness(flowID string, selfHealOnRead bool, mutate func(FlowRecord, time.Time) (FlowRecord, error)) (FlowRecord, error) {
-	var out FlowRecord
-	err := s.backend.update(flowID, func(tx flowTx) error {
-		out = FlowRecord{}
-		stored, ok := tx.get()
+	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
+		stored, ok := sess.get()
 		if !ok {
-			return flowNotFoundError(flowID)
+			return FlowRecord{}, flowNotFoundError(flowID)
 		}
 		record := s.hydrate(stored, selfHealOnRead)
 		if selfHealOnRead {
 			if err := validatePhaseGraphResolved(record); err != nil {
-				return err
+				return FlowRecord{}, err
 			}
 		}
 		record, err := mutate(record, s.now())
 		if err != nil {
-			return err
+			return FlowRecord{}, err
 		}
 		record = normalizeRecordBase(record)
 		record.Status = DeriveStatus(record)
-		if err := s.saveTx(tx, record); err != nil {
-			return err
+		if err := s.saveSession(sess, record); err != nil {
+			return FlowRecord{}, err
 		}
-		out = record
-		return nil
+		return record, nil
 	})
-	if err != nil {
-		return FlowRecord{}, err
-	}
-	return out, nil
 }
 
 func validatePhaseGraphResolved(record FlowRecord) error {
@@ -1983,41 +1957,24 @@ func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
 	return seedPhases(DefaultPreset().Phases, createdAt, updatedAt)
 }
 
-// write persists one record without taking the flow lock; callers must already
-// hold it, or must not need it. After the seam extraction it has no production
-// callers left: it survives because preset_test.go seeds hand-authored records
-// through it. Routing it through backend.update instead would deadlock, because
-// the flow lock is not re-entrant.
-func (s *Store) write(record FlowRecord) error {
-	if err := validateFlowID(record.FlowID); err != nil {
-		return err
-	}
-	// Deliberately in place: callers observe the normalized DependsOn slices on
-	// the record they passed in, and on every record the public API returns.
-	record.Phases = normalizeDependsOnValues(record.Phases)
-	return s.backend.save(record)
-}
-
-// saveTx mirrors write for saves made inside a critical section, so both paths
-// validate and normalize identically.
-func (s *Store) saveTx(tx flowTx, record FlowRecord) error {
+// saveSession validates and normalizes one record, then persists it through the
+// critical section the caller already holds. Normalization is deliberately in
+// place: callers observe the normalized DependsOn slices on the record they
+// passed in, and on every record the public API returns.
+func (s *Store) saveSession(sess flowSession, record FlowRecord) error {
 	if err := validateFlowID(record.FlowID); err != nil {
 		return err
 	}
 	record.Phases = normalizeDependsOnValues(record.Phases)
-	return tx.save(record)
+	return sess.save(record)
 }
 
 func (s *Store) readRecord(flowID string) (FlowRecord, bool) {
-	return s.readRecordWithReadiness(flowID, true)
-}
-
-func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (FlowRecord, bool) {
 	stored, ok := s.backend.get(flowID)
 	if !ok {
 		return FlowRecord{}, false
 	}
-	return s.hydrate(stored, selfHealOnRead), true
+	return s.hydrate(stored, true), true
 }
 
 // hydrate turns a decoded record plus its raw encoding hints into the domain
@@ -2025,8 +1982,10 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 // normalization, readiness, and derived status.
 func (s *Store) hydrate(stored storedFlow, selfHealOnRead bool) FlowRecord {
 	record := stored.record
-	presence := stored.dependsOnPresence
-	if !stored.headlessPresent {
+	presence := stored.dependsOnHints()
+	// Legacy records predate per-flow headless and stored no field for it, so
+	// they read back as headless rather than as Go's zero value.
+	if stored.legacyEncoding && !stored.headlessPresent {
 		record.Headless = true
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)

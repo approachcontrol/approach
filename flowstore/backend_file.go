@@ -41,7 +41,15 @@ func (b *fileBackend) get(flowID string) (storedFlow, bool) {
 	if record.FlowID != flowID || record.SchemaVersion != schemaVersion {
 		return storedFlow{}, false
 	}
-	return storedFlow{record: record, dependsOnPresence: presence, headlessPresent: headlessPresent}, true
+	// legacyEncoding: meta.json is the encoding where a phase object could omit
+	// depends_on entirely and the record could omit headless, so this backend is
+	// the one that owes real hints.
+	return storedFlow{
+		record:            record,
+		legacyEncoding:    true,
+		dependsOnPresence: presence,
+		headlessPresent:   headlessPresent,
+	}, true
 }
 
 // list preserves os.ReadDir order. Store.List sorts stably on UpdatedAt, so
@@ -61,8 +69,8 @@ func (b *fileBackend) list() ([]storedFlow, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		// get's validateFlowID is what keeps .locks and other unsafe-ID
-		// directories out of the results.
+		// .locks and any other non-record directory drop out here: get rejects
+		// unsafe ids outright, and anything else has no readable meta.json.
 		flow, ok := b.get(entry.Name())
 		if !ok {
 			continue
@@ -72,9 +80,13 @@ func (b *fileBackend) list() ([]storedFlow, error) {
 	return stored, nil
 }
 
-// save writes the record without taking the flow lock, and without touching
-// depends_on: normalization is domain logic and stays above the seam. It must
-// not copy record.Phases.
+// save writes the record without taking the flow lock. It must not: fileSession
+// routes every in-section save through here while acquireFlowLock's flock is
+// already held, and that flock is not re-entrant, so taking it again would
+// block until it timed out.
+//
+// It also leaves depends_on alone. Normalization is domain logic and stays
+// above the seam, in Store.saveSession.
 func (b *fileBackend) save(record FlowRecord) error {
 	dir, err := artifacts.EnsureRecordDir(b.root, "flows", record.FlowID)
 	if err != nil {
@@ -113,18 +125,19 @@ func (b *fileBackend) delete(flowID string) error {
 	return nil
 }
 
-func (b *fileBackend) update(flowID string, mutate func(tx flowTx) error) error {
+func (b *fileBackend) update(flowID string, mutate func(sess flowSession) (FlowRecord, error)) (FlowRecord, error) {
 	if err := validateFlowID(flowID); err != nil {
-		return err
+		return FlowRecord{}, err
 	}
 	release, err := b.acquireFlowLock(flowID)
 	if err != nil {
-		return err
+		return FlowRecord{}, err
 	}
 	defer release()
-	// Returned verbatim: the flock has no rollback, so every tx.save is already
-	// durable, and callers match on the error's identity and text.
-	return mutate(fileTx{backend: b, flowID: flowID})
+	// Invoked exactly once, and its record and error both returned verbatim:
+	// the flock has no rollback, so every save is already durable, and callers
+	// match on the error's identity and text.
+	return mutate(fileSession{backend: b, flowID: flowID})
 }
 
 func (b *fileBackend) allocateID(title string, now time.Time) (string, error) {
@@ -161,19 +174,19 @@ func (b *fileBackend) flowDir(flowID string) string {
 	return artifacts.RecordDir(b.root, "flows", flowID)
 }
 
-// fileTx is the in-lock handle. It holds no state beyond the target flow, so
-// every operation reads or writes through the backend directly.
-type fileTx struct {
+// fileSession is the in-lock handle. It holds no state beyond the target flow,
+// so every operation reads or writes through the backend directly.
+type fileSession struct {
 	backend *fileBackend
 	flowID  string
 }
 
-func (t fileTx) get() (storedFlow, bool) {
-	return t.backend.get(t.flowID)
+func (s fileSession) get() (storedFlow, bool) {
+	return s.backend.get(s.flowID)
 }
 
-func (t fileTx) exists() (bool, error) {
-	if _, err := os.Stat(t.backend.flowDir(t.flowID)); err == nil {
+func (s fileSession) exists() (bool, error) {
+	if _, err := os.Stat(s.backend.flowDir(s.flowID)); err == nil {
 		return true, nil
 	} else if !os.IsNotExist(err) {
 		return false, err
@@ -181,8 +194,8 @@ func (t fileTx) exists() (bool, error) {
 	return false, nil
 }
 
-func (t fileTx) save(record FlowRecord) error {
-	return t.backend.save(record)
+func (s fileSession) save(record FlowRecord) error {
+	return s.backend.save(record)
 }
 
 func marshalFlowRecord(record FlowRecord) ([]byte, error) {
