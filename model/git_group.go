@@ -6,33 +6,38 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-// topLevelModeForNumberedKey maps the top-level number keys to their views.
-// 1 is the Git view and 5 is the Beads view; each resolves to its last-used
-// subview. Keys 6-9 are unbound and report !ok so callers can treat them as
+// topLevelModeForNumberedKey maps numbers within the focused stored pane.
+// Each pane restarts numbering at one; keys not owned by that pane are silent
 // no-ops.
 func (m Model) topLevelModeForNumberedKey(key string) (ui.Mode, bool) {
-	switch key {
-	case "1":
-		return m.lastGitSubview(), true
-	case "2":
-		return ui.ModeSessions, true
-	case "3":
-		return ui.ModePlans, true
-	case "4":
-		return ui.ModeFlows, true
-	case "5":
-		return m.lastBeadsSubview(), true
+	switch m.activePane {
+	case ui.PaneTop:
+		switch key {
+		case "1":
+			return m.lastGitSubview(), true
+		case "2":
+			return m.lastBeadsSubview(), true
+		}
+	case ui.PaneBottom:
+		switch key {
+		case "1":
+			return ui.ModeSessions, true
+		case "2":
+			return ui.ModePlans, true
+		case "3":
+			return ui.ModeFlows, true
+		}
 	}
 	return ui.ModeWorktrees, false
 }
 
 // lastBeadsSubview is where entering the top-level Beads view lands: the
-// last-used Beads subview, defaulting to Open on first-ever entry.
+// last-used Beads subview, defaulting to Ready on first-ever entry.
 func (m Model) lastBeadsSubview() ui.Mode {
 	if ui.IsBeadsMode(m.lastBeadsMode) {
 		return m.lastBeadsMode
 	}
-	return ui.ModeBeadsOpen
+	return ui.ModeBeadsReady
 }
 
 // lastGitSubview is where entering the top-level Git view lands: the

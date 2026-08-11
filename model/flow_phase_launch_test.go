@@ -3,6 +3,7 @@ package model_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/model"
@@ -18,6 +19,7 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 		Commit:       "abc123",
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/plans/plan-1/plan.md",
+		Headless:     true,
 		Phases:       []flowstore.FlowPhase{phase},
 	}
 	persistedPhase := phase
@@ -33,7 +35,8 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return flowstore.FlowRecord{
-				FlowID: record.FlowID,
+				FlowID:   record.FlowID,
+				Headless: record.Headless,
 				Phases: []flowstore.FlowPhase{
 					persistedPhase,
 				},
@@ -100,6 +103,60 @@ func TestFlowPhaseLauncherPrepareManualReadyPhaseLaunch(t *testing.T) {
 	}
 }
 
+func TestFlowPhaseLauncherPrepareRefreshesManualHeadlessPreferenceAfterReservation(t *testing.T) {
+	phase := flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady}
+
+	for _, tt := range []struct {
+		name          string
+		cached        bool
+		authoritative bool
+		autoLaunch    bool
+		want          bool
+	}{
+		{name: "manual launch observes headless disabled", cached: true, authoritative: false, want: false},
+		{name: "manual launch observes headless enabled", cached: false, authoritative: true, want: true},
+		{name: "auto launch remains headless", cached: true, authoritative: false, autoLaunch: true, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			record := flowstore.FlowRecord{
+				FlowID:       "flow-1",
+				RepoPath:     "/dev/alpha",
+				WorktreePath: "/dev/alpha-worktrees/flow-implementation",
+				Headless:     tt.cached,
+				Phases:       []flowstore.FlowPhase{phase},
+			}
+			launcher := model.FlowPhaseLauncher{
+				AddFlowPhaseLaunchID: func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
+					updated := record
+					updated.Headless = tt.authoritative
+					updated.Phases[0].Status = flowstore.PhaseRunning
+					updated.UpdatedAt = time.Unix(1, 0)
+					return updated, nil
+				},
+				NewLaunchID:  func() string { return "launch-1" },
+				AgentCommand: "codex",
+			}
+
+			prepared, err := launcher.Preflight(model.FlowPhaseLaunchRequest{
+				Record:     record,
+				Phase:      phase,
+				AutoLaunch: tt.autoLaunch,
+				Headless:   tt.cached,
+			})
+			if err != nil {
+				t.Fatalf("Preflight() error = %v", err)
+			}
+			result, err := launcher.Prepare(prepared)
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			if result.Context.Headless != tt.want {
+				t.Fatalf("Headless = %v, want %v", result.Context.Headless, tt.want)
+			}
+		})
+	}
+}
+
 func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
 	phase := flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}
 	record := flowstore.FlowRecord{
@@ -111,6 +168,7 @@ func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
 		Branch:       "flow/parked",
 		BaseRef:      "main",
 		Commit:       "abc123",
+		Headless:     true,
 		Phases:       []flowstore.FlowPhase{phase},
 	}
 	persistedPhase := phase
@@ -120,7 +178,7 @@ func TestFlowPhaseLauncherLaunchesParkedPlanPhaseFromSavedFlow(t *testing.T) {
 	launcher := model.FlowPhaseLauncher{
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
-			return flowstore.FlowRecord{FlowID: record.FlowID, Phases: []flowstore.FlowPhase{persistedPhase}}, nil
+			return flowstore.FlowRecord{FlowID: record.FlowID, Headless: record.Headless, Phases: []flowstore.FlowPhase{persistedPhase}}, nil
 		},
 		NewLaunchID:      func() string { return "launch-parked" },
 		SessionStateRoot: "/state/approach/sessions/v1",

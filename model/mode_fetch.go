@@ -235,7 +235,7 @@ func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
 		m = desc.beforeStart(m)
 	}
 	cmd := m.fetchList(desc, request)
-	if desc.mode == ui.ModeFlows && m.flowSurfaceVisible() {
+	if desc.mode == ui.ModeFlows && !m.activeFlowSurfaceVisible() && m.modeStored(ui.ModeFlows) {
 		m.flowRefreshTickGen++
 		m.flowRefreshInFlight = 0
 		m.flowRefreshInFlightMode = 0
@@ -250,7 +250,7 @@ func (m Model) startFetchMode(mode ui.Mode) (Model, tea.Cmd) {
 func (m Model) startFetchActiveFlows() (Model, tea.Cmd) {
 	m, request := m.nextListFetchRequest(ui.ModeActiveFlows)
 	cmd := m.fetchActiveFlows(request)
-	if m.flowSurfaceVisible() {
+	if m.activeFlowSurfaceVisible() {
 		m.flowRefreshTickGen++
 		m.flowRefreshInFlight = 0
 		m.flowRefreshInFlightMode = 0

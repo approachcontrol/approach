@@ -54,6 +54,9 @@ func (m Model) startFlowRefreshFetch() (Model, tea.Cmd) {
 	if m.flowRefreshInFlight != 0 {
 		return m, nil
 	}
+	if _, ok := m.currentRepoPath(); !ok {
+		return m, nil
+	}
 	var fetchCmd tea.Cmd
 	m, fetchCmd = m.startFetchMode(ui.ModeFlows)
 	if fetchCmd == nil {
@@ -85,7 +88,7 @@ func (m Model) finishFlowRefreshFetch(mode ui.Mode, request uint64) (Model, tea.
 	}
 	m.flowRefreshInFlight = 0
 	m.flowRefreshInFlightMode = 0
-	if !m.flowSurfaceVisible() {
+	if !m.flowRefreshSurfaceVisible() {
 		return m, nil
 	}
 	return m, m.flowRefreshTickCmd()

@@ -11,6 +11,7 @@
     "status": "pending"
   },
   "auto_mode": true,
+  "headless": true,
   "phases": [
     {
       "phase_id": "plan",

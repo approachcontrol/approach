@@ -185,7 +185,7 @@ func TestFlowRuntimeOccupancyIncludesLiveSessionOnTerminalPhase(t *testing.T) {
 func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *testing.T) {
 	record := repairClassificationRecord(flowstore.FlowPhase{PhaseID: "implementation", Status: flowstore.PhaseBlocked})
 	newModel := func(mode ui.Mode) Model {
-		m := NewWithOptions([]scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}, Options{StartupMode: mode})
+		m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/dev/approach", DisplayName: "approach"}}, Options{}), mode)
 		m.activePane = 1
 		if mode == ui.ModeActiveFlows {
 			m.activeFlows = m.activeFlows.SetItems([]flowstore.FlowRecord{record})

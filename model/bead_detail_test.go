@@ -371,9 +371,10 @@ func beadDetailRows() []beadsquery.Bead {
 
 func settledBeadDetailModel(t *testing.T, opts model.Options, mode ui.Mode, key rune, beads []beadsquery.Bead) model.Model {
 	t.Helper()
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-	if mode != ui.ModeBeadsOpen {
+	m := model.NewWithOptions(testRepos(), opts)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if mode != ui.ModeBeadsReady {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
 	}
 	return applyBeadsResult(t, m, mode, true, beads)

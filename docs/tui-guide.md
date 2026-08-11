@@ -7,17 +7,29 @@ session hooks and storage in `docs/agent-sessions.md`.
 
 ## Layout and Focus
 
-The UI has two panes: repos on the left, content on the right. Press `enter`
-on a selected repo to collapse the repos pane to a narrow strip and give its
-width to the content pane. When global key handling is active, `ctrl+r` or
-`bksp` restores and focuses the full repos pane. Press `tab` from the repos pane
-to focus content without collapsing it. While collapsed, ordinary `tab` focus
-cycling skips the repos strip. When the shared embedded terminal dock is
-expanded, `tab` cycles through the repo pane, the current content list, and
-the terminal — or alternates between just the list and the terminal while the
-repos pane is collapsed — so terminal input cannot trap focus. While the
-embedded terminal owns input, `ctrl+r` and `bksp` are passed to the agent. The
-active pane is highlighted with a blue border.
+The UI has a repos pane on the left, a stacked content column in the middle,
+and shortcuts on the right. Git/Beads is the top content pane;
+Sessions/Plans/Flows is the bottom pane. Approach starts with repos focused,
+Beads/Ready stored above Flows, and the top pane remembered as the first content
+destination. Both stored panes load for the selected repo even while repos owns
+focus.
+
+Press `enter` on a selected repo to collapse the repos pane to a narrow strip
+and focus the top pane. `ctrl+r` restores and focuses the full repos pane.
+Forward focus is repos → top → bottom → eligible terminal → repos; `bksp`
+reverses that order. With repos collapsed, the cycle is top → bottom → eligible
+terminal → top. The terminal stop is skipped when the dock is manually hidden,
+automatically collapsed, empty, or has no active embedded terminal. Raw terminal
+input owns Tab and Backspace;
+enter terminal command mode with `ctrl+]` before using Tab to leave it. The
+focused pane is highlighted with a blue border.
+
+Each stacked pane reserves at least six list rows. If the shared content row
+budget is below the 19-row split threshold, Approach degrades to one full-height
+content pane: the focused pane, or the remembered content pane while repos owns
+focus. Focus still moves through both stored panes and swaps which one is
+visible. Active Flows is a separate takeover that always spans the combined
+content height and restores both stored panes exactly when closed.
 
 Press `f2` from normal TUI views to open the prompt-template editor for the
 `[agent].plan_prompt` and `[flow_prompts]` templates; embedded terminal input
@@ -31,12 +43,12 @@ below.
 
 **Destructive mode:** The app starts in read-only mode — deletion keys are
 disabled. Press `D` (Shift+D) to toggle destructive mode on/off. When active,
-the right pane border turns red and delete/drop hints appear in red as a
+the focused content border turns red and delete/drop hints appear in red as a
 visual warning.
 
 **Fuzzy filter:** Press `/` in the active pane to type-ahead filter repos or
-right-pane items. `enter` keeps the filter, `esc` clears it, `backspace` edits
-it. Each filterable right-pane view keeps its own filter: filtering worktrees
+content items. `enter` keeps the filter, `esc` clears it, `backspace` edits
+it. Each filterable content view keeps its own filter: filtering worktrees
 does not filter history, and returning to a view restores that view's previous
 query. Each Beads subview likewise keeps an independent filter over bead ID,
 title, and assignee; repo filtering remains available from the left pane.
@@ -51,29 +63,28 @@ title, and assignee; repo filtering remains available from the left pane.
 | `↓`/`j` | Select next repo |
 | `/` | Fuzzy filter repos |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Beads — Closed`) |
 | `D` | Toggle destructive mode |
 | `f` | Fetch all currently visible repos with `--prune` |
 | `n` | Create a new local repo under the scan root, optionally creating a GitHub repo and wiring `origin` |
-| `enter` | Collapse the repos pane and focus the content pane |
-| `tab` | Focus the content pane without collapsing the repos pane |
+| `enter` | Collapse the repos pane and focus the top content pane |
+| `tab` | Focus the top content pane without collapsing the repos pane |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Quit |
 
-**Right pane (content)**
+**Content panes**
 
 | Key | Action |
 |-----|--------|
 | `↑`/`k` | Move selection up |
 | `↓`/`j` | Move selection down |
 | `/` | Fuzzy filter the current item list, including the active Beads subview |
-| `1`/`2`/`3`/`4`/`5` | Switch to the Git view / sessions / plans / flows / Beads outside Active Flows (`6`–`9` are unbound); `1` and `5` return to their group's last-used subview and are no-ops while already inside that group; Beads defaults to Open before first use |
+| Top `1` / `2` | Switch the top pane to Git / Beads at its last-used subview; Beads defaults to Ready before first use |
+| Bottom `1` / `2` / `3` | Switch the bottom pane to Sessions / Plans / Flows |
 | `ctrl+a` | Toggle Active Flows; pressing it again from Active Flows returns to the previous view. In tmux sessions that use `ctrl+a` as the prefix, send the prefix passthrough first. |
 | `w`/`b`/`s`/`h`/`r` | Inside the Git view, switch directly to the worktrees / branches / stashes / history / reflog subview |
 | `r`/`b`/`o`/`i`/`c` | Inside Beads, switch directly to the ready / blocked / open / in-progress / closed subview; the same letters keep their existing meanings outside Beads |
-| `←`/`→` | Cycle subviews with wrap inside either Git or Beads (arrows never leave a grouped view); elsewhere step through Git, sessions, plans, flows, and Beads, entering either group at its last-used subview. Active Flows is not in the arrow cycle. |
-| `l` | Alias for `→` in flows view, entering the last-used Beads subview; unbound elsewhere |
-| `h` | Switch to the history subview inside the Git view; toggle Flow headless/interactive command mode in flows view |
+| `←`/`→` | Wrap between Git and Beads in the top pane, or Sessions, Plans, and Flows in the bottom pane; grouped entries use their remembered subview. Active Flows is not in either cycle. |
+| `h` | Switch to the history subview inside the Git view; toggle the selected Flow's persisted headless/interactive preference in Flows or Active Flows |
 | `M` | Choose and persist model for the selected CLI agent in flows view |
 | `E` | Choose and persist reasoning effort for the selected CLI agent in flows view |
 | `enter` | Page diff in `less` (dirty worktree, dirty branch, stash, commit, or reflog entry), page a selected bead's detail, resume an inline worktree session, page a session transcript, or expand/collapse plan or Flow phases |
@@ -85,7 +96,6 @@ title, and assignee; repo filtering remains available from the left pane.
 | `N` | Create a new worktree and launch the selected coding agent |
 | `m` | Move or rename a linked worktree (worktrees view), or mark the selected Flow's GitHub PR as already merged after verifying it in GitHub (flows and active flows views) |
 | `A` | Choose and persist the coding agent from a picker (`codex`, `codex-app`, or `claude`) |
-| `V` | Choose and persist the startup default view from a grouped picker (`Git — Worktrees` … `Beads — Closed`) |
 | `a` | Launch the selected coding agent in the selected worktree, launch the selected plan or plan phase, or toggle auto mode for the selected Flow (flows and active flows views) |
 | `d` | Delete worktree/branch, drop stash, or delete Flow data — requires destructive mode |
 | `p` | Prune stale worktree — requires destructive mode (worktrees view), or open the linked PR (flows and active flows views, when PR metadata exists) |
@@ -103,33 +113,33 @@ title, and assignee; repo filtering remains available from the left pane.
 | `i` | Alias for plan implementation launch, or open the linked GitHub issue (flows and active flows views, when issue metadata exists) |
 | `D` | Toggle destructive mode |
 | `ctrl+r` | Restore and focus the full repos pane (outside search or embedded-terminal input focus) |
-| `f5` | Rescan repositories and refetch the current view, including the active Beads subview |
+| `f5` | Rescan repositories and refetch both stored panes; while Active Flows is open, refresh it independently too |
 | `ctrl+t` | Hide or show the shared embedded terminal dock (outside search and terminal input); when input is focused, use `ctrl+] t` |
-| `tab` | Cycle pane focus forward; with the terminal dock expanded, cycles repo pane → current list → terminal, and while the repos pane is collapsed skips it and alternates between the current list and terminal |
-| `bksp` | Restore and focus the full repos pane (outside embedded-terminal input focus) |
+| `tab` | Cycle focus forward through repos, top, bottom, and an eligible terminal; collapsed repos are skipped |
+| `bksp` | Cycle focus in reverse (outside search or embedded-terminal input focus) |
 | `f2` | Edit prompt templates |
 | `q`/`esc` | Close a prompt/dialog or quit |
 
 ## View Switching and the Header
 
-The right pane header shows the top-level views: `1` git, `2` sessions, `3`
-plans, `4` flows, and `5` beads on the left, with `^a` active flows pinned to
-the right.
-While the Git view is active a second header row lists its subviews with their
+The top header shows local `1` Git and `2` Beads, with `^a` Active Flows pinned
+to the right. The bottom header independently shows local `1` Sessions, `2`
+Plans, and `3` Flows. Numbers are silent no-ops from repos, Active Flows, the
+other content pane, and raw terminal input.
+
+While Git is stored in the top pane, a second header row lists its subviews with their
 direct letter keys (`w` worktrees, `b` branches, `s` stashes, `h` history, `r`
 reflog); the active entries are bracketed. Entering the Git view lands on the
 last-used subview (worktrees on first entry), and each subview keeps its own
-cursor position and filter across switches. Press `V` to choose which view
-Approach opens on future launches; leaving it unset keeps the built-in startup
-default of Flows. Choosing a Git or Beads subview starts directly in that
-subview and seeds the corresponding group's last-used destination.
+cursor position and filter across switches.
 
 While Beads is active, its second header row lists `r` ready, `b` blocked, `o`
 open, `i` in-progress, and `c` closed. The active top-level Beads entry and
 active subview are bracketed. This extra row comes out of the list viewport,
 so it does not increase the pane's outer height. Entering Beads lands on the
-last-used subview (Open before first use), arrows wrap within the five Beads
-subviews, and each subview keeps its own filter, cursor, and scroll position.
+last-used subview (Ready before first use), and each subview keeps its own
+filter, cursor, and scroll position. Use the letter keys to move directly among
+Beads subviews; horizontal arrows move between the top pane's Git and Beads groups.
 
 ## Repo Pane Actions
 
@@ -150,7 +160,7 @@ creation succeeds, Approach keeps the local repo and reopens the form so
 submitting again retries only the GitHub/origin setup against that existing
 local path.
 
-## Git View: Worktrees Subview (`1`, then `w`)
+## Git View: Worktrees Subview (top `1`, then `w`)
 
 Shows all worktree checkouts for the selected repo. The main (root) worktree
 always appears first with a blue `[root]` annotation.
@@ -235,7 +245,7 @@ Use `enter` to page the diff for that entry in `less -R` — checkout entries
 with no tree changes page "No changes at this reflog entry". Use `y` to copy
 the entry hash to clipboard.
 
-## Sessions View (`2`)
+## Sessions View (bottom `1`)
 
 Browse captured Claude Code and Codex sessions associated with the selected
 repo. Rows show provider, branch, worktree, status, and summary. Use `/` to
@@ -260,19 +270,28 @@ session resume and a Flow launch appear in the same numbered header. The
 current list remains usable above the dock; in particular, the saved-session
 table is never replaced by the terminal surface.
 
-Press `ctrl+t` from repo or list focus to collapse or expand the dock. The
-dock's bottom chip row is always reserved: when terminals run collapsed, the
-narrow-safe chip shows the terminal count, active terminal, and `ctrl+t` hint
-when space permits; with no terminals it reads `no terminals running`. From
-terminal input, `ctrl+t` is sent to the PTY; use `ctrl+] t` to hide the dock.
-Hiding it returns terminal focus to the current list without stopping or
-resizing any terminal.
+Press `ctrl+t` from repo or list focus to store whether the dock is requested
+open or manually hidden. An expanded dock shrinks before either stored pane is
+sacrificed. If the viewport cannot fit both panes plus a framed terminal header
+and one output row, the requested-open dock automatically becomes the collapsed
+chip. Growing the viewport restores it automatically while the request remains
+open. Pressing `ctrl+t` during automatic collapse changes that request to a
+manual hide, so later growth does not restore the dock until `ctrl+t` is pressed
+again.
 
-Tabbing from the current list into terminal focus enters terminal command
-mode. Commands remain in Approach until `i` returns to terminal input mode; in
-input mode, keys pass through to the PTY (including agent shortcuts such as
-`ctrl+g`) except `tab`, which cycles focus, and `ctrl+]`, which enters command
-mode. The command-mode keys are the same in every view:
+The narrow-safe chip distinguishes `auto-collapsed · ctrl+t hide` from the
+manually hidden `ctrl+t show` state when space permits; with no terminals it
+reads `no terminals running`. From visible terminal input, `ctrl+t` is sent to
+the PTY; use `ctrl+] t` to hide the dock. Manual or automatic collapse returns
+terminal focus to the current list without stopping the process. Live PTYs are
+resized to a backend-safe one-row height while hidden or automatically collapsed
+and return to the allocated expanded height when shown or restored.
+
+Tabbing from a content list into terminal focus enters terminal command mode.
+Commands remain in Approach until `i` returns to terminal input mode; in input
+mode, keys—including Tab, Backspace, and agent shortcuts such as `ctrl+g`—pass
+through to the PTY. `ctrl+]` re-enters command mode. The command-mode keys are
+the same in every view:
 
 | Command | Action |
 |---------|--------|
@@ -309,7 +328,7 @@ sessions created by that embedded launch; detached tmux sessions are no longer
 owned by Approach and are not prompted for on quit. Embedded terminals are not
 restored after Approach restarts.
 
-## Plans View (`3`)
+## Plans View (bottom `2`)
 
 Browse saved agent plans for the selected repo. Rows show status, branch,
 phase progress (`completed/total`), the updated date, and the title. Use `/`
@@ -333,18 +352,17 @@ Plans share the agent-artifact root with sessions (see
 sessions, moving or cleaning the sessions root also moves or removes saved
 plans. v1 has no TUI plan deletion.
 
-## Beads View (`5`)
+## Beads View (top `2`)
 
-With the content pane focused, press `5` to enter the selected repository's
-Beads group at its last-used subview, defaulting to Open before first use.
+With the top content pane focused, press `2` to enter the selected repository's
+Beads group at its last-used subview, defaulting to Ready before first use.
 Beads queries and detail reads are read-only, and no action in this group
-mutates tracker state. Pressing `5` while already in any Beads subview is a
+mutates tracker state. Pressing `2` while already in any Beads subview is a
 no-op. Press `r` for
 Ready, `b` for Blocked, `o` for Open, `i` for In-Progress, or `c` for Closed;
-pressing the already-active letter is also a no-op. `←`/`→` step and wrap
-Ready ↔ Blocked ↔ Open ↔ In-Progress ↔ Closed without leaving the group. From
-Flows, `→` (or `l`) enters Beads at the remembered subview as the fifth
-top-level arrow stop. The five modes keep independent rows, filters,
+pressing the already-active letter is also a no-op. Top-pane `←`/`→` switches
+between Git and Beads at their remembered subviews. The five Beads modes keep
+independent rows, filters,
 cursor/scroll positions, availability, loading state, and request tokens.
 
 The query sources and ordering are:
@@ -383,9 +401,10 @@ accepted replacement reapplies the filter and clamps selection and scroll for
 shorter, empty, or zero-match results. An unavailable result retains the query
 but clears that pane's rows and selection. Moving to another repo invalidates
 every Beads request, clears all old-repo rows and cursor/scroll positions,
-retains each subview's query, and starts only the active subview pending for the
-new repo; retention is same-repo only, so this holds even when the repo changes
-while Active Flows is open.
+retains each subview's query, and starts the stored top Beads subview and the
+stored bottom mode for the new repo; only that top subview becomes pending
+within the Beads group. Retention is same-repo only, so this holds even when the
+repo changes while Active Flows is open.
 Per-mode request tokens reject results for an old repo, an older refresh, or a
 subview that is no longer active. Every query is read-only, and `bd -C` plus the
 selected process directory are owned by the query runner.
@@ -423,11 +442,7 @@ same active-view request lifecycle as other read-only detail panes: a repeated
 request, and delivery also requires the same bead to remain visibly selected.
 Stale successes do not launch a pager and stale errors do not change status.
 
-Keys `6`–`9` remain unbound; frozen
-`default_view` meanings `1`–`9` are unchanged, and `10`–`14` start directly in
-Ready, Blocked, Open, In-Progress, or Closed.
-
-## Flows View (`4`)
+## Flows View (bottom `3`)
 
 Browse persisted Flow records for the selected repo. Row columns are Status,
 Branch, Phase (progress plus current phase state), Issue, Plan, PR, Updated,
@@ -441,7 +456,9 @@ checkboxes. New Flows use the built-in default phase graph unless
 `[flow].preset` selects a configured custom graph. Plan Now is checked by
 default and immediately launches the first ready root phase after creating the
 Flow; uncheck it to create a parked Flow whose ready root phase can be
-launched later from the Flow row.
+launched later from the Flow row. The Headless checkbox is persisted on the
+new Flow in either case, so a parked Flow uses the same choice when launched
+later. Ready-Bead and command-line creation retain the default-on setting.
 For Plan Now, Approach allocates the Flow ID and reserves its launch before the
 async operation begins. It creates the worktree, persists the initial phase as
 `running`, and only then publishes worktree, branch, and commit metadata, so a
@@ -483,6 +500,9 @@ On a Flow row or an expanded phase row:
 - `a` toggles per-Flow auto mode, which is on by default for new Flows and
   persisted on that Flow record. Flows created before this field existed
   remain manual until toggled on.
+- `h` toggles the selected Flow's persisted manual-launch preference. It works
+  from the Flow row or an expanded phase row and is hidden when no Flow is
+  selected; changing one Flow does not affect another.
 - `m` on an eligible Flow row marks a GitHub PR that was merged manually:
   Approach verifies the PR is merged with `gh`, records the merge commit and
   timestamp, marks the Merge phase completed, and hides the Flow from active
@@ -524,8 +544,10 @@ before allocating the terminal.
 Repair is an embedded CLI operation and accepts only `codex` or `claude`.
 `codex-app`, an unset agent, or another configured command produces guidance
 instead of opening an external app or changing Flow state. The launch reuses
-the selected provider's current model and reasoning effort plus the manual
-`h` headless setting. Interactive repairs prefill their recovery prompt and
+the selected provider's current model and reasoning effort plus that Flow's
+persisted `h` headless setting. The fresh pre-launch record read is
+authoritative, so a recently changed preference overrides a stale list row.
+Interactive repairs prefill their recovery prompt and
 focus terminal input; headless repairs submit it and keep list focus.
 
 A repair session carries the Flow ID, linked-plan/worktree metadata, and the
@@ -565,17 +587,21 @@ outcome and receives its normal one-shot handoff.
 
 ### Headless mode, model, and effort
 
-Flow headless mode is on by default: selected CLI `codex` and `claude` phase
-launches run in the shared runtime-only embedded terminal dock. Press
-`h` to choose the CLI command mode: headless runs `codex exec` or
+Each Flow persists its own headless preference, which defaults on. Selected CLI
+`codex` and `claude` phase launches run in the shared runtime-only embedded
+terminal dock. Press `h` on a Flow or one of its expanded phase rows to choose
+that Flow's manual CLI command mode: headless runs `codex exec` or
 `claude --print`, while headless off runs interactive `codex` or `claude` in
 the same dock. Headless-off launches prefill the phase prompt without
 submitting it, then focus the terminal in input mode so
 you can review or edit it before pressing enter. Headless launches keep focus
-on the Flow list. Creating a new Flow has its own default-on Headless checkbox
-for the initial Plan launch; that checkbox is ignored when Plan Now is off and
-does not change the selected-phase `h` setting. The `h` toggle applies only to
-manual phase launches; auto-mode CLI launches are always headless.
+on the Flow list. The New Flow form's default-on Headless checkbox seeds the
+persisted preference whether Plan Now is on or off; an immediate Plan launch
+and a later launch of a parked Flow both use that stored value. Records created
+before the field existed read as headless-on without being rewritten solely by
+a read. Manual phase and repair launches use the target Flow's value. Auto-mode
+CLI launches are always headless, independent of it; session resume behavior is
+unchanged.
 
 Press `M` to choose the selected CLI agent's model and `E` to choose its
 reasoning effort; the shortcut pane shows the current values. Codex CLI
@@ -592,8 +618,8 @@ answer streamed token-by-token, and a closing summary).
 
 ### Flow terminals
 
-Flow terminals share the persistent dock, global numbering, focus cycle, and
-command set described in [Embedded Terminals](#embedded-terminals). Selecting
+Flow terminals share the persistent dock, global terminal-tab numbering, focus
+cycle, and command set described in [Embedded Terminals](#embedded-terminals). Selecting
 a Flow or phase still synchronizes the active dock terminal to its attached
 Flow terminal when one exists. Flow scope remains lifecycle metadata for
 launch tracking, auto-mode gating, and recovery; it no longer creates a
@@ -635,7 +661,8 @@ readiness, gating, and merge requirements are documented in
 ## Active Flows View (`ctrl+a`)
 
 Browse active Flow records across all repos. Press `ctrl+a` from any normal
-TUI view to open it, and press `ctrl+a` again to return to the previous view;
+TUI view to open it across the combined content height, and press `ctrl+a`
+again to restore the exact top mode, bottom mode, remembered pane, and focus;
 number keys and arrows do not leave Active Flows. This view hides merged Flow
 records; moving focus to the left repo pane temporarily filters the visible
 active rows to the selected repo, and returning focus to the middle pane

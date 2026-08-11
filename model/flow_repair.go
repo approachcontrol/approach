@@ -169,6 +169,11 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	// Repair reads the persisted headless preference asynchronously, so it must
+	// wait for an in-flight toggle exactly as a phase launch does.
+	if m.flowHeadlessWritePending(record.FlowID) {
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
+	}
 	if !m.selectedFlowRepairReady() {
 		if m.hasPendingFlowRepairLaunch(record.FlowID) {
 			return m.setStatus(statusOther, "A repair launch is already pending for this Flow"), nil
@@ -221,7 +226,7 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		FlowID:           record.FlowID,
 		FlowRepair:       true,
 		Embedded:         true,
-		Headless:         m.flowHeadless,
+		Headless:         record.Headless,
 		Model:            modelName,
 		ReasoningEffort:  reasoningEffort,
 		InitialPrompt:    flowRepairPrompt(record, obstruction),
@@ -385,6 +390,7 @@ func refreshFlowRepairLaunchContext(ctx actions.AgentLaunchContext, record flows
 	ctx.Commit = record.Commit
 	ctx.PlanID = record.PlanID
 	ctx.PlanPath = planPath
+	ctx.Headless = record.Headless
 	ctx.InitialPrompt = flowRepairPrompt(record, obstruction)
 	return ctx
 }

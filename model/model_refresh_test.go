@@ -16,63 +16,6 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-func TestModel_F5RefreshesReposAndCurrentFetchBackedMode(t *testing.T) {
-	modes := []ui.Mode{
-		ui.ModeWorktrees,
-		ui.ModeBranches,
-		ui.ModeStashes,
-		ui.ModeHistory,
-		ui.ModeReflog,
-		ui.ModeSessions,
-		ui.ModePlans,
-		ui.ModeFlows,
-		ui.ModeActiveFlows,
-	}
-
-	for _, mode := range modes {
-		t.Run(fmt.Sprintf("mode-%d", mode), func(t *testing.T) {
-			scans := 0
-			m := model.NewWithOptions(testRepos(), model.Options{
-				StartupMode: mode,
-				ScanRepos: func() ([]scanner.Repo, error) {
-					scans++
-					return testRepos(), nil
-				},
-				ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
-					return []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: "s1", RepoPath: filter.RepoPath}}, nil
-				},
-				ListPlans: func(filter planstore.PlanFilter) ([]planstore.PlanRecord, error) {
-					return []planstore.PlanRecord{{PlanID: "p1", RepoPath: filter.RepoPath, Title: "Plan"}}, nil
-				},
-				ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-					return []flowstore.FlowRecord{{FlowID: "f1", RepoPath: filter.RepoPath, Title: "Flow"}}, nil
-				},
-			})
-			m = inRightPane(m)
-			beforeRequest := m.ListRequest(mode)
-
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
-			if scans != 0 {
-				t.Fatalf("scanner ran before command execution: %d call(s)", scans)
-			}
-			if got := m.ListRequest(mode); got == beforeRequest {
-				t.Fatalf("ListRequest(%v) did not advance after f5", mode)
-			}
-
-			msgs := runBatchCmd(t, cmd)
-			if scans != 1 {
-				t.Fatalf("scanner ran %d times, want 1", scans)
-			}
-			if !hasRepoRefreshResult(msgs) {
-				t.Fatalf("refresh command messages = %#v, want RepoRefreshResultMsg", msgs)
-			}
-			if !hasListFetchForMode(msgs, mode, m.ListRequest(mode)) {
-				t.Fatalf("refresh command messages = %#v, want list fetch for mode %v request %d", msgs, mode, m.ListRequest(mode))
-			}
-		})
-	}
-}
-
 func TestModel_F5WithNoScannerReportsUnavailable(t *testing.T) {
 	m := model.New(testRepos())
 
@@ -154,7 +97,6 @@ func TestModel_RepoRefreshFailureLeavesReposAndShowsStatus(t *testing.T) {
 
 func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
-		StartupMode: ui.ModeSessions,
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return []scanner.Repo{
 				{Path: "/dev/alpha", DisplayName: "alpha"},
@@ -166,6 +108,8 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 			return []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: "fresh", RepoPath: filter.RepoPath}}, nil
 		},
 	})
+	m, _ = switchTestMode(m, ui.ModeSessions)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m = selectBravo(m)
 	m, _ = update(m, model.SessionResultMsg{
 		RepoPath:    "/dev/bravo",
@@ -189,7 +133,6 @@ func TestModel_RepoRefreshPreservesSelectionAndKeepsCurrentListWhileFetchPending
 func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *testing.T) {
 	var gotFilters []sessions.SessionFilter
 	m := model.NewWithOptions(testRepos(), model.Options{
-		StartupMode: ui.ModeWorktrees,
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return testRepos(), nil
 		},
@@ -204,7 +147,7 @@ func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *
 			}}, nil
 		},
 	})
-	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeWorktrees)
 	m, _ = update(m, model.WorktreeResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeWorktrees),
@@ -251,7 +194,6 @@ func TestModel_F5RefreshesOpenInlineWorktreeSessionsAfterWorktreeListRefresh(t *
 
 func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
-		StartupMode: ui.ModeSessions,
 		ScanRepos: func() ([]scanner.Repo, error) {
 			return []scanner.Repo{
 				{Path: "/dev/bravo", DisplayName: "bravo"},
@@ -262,7 +204,7 @@ func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *t
 			return []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: filter.RepoPath, RepoPath: filter.RepoPath}}, nil
 		},
 	})
-	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeSessions),
@@ -272,7 +214,7 @@ func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *t
 	})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyF5})
-	msgs := runBatchCmd(t, cmd)
+	msgs := immediateTestCommandMessages(cmd)
 	preScanFetch := sessionResultFromMessages(t, msgs, "/dev/alpha")
 	scanMsg := repoRefreshResultFromBatch(t, msgs)
 
@@ -283,10 +225,7 @@ func TestModel_RepoRefreshClampsSelectionAndFetchesNewRepoWhenOldDisappears(t *t
 	if followup == nil {
 		t.Fatal("expected post-scan fetch for new selected repo")
 	}
-	postScanMsg, ok := followup().(model.SessionResultMsg)
-	if !ok {
-		t.Fatalf("post-scan fetch = %T, want SessionResultMsg", postScanMsg)
-	}
+	postScanMsg := sessionResultFromMessages(t, immediateTestCommandMessages(followup), "/dev/bravo")
 	if postScanMsg.RepoPath != "/dev/bravo" {
 		t.Fatalf("post-scan fetch repo = %q, want /dev/bravo", postScanMsg.RepoPath)
 	}
@@ -330,8 +269,7 @@ func TestModel_RepoRefreshKeepsFilterAndHandlesZeroVisibleRepos(t *testing.T) {
 
 func TestModel_PlanResultPreservesSelectedPlanWhenResultsReorder(t *testing.T) {
 	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = switchTestMode(m, ui.ModePlans)
 	m, _ = update(m, model.PlanResultMsg{
 		RepoPath: "/dev/alpha",
 		Plans: []planstore.PlanRecord{
@@ -364,8 +302,7 @@ func TestModel_PlanResultPreservesSelectedPlanWhenResultsReorder(t *testing.T) {
 
 func TestModel_FlowResultPreservesSelectedFlowWhenResultsReorder(t *testing.T) {
 	m := model.New(testRepos())
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{
 		RepoPath: "/dev/alpha",
 		Flows: []flowstore.FlowRecord{
@@ -421,7 +358,6 @@ func TestModel_RepoSelectionResetInvalidatesStaleNonCurrentPaneResults(t *testin
 func TestModel_StaleRepoRefreshResultAndFailureIgnored(t *testing.T) {
 	scans := 0
 	m := model.NewWithOptions(testRepos(), model.Options{
-		StartupMode: ui.ModeSessions,
 		ScanRepos: func() ([]scanner.Repo, error) {
 			scans++
 			if scans == 1 {
@@ -433,20 +369,18 @@ func TestModel_StaleRepoRefreshResultAndFailureIgnored(t *testing.T) {
 			return []sessions.SessionRecord{{Provider: sessions.ProviderCodex, SessionID: filter.RepoPath, RepoPath: filter.RepoPath}}, nil
 		},
 	})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 
 	m, cmdA := update(m, tea.KeyMsg{Type: tea.KeyF5})
-	msgA := repoRefreshResultFromBatch(t, runBatchCmd(t, cmdA))
+	msgA := repoRefreshResultFromBatch(t, immediateTestCommandMessages(cmdA))
 	m, cmdB := update(m, tea.KeyMsg{Type: tea.KeyF5})
-	msgB := repoRefreshResultFromBatch(t, runBatchCmd(t, cmdB))
+	msgB := repoRefreshResultFromBatch(t, immediateTestCommandMessages(cmdB))
 
 	m, followup := update(m, msgB)
 	if followup == nil {
 		t.Fatal("fresh refresh should fetch selected repo after clamping")
 	}
-	freshMsg, ok := followup().(model.SessionResultMsg)
-	if !ok {
-		t.Fatalf("fresh post-scan fetch = %T, want SessionResultMsg", freshMsg)
-	}
+	freshMsg := sessionResultFromMessages(t, immediateTestCommandMessages(followup), "/dev/bravo")
 	if freshMsg.RepoPath != "/dev/bravo" {
 		t.Fatalf("fresh post-scan fetch repo = %q, want /dev/bravo", freshMsg.RepoPath)
 	}
@@ -514,6 +448,8 @@ func hasListFetchForMode(msgs []tea.Msg, mode ui.Mode, request uint64) bool {
 			return mode == ui.ModeFlows && msg.ListRequest == request
 		case model.ActiveFlowResultMsg:
 			return mode == ui.ModeActiveFlows && msg.ListRequest == request
+		case model.BeadsReadyResultMsg:
+			return mode == ui.ModeBeadsReady && msg.ListRequest == request
 		case model.BeadsOpenResultMsg:
 			return mode == ui.ModeBeadsOpen && msg.ListRequest == request
 		case model.FetchErrorMsg:

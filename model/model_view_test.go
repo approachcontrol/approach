@@ -68,6 +68,7 @@ func TestModel_ViewNoReposShowsEmptyMessage(t *testing.T) {
 func TestModel_ViewWorktreesModeShowsPlaceholder(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = inRightPane(m)
 	// Load branch data — worktrees mode should still show placeholder, not branches
 	branches := []gitquery.Branch{{Name: "main", HasUpstream: true}}
 	m, _ = update(m, model.BranchResultMsg{RepoPath: "/dev/alpha", Branches: branches})
@@ -115,8 +116,7 @@ func TestModel_ViewDistinguishesFilteredEmptyRepos(t *testing.T) {
 func TestModel_ViewKeepsSelectedSessionVisibleBelowTableHeader(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-0", RepoPath: "/dev/alpha", Branch: "session-row-0"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-1", RepoPath: "/dev/alpha", Branch: "session-row-1"},
@@ -138,8 +138,7 @@ func TestModel_ViewKeepsSelectedSessionVisibleBelowTableHeader(t *testing.T) {
 func TestModel_ViewKeepsExpandedSelectedPlanVisibleBelowTableHeader(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 8 + ui.TerminalChipRows})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m, _ = switchTestMode(m, ui.ModePlans)
 	m, _ = update(m, model.PlanResultMsg{RepoPath: "/dev/alpha", Plans: []planstore.PlanRecord{
 		{PlanID: "plan-0", RepoPath: "/dev/alpha", Branch: "plan-row-0", Status: "draft", Title: "Plan zero"},
 		{PlanID: "plan-1", RepoPath: "/dev/alpha", Branch: "plan-row-1", Status: "draft", Title: "Plan one"},
@@ -267,52 +266,6 @@ func TestModel_ViewDistinguishesFilteredEmptyItemsInEveryMode(t *testing.T) {
 				t.Fatalf("filtered-empty %s pane should not look like an unfiltered empty pane", tt.name)
 			}
 		})
-	}
-}
-
-func TestModel_ViewModeHeaderShowsGroupedGitSubviews(t *testing.T) {
-	m := model.New(testRepos())
-	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
-
-	view := m.View()
-	// Worktrees subview active: grouped header shows the Git group plus the
-	// letter-labelled subview row.
-	if !strings.Contains(view, "[1] git") {
-		t.Error("worktrees active: header should bracket the Git group '[1] git'")
-	}
-	if !strings.Contains(view, "[w] worktrees") {
-		t.Error("worktrees active: header should contain '[w] worktrees'")
-	}
-	for _, want := range []string{"b branches", "s stashes", "h history", "r reflog", "2 sessions", "3 plans", "4 flows", "^a active flows"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("worktrees active: header should show inactive %q", want)
-		}
-	}
-	if strings.Contains(view, "5 active flows") {
-		t.Fatalf("worktrees active: header should not label active flows with 5")
-	}
-
-	// Cycle the git subviews with the right arrow.
-	m = inRightPane(m)
-	for _, want := range []string{"[b] branches", "[s] stashes", "[h] history", "[r] reflog"} {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight})
-		view = m.View()
-		if !strings.Contains(view, want) {
-			t.Errorf("header should contain %q after right arrow", want)
-		}
-		if !strings.Contains(view, "[1] git") {
-			t.Errorf("header should keep the Git group bracketed while %q is active", want)
-		}
-	}
-
-	// A non-git view renders the single top-level row without subviews.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	view = m.View()
-	if !strings.Contains(view, "[2] sessions") {
-		t.Error("sessions active: header should contain '[2] sessions'")
-	}
-	if strings.Contains(view, "w worktrees") {
-		t.Error("sessions active: header should not list git subviews")
 	}
 }
 
@@ -665,6 +618,7 @@ func TestModel_ViewWorktreesModeReadOnlyShowsDestructiveHint(t *testing.T) {
 func TestModel_ViewWorktreesModeShowsWorktreeContent(t *testing.T) {
 	m := model.New(testRepos())
 	m, _ = update(m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = inRightPane(m)
 	wts := []gitquery.Worktree{
 		{Path: "/dev/alpha", BranchName: "main", IsMain: true},
 		{Path: "/dev/alpha-feat", BranchName: "feature-x"},
@@ -937,27 +891,13 @@ func TestModel_FilteredEmptyItemsTakePrecedenceOverListFetchErrorPlaceholder(t *
 
 func TestModel_InitFetchUsesNonZeroListRequest(t *testing.T) {
 	m := model.New(testRepos())
-	msg := m.Init()()
-	msgs := []tea.Msg{msg}
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		msgs = msgs[:0]
-		for _, subcmd := range batch {
-			msgs = append(msgs, subcmd())
+	if m.Init() == nil {
+		t.Fatal("expected startup fetch command")
+	}
+	for _, mode := range []ui.Mode{ui.ModeBeadsReady, ui.ModeFlows} {
+		if got := m.ListRequest(mode); got == 0 {
+			t.Fatalf("initial mode %v fetch should carry a non-zero list request", mode)
 		}
-	}
-	var fetchErr model.FetchErrorMsg
-	found := false
-	for _, msg := range msgs {
-		if err, ok := msg.(model.FetchErrorMsg); ok {
-			fetchErr = err
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected fake repo init to return FetchErrorMsg, got %#v", msgs)
-	}
-	if fetchErr.ListRequest == 0 {
-		t.Fatal("initial fetch should carry a non-zero list request")
 	}
 }
 

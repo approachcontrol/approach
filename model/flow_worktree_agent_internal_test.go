@@ -33,7 +33,6 @@ func TestFlowWorktreeAgentStartsFromParentFlowWithoutPhaseTracking(t *testing.T)
 	var filter sessions.SessionFilter
 	var launched actions.AgentLaunchContext
 	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
-		StartupMode:  ui.ModeFlows,
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{record}, nil
@@ -47,6 +46,7 @@ func TestFlowWorktreeAgentStartsFromParentFlowWithoutPhaseTracking(t *testing.T)
 			return internalFakeEmbeddedTerminal{}, nil
 		},
 	})
+	m = modelWithModeForTest(m, ui.ModeFlows)
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 	m.activePane = ui.PaneBottom
 	m.expandedFlowID = record.FlowID
@@ -96,7 +96,6 @@ func TestFlowWorktreeAgentReadsFlowAfterSessionPreflight(t *testing.T) {
 	current := initial
 	var launched actions.AgentLaunchContext
 	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
-		StartupMode:  ui.ModeFlows,
 		AgentCommand: "codex",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{current}, nil
@@ -110,6 +109,7 @@ func TestFlowWorktreeAgentReadsFlowAfterSessionPreflight(t *testing.T) {
 			return internalFakeEmbeddedTerminal{}, nil
 		},
 	})
+	m = modelWithModeForTest(m, ui.ModeFlows)
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{initial})
 	m.activePane = ui.PaneBottom
 
@@ -132,7 +132,6 @@ func TestFlowWorktreeAgentRejectsActivePersistedSessionAndReleasesLease(t *testi
 	worktree := t.TempDir()
 	record := flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree}
 	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{
-		StartupMode:  ui.ModeFlows,
 		AgentCommand: "claude",
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{record}, nil
@@ -145,6 +144,7 @@ func TestFlowWorktreeAgentRejectsActivePersistedSessionAndReleasesLease(t *testi
 			return nil, nil
 		},
 	})
+	m = modelWithModeForTest(m, ui.ModeFlows)
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 	m.activePane = ui.PaneBottom
 	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
@@ -159,7 +159,7 @@ func TestFlowWorktreeAgentRejectsActivePersistedSessionAndReleasesLease(t *testi
 func TestFlowWorktreeAgentReadinessUsesKnownActiveSessionSnapshot(t *testing.T) {
 	worktree := t.TempDir()
 	record := flowstore.FlowRecord{FlowID: "flow-1", RepoPath: "/repo", WorktreePath: worktree}
-	m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{StartupMode: ui.ModeFlows, AgentCommand: "codex"})
+	m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{AgentCommand: "codex"}), ui.ModeFlows)
 	m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 	m.activePane = ui.PaneBottom
 	m.sessions = m.sessions.SetItems([]sessions.SessionRecord{{FlowID: record.FlowID, Status: "active"}})
@@ -726,7 +726,7 @@ func TestFlowWorktreeAndPhaseLaunchesSerializeInBothOrders(t *testing.T) {
 		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}},
 	}
 	newModel := func() Model {
-		m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{StartupMode: ui.ModeFlows, AgentCommand: "codex"})
+		m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{AgentCommand: "codex"}), ui.ModeFlows)
 		m.activePane = ui.PaneBottom
 		m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 		return m
@@ -762,7 +762,7 @@ func TestFlowWorktreeAgentSerializesAgainstEveryLaunchEntrypointInBothOrders(t *
 		Phases: []flowstore.FlowPhase{{PhaseID: "plan", Status: flowstore.PhaseReady}},
 	}
 	newModel := func() Model {
-		m := NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{StartupMode: ui.ModeFlows, AgentCommand: "codex"})
+		m := modelWithModeForTest(NewWithOptions([]scanner.Repo{{Path: "/repo"}}, Options{AgentCommand: "codex"}), ui.ModeFlows)
 		m.activePane = ui.PaneBottom
 		m.flows = m.flows.SetItems([]flowstore.FlowRecord{record})
 		return m

@@ -29,7 +29,6 @@ exist:
 | Coding agent | none | `[agent].command` | unset |
 | Agent model | none | `[agent].codex_model` / `[agent].claude_model` | provider default |
 | Agent reasoning effort | none | `[agent].codex_reasoning_effort` / `[agent].claude_reasoning_effort` | provider default |
-| Startup default view | none | `[ui].default_view` | flows view (config number `8`) |
 | Plan launch prompt | none | `[agent].plan_prompt` | built-in plan implementation prompt |
 | Flow phase launch prompts | none | `[flow_prompts]` | built-in Flow phase prompts |
 | Flow phase graph preset | `approach flow create --preset` | `[flow].preset` | `default` |
@@ -64,9 +63,6 @@ name = "github"
 
 [launch]
 prefer_multiplexer = true
-
-[ui]
-default_view = 8
 
 [agent]
 command = "codex"
@@ -142,20 +138,14 @@ under the resolved scan root, optionally creating a GitHub repo and wiring
 `origin`; the creation form and repo-name rules are documented in
 `docs/tui-guide.md`.
 
-### `[ui]`
+### Legacy `[ui]` compatibility
 
-Stores user-interface preferences.
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `default_view` | integer | Optional startup view number. The frozen vocabulary is `1` worktrees, `2` branches, `3` stashes, `4` history, `5` reflog, `6` sessions, `7` plans, `8` flows, `9` active flows, `10` Beads Ready, `11` Beads Blocked, `12` Beads Open, `13` Beads In-Progress, and `14` Beads Closed. It deliberately differs from the grouped keyboard keys (keyboard `1` opens Git at its last-used subview, `2`–`4` open sessions/plans/flows outside Active Flows, keyboard `5` opens Beads at its last-used subview with Open as the first-entry default, `ctrl+a` toggles active flows, `6`–`9` are unbound, `w`/`b`/`s`/`h`/`r` pick Git subviews, and `r`/`b`/`o`/`i`/`c` pick Beads subviews only while Beads is active). A Git value (`1`–`5`) boots into that subview and seeds the Git group's sticky subview. A Beads value (`10`–`14`) immediately fetches that subview at startup and seeds the Beads group's sticky subview for later re-entry. Omitted keeps the built-in Flows startup default. |
-
-Press `V` in Approach to choose and persist this value from a picker. The picker
-changes future launches only; use the keyboard keys `1`–`5`, `ctrl+a`, the
-scoped Git or Beads subview letters, or arrows within either group and among
-the top-level Git, sessions, plans, flows, and Beads stops to switch the current
-view. Arrows that enter Git or Beads then stay inside that group, so leaving it
-needs a number key or `ctrl+a`.
+Approach no longer has configurable startup views. Every launch starts with
+repository focus, Beads/Ready stored in the top pane, Flows stored in the bottom
+pane, and the top pane remembered as the first content destination. Older
+`[ui].default_view` assignments remain syntactically accepted because unknown
+keys are ignored, but their value has no effect. There is no startup-view picker
+or persistence shortcut.
 
 ### `[editor]`
 
@@ -341,7 +331,7 @@ Agents persist plans explicitly through the `approach plan` subcommands; plans a
 not captured from provider hooks in v1. Each plan is stored as
 `<artifact-root>/plans/<plan-id>/meta.json` plus `plan.md`, with the same
 restrictive permissions (`0700` directories, `0600` files) and atomic writes as
-sessions. They appear in the TUI plans pane (keyboard `3`); pane behavior is
+sessions. They appear in the TUI plans pane (bottom-pane keyboard `2`); pane behavior is
 documented in `docs/tui-guide.md`, and the edit action's editor selection in
 `[editor]` above.
 
@@ -392,9 +382,9 @@ Flow records are task-centric workflow records created by the TUI or explicitly
 through `approach flow`. Each record is stored as
 `<artifact-root>/flows/<flow-id>/meta.json`, with restrictive permissions
 (`0700` directories, `0600` files) and atomic writes. They appear in the TUI
-flows pane (keyboard `4`), which is the startup default unless `[ui].default_view`
-is set. The TUI can create a new Flow, launch the next launchable phase,
-toggle per-Flow auto mode, resume attached phase sessions, record a manual
+flows pane (bottom-pane keyboard `3`), which is stored at startup below
+Beads/Ready. The TUI can create a new Flow, launch the next launchable phase,
+toggle per-Flow auto mode and the per-Flow headless preference, resume attached phase sessions, record a manual
 GitHub merge, and delete a top-level Flow record in destructive mode; pane
 keys, auto-mode behavior, headless mode, model/effort pickers, and embedded
 Flow terminals are documented in `docs/tui-guide.md`. Other phase and
@@ -441,7 +431,10 @@ Flow IDs use the same safe single-path-segment shape as plans:
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Generated IDs use
 `YYYYMMDDTHHMMSSZ-<title-slug>` with a numeric suffix on collision. New flows
 start with a default phase graph: plan, plan review, implementation, review
-loop, PR creation, autoreview, and merge.
+loop, PR creation, autoreview, and merge. New TUI, Ready-Bead, and CLI-created
+Flows also persist `headless: true` unless the New Flow form explicitly seeds
+`false`. Legacy records without `headless` read as `true`, while a stored
+`false` is preserved across reads, lists, and later metadata writes.
 
 Flow statuses are derived from phase and merge state. Flow statuses include
 `pending`, `in_progress`, `needs_attention`, `blocked`, `completed`, `merged`,

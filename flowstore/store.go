@@ -205,6 +205,12 @@ type AutoModeUpdate struct {
 	Enabled bool
 }
 
+// HeadlessUpdate changes the manual launch preference for one Flow.
+type HeadlessUpdate struct {
+	FlowID  string
+	Enabled bool
+}
+
 // FlowRecord is the persisted task workflow record.
 type FlowRecord struct {
 	SchemaVersion int                `json:"schema_version"`
@@ -224,6 +230,7 @@ type FlowRecord struct {
 	PR            PullRequest        `json:"pr,omitempty"`
 	Merge         Merge              `json:"merge,omitempty"`
 	AutoMode      bool               `json:"auto_mode,omitempty"`
+	Headless      bool               `json:"headless"`
 	Phases        []FlowPhase        `json:"phases"`
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
@@ -409,6 +416,10 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	record.CreatedAt = defaultTime(record.CreatedAt, now)
 	record.UpdatedAt = defaultTime(record.UpdatedAt, now)
 	record.AutoMode = true
+	record.Headless = true
+	if opts.Headless != nil {
+		record.Headless = *opts.Headless
+	}
 	if opts.Preset != nil && len(record.Phases) > 0 {
 		return FlowRecord{}, fmt.Errorf("preset cannot be used with declared phases")
 	}
@@ -859,6 +870,21 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 			return record, nil
 		}
 		record.AutoMode = update.Enabled
+		record.UpdatedAt = now
+		return record, nil
+	})
+}
+
+// SetHeadless enables or disables headless manual launches for one Flow.
+func (s *Store) SetHeadless(update HeadlessUpdate) (FlowRecord, error) {
+	if err := validateFlowID(update.FlowID); err != nil {
+		return FlowRecord{}, err
+	}
+	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if record.Headless == update.Enabled {
+			return record, nil
+		}
+		record.Headless = update.Enabled
 		record.UpdatedAt = now
 		return record, nil
 	})
@@ -2017,6 +2043,7 @@ func marshalFlowRecord(record FlowRecord) ([]byte, error) {
 		PR:            record.PR,
 		Merge:         record.Merge,
 		AutoMode:      record.AutoMode,
+		Headless:      record.Headless,
 		Phases:        phases,
 		CreatedAt:     record.CreatedAt,
 		UpdatedAt:     record.UpdatedAt,
@@ -2041,6 +2068,7 @@ type flowRecordForWrite struct {
 	PR            PullRequest         `json:"pr,omitempty"`
 	Merge         Merge               `json:"merge,omitempty"`
 	AutoMode      bool                `json:"auto_mode,omitempty"`
+	Headless      bool                `json:"headless"`
 	Phases        []flowPhaseForWrite `json:"phases"`
 	CreatedAt     time.Time           `json:"created_at"`
 	UpdatedAt     time.Time           `json:"updated_at"`
@@ -2099,12 +2127,16 @@ func (s *Store) readRecordWithReadiness(flowID string, selfHealOnRead bool) (Flo
 		return FlowRecord{}, false
 	}
 	presence := rawDependsOnPresence(data)
+	headlessPresent := rawFieldPresent(data, "headless")
 	var record FlowRecord
 	if err := json.Unmarshal(data, &record); err != nil {
 		return FlowRecord{}, false
 	}
 	if record.FlowID != flowID || record.SchemaVersion != schemaVersion {
 		return FlowRecord{}, false
+	}
+	if !headlessPresent {
+		record.Headless = true
 	}
 	selfHeal := rawDependsOnPresentForTopLevel(record.Phases, presence)
 	record = s.restoreMissingDependsOn(record, presence)
@@ -2216,6 +2248,15 @@ func rawDependsOnPresence(data []byte) []rawDependsOnState {
 		}
 	}
 	return presence
+}
+
+func rawFieldPresent(data []byte, field string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	_, ok := raw[field]
+	return ok
 }
 
 func rawDependsOnPresentForTopLevel(phases []FlowPhase, presence []rawDependsOnState) bool {

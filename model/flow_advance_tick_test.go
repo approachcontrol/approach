@@ -864,7 +864,6 @@ func TestModel_AutoAdvanceTickIntervalIsOneSecond(t *testing.T) {
 
 func TestModel_AutoAdvanceTickScheduledFromInitInFlowsMode(t *testing.T) {
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
-		StartupMode: ui.ModeFlows,
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
 			return []flowstore.FlowRecord{flowForRefreshTest("flow-1")}, nil
 		},
@@ -875,7 +874,7 @@ func TestModel_AutoAdvanceTickScheduledFromInitInFlowsMode(t *testing.T) {
 }
 
 func TestModel_AutoAdvanceTickScheduledFromInitWithoutRepos(t *testing.T) {
-	m := NewWithOptions(nil, Options{StartupMode: ui.ModeFlows})
+	m := NewWithOptions(nil, Options{})
 	if !hasAutoAdvanceTickMsg(t, m.Init()) {
 		t.Fatal("Init() with no flows fetch should still schedule the auto-advance tick")
 	}
@@ -1351,7 +1350,6 @@ func TestModel_AutoAdvanceDisplayFetchSeedsFirstSnapshotForStartupEdge(t *testin
 	})
 	var updates []flowstore.PhaseLaunchUpdate
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
-		StartupMode:  ui.ModeFlows,
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
@@ -1399,13 +1397,13 @@ func TestModel_AutoAdvanceDisplayFetchMergesNewFlowIntoExistingSnapshot(t *testi
 	})
 	var updates []flowstore.PhaseLaunchUpdate
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
-		StartupMode:  ui.ModeActiveFlows,
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return newCompleted, nil
 		},
 	})
+	m = modelWithModeForTest(m, ui.ModeActiveFlows)
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{existing}
 
 	m, _ = updateFlowRefreshTest(m, ActiveFlowResultMsg{
@@ -1448,13 +1446,13 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesExistingFlowRerunBaseline(t *test
 	})
 	var updates []flowstore.PhaseLaunchUpdate
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
-		StartupMode:  ui.ModeActiveFlows,
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return rerunCompleted, nil
 		},
 	})
+	m = modelWithModeForTest(m, ui.ModeActiveFlows)
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{completedBaseline}
 
 	m, _ = updateFlowRefreshTest(m, ActiveFlowResultMsg{
@@ -1516,13 +1514,13 @@ func TestModel_AutoAdvanceDisplayFetchRefreshesNewRunningChildBaseline(t *testin
 	})
 	var updates []flowstore.PhaseLaunchUpdate
 	m := NewWithOptions(flowRefreshTestRepos(), Options{
-		StartupMode:  ui.ModeActiveFlows,
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
 			updates = append(updates, update)
 			return childCompleted, nil
 		},
 	})
+	m = modelWithModeForTest(m, ui.ModeActiveFlows)
 	m.autoAdvanceSnapshot = []flowstore.FlowRecord{baseline}
 
 	m, _ = updateFlowRefreshTest(m, ActiveFlowResultMsg{

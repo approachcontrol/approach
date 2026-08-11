@@ -43,9 +43,9 @@ Goal: add context that helps users decide which worktree needs attention.
 - [ ] P2 - CI status per branch/worktree: show pass, fail, and running indicators for active branches.
 - [ ] P2 - GitHub/GitLab provider config: support PR creation, PR detection, and CI lookup without hardcoding one provider.
 - [ ] P3 - Worktree notes, labels, or tags: help users manage many parallel branches, especially for review or agent-driven work.
-- [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, show worktree-scoped inline sessions in mode 1, page normalized transcripts in mode 6, resume CLI sessions in embedded PTYs from the full sessions view, keep `codex-app` resumes on deep links, and copy raw provider session IDs.
-- [x] P3 - Saved plans (skill-first v1): persist agent plans via the `approach plan` CLI and the `approach-plan-persist` skill into `<sessions root>/plans/...`, and browse them in mode 7 with `less -R` paging, phase expansion, per-phase progress, plan-path copying, plan Markdown editing, and launch instructions for whole-plan or selected-phase agent launch.
-- [x] P3 - Flow records and default Flow UI: persist task-centric Flow records via the `approach flow` CLI into `<sessions root>/flows/...`; start the TUI in mode 8; create new Flows; launch ready phases; resume attached expanded-phase sessions; browse derived status, phase progress, linked plan metadata, PR metadata, repo-scoped filtering, linked-plan body opening, and recoverable partial-state labels.
+- [x] P3 - Agent-session capture and browsing: ingest Claude/Codex hook payloads, associate sessions with repos/worktrees/branches, show worktree-scoped inline sessions in the Git pane, page normalized transcripts in bottom-pane Sessions, resume CLI sessions in embedded PTYs, keep `codex-app` resumes on deep links, and copy raw provider session IDs.
+- [x] P3 - Saved plans (skill-first v1): persist agent plans via the `approach plan` CLI and the `approach-plan-persist` skill into `<sessions root>/plans/...`, and browse them in bottom-pane Plans with `less -R` paging, phase expansion, per-phase progress, plan-path copying, plan Markdown editing, and launch instructions for whole-plan or selected-phase agent launch.
+- [x] P3 - Flow records and Flow UI: persist task-centric Flow records via the `approach flow` CLI into `<sessions root>/flows/...`; store Flows in the startup bottom pane; create new Flows; launch ready phases; resume attached expanded-phase sessions; browse derived status, phase progress, linked plan metadata, PR metadata, repo-scoped filtering, linked-plan body opening, and recoverable partial-state labels.
 - [ ] P3 - Plans follow-ups: optional Claude Code `plan-hook` adapter (`ExitPlanMode` PreToolUse/PostToolUse), automatic phase extraction, and TUI deletion (see plan appendix).
 - [ ] P3 - Flow follow-ups: add transcript shortcuts from expanded phase rows, manual recovery/retry actions for partial Flow states, and richer phase/session status once provider signals are reliable.
 - [ ] P3 - Agent session follow-ups: add open-native-transcript actions and richer status when provider signals are reliable.
@@ -68,7 +68,7 @@ Goal: let users adapt Approach without changing source or environment wrappers.
 - [ ] P1 - Multiple scan roots: support developers who split work across `~/dev`, client folders, and sandbox folders.
 - [ ] P1 - Custom code-open command: support Cursor, Zed, Neovim terminals, or arbitrary commands through config/env instead of hardcoding `code`.
 - [ ] P2 - Additional scan exclude controls: preserve zero-config scan-depth defaults while letting large workspaces avoid noisy directories beyond sibling `*-worktrees`.
-- [ ] P3 - Persisted UI defaults: remember default mode and possibly last selected repo without surprising statefulness.
+- [ ] P3 - Persisted repo selection: consider remembering the last selected repo without making startup pane state configurable.
 
 ## Distribution Follow-Ups
 

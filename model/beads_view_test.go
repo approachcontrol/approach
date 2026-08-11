@@ -37,7 +37,7 @@ func TestBeadsSubviewLettersSwitchAndStartMatchingDeferredQuery(t *testing.T) {
 					return []beadsquery.Bead{{ID: "bd-" + name, Priority: 1, Title: name}}, nil
 				}
 			}
-			m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+			m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
 				ListReadyBeads:      query("ready"),
 				ListBlockedBeads:    query("blocked"),
 				ListOpenBeads:       query("open"),
@@ -45,10 +45,8 @@ func TestBeadsSubviewLettersSwitchAndStartMatchingDeferredQuery(t *testing.T) {
 				ListClosedBeads:     query("closed"),
 				CountClosedBeads:    func(string) (int, error) { return 1, nil },
 			}))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.mode == ui.ModeBeadsOpen {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-			}
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{differentBeadsSubviewKey(tt.mode)}})
 			before := m.ListRequest(tt.mode)
 
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
@@ -105,10 +103,7 @@ func TestBeadsSubviewActiveLetterIsHandledNoOp(t *testing.T) {
 	} {
 		t.Run(string(tt.key), func(t *testing.T) {
 			m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.mode != ui.ModeBeadsOpen {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
-			}
+			m, _ = enterBeadsSubview(t, m, beadSubviewCase{key: tt.key, mode: tt.mode})
 			before := m.ListRequest(tt.mode)
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			if m.Mode() != tt.mode || cmd != nil || m.ListRequest(tt.mode) != before {
@@ -130,7 +125,7 @@ func TestBeadsSubviewLettersAreScopedOutsideBeads(t *testing.T) {
 	}
 }
 
-func TestKeyFiveReentersRememberedBeadsSubview(t *testing.T) {
+func TestKeyTwoReentersRememberedBeadsSubview(t *testing.T) {
 	for _, tt := range []struct {
 		key  rune
 		mode ui.Mode
@@ -142,24 +137,25 @@ func TestKeyFiveReentersRememberedBeadsSubview(t *testing.T) {
 		{key: 'c', mode: ui.ModeBeadsClosed},
 	} {
 		t.Run(string(tt.key), func(t *testing.T) {
-			m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if m.Mode() != ui.ModeBeadsOpen {
-				t.Fatalf("first key 5 mode = %v, want ModeBeadsOpen", m.Mode())
+			m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			if m.Mode() != ui.ModeBeadsReady {
+				t.Fatalf("first key 2 mode = %v, want ModeBeadsReady", m.Mode())
 			}
-			if tt.mode != ui.ModeBeadsOpen {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+			if tt.mode == ui.ModeBeadsReady {
+				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 			}
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			before := listRequests(m)
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			if m.Mode() != tt.mode || cmd != nil {
-				t.Fatalf("active key 5 changed Beads state: mode=%v cmd=%T, want %v and nil", m.Mode(), cmd, tt.mode)
+				t.Fatalf("active key 2 changed Beads state: mode=%v cmd=%T, want %v and nil", m.Mode(), cmd, tt.mode)
 			}
 			assertListRequestsUnchanged(t, before, m)
 
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 			before = listRequests(m)
-			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+			m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			if m.Mode() != tt.mode {
 				t.Fatalf("re-entry mode = %v, want remembered %v", m.Mode(), tt.mode)
 			}
@@ -171,9 +167,38 @@ func TestKeyFiveReentersRememberedBeadsSubview(t *testing.T) {
 	}
 }
 
+func TestKeyTwoFirstEntersReadyAndStartsDeferredQuery(t *testing.T) {
+	calls := 0
+	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
+			calls++
+			return []beadsquery.Bead{{ID: "bd-ready"}}, nil
+		},
+	}))
+	before := listRequests(m)
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+
+	if m.Mode() != ui.ModeBeadsReady {
+		t.Fatalf("mode = %v, want ModeBeadsReady", m.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("key 2 returned nil Ready fetch command")
+	}
+	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsReady)
+	if calls != 0 {
+		t.Fatalf("Ready query ran before command execution: %d call(s)", calls)
+	}
+	if msg := cmd(); calls != 1 {
+		t.Fatalf("Ready query calls = %d, want 1", calls)
+	} else if _, ok := msg.(model.BeadsReadyResultMsg); !ok {
+		t.Fatalf("fetch message = %T, want BeadsReadyResultMsg", msg)
+	}
+}
+
 func TestReadyAndOpenKeepIndependentResultsWithSharedID(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-shared", Title: "Ready copy"}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
@@ -202,9 +227,9 @@ func TestBeadsResultForPriorSubviewAfterLetterSwitchIsRejected(t *testing.T) {
 		{name: "closed", sourceKey: 'c', source: ui.ModeBeadsClosed, targetKey: 'r', target: ui.ModeBeadsReady},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.source != ui.ModeBeadsOpen {
+			m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			if tt.source != ui.ModeBeadsReady {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.sourceKey}})
 			}
 			sourceRequest := m.ListRequest(tt.source)
@@ -234,13 +259,13 @@ func TestBeadsSubviewStaleRepoAndSupersededRequestResultsAreRejectedPerMode(t *t
 		t.Run(string(tt.key), func(t *testing.T) {
 			opts := beadQueryOptions()
 			opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-			m := inRightPane(model.NewWithOptions(testRepos(), opts))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.mode != ui.ModeBeadsOpen {
+			m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			if tt.mode != ui.ModeBeadsReady {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			}
 			alphaRequest := m.ListRequest(tt.mode)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 			bravoRequest := m.ListRequest(tt.mode)
 
@@ -263,8 +288,9 @@ func TestBeadsSubviewStaleRepoAndSupersededRequestResultsAreRejectedPerMode(t *t
 }
 
 func TestBeadsSubviewFetchPreservesOnlyTargetStateWhilePending(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-open"}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-ready"}})
@@ -327,14 +353,20 @@ func beadQueryOptionsFor(mode ui.Mode, query func(string) ([]beadsquery.Bead, er
 
 func enterBeadsSubview(t *testing.T, m model.Model, subview beadSubviewCase) (model.Model, tea.Cmd) {
 	t.Helper()
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-	if subview.mode != ui.ModeBeadsOpen {
-		m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
-	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{differentBeadsSubviewKey(subview.mode)}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
 	if m.Mode() != subview.mode {
 		t.Fatalf("entered mode %v, want %v", m.Mode(), subview.mode)
 	}
 	return m, cmd
+}
+
+func differentBeadsSubviewKey(mode ui.Mode) rune {
+	if mode == ui.ModeBeadsBlocked {
+		return 'o'
+	}
+	return 'b'
 }
 
 func beadResultFields(t *testing.T, msg tea.Msg) (bool, string, []beadsquery.Bead) {
@@ -422,7 +454,7 @@ func assertBeadsModePending(t *testing.T, m model.Model, mode ui.Mode, wantID st
 	}
 }
 
-func TestBeadsOpen_KeyFiveStartsDeferredFetchForSelectedRepo(t *testing.T) {
+func TestBeadsOpen_ExplicitSubviewStartsDeferredFetchForSelectedRepo(t *testing.T) {
 	calls := 0
 	queriedRepo := ""
 	m := model.NewWithOptions(testRepos(), model.Options{
@@ -438,7 +470,8 @@ func TestBeadsOpen_KeyFiveStartsDeferredFetchForSelectedRepo(t *testing.T) {
 		t.Fatal("new model has zero Beads Open request token")
 	}
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	if m.Mode() != ui.ModeBeadsOpen {
 		t.Fatalf("mode = %v, want ModeBeadsOpen", m.Mode())
 	}
@@ -446,7 +479,7 @@ func TestBeadsOpen_KeyFiveStartsDeferredFetchForSelectedRepo(t *testing.T) {
 		t.Fatalf("Beads Open request = %d, want advancement from %d", request, beforeRequest)
 	}
 	if cmd == nil {
-		t.Fatal("key 5 returned nil fetch command")
+		t.Fatal("open switch returned nil fetch command")
 	}
 	if calls != 0 {
 		t.Fatalf("ListOpenBeads ran before command execution: %d call(s)", calls)
@@ -477,7 +510,8 @@ func TestBeadsOpen_QueryFailureProducesUnavailableResult(t *testing.T) {
 			return nil, errors.New("bd exploded")
 		},
 	}))
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 
 	rawMsg := cmd()
 	msg, ok := rawMsg.(model.BeadsOpenResultMsg)
@@ -555,7 +589,7 @@ func TestBeadsSubviewErrorLifecycleAndStaleGuards(t *testing.T) {
 		t.Run(subview.name, func(t *testing.T) {
 			opts := beadQueryOptions()
 			opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-			m := inRightPane(model.NewWithOptions(testRepos(), opts))
+			m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 			m, _ = enterBeadsSubview(t, m, subview)
 			m = applyBeadsResultWithError(t, m, subview.mode, "first failure")
 			if got := m.BeadsError(subview.mode); got != "first failure" || !strings.Contains(m.View(), got) {
@@ -622,8 +656,8 @@ func TestBeadsClosed_FetchListsThenCountsAndReturnsTotal(t *testing.T) {
 		calls = append(calls, "count "+repoPath)
 		return 1432, nil
 	}
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd == nil {
 		t.Fatal("Closed switch returned nil fetch command")
@@ -666,8 +700,8 @@ func TestBeadsClosed_ListOrCountFailureReturnsNoPartialRows(t *testing.T) {
 				countCalls++
 				return 1432, tt.countErr
 			}
-			m := inRightPane(model.NewWithOptions(testRepos(), opts))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+			m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 
 			rawMsg := cmd()
@@ -691,10 +725,10 @@ func TestBeadsClosed_ListOrCountFailureReturnsNoPartialRows(t *testing.T) {
 func TestBeadsRepoChangeClearsEverySubviewError(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 	for _, subview := range beadSubviewCases() {
 		if !ui.IsBeadsMode(m.Mode()) {
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 		}
 		if m.Mode() != subview.mode {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
@@ -702,7 +736,7 @@ func TestBeadsRepoChangeClearsEverySubviewError(t *testing.T) {
 		m = applyBeadsResultWithError(t, m, subview.mode, subview.name+" failure")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil {
 		t.Fatal("repo change returned nil active-subview fetch")
@@ -715,8 +749,8 @@ func TestBeadsRepoChangeClearsEverySubviewError(t *testing.T) {
 }
 
 func TestBeadsClosed_CurrentSuccessRendersAcceptedTotal(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m, _ = update(m, model.BeadsClosedResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -732,8 +766,8 @@ func TestBeadsClosed_CurrentSuccessRendersAcceptedTotal(t *testing.T) {
 }
 
 func TestBeadsClosed_StaleAndWrongRepoTotalsAreIgnored(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	request := m.ListRequest(ui.ModeBeadsClosed)
 	m, _ = update(m, model.BeadsClosedResultMsg{
@@ -755,8 +789,8 @@ func TestBeadsClosed_StaleAndWrongRepoTotalsAreIgnored(t *testing.T) {
 func TestBeadsClosed_RefreshAndRepoChangeClearTotalWhilePending(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	request := m.ListRequest(ui.ModeBeadsClosed)
 	m, _ = update(m, model.BeadsClosedResultMsg{
@@ -780,7 +814,7 @@ func TestBeadsClosed_RefreshAndRepoChangeClearTotalWhilePending(t *testing.T) {
 		RepoPath: "/dev/alpha", ListRequest: currentRequest, Available: true,
 		Beads: []beadsquery.Bead{{ID: "bd-refreshed", Title: "Refreshed"}}, Total: 1500,
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if view := m.View(); !m.BeadsPending(ui.ModeBeadsClosed) || len(m.BeadsClosed()) != 0 || !strings.Contains(view, "loading closed beads") || strings.Contains(view, "of 1500") {
 		t.Fatalf("repo change did not clear and suppress the Closed result:\n%s", view)
@@ -788,9 +822,9 @@ func TestBeadsClosed_RefreshAndRepoChangeClearTotalWhilePending(t *testing.T) {
 }
 
 func TestBeadsClosed_HeaderCountUsesUnfilteredAcceptedRows(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 16})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	rows := make([]beadsquery.Bead, 100)
 	for i := range rows {
@@ -815,10 +849,11 @@ func TestBeadsClosed_HeaderCountUsesUnfilteredAcceptedRows(t *testing.T) {
 }
 
 func TestBeadsOpen_CurrentSuccessReplacesPaneAndMarksAvailable(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -842,10 +877,11 @@ func TestBeadsOpen_CurrentSuccessReplacesPaneAndMarksAvailable(t *testing.T) {
 }
 
 func TestBeadsOpen_CurrentUnavailableClearsPaneWithoutFetchStatus(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	request := m.ListRequest(ui.ModeBeadsOpen)
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -878,15 +914,16 @@ func TestBeadsOpen_RepoCursorChangeClearsAvailabilityAndRefetches(t *testing.T) 
 			return nil, nil
 		},
 	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = inBeadsPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeBeadsOpen),
 		Available:   true,
 		Beads:       []beadsquery.Bead{{ID: "bd-alpha", Title: "Alpha"}},
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	before := m.ListRequest(ui.ModeBeadsOpen)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -902,10 +939,17 @@ func TestBeadsOpen_RepoCursorChangeClearsAvailabilityAndRefetches(t *testing.T) 
 	if queriedRepo != "" {
 		t.Fatalf("ListOpenBeads ran before command execution for %q", queriedRepo)
 	}
-	rawMsg := cmd()
-	msg, ok := rawMsg.(model.BeadsOpenResultMsg)
-	if !ok {
-		t.Fatalf("repo change fetch = %T, want BeadsOpenResultMsg", rawMsg)
+	var msg model.BeadsOpenResultMsg
+	found := false
+	for _, rawMsg := range immediateTestCommandMessages(cmd) {
+		if candidate, ok := rawMsg.(model.BeadsOpenResultMsg); ok {
+			msg = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("repo change fetch = %T, want batch containing BeadsOpenResultMsg", cmd())
 	}
 	if queriedRepo != "/dev/bravo" || msg.RepoPath != "/dev/bravo" {
 		t.Fatalf("repo change queried %q and returned %q, want /dev/bravo", queriedRepo, msg.RepoPath)
@@ -919,10 +963,11 @@ func TestBeadsOpen_StaleSuccessAndUnavailableResultsAreIgnored(t *testing.T) {
 			return nil, nil
 		},
 	})
-	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = inBeadsPane(m)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	alphaRequest := m.ListRequest(ui.ModeBeadsOpen)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	bravoRequest := m.ListRequest(ui.ModeBeadsOpen)
 	m, _ = update(m, model.BeadsOpenResultMsg{
@@ -981,9 +1026,9 @@ func TestBeadsSubviews_RightPaneSlashFiltersEachSubview(t *testing.T) {
 		{key: 'c', mode: ui.ModeBeadsClosed, query: "alice"},
 	} {
 		t.Run(string(tt.key), func(t *testing.T) {
-			m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.mode != ui.ModeBeadsOpen {
+			m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			if tt.mode != ui.ModeBeadsReady {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			}
 			m = applyBeadsResult(t, m, tt.mode, true, []beadsquery.Bead{
@@ -1009,14 +1054,15 @@ func TestBeadsSubviews_RightPaneSlashFiltersEachSubview(t *testing.T) {
 
 func TestBeadsOpen_F5RefetchesSelectedRepo(t *testing.T) {
 	var queried []string
-	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
 		ScanRepos: func() ([]scanner.Repo, error) { return testRepos(), nil },
 		ListOpenBeads: func(repoPath string) ([]beadsquery.Bead, error) {
 			queried = append(queried, repoPath)
 			return nil, nil
 		},
 	}))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeBeadsOpen),
@@ -1041,7 +1087,7 @@ func TestBeadsOpen_F5RefetchesSelectedRepo(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "loading open beads") || strings.Contains(view, "bd-old") {
 		t.Fatalf("F5 did not replace stale rows with loading state:\n%s", view)
 	}
-	msgs := runBatchCmd(t, cmd)
+	msgs := immediateTestCommandMessages(cmd)
 	if len(queried) != 1 || queried[0] != "/dev/alpha" {
 		t.Fatalf("F5 queried repos = %v, want [/dev/alpha]", queried)
 	}
@@ -1051,11 +1097,12 @@ func TestBeadsOpen_F5RefetchesSelectedRepo(t *testing.T) {
 }
 
 func TestBeadsOpen_ModelViewExposesRowsSelectionAndAvailability(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	}))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 100, Height: 16})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeBeadsOpen),
@@ -1073,213 +1120,26 @@ func TestBeadsOpen_ModelViewExposesRowsSelectionAndAvailability(t *testing.T) {
 	}
 }
 
-func TestBeadsOpen_KeyFiveIsInertWhileRepoPaneFocused(t *testing.T) {
+func TestKeyTwoIsInertWhileRepoPaneFocusedAtReadyDefault(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{
-		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListReadyBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	})
-	before := m.ListRequest(ui.ModeBeadsOpen)
+	before := m.ListRequest(ui.ModeBeadsReady)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 
-	if m.Mode() != ui.ModeWorktrees || cmd != nil || m.ListRequest(ui.ModeBeadsOpen) != before {
-		t.Fatalf("left-pane key 5 changed state: mode=%v cmd=%T request=%d want mode=%v request=%d", m.Mode(), cmd, m.ListRequest(ui.ModeBeadsOpen), ui.ModeWorktrees, before)
-	}
-}
-
-func TestBeadsSubviews_ArrowsCycleWithWrapAndFetchOnlyTarget(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		fromKey   rune
-		direction tea.KeyType
-		want      ui.Mode
-	}{
-		{name: "ready left wraps closed", fromKey: 'r', direction: tea.KeyLeft, want: ui.ModeBeadsClosed},
-		{name: "ready right", fromKey: 'r', direction: tea.KeyRight, want: ui.ModeBeadsBlocked},
-		{name: "blocked left", fromKey: 'b', direction: tea.KeyLeft, want: ui.ModeBeadsReady},
-		{name: "blocked right", fromKey: 'b', direction: tea.KeyRight, want: ui.ModeBeadsOpen},
-		{name: "open left", fromKey: 'o', direction: tea.KeyLeft, want: ui.ModeBeadsBlocked},
-		{name: "open right", fromKey: 'o', direction: tea.KeyRight, want: ui.ModeBeadsInProgress},
-		{name: "in-progress left", fromKey: 'i', direction: tea.KeyLeft, want: ui.ModeBeadsOpen},
-		{name: "in-progress right", fromKey: 'i', direction: tea.KeyRight, want: ui.ModeBeadsClosed},
-		{name: "closed left", fromKey: 'c', direction: tea.KeyLeft, want: ui.ModeBeadsInProgress},
-		{name: "closed right wraps ready", fromKey: 'c', direction: tea.KeyRight, want: ui.ModeBeadsReady},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.fromKey != 'o' {
-				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.fromKey}})
-			}
-			before := listRequests(m)
-
-			m, cmd := update(m, tea.KeyMsg{Type: tt.direction})
-
-			if m.Mode() != tt.want || m.ActivePane() == ui.PaneRepos {
-				t.Fatalf("arrow mode/pane = %v/%d, want %v/1", m.Mode(), m.ActivePane(), tt.want)
-			}
-			if cmd == nil {
-				t.Fatal("arrow switch returned nil fetch command")
-			}
-			assertOnlyListRequestChanged(t, before, m, tt.want)
-		})
-	}
-}
-
-func TestTopLevelArrowFromFlowsEntersRememberedBeadsSubview(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	before := listRequests(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeBeadsClosed || cmd == nil {
-		t.Fatalf("right from Flows = mode %v cmd %T, want remembered Closed fetch", m.Mode(), cmd)
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsClosed)
-}
-
-func TestBeadsStartupFetchesOnlyConfiguredSubview(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		mode ui.Mode
-	}{
-		{name: "ready", mode: ui.ModeBeadsReady},
-		{name: "blocked", mode: ui.ModeBeadsBlocked},
-		{name: "open", mode: ui.ModeBeadsOpen},
-		{name: "in-progress", mode: ui.ModeBeadsInProgress},
-		{name: "closed", mode: ui.ModeBeadsClosed},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var calls []string
-			query := func(name string) func(string) ([]beadsquery.Bead, error) {
-				return func(repoPath string) ([]beadsquery.Bead, error) {
-					calls = append(calls, name+":"+repoPath)
-					return []beadsquery.Bead{{ID: "bd-" + name}}, nil
-				}
-			}
-			m := model.NewWithOptions(testRepos(), model.Options{
-				StartupMode:         tt.mode,
-				ListReadyBeads:      query("ready"),
-				ListBlockedBeads:    query("blocked"),
-				ListOpenBeads:       query("open"),
-				ListInProgressBeads: query("in-progress"),
-				ListClosedBeads:     query("closed"),
-				CountClosedBeads: func(repoPath string) (int, error) {
-					calls = append(calls, "closed-count:"+repoPath)
-					return 1, nil
-				},
-			})
-			if m.Mode() != tt.mode {
-				t.Fatalf("startup mode = %v, want %v", m.Mode(), tt.mode)
-			}
-			if !m.BeadsPending(tt.mode) {
-				t.Fatalf("configured mode %v is not pending before its startup result", tt.mode)
-			}
-			view := m.View()
-			if want := "loading " + tt.name + " beads"; !strings.Contains(view, want) {
-				t.Fatalf("startup view does not show %q before the result:\n%s", want, view)
-			}
-			if strings.Contains(view, "beads not configured") {
-				t.Fatalf("startup view reports Beads unavailable while the query is pending:\n%s", view)
-			}
-
-			cmd := m.Init()
-			if cmd == nil {
-				t.Fatal("Init returned nil command")
-			}
-			batch, ok := cmd().(tea.BatchMsg)
-			if !ok || len(batch) < 1 {
-				t.Fatalf("Init command = %T with %d entries, want fetch batch", batch, len(batch))
-			}
-			if len(calls) != 0 {
-				t.Fatalf("Beads query ran before fetch command execution: %v", calls)
-			}
-			msg := batch[0]()
-			wantCalls := []string{tt.name + ":/dev/alpha"}
-			if tt.mode == ui.ModeBeadsClosed {
-				wantCalls = append(wantCalls, "closed-count:/dev/alpha")
-			}
-			if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
-				t.Fatalf("startup query calls = %v, want %v", calls, wantCalls)
-			}
-			if got := beadsResultMode(msg); got != tt.mode {
-				t.Fatalf("startup fetch result mode = %v for %T, want %v", got, msg, tt.mode)
-			}
-
-			m, _ = update(m, msg)
-			for mode := ui.ModeBeadsReady; mode <= ui.ModeBeadsClosed; mode++ {
-				beads := m.Beads(mode)
-				if mode == tt.mode {
-					if len(beads) != 1 || beads[0].ID != "bd-"+tt.name || !m.BeadsAvailable(mode) || m.BeadsPending(mode) {
-						t.Fatalf("configured mode %v state = %#v available=%v pending=%v", mode, beads, m.BeadsAvailable(mode), m.BeadsPending(mode))
-					}
-					continue
-				}
-				if len(beads) != 0 || m.BeadsAvailable(mode) {
-					t.Fatalf("non-configured mode %v state = %#v available=%v, want untouched", mode, beads, m.BeadsAvailable(mode))
-				}
-			}
-		})
-	}
-}
-
-func TestBeadsStartupWithoutRepoDoesNotRemainPendingOrQuery(t *testing.T) {
-	calls := 0
-	m := model.NewWithOptions(nil, model.Options{
-		StartupMode: ui.ModeBeadsReady,
-		ListReadyBeads: func(string) ([]beadsquery.Bead, error) {
-			calls++
-			return nil, nil
-		},
-	})
-	if m.Mode() != ui.ModeBeadsReady {
-		t.Fatalf("startup mode = %v, want Ready", m.Mode())
-	}
-	if m.BeadsPending(ui.ModeBeadsReady) {
-		t.Fatal("Ready is pending even though no repository is available to query")
-	}
-	if cmd := model.FetchForModeForTest(m); cmd != nil {
-		t.Fatalf("Beads startup without a repository returned fetch command %T", cmd)
-	}
-	if calls != 0 {
-		t.Fatalf("Ready query calls = %d, want 0 without a repository", calls)
-	}
-}
-
-func TestBeadsStartupDefaultSeedsStickySubview(t *testing.T) {
-	for _, mode := range []ui.Mode{
-		ui.ModeBeadsReady,
-		ui.ModeBeadsBlocked,
-		ui.ModeBeadsOpen,
-		ui.ModeBeadsInProgress,
-		ui.ModeBeadsClosed,
-	} {
-		t.Run(model.ViewChoiceLabel(mode), func(t *testing.T) {
-			opts := beadQueryOptions()
-			opts.StartupMode = mode
-			m := inRightPane(model.NewWithOptions(testRepos(), opts))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-			before := listRequests(m)
-
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-
-			if m.Mode() != mode {
-				t.Fatalf("Beads re-entry mode = %v, want configured %v", m.Mode(), mode)
-			}
-			if cmd == nil {
-				t.Fatal("Beads re-entry returned nil fetch command")
-			}
-			assertOnlyListRequestChanged(t, before, m, mode)
-		})
+	if m.Mode() != ui.ModeBeadsReady || cmd != nil || m.ListRequest(ui.ModeBeadsReady) != before {
+		t.Fatalf("repo-pane key 2 changed state: mode=%v cmd=%T request=%d want mode=%v request=%d", m.Mode(), cmd, m.ListRequest(ui.ModeBeadsReady), ui.ModeBeadsReady, before)
 	}
 }
 
 func TestBeadsOpen_CursorUsesGroupedContentHeightAndScroll(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), model.Options{
+	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
 		ListOpenBeads: func(string) ([]beadsquery.Bead, error) { return nil, nil },
 	}))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m, _ = update(m, model.BeadsOpenResultMsg{
 		RepoPath:    "/dev/alpha",
 		ListRequest: m.ListRequest(ui.ModeBeadsOpen),
@@ -1295,8 +1155,8 @@ func TestBeadsOpen_CursorUsesGroupedContentHeightAndScroll(t *testing.T) {
 	if m.BeadsOpenSelected() != 3 {
 		t.Fatalf("BeadsOpenSelected() = %d, want 3", m.BeadsOpenSelected())
 	}
-	if scroll := m.BeadsOpenScroll(); scroll == 0 || m.BeadsOpenSelected() >= scroll+2 {
-		t.Fatalf("Beads selection %d not visible in height-2 viewport at scroll %d", m.BeadsOpenSelected(), scroll)
+	if scroll := m.BeadsOpenScroll(); scroll != 1 {
+		t.Fatalf("Beads scroll = %d, want 1 for stacked viewport", scroll)
 	}
 	if !strings.Contains(m.View(), "> bd-3") {
 		t.Fatalf("selected Bead did not render after scrolling:\n%s", m.View())
@@ -1304,9 +1164,10 @@ func TestBeadsOpen_CursorUsesGroupedContentHeightAndScroll(t *testing.T) {
 }
 
 func TestBeadsSubviews_RestoreIndependentPaneStateAcrossSwitchPaths(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	openRows := []beadsquery.Bead{
 		{ID: "open-0", Title: "Open zero"},
 		{ID: "open-1", Title: "Open one"},
@@ -1333,15 +1194,14 @@ func TestBeadsSubviews_RestoreIndependentPaneStateAcrossSwitchPaths(t *testing.T
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	assertBeadsPaneState(t, m, ui.ModeBeadsOpen, "open", 4, 3, 2)
+	assertBeadsPaneState(t, m, ui.ModeBeadsOpen, "open", 4, 3, 1)
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, openRows)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-	assertBeadsPaneState(t, m, ui.ModeBeadsOpen, "open", 4, 3, 2)
+	assertBeadsPaneState(t, m, ui.ModeBeadsOpen, "open", 4, 3, 1)
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft}) // Blocked.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyLeft}) // Ready.
-	assertBeadsPaneState(t, m, ui.ModeBeadsReady, "ready", 4, 2, 1)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	assertBeadsPaneState(t, m, ui.ModeBeadsReady, "ready", 4, 2, 0)
 }
 
 func setBeadsQuery(t *testing.T, m model.Model, query string) model.Model {
@@ -1376,10 +1236,10 @@ func TestBeadsSubviews_SameRepoRefetchRetainsThenRefiltersAndClamps(t *testing.T
 		t.Run(string(tt.key), func(t *testing.T) {
 			opts := beadQueryOptions()
 			opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-			m := inRightPane(model.NewWithOptions(testRepos(), opts))
+			m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 			m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.mode != ui.ModeBeadsOpen {
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			if tt.mode != ui.ModeBeadsReady {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			}
 			m = applyBeadsResult(t, m, tt.mode, true, []beadsquery.Bead{
@@ -1397,7 +1257,7 @@ func TestBeadsSubviews_SameRepoRefetchRetainsThenRefiltersAndClamps(t *testing.T
 			if cmd == nil || !m.BeadsPending(tt.mode) || m.BeadsAvailable(tt.mode) {
 				t.Fatalf("F5 state = cmd %T pending %v available %v", cmd, m.BeadsPending(tt.mode), m.BeadsAvailable(tt.mode))
 			}
-			assertBeadsPaneState(t, m, tt.mode, "needle", 4, 3, 2)
+			assertBeadsPaneState(t, m, tt.mode, "needle", 4, 3, 1)
 			if view := m.View(); !strings.Contains(view, "loading ") || strings.Contains(view, "bd-old-3") {
 				t.Fatalf("pending view exposed retained rows instead of loading state:\n%s", view)
 			}
@@ -1433,9 +1293,9 @@ func TestBeadsRepoChangeClearsEveryPaneButRetainsQueries(t *testing.T) {
 		{key: 'i', mode: ui.ModeBeadsInProgress, query: "progress-query"},
 		{key: 'c', mode: ui.ModeBeadsClosed, query: "closed-query"},
 	}
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 1})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	for _, subview := range subviews {
 		if m.Mode() != subview.mode {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
@@ -1448,7 +1308,7 @@ func TestBeadsRepoChangeClearsEveryPaneButRetainsQueries(t *testing.T) {
 		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	before := listRequests(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil || m.Mode() != ui.ModeBeadsClosed {
 		t.Fatalf("repo change = cmd %T mode %v, want Closed fetch", cmd, m.Mode())
@@ -1483,9 +1343,10 @@ func TestBeadsRepoChangeClearsEveryPaneButRetainsQueries(t *testing.T) {
 func TestBeadsUnavailableResultClearsOnlyCurrentPaneAndRetainsQuery(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 1})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	openRows := []beadsquery.Bead{{ID: "open-0", Title: "Open"}, {ID: "open-1", Title: "Open"}}
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, openRows)
 	m = setBeadsQuery(t, m, "open")
@@ -1517,9 +1378,10 @@ func TestBeadsUnavailableResultClearsOnlyCurrentPaneAndRetainsQuery(t *testing.T
 func TestBeadsPendingViewReportsLoadingUnderZeroMatchQuery(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{{ID: "bd-0", Title: "Alpha"}})
 	m = setBeadsQuery(t, m, "zzz")
 	if view := m.View(); !strings.Contains(view, "No bead results for zzz") {
@@ -1554,9 +1416,9 @@ func TestBeadsRepoChangeUnderActiveFlowsClearsPaneState(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
 	opts.ListFlows = func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	for _, subview := range subviews {
 		if m.Mode() != subview.mode {
 			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{subview.key}})
@@ -1575,13 +1437,14 @@ func TestBeadsRepoChangeUnderActiveFlowsClearsPaneState(t *testing.T) {
 
 	before := listRequests(m)
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	for _, subview := range subviews {
 		if m.ListRequest(subview.mode) == before[subview.mode] {
 			t.Fatalf("Active Flows repo change did not invalidate %v request", subview.mode)
 		}
-		if len(m.Beads(subview.mode)) != 0 || m.BeadsAvailable(subview.mode) || m.BeadsPending(subview.mode) ||
+		wantPending := subview.mode == ui.ModeBeadsClosed
+		if len(m.Beads(subview.mode)) != 0 || m.BeadsAvailable(subview.mode) || m.BeadsPending(subview.mode) != wantPending ||
 			m.BeadsSelected(subview.mode) != 0 || m.BeadsScroll(subview.mode) != 0 {
 			t.Fatalf("Active Flows repo change left state in %v: rows=%#v available=%v pending=%v selected=%d scroll=%d",
 				subview.mode, m.Beads(subview.mode), m.BeadsAvailable(subview.mode), m.BeadsPending(subview.mode),
@@ -1609,9 +1472,10 @@ func TestBeadsRepoChangeUnderActiveFlowsClearsPaneState(t *testing.T) {
 func TestBeadsCursorIsInertWhilePending(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + ui.TerminalChipRows + 2})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{
 		{ID: "bd-0"}, {ID: "bd-1"}, {ID: "bd-2"},
 	})
@@ -1635,48 +1499,30 @@ func TestBeadsCursorIsInertWhilePending(t *testing.T) {
 	}
 }
 
-// Arrow switching is one of the ways a subview becomes the remembered one, so
-// key 5 must re-enter a subview that was only ever reached by arrow.
-func TestBeadsArrowSwitchIsRememberedForKeyFiveReentry(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRight}) // Open -> In-progress.
-	if m.Mode() != ui.ModeBeadsInProgress {
-		t.Fatalf("arrow mode = %v, want Beads In-progress", m.Mode())
-	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	before := listRequests(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-	if m.Mode() != ui.ModeBeadsInProgress || cmd == nil {
-		t.Fatalf("key 5 re-entry = mode %v cmd %T, want arrow-remembered In-progress fetch", m.Mode(), cmd)
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsInProgress)
-}
-
 // The remembered subview is view state, not repo-owned data, so a repo change
-// must not send Beads back to Open.
+// must not send Beads back to Ready.
 func TestBeadsRememberedSubviewSurvivesRepoChange(t *testing.T) {
 	opts := beadQueryOptions()
 	opts.ScanRepos = func() ([]scanner.Repo, error) { return testRepos(), nil }
-	m := inRightPane(model.NewWithOptions(testRepos(), opts))
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m := inBeadsPane(model.NewWithOptions(testRepos(), opts))
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if m.Mode() != ui.ModeBeadsClosed {
-		t.Fatalf("key 5 after repo change = %v, want remembered Beads Closed", m.Mode())
+		t.Fatalf("key 2 after repo change = %v, want remembered Beads Closed", m.Mode())
 	}
 }
 
 // esc is the primary way a filter is undone, and it must restore the subview's
 // full row set rather than only leaving search-edit mode.
 func TestBeadsFilterClearsWithEsc(t *testing.T) {
-	m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+	m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
 	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: ui.BeadsContentOverhead + 3})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m = applyBeadsResult(t, m, ui.ModeBeadsOpen, true, []beadsquery.Bead{
 		{ID: "bd-needle", Title: "Needle"},
 		{ID: "bd-other", Title: "Other"},
@@ -1708,9 +1554,9 @@ func TestBeadsSubviews_ModelViewUsesExactQuietStates(t *testing.T) {
 		{key: 'c', mode: ui.ModeBeadsClosed, name: "closed"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			m := inRightPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
-			if tt.mode != ui.ModeBeadsOpen {
+			m := inBeadsPane(model.NewWithOptions(testRepos(), beadQueryOptions()))
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+			if tt.mode != ui.ModeBeadsReady {
 				m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			}
 			if view := m.View(); !strings.Contains(view, "loading "+tt.name+" beads") || strings.Contains(view, "beads not configured") {

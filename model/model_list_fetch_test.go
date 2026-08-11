@@ -184,7 +184,6 @@ func TestModel_ListFetchModesShareRequestAndStaleResultBehavior(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			loadCount := 0
 			m := model.NewWithOptions(testRepos(), model.Options{
-				StartupMode: tc.mode,
 				ListSessions: func(filter sessions.SessionFilter) ([]sessions.SessionRecord, error) {
 					loadCount++
 					if filter.RepoPath != selectedRepo {
@@ -207,6 +206,8 @@ func TestModel_ListFetchModesShareRequestAndStaleResultBehavior(t *testing.T) {
 					return nil, errors.New("flow store unavailable")
 				},
 			})
+			m, _ = switchTestMode(m, tc.mode)
+			m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 			beforeRequest := m.ListRequest(tc.mode)
 
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
@@ -223,7 +224,16 @@ func TestModel_ListFetchModesShareRequestAndStaleResultBehavior(t *testing.T) {
 			}
 
 			switched, _ := update(m, tea.KeyMsg{Type: tea.KeyDown})
-			msg := cmd()
+			var msg tea.Msg
+			for _, candidate := range immediateTestCommandMessages(cmd) {
+				if errMsg, ok := candidate.(model.FetchErrorMsg); ok && errMsg.Mode == tc.mode {
+					msg = candidate
+					break
+				}
+			}
+			if msg == nil {
+				t.Fatalf("fetch batch contained no error for mode %v", tc.mode)
+			}
 			assertListFetchCommandError(t, msg, tc.mode, request, selectedRepo, tc.pane, tc.errorPrefix)
 			switched, _ = update(switched, msg)
 			if got := switched.TransientError(); got != "" {

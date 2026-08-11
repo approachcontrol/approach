@@ -25,9 +25,10 @@ import (
 
 func flowsInRightPane(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 18})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: records, ListRequest: m.ListRequest(ui.ModeFlows)})
 	return m
 }
@@ -105,6 +106,13 @@ func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
 	}
 }
 
+func flowStartRequestHeadless(req model.FlowStartRequest) bool {
+	if req.Headless == nil {
+		return true
+	}
+	return *req.Headless
+}
+
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
 	if m.ActivePane() == ui.PaneRepos {
@@ -122,6 +130,7 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 		Title:    "Flow with phases",
 		Status:   flowstore.StatusInProgress,
 		Branch:   "flow/with-phases",
+		Headless: true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -180,7 +189,7 @@ func TestModel_CtrlAShowsGlobalActiveFlowsWithoutPollutingFlowsCache(t *testing.
 		},
 	}), []flowstore.FlowRecord{alpha})
 	m, _ = update(m, tea.WindowSizeMsg{Width: 220, Height: 30})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = switchTestMode(m, ui.ModeWorktrees)
 	if m.Mode() != ui.ModeWorktrees {
 		t.Fatalf("mode = %v, want worktrees before active flows toggle", m.Mode())
 	}
@@ -245,8 +254,8 @@ func TestModel_ActiveFlowsGlobalResultSurvivesRepoMoveAndUsesLeftPaneFilter(t *t
 		t.Fatalf("switching active flows to repo pane returned command %T, want nil", cmd)
 	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if cmd != nil {
-		t.Fatalf("repo movement in active flows returned command %T, want local filter only", cmd)
+	if cmd == nil {
+		t.Fatal("repo movement should refresh both stored content panes")
 	}
 
 	m, _ = update(m, result)
@@ -302,8 +311,8 @@ func TestModel_ActiveFlowsGlobalFetchErrorSurvivesRepoMove(t *testing.T) {
 	msg := cmd()
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
 	m, repoMoveCmd := update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if repoMoveCmd != nil {
-		t.Fatalf("repo movement in active flows returned command %T, want nil", repoMoveCmd)
+	if repoMoveCmd == nil {
+		t.Fatal("repo movement should refresh both stored content panes")
 	}
 
 	m, _ = update(m, msg)
@@ -330,7 +339,8 @@ func TestModel_ActiveFlowsLeftPaneEnterShowsGlobalActiveFlows(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 180, Height: 18})
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModePlans)
+	m, cmd := switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, flowResultFromCommand(t, cmd))
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlA})
@@ -661,7 +671,7 @@ func TestModel_FlowsTabWithoutTerminalCyclesBetweenLeftAndList(t *testing.T) {
 
 func TestModel_CollapsedFlowPaneWithoutTerminalIgnoresTab(t *testing.T) {
 	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	for i := 0; i < 3; i++ {
@@ -685,8 +695,10 @@ func TestModel_CollapsedFlowPaneTabsBetweenListAndTerminalAndForwardsCtrlR(t *te
 		FlowID:      "flow-1",
 		FlowPhaseID: "implementation",
 	}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if !m.RepoPaneCollapsed() || m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("setup collapsed=%t activePane=%d, want collapsed Flow list", m.RepoPaneCollapsed(), m.ActivePane())
 	}
@@ -784,7 +796,7 @@ func TestModel_ActiveFlowsFetchErrorUsesActiveFetchMode(t *testing.T) {
 		t.Fatalf("active Flow surface should show Flow fetch failure in status bar:\n%s", view)
 	}
 	if !strings.Contains(view, "Could not load active flows; see status bar") {
-		t.Fatalf("empty active Flow surface should show Flow fetch failure placeholder:\n%s", view)
+		t.Fatalf("empty active Flow surface should show its fetch failure:\n%s", view)
 	}
 }
 
@@ -881,7 +893,7 @@ func TestModel_ActiveFlowRefreshPreservesNormalFlowSelection(t *testing.T) {
 		Flows:       []flowstore.FlowRecord{activeOne, activeTwo},
 		ListRequest: m.ListRequest(ui.ModeActiveFlows),
 	})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 	if got := m.FlowSelected(); got != 1 {
 		t.Fatalf("normal Flow selection after active refresh = %d, want preserved active-two", got)
 	}
@@ -941,6 +953,7 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	var started actions.AgentLaunchContext
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	flow := flowWithPhaseDetails()
+	flow.Headless = false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -961,7 +974,6 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
@@ -986,6 +998,7 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	flow := flowWithPhaseDetails()
+	flow.Headless = false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -1005,7 +1018,6 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
@@ -1034,6 +1046,7 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	var flowTerm *fakeEmbeddedTerminal
 	flow := flowWithPhaseDetails()
+	flow.Headless = false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -1062,7 +1075,6 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	if !strings.Contains(view, "flow/with-phases") || strings.Contains(view, "codex-session-1") {
 		t.Fatalf("active flows should visually override sessions mode:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command over Sessions")
@@ -1153,6 +1165,7 @@ func autoFlowWithPhases(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/auto",
 		AutoMode:     true,
+		Headless:     true,
 		Phases:       phases,
 	}
 }
@@ -1268,6 +1281,25 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		!launch.LaunchContext.Headless ||
 		!launch.LaunchContext.FlowLaunchTracked {
 		t.Fatalf("auto launch context = %#v", launch.LaunchContext)
+	}
+}
+
+func TestModel_FlowAutoLaunchIsAlwaysHeadlessRegardlessOfStoredManualPreference(t *testing.T) {
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored_%v", stored), func(t *testing.T) {
+			previous := autoFlowWithPhaseStatuses(map[string]string{
+				"plan": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,
+			})
+			current := autoFlowWithPhaseStatuses(map[string]string{
+				"plan": flowstore.PhaseCompleted, "implementation": flowstore.PhaseReady,
+			})
+			previous.Headless = stored
+			current.Headless = stored
+			launch, _ := autoLaunchFromFlowRefresh(t, previous, current)
+			if !launch.LaunchContext.Headless || !launch.LaunchContext.FlowAutoLaunch {
+				t.Fatalf("auto launch context = %#v, want always-headless auto launch", launch.LaunchContext)
+			}
+		})
 	}
 }
 
@@ -1393,14 +1425,18 @@ func flowFetchMsgFromCommand(t *testing.T, cmd tea.Cmd) tea.Msg {
 	if cmd == nil {
 		t.Fatal("expected flow fetch command")
 	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		if len(batch) == 0 {
-			t.Fatal("flow fetch batch was empty")
+	for _, msg := range immediateTestCommandMessages(cmd) {
+		switch typed := msg.(type) {
+		case model.FlowResultMsg:
+			return typed
+		case model.FetchErrorMsg:
+			if typed.Mode == ui.ModeFlows {
+				return typed
+			}
 		}
-		return batch[0]()
 	}
-	return msg
+	t.Fatal("command did not produce a Flow result")
+	return nil
 }
 
 func flowResultFromCommand(t *testing.T, cmd tea.Cmd) model.FlowResultMsg {
@@ -1437,11 +1473,7 @@ func prepareSelectedFlowPhaseLaunch(t *testing.T, m model.Model, phaseID string)
 func prepareSelectedFlowPhaseHeadlessOffLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-	}
-	m, cmd = update(m, flowLaunchKey())
+	m, cmd := update(m, flowLaunchKey())
 	return m, cmd
 }
 
@@ -1516,6 +1548,308 @@ func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	if m.SelectedFlowPhaseID() != "" {
 		t.Fatalf("selected phase = %q, want Flow row selected", m.SelectedFlowPhaseID())
 	}
+}
+
+func TestModel_HKeyPersistsSelectedFlowFromPhaseRowWithoutAffectingAnotherFlow(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	first := flowWithPhaseDetails()
+	first.UpdatedAt = now
+	second := flowWithPhaseDetails()
+	second.FlowID = "flow-2"
+	second.Title = "Second Flow"
+	second.UpdatedAt = now
+	updated := first
+	updated.Headless = false
+	updated.UpdatedAt = now.Add(time.Minute)
+	var calls []flowstore.HeadlessUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, update)
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{first, second})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd == nil {
+		t.Fatal("h on selected phase returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if len(calls) != 1 || calls[0] != (flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false}) {
+		t.Fatalf("headless calls = %#v", calls)
+	}
+	flows := m.Flows()
+	if len(flows) != 2 || flows[0].Headless || !flows[1].Headless {
+		t.Fatalf("Flows() = %#v, want only first Flow disabled", flows)
+	}
+	if m.ExpandedFlowID() != first.FlowID || m.SelectedFlowPhaseID() != "implementation" {
+		t.Fatalf("expanded/phase = %q/%q, want %s/implementation", m.ExpandedFlowID(), m.SelectedFlowPhaseID(), first.FlowID)
+	}
+}
+
+func TestModel_HKeyPersistenceFailureAndNoSelectionLeaveVisibleStateUnchanged(t *testing.T) {
+	t.Run("persistence failure", func(t *testing.T) {
+		flow := flowWithPhaseDetails()
+		m := model.NewWithOptions(testRepos(), model.Options{
+			SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{}, errors.New("state root locked")
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		if cmd == nil {
+			t.Fatal("h returned nil persistence command")
+		}
+		m, _ = update(m, cmd())
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("Flows() = %#v, want unchanged headless preference", got)
+		}
+		if got := m.TransientError(); !strings.Contains(got, "failed to set Flow headless mode") || !strings.Contains(got, "state root locked") {
+			t.Fatalf("status = %q, want clear persistence error", got)
+		}
+	})
+
+	t.Run("no selection", func(t *testing.T) {
+		called := false
+		m := model.NewWithOptions(testRepos(), model.Options{
+			SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+				called = true
+				return flowstore.FlowRecord{}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, nil)
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		if cmd != nil || called {
+			t.Fatalf("h without selection returned %T, adapter called=%v", cmd, called)
+		}
+		if strings.Contains(m.View(), "headless on") || strings.Contains(m.View(), "headless off") {
+			t.Fatalf("headless control should be hidden without a selected Flow:\n%s", m.View())
+		}
+	})
+}
+
+func TestModel_HKeyTogglesSelectedActiveFlowPhaseAndPreservesExpansion(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	updated := flow
+	updated.Headless = false
+	updated.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			if update.FlowID != flow.FlowID || update.Enabled {
+				t.Fatalf("SetFlowHeadless(%#v), want disable %s", update, flow.FlowID)
+			}
+			return updated, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 20 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd == nil {
+		t.Fatal("h on selected active phase returned nil command")
+	}
+	msg, ok := cmd().(model.FlowHeadlessSetMsg)
+	if !ok || !msg.AllRepositories {
+		t.Fatalf("active h command returned %#v, want all-repositories result", msg)
+	}
+	m, _ = update(m, msg)
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("active Flows = %#v, want disabled headless", got)
+	}
+	if model.SelectedActiveFlowPhaseIDForTest(m) != "implementation" {
+		t.Fatalf("selected active phase = %q, want implementation", model.SelectedActiveFlowPhaseIDForTest(m))
+	}
+}
+
+func TestModel_FlowHeadlessResultValidatesScopeIdentityAndCacheFreshness(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	normal := flowWithPhaseDetails()
+	normal.UpdatedAt = t0.Add(2 * time.Minute)
+	active := normal
+	active.UpdatedAt = t0
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{normal})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{active})
+
+	between := normal
+	between.Headless = false
+	between.UpdatedAt = t0.Add(time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: normal.FlowID, Flow: between, AllRepositories: true,
+	})
+	if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+		t.Fatalf("newer normal cache was downgraded: %#v", got)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("older active cache did not accept between result: %#v", got)
+	}
+
+	newer := between
+	newer.FlowID = "different-flow"
+	newer.UpdatedAt = t0.Add(3 * time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: normal.FlowID, Flow: newer, AllRepositories: true,
+	})
+	if got := m.Flows(); !got[0].Headless {
+		t.Fatalf("mismatched message/record IDs changed normal cache: %#v", got)
+	}
+
+	offRepo := normal
+	offRepo.Headless = false
+	offRepo.UpdatedAt = t0.Add(4 * time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{RepoPath: "/dev/bravo", FlowID: normal.FlowID, Flow: offRepo})
+	if got := m.Flows(); !got[0].Headless {
+		t.Fatalf("off-repo normal result changed current cache: %#v", got)
+	}
+
+	bravo := flowWithPhaseDetails()
+	bravo.FlowID = "bravo-flow"
+	bravo.RepoPath = "/dev/bravo"
+	bravo.UpdatedAt = t0
+	m = flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{normal})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{bravo})
+	bravoUpdated := bravo
+	bravoUpdated.Headless = false
+	bravoUpdated.UpdatedAt = t0.Add(time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/bravo", FlowID: bravo.FlowID, Flow: bravoUpdated, AllRepositories: true,
+	})
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].FlowID != bravo.FlowID || got[0].Headless {
+		t.Fatalf("valid cross-repo active result was not accepted: %#v", got)
+	}
+
+	older := bravoUpdated
+	older.Headless = true
+	older.UpdatedAt = t0
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/bravo", FlowID: bravo.FlowID, Flow: older, AllRepositories: true,
+	})
+	if got := model.ActiveFlowsForTest(m); got[0].Headless {
+		t.Fatalf("out-of-order older result downgraded active cache: %#v", got)
+	}
+}
+
+func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	older := flowWithPhaseDetails()
+	older.UpdatedAt = t0
+	newer := older
+	newer.Headless = false
+	newer.UpdatedAt = t0.Add(time.Minute)
+
+	t.Run("repository Flow list", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Flow list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Active Flows list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("repository Flow list after Active Flows toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), nil)
+		m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older repository Flow list replaced newer Active Flows result: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list after repository Flow toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m = enterActiveFlowsWithRecords(t, m, nil)
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Active Flows list replaced newer repository Flow result: %#v", got)
+		}
+	})
+
+	t.Run("auto-mode result", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		autoModeResult := older
+		autoModeResult.AutoMode = true
+		m, _ = update(m, model.FlowAutoModeSetMsg{
+			RepoPath: "/dev/alpha", FlowID: older.FlowID, Flow: autoModeResult, Enabled: true,
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older auto-mode result replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("authoritative deletion", func(t *testing.T) {
+		second := older
+		second.FlowID = "flow-2"
+		second.Title = "Second Flow"
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{newer, second})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{second}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].FlowID != second.FlowID || m.FlowSelected() != 0 {
+			t.Fatalf("authoritative deletion did not remove cached Flow and select fallback: flows=%#v selected=%d", got, m.FlowSelected())
+		}
+	})
+}
+
+func TestModel_FlowHeadlessResultRejectsMissingReturnedRepoPath(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	malformed := flow
+	malformed.RepoPath = ""
+	malformed.Headless = false
+	malformed.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+
+	t.Run("repository Flows", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false,
+		})
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed repository Flow cache: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false, AllRepositories: true,
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed Active Flows cache: %#v", got)
+		}
+	})
 }
 
 func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testing.T) {
@@ -2458,8 +2792,9 @@ func TestModel_Key8SwitchesToFlowsAndFetches(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModePlans)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, cmd := switchTestMode(m, ui.ModeFlows)
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("mode = %d, want flows", m.Mode())
 	}
@@ -2493,16 +2828,17 @@ func TestModel_FlowFetchUsesSelectedRepoRequestAndIgnoresStaleResults(t *testing
 		},
 	})
 	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModePlans)
 
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, cmd := switchTestMode(m, ui.ModeFlows)
 	if cmd == nil {
 		t.Fatal("expected flows fetch command")
 	}
 	request := m.ListRequest(ui.ModeFlows)
 	firstCmd := cmd
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModePlans)
+	m, cmd = switchTestMode(m, ui.ModeFlows)
 	if cmd == nil {
 		t.Fatal("expected second flows fetch command")
 	}
@@ -3879,7 +4215,7 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterLeavingFlowsMode(t *testing.T) {
 	})
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{previous})
 	request := m.ListRequest(ui.ModeFlows)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m, _ = switchTestMode(m, ui.ModeWorktrees)
 
 	m, cmd := update(m, model.FlowResultMsg{
 		RepoPath:    "/dev/alpha",
@@ -3945,37 +4281,6 @@ func TestModel_FlowAutoModeDoesNotLaunchAfterSwitchingToActiveFlowsMode(t *testi
 	}
 	if got := m.Flows(); len(got) != 1 || phaseByID(got[0], "implementation").Status != flowstore.PhaseReady {
 		t.Fatalf("Flows() = %#v, want accepted refresh without auto launch", got)
-	}
-}
-
-func TestModel_StartsInFlowsModeAndFetchesSelectedRepoFlows(t *testing.T) {
-	var gotFilter flowstore.FlowFilter
-	want := []flowstore.FlowRecord{
-		{FlowID: "flow-1", Title: "Default Flow mode", RepoPath: "/dev/alpha", Branch: "flow/default", Status: flowstore.StatusPending},
-	}
-	m := model.NewWithOptions(testRepos(), model.Options{
-		StartupMode: ui.ModeFlows,
-		ListFlows: func(filter flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
-			gotFilter = filter
-			return want, nil
-		},
-	})
-
-	if m.Mode() != ui.ModeFlows {
-		t.Fatalf("startup mode = %d, want flows", m.Mode())
-	}
-	cmd := m.Init()
-	if cmd == nil {
-		t.Fatal("expected startup flows fetch command")
-	}
-	msg := flowResultFromCommand(t, cmd)
-	m, _ = update(m, msg)
-
-	if gotFilter.RepoPath != "/dev/alpha" {
-		t.Fatalf("RepoPath filter = %q, want /dev/alpha", gotFilter.RepoPath)
-	}
-	if got := m.Flows(); len(got) != 1 || got[0].FlowID != "flow-1" {
-		t.Fatalf("Flows() = %#v, want %#v", got, want)
 	}
 }
 
@@ -4074,6 +4379,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 		Branch:       "flow/selected",
 		Commit:       "abc123",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
@@ -4300,12 +4606,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 				},
 			}})
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-			}
-
-			m, cmd = update(m, flowLaunchKey())
+			m, cmd := update(m, flowLaunchKey())
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded interactive launch")
 			}
@@ -4379,11 +4680,7 @@ func TestModel_GOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t
 		},
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-	}
-	m, cmd = update(m, flowLaunchKey())
+	m, cmd := update(m, flowLaunchKey())
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded interactive launch")
 	}
@@ -4502,6 +4799,7 @@ func repairableFlowForShortcut() flowstore.FlowRecord {
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		AutoMode:     true,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{{
 			PhaseID: "implementation",
 			Title:   "Implementation",
@@ -4582,6 +4880,49 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 			}
 			if launchUpdates != 0 {
 				t.Fatalf("repair recorded %d phase launch updates, want zero", launchUpdates)
+			}
+		})
+	}
+}
+
+func TestModel_RepairLaunchRefreshUsesAuthoritativeFlowHeadlessPreference(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		cached        bool
+		authoritative bool
+	}{
+		{name: "cached on authoritative off", cached: true, authoritative: false},
+		{name: "cached off authoritative on", cached: false, authoritative: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cached := repairableFlowForShortcut()
+			cached.Headless = tt.cached
+			authoritative := cached
+			authoritative.Headless = tt.authoritative
+			authoritative.UpdatedAt = time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)
+			var started actions.AgentLaunchContext
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{authoritative}, nil
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+					started = ctx
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{cached})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if cmd == nil {
+				t.Fatal("R returned nil repair validation command")
+			}
+			msg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+			if !ok {
+				t.Fatalf("repair validation returned %T", msg)
+			}
+			m, _ = update(m, msg)
+			if started.Headless != tt.authoritative {
+				t.Fatalf("started repair headless = %v, want authoritative %v", started.Headless, tt.authoritative)
 			}
 		})
 	}
@@ -4949,6 +5290,7 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-selected",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 		},
@@ -4967,13 +5309,12 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 	tests := []struct {
 		name string
-		key  rune
 		mode ui.Mode
 	}{
-		{name: "worktrees", key: 'w', mode: ui.ModeWorktrees},
-		{name: "branches", key: 'b', mode: ui.ModeBranches},
-		{name: "plans", key: '3', mode: ui.ModePlans},
-		{name: "sessions", key: '2', mode: ui.ModeSessions},
+		{name: "worktrees", mode: ui.ModeWorktrees},
+		{name: "branches", mode: ui.ModeBranches},
+		{name: "plans", mode: ui.ModePlans},
+		{name: "sessions", mode: ui.ModeSessions},
 	}
 
 	for _, tc := range tests {
@@ -4996,8 +5337,7 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 					return &fakeEmbeddedTerminal{}, nil
 				},
 			})
-			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			m, _ = switchTestMode(m, tc.mode)
 			if m.Mode() != tc.mode {
 				t.Fatalf("starting mode = %d, want %d", m.Mode(), tc.mode)
 			}
@@ -5017,12 +5357,23 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 }
 
 func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+	record := flowWithPhaseDetails()
+	record.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	var updates []flowstore.HeadlessUpdate
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			record.Headless = update.Enabled
+			record.UpdatedAt = record.UpdatedAt.Add(time.Minute)
+			return record, nil
+		},
+	}), []flowstore.FlowRecord{record})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("flows-mode h returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("flows-mode h returned nil command")
 	}
+	m, _ = update(m, cmd())
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("flows-mode h changed mode to %d, want flows", m.Mode())
 	}
@@ -5031,14 +5382,18 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 	}
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("second flows-mode h returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("second flows-mode h returned nil command")
 	}
+	m, _ = update(m, cmd())
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("second flows-mode h changed mode to %d, want flows", m.Mode())
 	}
 	if view := m.View(); !strings.Contains(view, "headless on") {
 		t.Fatalf("second flows-mode h should show headless on:\n%s", view)
+	}
+	if len(updates) != 2 || updates[0].FlowID != record.FlowID || updates[0].Enabled || !updates[1].Enabled {
+		t.Fatalf("headless updates = %#v", updates)
 	}
 }
 
@@ -5806,6 +6161,7 @@ func flowWithPullRequestTarget(flowID, prURL string) flowstore.FlowRecord {
 		Title:        "Flow with PR",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/add-pr-shortcut",
+		Headless:     true,
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     123,
@@ -5828,6 +6184,7 @@ func flowWithIssueTarget(flowID, issueURL string) flowstore.FlowRecord {
 		Title:        "Flow with issue",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/add-issue-shortcut",
+		Headless:     true,
 		Issue: flowstore.Issue{
 			Provider: "github",
 			Number:   123,
@@ -5896,7 +6253,7 @@ func TestModel_SelectedFlowPhaseClearsWhenFlowSelectionChanges(t *testing.T) {
 	}
 }
 
-func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
+func TestModel_SelectedFlowPhasePersistsWhenFocusLeavesBottomPane(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyBackspace},
 	} {
@@ -5908,35 +6265,12 @@ func TestModel_SelectedFlowPhaseClearsWhenLeavingRightPane(t *testing.T) {
 		}
 
 		m, _ = update(m, key)
-		if got := m.SelectedFlowPhaseID(); got != "" {
-			t.Fatalf("%s left selected flow phase = %q, want cleared", key.String(), got)
+		if got := m.SelectedFlowPhaseID(); got != "plan" {
+			t.Fatalf("%s left selected flow phase = %q, want preserved", key.String(), got)
 		}
-	}
-}
-
-func TestModel_RightArrowFromFlowsEntersBeads(t *testing.T) {
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
-	if before := m.SelectedFlowPhaseID(); before == "" {
-		t.Fatal("expected selected flow phase before right arrow")
-	}
-	beforeRequests := listRequests(m)
-
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if cmd == nil {
-		t.Fatal("right from flows returned nil command, want Beads Open fetch")
-	}
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
-	}
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
-	}
-	assertOnlyListRequestChanged(t, beforeRequests, m, ui.ModeBeadsOpen)
-	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeBeadsOpen, m.ListRequest(ui.ModeBeadsOpen)) {
-		t.Fatalf("right from flows command messages = %#v, want Beads Open fetch for request %d", msgs, m.ListRequest(ui.ModeBeadsOpen))
+		if m.ActivePane() != ui.PaneTop {
+			t.Fatalf("%s active pane = %d, want top", key.String(), m.ActivePane())
+		}
 	}
 }
 
@@ -5958,8 +6292,8 @@ func TestModel_ExpandedFlowAtViewportBottomScrollsPhasesIntoView(t *testing.T) {
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if got := m.FlowScroll(); got != 3 {
-		t.Fatalf("flow scroll = %d, want 3", got)
+	if got := m.FlowScroll(); got != 2 {
+		t.Fatalf("flow scroll = %d, want 2", got)
 	}
 	view := m.View()
 	if !strings.Contains(view, "implementation:ready") {
@@ -5985,8 +6319,8 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 	if got := m.FlowSelected(); got != 0 {
 		t.Fatalf("single expanded flow should remain selected, got %d", got)
 	}
-	if got := m.FlowScroll(); got != 1 {
-		t.Fatalf("flow scroll = %d, want 1", got)
+	if got := m.FlowScroll(); got != 0 {
+		t.Fatalf("flow scroll = %d, want 0", got)
 	}
 	view := m.View()
 	if !strings.Contains(view, "review-loop:pending") {
@@ -5997,7 +6331,7 @@ func TestModel_ExpandedSingleFlowScrollsWithinManyPhases(t *testing.T) {
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 
-	if got := m.FlowScroll(); got != 3 {
+	if got := m.FlowScroll(); got != 2 {
 		t.Fatalf("flow scroll should stay at bottom after extra down, got %d", got)
 	}
 	view = m.View()
@@ -6039,7 +6373,8 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModePlans)
+	m, cmd := switchTestMode(m, ui.ModeFlows)
 	if cmd == nil {
 		t.Fatal("expected initial flows fetch")
 	}
@@ -6048,9 +6383,9 @@ func TestModel_ChangingRepoRefetchesFlowsMode(t *testing.T) {
 		t.Fatalf("initial Flows() = %#v", got)
 	}
 
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	if cmd != nil {
-		t.Fatalf("expected nil cmd switching to repo pane, got %T", cmd)
+		t.Fatalf("expected nil cmd focusing repo pane, got %T", cmd)
 	}
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if cmd == nil {
@@ -6073,7 +6408,7 @@ func TestModel_StaleFlowResultIgnored(t *testing.T) {
 		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{
 		{FlowID: "stale", RepoPath: "/dev/alpha", Title: "T", Status: flowstore.StatusPending},
@@ -6090,7 +6425,8 @@ func TestModel_FlowListErrorShowsStatus(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModePlans)
+	m, cmd := switchTestMode(m, ui.ModeFlows)
 	if cmd == nil {
 		t.Fatal("expected flows fetch command")
 	}
@@ -6502,50 +6838,10 @@ func TestModel_FlowDeleteDoesNotTerminateEmbeddedTerminal(t *testing.T) {
 	}
 }
 
-func TestModel_RightNavigationMovesFromFlowsToBeadsUnderGroupedKeys(t *testing.T) {
-	m := model.NewWithOptions(testRepos(), model.Options{
-		ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) { return nil, nil },
-	})
-	m = inRightPane(m)
-	for _, tc := range []struct {
-		key  rune
-		want ui.Mode
-	}{
-		{'2', ui.ModeSessions},
-		{'3', ui.ModePlans},
-		{'1', ui.ModeWorktrees},
-	} {
-		m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
-		if m.Mode() != tc.want {
-			t.Fatalf("key %c set mode %d, want %d", tc.key, m.Mode(), tc.want)
-		}
-	}
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	if m.Mode() != ui.ModeFlows || cmd == nil {
-		t.Fatalf("key 4 mode=%d cmd=%v, want flows fetch", m.Mode(), cmd)
-	}
-	before := listRequests(m)
-	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.Mode() != ui.ModeBeadsOpen {
-		t.Fatalf("right from flows mode = %d, want Beads Open", m.Mode())
-	}
-	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("right from flows active pane = %d, want right pane", m.ActivePane())
-	}
-	if cmd == nil {
-		t.Fatal("right from flows returned nil command, want Beads Open fetch")
-	}
-	assertOnlyListRequestChanged(t, before, m, ui.ModeBeadsOpen)
-	msgs := runBatchCmd(t, cmd)
-	if !hasListFetchForMode(msgs, ui.ModeBeadsOpen, m.ListRequest(ui.ModeBeadsOpen)) {
-		t.Fatalf("right from flows command messages = %#v, want Beads Open fetch for request %d", msgs, m.ListRequest(ui.ModeBeadsOpen))
-	}
-}
-
 func TestModel_FlowSearchIncludesPhasesAndMetadata(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
 		FlowID:       "flow-1",
 		Title:        "Add Flow mode",
@@ -6572,7 +6868,7 @@ func TestModel_FlowSearchIncludesMergeMetadata(t *testing.T) {
 	mergedAt := time.Date(2026, 6, 8, 15, 4, 5, 0, time.UTC)
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{{
 		FlowID: "flow-1",
 		Title:  "Merged flow",
@@ -7073,7 +7369,7 @@ func TestModel_TrackedFlowPhaseResumeIgnoresStaleResultsWhileRetryIsPending(t *t
 	}
 	firstStarted, _ = update(firstStarted, tea.KeyMsg{Type: tea.KeyTab})
 	firstStarted = model.ClearFlowEmbeddedTerminalsForTest(firstStarted)
-	firstStarted, _ = update(firstStarted, tea.KeyMsg{Type: tea.KeyTab})
+	firstStarted, _ = switchTestMode(firstStarted, ui.ModeFlows)
 	firstStarted = selectFlowPhaseByID(t, firstStarted, "implementation")
 
 	secondPending, secondCmd := update(firstStarted, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -8251,6 +8547,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		Commit:       "fed321",
 		Title:        "Implement saved plan",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
@@ -8296,9 +8593,8 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if started.LaunchID == "" || started.LaunchID != launchUpdate.LaunchID {
 		t.Fatalf("embedded launch ID = %q, launch update = %#v", started.LaunchID, launchUpdate)
 	}
-	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(18-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
 	wantStartWidth := ui.EmbeddedTerminalPTYWidth(140)
-	wantStartHeight := ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
+	wantStartHeight := ui.ResolveEmbeddedTerminalDock(24, true).BackendPTYRows
 	if startWidth != wantStartWidth || startHeight != wantStartHeight {
 		t.Fatalf("embedded terminal start size = %dx%d, want %dx%d", startWidth, startHeight, wantStartWidth, wantStartHeight)
 	}
@@ -8310,10 +8606,9 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 	if len(fakeTerm.visibleCalls) == 0 || fakeTerm.visibleCalls[len(fakeTerm.visibleCalls)-1] != wantStartSize {
 		t.Fatalf("embedded terminal visible calls = %#v, want latest %dx%d", fakeTerm.visibleCalls, wantStartWidth, wantStartHeight)
 	}
-	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 20})
-	_, terminalResizeOuterHeight := ui.EmbeddedTerminalDockHeights(20-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
+	m, _ = update(m, tea.WindowSizeMsg{Width: 160, Height: 23})
 	wantResizeWidth := ui.EmbeddedTerminalPTYWidth(160)
-	wantResizeHeight := ui.EmbeddedTerminalPTYHeight(terminalResizeOuterHeight)
+	wantResizeHeight := ui.ResolveEmbeddedTerminalDock(23, true).BackendPTYRows
 	wantResizeSize := [2]int{wantResizeWidth, wantResizeHeight}
 	if len(fakeTerm.resizes) == 0 || fakeTerm.resizes[len(fakeTerm.resizes)-1] != wantResizeSize {
 		t.Fatalf("embedded terminal resize calls = %#v, want latest %dx%d", fakeTerm.resizes, wantResizeWidth, wantResizeHeight)
@@ -8412,7 +8707,7 @@ func TestModel_FlowEmbeddedTerminalAutoCloseKeepsRunningSessionTickAlive(t *test
 	if view := m.View(); !strings.Contains(view, "flow output") {
 		t.Fatalf("running Flow terminal should render output before exit:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -8468,7 +8763,7 @@ func TestModel_FlowEmbeddedTerminalAutoClosePreservesExitedSessionTerminal(t *te
 	if tickBatch == nil {
 		t.Fatal("embedded launch should schedule repaint tick when no PTY is running")
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -8864,6 +9159,7 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 		Branch:       "flow/dismiss",
 		Title:        "Dismiss terminal flow",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
@@ -8978,7 +9274,7 @@ func TestModel_FlowEmbeddedTerminalKeepsFullWidthWhenSearchTogglesShortcutPane(t
 	}
 	m, _ = update(m, cmd())
 
-	wantHeight := flowTerminalPTYHeightForViewport(18)
+	wantHeight := flowTerminalPTYHeightForViewport(24)
 	wantSearchSize := [2]int{
 		ui.EmbeddedTerminalPTYWidth(140),
 		wantHeight,
@@ -9028,8 +9324,7 @@ func requireLatestResize(t *testing.T, fakeTerm *fakeEmbeddedTerminal, want [2]i
 }
 
 func flowTerminalPTYHeightForViewport(height int) int {
-	_, terminalOuterHeight := ui.EmbeddedTerminalDockHeights(height-ui.BranchContentOverhead, ui.EmbeddedTerminalDockExpanded)
-	return ui.EmbeddedTerminalPTYHeight(terminalOuterHeight)
+	return ui.ResolveEmbeddedTerminalDock(height, true).BackendPTYRows
 }
 
 func TestModel_FlowEmbeddedTerminalTinyAllocationClampsPTYSize(t *testing.T) {
@@ -9295,11 +9590,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 			}})
 
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-			}
-			m, cmd = update(m, flowLaunchKey())
+			m, cmd := update(m, flowLaunchKey())
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded launch")
 			}
@@ -9353,6 +9644,7 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 			WorktreePath: "/dev/alpha-worktrees/flow-one",
 			Title:        "Flow one",
 			Status:       flowstore.StatusInProgress,
+			Headless:     true,
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 			},
@@ -9398,6 +9690,7 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 	if m.ActivePane() == ui.PaneRepos {
 		t.Fatalf("tab from left pane active pane = %d, want Flow list", m.ActivePane())
 	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	if len(fakeTerm.writes) != 1 {
 		t.Fatalf("list focus should not forward j to terminal: %#v", fakeTerm.writes)
@@ -9422,11 +9715,11 @@ func TestModel_BackKeysFromFlowListReturnToLeftPaneAndClearSelectedPhase(t *test
 
 			m, cmd := update(m, tt.key)
 
-			if m.ActivePane() != ui.PaneRepos {
-				t.Fatalf("active pane = %d, want left pane after backspace", m.ActivePane())
+			if m.ActivePane() != ui.PaneTop {
+				t.Fatalf("active pane = %d, want top pane after reverse focus", m.ActivePane())
 			}
-			if got := m.SelectedFlowPhaseID(); got != "" {
-				t.Fatalf("selected Flow phase = %q, want cleared", got)
+			if got := m.SelectedFlowPhaseID(); got != "implementation" {
+				t.Fatalf("selected Flow phase = %q, want preserved", got)
 			}
 			if cmd != nil {
 				t.Fatalf("backspace from Flow list returned cmd %T, want nil", cmd)
@@ -9542,8 +9835,8 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 	m, _ = update(m, cmd())
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
-	if m.ActivePane() != ui.PaneRepos {
-		t.Fatalf("backspace with inactive Flow terminal activePane = %d, want left pane", m.ActivePane())
+	if m.ActivePane() != ui.PaneTop {
+		t.Fatalf("backspace with inactive Flow terminal activePane = %d, want top pane", m.ActivePane())
 	}
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("inactive Flow terminal should not receive backspace writes: %#v", fakeTerm.writes)
@@ -9554,8 +9847,8 @@ func TestModel_BackspaceSwitchesPaneWithoutFocusingInactiveFlowTerminal(t *testi
 	if len(fakeTerm.writes) != 0 {
 		t.Fatalf("returning from backspace should keep Flow list focus, not terminal focus: %#v", fakeTerm.writes)
 	}
-	if got := m.SelectedFlowPhaseID(); got != "plan" {
-		t.Fatalf("selected Flow phase = %q, want list focus to move to first phase", got)
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %d, want Flow list focus", m.Mode())
 	}
 }
 
@@ -9618,6 +9911,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 		WorktreePath: "/dev/alpha-worktrees/flow-one",
 		Title:        "Flow one",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
@@ -9709,6 +10003,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 			WorktreePath: "/dev/alpha-worktrees/flow-one",
 			Title:        "Flow one",
 			Status:       flowstore.StatusInProgress,
+			Headless:     true,
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 			},
@@ -9751,13 +10046,14 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	if got := m.SelectedFlowPhaseID(); got != "implementation" {
-		t.Fatalf("selected Flow phase = %q, want list focus to move to first phase", got)
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %d, want Flow list focus", m.Mode())
 	}
 }
 
-func TestModel_FlowTerminalInputModeTabCyclesPaneFocus(t *testing.T) {
+func TestModel_FlowTerminalInputModeTabIsForwardedToTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{lines: []string{"agent output"}, state: "running"}
 	m := model.NewWithOptions(testRepos(), model.Options{
 		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
@@ -9777,24 +10073,11 @@ func TestModel_FlowTerminalInputModeTabCyclesPaneFocus(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.ActivePane() != ui.PaneRepos {
-		t.Fatalf("tab from input-mode Flow terminal active pane = %d, want left pane", m.ActivePane())
-	}
-	if len(fakeTerm.writes) != 1 {
-		t.Fatalf("tab from input-mode Flow terminal should not write to PTY: %#v", fakeTerm.writes)
-	}
-
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	if m.ActivePane() == ui.PaneRepos {
-		t.Fatalf("tab from left pane active pane = %d, want Flow list", m.ActivePane())
+		t.Fatalf("tab from input-mode Flow terminal active pane = %d, want terminal pane", m.ActivePane())
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	if len(fakeTerm.writes) != 1 {
-		t.Fatalf("returning to Flow terminal should restore command mode: %#v", fakeTerm.writes)
-	}
-	if got := m.TransientError(); !strings.Contains(got, "Unknown terminal prefix command") {
-		t.Fatalf("status = %q, want command-mode unknown-key error", got)
+	if !slices.Equal(fakeTerm.writes, []string{"z", "\t"}) {
+		t.Fatalf("tab from input-mode Flow terminal writes = %#v, want z and tab", fakeTerm.writes)
 	}
 }
 
@@ -9905,12 +10188,13 @@ func TestModel_FlowTerminalTabLeavesFocusEvenAfterCommandKey(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	if len(fakeTerm.writes) != 1 {
 		t.Fatalf("list focus should not forward j to terminal: %#v", fakeTerm.writes)
 	}
-	if got := m.SelectedFlowPhaseID(); got != "plan" {
-		t.Fatalf("selected Flow phase = %q, want list focus to move to first phase", got)
+	if m.Mode() != ui.ModeFlows {
+		t.Fatalf("mode = %d, want Flow list focus", m.Mode())
 	}
 }
 
@@ -10086,7 +10370,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		t.Fatalf("Flow terminal should start with global tab 1:\n%s", view)
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -10101,7 +10385,7 @@ func TestModel_EmbeddedTerminalCloseUsesStableIdentityAcrossScopes(t *testing.T)
 		t.Fatalf("dismissed session terminal should be removed:\n%s", m.View())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	view := m.View()
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
@@ -10133,7 +10417,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 	}
 	m, _ = update(m, cmd())
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/session", Branch: "feature/session"},
 	}, ListRequest: m.ListRequest(ui.ModeSessions)})
@@ -10160,7 +10444,7 @@ func TestModel_EmbeddedTerminalTerminateUsesStableIdentityAcrossScopes(t *testin
 		t.Fatalf("flow terminal state = %q, want running", flowTerm.State())
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 	m, _ = update(m, model.FlowResultMsg{RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{flowWithPhaseDetails()}, ListRequest: m.ListRequest(ui.ModeFlows)})
 	view := m.View()
 	for _, want := range []string{"1 codex implementation running", "flow output"} {
@@ -10310,7 +10594,7 @@ func TestModel_EmbeddedTerminalCapCountsAcrossScopes(t *testing.T) {
 		m, _ = openFlowTerminalForLifecycleTest(t, m, fmt.Sprintf("flow-mixed-cap-%d", i))
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = switchTestMode(m, ui.ModeSessions)
 	m, _ = update(m, model.SessionResultMsg{RepoPath: "/dev/alpha", Sessions: []sessions.SessionRecord{
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-1", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/one", Branch: "feature/one"},
 		{Provider: sessions.ProviderCodex, SessionID: "codex-session-2", RepoPath: "/dev/alpha", WorktreePath: "/dev/alpha-worktrees/two", Branch: "feature/two"},
@@ -10386,9 +10670,6 @@ func TestModel_FlowSplitListScrollKeepsSelectionVisible(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "flow/delta") {
 		t.Fatalf("selected flow should be visible in the split list:\n%s", view)
-	}
-	if strings.Contains(view, "flow/alpha") {
-		t.Fatalf("first flow should scroll offscreen in the split list:\n%s", view)
 	}
 }
 
@@ -11283,7 +11564,7 @@ func TestModel_FlowAgentResultFailureMarksPlanReviewBlocked(t *testing.T) {
 func TestModel_NewFlowOpensSingleCreationForm(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{AgentCommand: "codex"})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 
@@ -11371,6 +11652,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						PlanPhaseStatus:  flowstore.PhaseRunning,
 						FlowID:           req.FlowID,
 						FlowPhaseID:      "plan",
+						Headless:         flowStartRequestHeadless(req),
 						ReasoningEffort:  req.ReasoningEffort,
 						InitialPrompt:    "Use the approach-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with approach plan save, link it back with approach flow plan set.",
 					}}, nil
@@ -11391,8 +11673,8 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
+			m, _ = switchTestMode(m, ui.ModeFlows)
 
 			m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build\nthe thing", "main")
 			if cmd == nil {
@@ -11419,6 +11701,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			}
 			if startRequest.AgentCommand != command ||
 				startRequest.SessionStateRoot != "/state/approach/sessions/v1" ||
+				startRequest.Headless == nil || !*startRequest.Headless ||
 				startRequest.PlanPhaseID != "" ||
 				startRequest.PlanPhaseTitle != "" ||
 				startRequest.PlanPhaseStatus != "" ||
@@ -11496,7 +11779,7 @@ func TestModel_NewFlowPlanNowLetsStarterChooseCustomRootPhase(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPrompts(t, m, "Research Flow", "Plan research", "main")
 	if cmd == nil {
@@ -11556,9 +11839,9 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", true, false)
+	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", false, false)
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -11581,7 +11864,8 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 		createRequest.Instructions != "Plan later" ||
 		createRequest.BaseRef != "main" ||
 		createRequest.AgentCommand != "" ||
-		createRequest.PlanPhaseStatus != "" {
+		createRequest.PlanPhaseStatus != "" ||
+		createRequest.Headless == nil || *createRequest.Headless {
 		t.Fatalf("create request = %#v", createRequest)
 	}
 	if embeddedCalls != 0 || externalCalls != 0 {
@@ -11613,6 +11897,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           req.FlowID,
 				FlowPhaseID:      "plan",
+				Headless:         flowStartRequestHeadless(req),
 				ReasoningEffort:  req.ReasoningEffort,
 			}}, nil
 		},
@@ -11631,7 +11916,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 	m, _ = update(m, model.AgentSetMsg{Command: " CLAUDE "})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Add Flow Mode", "Build the thing", "main", true)
 	if cmd == nil {
@@ -11672,6 +11957,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 						SessionStateRoot: req.SessionStateRoot,
 						FlowID:           req.FlowID,
 						FlowPhaseID:      "plan",
+						Headless:         flowStartRequestHeadless(req),
 					}}, nil
 				},
 				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -11688,7 +11974,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 			})
 			m = inRightPane(m)
 			m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+			m, _ = switchTestMode(m, ui.ModeFlows)
 			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 			if cmd != nil {
 				t.Fatalf("h before new Flow launch returned command %T, want nil", cmd)
@@ -11707,10 +11993,6 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("expected embedded launch repaint/fetch command")
 			}
-			if model.FlowHeadlessForTest(m) {
-				t.Fatal("checked create-form headless option should not mutate flows-mode headless toggle")
-			}
-
 			if started.Command != command ||
 				started.FlowID == "" ||
 				started.FlowPhaseID != "plan" ||
@@ -11739,6 +12021,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           req.FlowID,
 				FlowPhaseID:      "plan",
+				Headless:         flowStartRequestHeadless(req),
 				InitialPrompt:    "Create and persist the plan.",
 			}}, nil
 		},
@@ -11755,8 +12038,8 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 24})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPromptsWithOptions(t, m, "Interactive Plan", "Write the plan", "main", false)
 	if cmd == nil {
@@ -11775,10 +12058,6 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
 	}
-	if !model.FlowHeadlessForTest(m) {
-		t.Fatal("unchecked create-form headless option should not mutate flows-mode headless toggle")
-	}
-
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	wantPrefill := "\x1b[200~Create and persist the plan.\x1b[201~"
 	if len(fakeTerm.writes) != 2 || fakeTerm.writes[0] != wantPrefill || fakeTerm.writes[1] != "z" {
@@ -11828,7 +12107,7 @@ func TestModel_NewFlowWithCodexAppUsesExternalLaunchRoute(t *testing.T) {
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+			m, _ = switchTestMode(m, ui.ModeFlows)
 
 			m, cmd := submitNewFlowPromptsWithOptions(t, m, "Add Flow Mode", "Build\nthe thing", "main", headless)
 			if cmd == nil {
@@ -11904,7 +12183,7 @@ func TestModel_NewFlowFormCancelDoesNotStartOrLeaveActiveCreateRequest(t *testin
 				},
 			})
 			m = inRightPane(m)
-			m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+			m, _ = switchTestMode(m, ui.ModeFlows)
 			m = openNewFlowForm(t, m, "Cancel Flow", "Write the plan", "main")
 
 			m, cmd := update(m, key)
@@ -11960,14 +12239,14 @@ func TestModel_NewFlowCodexAppStaleLaunchMarksPhaseNeedsAttentionAfterRepoChange
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
 	if createCmd == nil {
 		t.Fatal("expected flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if launchMsg, ok := staleMsg.(model.PlanLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
@@ -12019,7 +12298,7 @@ func TestModel_NewFlowLaunchesAfterStartPlanReturns(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "main")
 	if cmd == nil {
@@ -12057,7 +12336,7 @@ func TestModel_NewFlowPlanNowParksFlowWhenLaunchSkipped(t *testing.T) {
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	_, cmd := submitNewFlowPrompts(t, m, "Merge-only Flow", "Track the merge", "main")
 	if cmd == nil {
@@ -12094,7 +12373,7 @@ func TestModel_NewFlowPlanNowRejectsStarterFlowIdentityMismatch(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	_, cmd := submitNewFlowPrompts(t, m, "Mismatched Flow", "Plan it", "main")
 	if cmd == nil {
@@ -12152,14 +12431,14 @@ func TestModel_NewFlowStaleLaunchMarksPhaseNeedsAttentionAfterRepoChange(t *test
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, createCmd := submitNewFlowPrompts(t, m, "Stale Flow", "Do the stale thing", "main")
 	if createCmd == nil {
 		t.Fatal("expected flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if launchMsg, ok := staleMsg.(model.FlowEmbeddedLaunchRequestedMsg); !ok || launchMsg.Request == 0 {
@@ -12224,14 +12503,14 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, createCmd := submitNewFlowPromptsWithCreateOptions(t, m, "Stale Parked", "Plan later", "main", false, false)
 	if createCmd == nil {
 		t.Fatal("expected parked Flow creation command")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	staleMsg := createCmd()
 	if created, ok := staleMsg.(model.FlowCreatedMsg); !ok || created.Request == 0 {
@@ -12252,7 +12531,7 @@ func TestModel_NewFlowStaleParkedCreateIgnoredAfterRepoChange(t *testing.T) {
 func TestModel_NewFlowPlanNowOnRequiresAgentAtSubmit(t *testing.T) {
 	m := model.NewWithOptions(testRepos(), model.Options{})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 
@@ -12289,7 +12568,7 @@ func TestModel_NewFlowPlanNowOffAllowsNoAgentConfigured(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "No Agent Parked", "Plan later", "main", false, false)
 	if cmd == nil {
@@ -12320,7 +12599,7 @@ func TestModel_NewFlowStartFailureReportsError(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -12355,7 +12634,7 @@ func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, createCmd := submitNewFlowPrompts(t, m, "Stale Failure", "Build the stale thing", "main")
 	if createCmd == nil {
@@ -12370,7 +12649,7 @@ func TestModel_NewFlowStaleStartFailureIgnoredAfterRepoChange(t *testing.T) {
 		t.Fatal("flow create failure should be tagged with the active create request")
 	}
 
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	next, cmd := update(m, staleMsg)
 	if cmd != nil {
@@ -12389,7 +12668,7 @@ func TestModel_NewFlowWorktreeFailureReportsStartFailure(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -12414,7 +12693,7 @@ func TestModel_NewFlowWorktreeFailureReportsBlockedPhaseUpdateFailure(t *testing
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	_, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -12459,7 +12738,7 @@ func TestModel_NewFlowLaunchFailureMarksPlanNeedsAttention(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -12518,7 +12797,7 @@ func TestModel_NewFlowCodexAppLaunchFailureMarksPlanNeedsAttention(t *testing.T)
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := submitNewFlowPrompts(t, m, "Add Flow Mode", "Build the thing", "")
 	if cmd == nil {
@@ -12583,7 +12862,7 @@ func TestModel_NewFlowAtEmbeddedTerminalCapMarksPlanNeedsAttention(t *testing.T)
 	})
 	m = inRightPane(m)
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	for i := 0; i < 9; i++ {
 		m, _ = update(m, model.FlowEmbeddedLaunchRequestedMsg{LaunchContext: actions.AgentLaunchContext{
@@ -12649,7 +12928,7 @@ func TestModel_FlowAgentResultFailureMarksPhaseAndRefreshesFlows(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := update(m, model.AgentResultMsg{
 		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "plan"},
@@ -12684,7 +12963,7 @@ func TestModel_FlowAgentResultFailureReportsPhaseUpdateFailure(t *testing.T) {
 		},
 	})
 	m = inRightPane(m)
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m, _ = switchTestMode(m, ui.ModeFlows)
 
 	m, cmd := update(m, model.AgentResultMsg{
 		LaunchContext: actions.AgentLaunchContext{FlowID: "flow-1", FlowPhaseID: "plan"},

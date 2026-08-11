@@ -161,7 +161,18 @@ func (m Model) activeItemPaneQuery() string {
 	if m.activeFlowSurfaceVisible() {
 		return m.activeFlows.Query()
 	}
-	switch m.focusedMode() {
+	return m.itemPaneQuery(m.focusedMode())
+}
+
+func (m Model) activeItemPaneSourceCount() int {
+	if m.activeFlowSurfaceVisible() {
+		return m.activeFlows.ItemCount()
+	}
+	return m.itemPaneSourceCount(m.focusedMode())
+}
+
+func (m Model) itemPaneQuery(mode ui.Mode) string {
+	switch mode {
 	case ui.ModeWorktrees:
 		return m.worktrees.Query()
 	case ui.ModeBranches:
@@ -179,10 +190,36 @@ func (m Model) activeItemPaneQuery() string {
 	case ui.ModeFlows:
 		return m.flows.Query()
 	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
-		state, _ := m.activeBeadSubview()
+		state, _ := m.beadSubview(mode)
 		return state.pane.Query()
 	default:
 		return ""
+	}
+}
+
+func (m Model) itemPaneSourceCount(mode ui.Mode) int {
+	switch mode {
+	case ui.ModeWorktrees:
+		return m.worktrees.ItemCount()
+	case ui.ModeBranches:
+		return m.rows.ItemCount()
+	case ui.ModeStashes:
+		return m.stashes.ItemCount()
+	case ui.ModeHistory:
+		return m.commits.ItemCount()
+	case ui.ModeReflog:
+		return m.reflogs.ItemCount()
+	case ui.ModeSessions:
+		return m.sessions.ItemCount()
+	case ui.ModePlans:
+		return m.plans.ItemCount()
+	case ui.ModeFlows:
+		return m.flows.ItemCount()
+	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
+		state, _ := m.beadSubview(mode)
+		return state.pane.ItemCount()
+	default:
+		return 0
 	}
 }
 

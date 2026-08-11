@@ -3,7 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -59,7 +59,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	terminalInputFocused := m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
+	terminalInputFocused := m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && !m.terminalPrefixActive && m.hasActiveEmbeddedTerminal()
 	if !m.searchActive && key == "ctrl+t" && !terminalInputFocused {
 		m = m.clearAnyStatus()
 		return m.toggleEmbeddedTerminalDock(), nil
@@ -129,10 +129,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSetReasoningEffort()
 	}
 
-	if key == "V" {
-		return m.handleSetDefaultView()
-	}
-
 	if key == "f5" {
 		return m.startGlobalRefresh()
 	}
@@ -146,8 +142,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if isPaneBackKey(key) && m.contentListInputEligible() {
-		m = m.togglePrimaryPaneFocus()
+	if isPaneBackKey(key) {
+		m = m.cyclePaneFocusBackward()
 		return m, nil
 	}
 
@@ -181,13 +177,18 @@ func (m Model) toggleEmbeddedTerminalDock() Model {
 		}
 	} else {
 		m.terminalDockVisible = true
-		m = m.resizeEmbeddedTerminals()
 	}
+	m = m.resizeEmbeddedTerminals()
 	return m.reflowForTerminalDock()
 }
 
 func (m Model) reflowForTerminalDock() Model {
 	m = m.reflowRepos()
+	m = m.reflowStoredPanes()
+	return m.reflowActiveFlows()
+}
+
+func (m Model) reflowStoredPanes() Model {
 	m = m.reflowWorktrees()
 	m = m.reflowBranches()
 	m = m.reflowStashes()
@@ -196,8 +197,7 @@ func (m Model) reflowForTerminalDock() Model {
 	m = m.reflowSessions()
 	m = m.reflowPlans()
 	m = m.reflowFlows()
-	m = m.reflowAllBeads()
-	return m.reflowActiveFlows()
+	return m.reflowAllBeads()
 }
 
 func isPaneBackKey(key string) bool {
@@ -357,11 +357,12 @@ func (m Model) handleLeftPaneKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "enter":
 		if len(m.filteredRepos()) > 0 {
-			m.activePane = m.contentPane
 			m = m.setRepoPaneCollapsed(true)
 			if m.activeFlowSurfaceVisible() {
+				m.activePane = m.contentPane
 				return m.syncActiveFlowsFromCache(), nil
 			}
+			m = m.focusContentPane(ui.PaneTop)
 		}
 	case "up", "k":
 		if len(m.filteredRepos()) > 0 {
@@ -395,13 +396,16 @@ func (m Model) moveRepoSelection(delta int) (tea.Model, tea.Cmd) {
 func (m Model) handleRepoSelectionChanged(repoSelected bool) (tea.Model, tea.Cmd) {
 	m = m.invalidateReadyBeadFlowCreateRequest()
 	if m.activeFlowSurfaceVisible() {
-		m = m.resetBeadsForRepoChange()
+		m = m.resetStoredPaneCursors()
 		m = m.syncActiveFlowsFromCache()
+		if repoSelected {
+			return m.startStoredModeFetches()
+		}
 		return m, nil
 	}
 	m = m.resetRightPaneCursors()
 	if repoSelected {
-		return m.startFetchForMode()
+		return m.startStoredModeFetches()
 	}
 	return m, nil
 }
@@ -429,10 +433,6 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 	case "h":
 		if mode == ui.ModeFlows {
 			return m.handleToggleFlowHeadless()
-		}
-	case "l":
-		if mode == ui.ModeFlows {
-			return m.handleHorizontalNavigation(1)
 		}
 	case "y":
 		if mode == ui.ModePlans {
@@ -567,7 +567,7 @@ func (m Model) handleRightPaneKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) canCreateReadyBeadFlow() bool {
-	terminalInputFocused := m.terminalDockVisible && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
+	terminalInputFocused := m.terminalEffectivelyExpanded() && m.activePane != ui.PaneRepos && m.terminalFocus == terminalFocusTerminal && m.hasActiveEmbeddedTerminal()
 	if m.modal.IsOpen() || m.searchActive || terminalInputFocused ||
 		!m.contentListInputEligible() || m.focusedMode() != ui.ModeBeadsReady || m.activeReadyBeadFlowCreate != 0 {
 		return false
@@ -632,58 +632,126 @@ func (m Model) setRepoPaneCollapsed(collapsed bool) Model {
 }
 
 func (m Model) cyclePaneFocusForward() Model {
-	if m.repoPaneCollapsed {
-		// The collapsed repos strip is skipped by ordinary tab cycling:
-		// focus alternates between the content list and the terminal dock
-		// while a terminal is active, so terminal input cannot trap focus,
-		// and stays on the list otherwise.
-		if !m.terminalDockVisible || !m.hasActiveEmbeddedTerminal() {
-			return m
-		}
-		if m.terminalFocus != terminalFocusTerminal {
-			m.terminalFocus = terminalFocusTerminal
-			m.terminalPrefixActive = true
-			return m
-		}
+	terminalEligible := m.terminalEffectivelyExpanded() && m.hasActiveEmbeddedTerminal()
+	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		if m.flowSurfaceVisible() {
-			return m.syncActiveFlowTerminalToSelectedFlow()
+		if m.activeFlowSurfaceVisible() && m.repoPaneCollapsed {
+			return m.focusContentPane(m.contentPane)
 		}
+		if m.repoPaneCollapsed {
+			return m.focusContentPane(ui.PaneTop)
+		}
+		return m.focusRepoPane()
+	}
+	if m.activeFlowSurfaceVisible() {
+		if m.activePane == ui.PaneRepos {
+			return m.focusContentPane(m.contentPane)
+		}
+		if terminalEligible {
+			return m.focusTerminalCommand()
+		}
+		if m.repoPaneCollapsed {
+			return m
+		}
+		return m.focusRepoPane()
+	}
+	switch m.activePane {
+	case ui.PaneRepos:
+		return m.focusContentPane(ui.PaneTop)
+	case ui.PaneTop:
+		return m.focusContentPane(ui.PaneBottom)
+	case ui.PaneBottom:
+		if terminalEligible {
+			return m.focusTerminalCommand()
+		}
+		if m.repoPaneCollapsed {
+			return m.focusContentPane(ui.PaneTop)
+		}
+		return m.focusRepoPane()
+	default:
 		return m
 	}
+}
 
-	if m.activePane == ui.PaneRepos {
-		m.activePane = m.contentPane
+func (m Model) cyclePaneFocusBackward() Model {
+	terminalEligible := m.terminalEffectivelyExpanded() && m.hasActiveEmbeddedTerminal()
+	if m.terminalFocus == terminalFocusTerminal {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
 		if m.activeFlowSurfaceVisible() {
-			m = m.syncActiveFlowsFromCache()
+			return m.focusContentPane(m.contentPane)
 		}
-		if m.flowSurfaceVisible() {
-			return m.syncActiveFlowTerminalToSelectedFlow()
+		return m.focusContentPane(ui.PaneBottom)
+	}
+	if m.activeFlowSurfaceVisible() {
+		if m.activePane != ui.PaneRepos {
+			if m.repoPaneCollapsed && terminalEligible {
+				return m.focusTerminalCommand()
+			}
+			if m.repoPaneCollapsed {
+				return m
+			}
+			return m.focusRepoPane()
 		}
+		if terminalEligible {
+			m = m.focusContentPane(m.contentPane)
+			return m.focusTerminalCommand()
+		}
+		return m.focusContentPane(m.contentPane)
+	}
+	switch m.activePane {
+	case ui.PaneRepos:
+		if terminalEligible {
+			m.activePane = ui.PaneBottom
+			m.contentPane = ui.PaneBottom
+			return m.focusTerminalCommand()
+		}
+		return m.focusContentPane(ui.PaneBottom)
+	case ui.PaneBottom:
+		return m.focusContentPane(ui.PaneTop)
+	case ui.PaneTop:
+		if m.repoPaneCollapsed {
+			if terminalEligible {
+				return m.focusTerminalCommand()
+			}
+			return m.focusContentPane(ui.PaneBottom)
+		}
+		return m.focusRepoPane()
+	default:
 		return m
 	}
+}
 
-	if m.terminalDockVisible && m.hasActiveEmbeddedTerminal() && m.terminalFocus != terminalFocusTerminal {
-		m.terminalFocus = terminalFocusTerminal
-		m.terminalPrefixActive = true
-		return m
+func (m Model) focusContentPane(pane ui.Pane) Model {
+	changed := m.contentPane != pane
+	if changed {
+		m = m.invalidateViewRequest()
 	}
-
-	m.activePane = ui.PaneRepos
+	m.activePane = pane
+	m.contentPane = pane
 	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
-	if m.focusedMode() == ui.ModePlans {
-		m = m.clearSelectedPlanPhase()
-	}
-	if m.flowSurfaceVisible() {
-		m = m.clearSelectedFlowPhase()
-	}
 	if m.activeFlowSurfaceVisible() {
 		return m.syncActiveFlowsFromCache()
 	}
+	if changed {
+		m = m.reflowStoredPanes()
+	}
+	if m.flowSurfaceVisible() {
+		return m.syncActiveFlowTerminalToSelectedFlow()
+	}
+	return m
+}
+
+func (m Model) focusTerminalCommand() Model {
+	if !m.terminalEffectivelyExpanded() || !m.hasActiveEmbeddedTerminal() {
+		m.terminalFocus = terminalFocusList
+		m.terminalPrefixActive = false
+		return m
+	}
+	m.terminalFocus = terminalFocusTerminal
+	m.terminalPrefixActive = true
 	return m
 }
 
@@ -753,34 +821,21 @@ func (m Model) handleHorizontalNavigation(direction int) (tea.Model, tea.Cmd) {
 	return m.startFetchForMode()
 }
 
-// modeAfterHorizontalNavigation steps the view for a left/right arrow press.
-// Inside the Git and Beads views the arrows cycle their five subviews with wrap
-// and never spill into another top-level view; elsewhere they step through the
-// five arrow-reachable top-level views, entering either group at its last-used
-// subview. Active Flows is intentionally outside this cycle.
+// modeAfterHorizontalNavigation steps within the focused stored pane: Git and
+// Beads wrap in the top pane, while Sessions, Plans, and Flows wrap in the
+// bottom pane. Group entries use their remembered subview. Active Flows is
+// intentionally outside both cycles.
 func (m Model) modeAfterHorizontalNavigation(direction int) ui.Mode {
 	mode := m.focusedMode()
-	if ui.IsGitMode(mode) {
-		next := mode + ui.Mode(direction)
-		if next < ui.ModeWorktrees {
-			return ui.ModeReflog
-		}
-		if next > ui.ModeReflog {
-			return ui.ModeWorktrees
-		}
-		return next
+	var stops []ui.Mode
+	switch m.activePane {
+	case ui.PaneTop:
+		stops = []ui.Mode{m.lastGitSubview(), m.lastBeadsSubview()}
+	case ui.PaneBottom:
+		stops = []ui.Mode{ui.ModeSessions, ui.ModePlans, ui.ModeFlows}
+	default:
+		return mode
 	}
-	if ui.IsBeadsMode(mode) {
-		next := mode + ui.Mode(direction)
-		if next < ui.ModeBeadsReady {
-			return ui.ModeBeadsClosed
-		}
-		if next > ui.ModeBeadsClosed {
-			return ui.ModeBeadsReady
-		}
-		return next
-	}
-	stops := []ui.Mode{m.lastGitSubview(), ui.ModeSessions, ui.ModePlans, ui.ModeFlows, m.lastBeadsSubview()}
 	for i, stop := range stops {
 		if stop == mode {
 			return stops[(i+direction+len(stops))%len(stops)]
@@ -957,11 +1012,136 @@ func (m Model) handleFlowEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleToggleFlowHeadless() (tea.Model, tea.Cmd) {
-	if !m.flowSurfaceVisible() {
+	if !m.flowSurfaceVisible() || len(m.currentFilteredFlows()) == 0 {
 		return m, nil
 	}
-	m.flowHeadless = !m.flowHeadless
-	return m, nil
+	record, ok := m.selectedFlow()
+	if !ok || record.FlowID == "" {
+		return m, nil
+	}
+	repoPath := record.RepoPath
+	if repoPath == "" {
+		repoPath, _ = m.currentRepoPath()
+	}
+	if repoPath == "" {
+		return m, nil
+	}
+	allRepositories := m.activeFlowSurfaceVisible()
+	// A write is already outstanding for this Flow. Commands run concurrently, so
+	// starting a second one would let the two values reach the store in either
+	// order. Record the new intent instead and let the in-flight completion
+	// persist it. The queued intent keeps the scope of the surface it was
+	// entered from, which may differ from the surface that started the write.
+	if queued, ok := m.queuedFlowHeadlessValue(record.FlowID); ok {
+		return m.updateQueuedFlowHeadlessWrite(record.FlowID, !queued.enabled, allRepositories), nil
+	}
+	// Launches read the persisted preference under the Flow store lock, so the
+	// launch must wait for this write instead of racing it.
+	enabled := !record.Headless
+	m = m.markFlowHeadlessWritePending(pendingFlowHeadlessWrite{
+		flowID: record.FlowID, repoPath: repoPath, enabled: enabled, allRepositories: allRepositories,
+	})
+	return m, m.setFlowHeadlessCmd(repoPath, record.FlowID, enabled, allRepositories)
+}
+
+// flowHeadlessWritePendingStatus explains why a launch waits for an in-flight
+// headless toggle instead of starting in the previous mode.
+const flowHeadlessWritePendingStatus = "Applying headless mode change; retry the launch in a moment"
+
+// pendingFlowHeadlessWrite fences launches for one Flow while a headless write
+// is outstanding and carries the value the user last asked for, along with the
+// scope of the surface that asked for it. At most one entry exists per Flow:
+// toggles arriving while a write is in flight update the entry in place, and the
+// completion persists it if it still differs.
+type pendingFlowHeadlessWrite struct {
+	flowID          string
+	repoPath        string
+	enabled         bool
+	allRepositories bool
+}
+
+func (m Model) markFlowHeadlessWritePending(pending pendingFlowHeadlessWrite) Model {
+	if pending.flowID == "" {
+		return m
+	}
+	m.pendingFlowHeadlessWrites = append(slices.Clone(m.pendingFlowHeadlessWrites), pending)
+	return m
+}
+
+func (m Model) updateQueuedFlowHeadlessWrite(flowID string, enabled bool, allRepositories bool) Model {
+	index := m.pendingFlowHeadlessWriteIndex(flowID)
+	if index < 0 {
+		return m
+	}
+	pending := slices.Clone(m.pendingFlowHeadlessWrites)
+	pending[index].enabled = enabled
+	// Scope accumulates across the serialized chain. Once any toggle in it came
+	// from Active Flows, every result in the chain has to reach the global cache,
+	// even if a later toggle was entered from a repository Flow list.
+	pending[index].allRepositories = pending[index].allRepositories || allRepositories
+	m.pendingFlowHeadlessWrites = pending
+	return m
+}
+
+func (m Model) clearFlowHeadlessWritePending(flowID string) Model {
+	index := m.pendingFlowHeadlessWriteIndex(flowID)
+	if index < 0 {
+		return m
+	}
+	m.pendingFlowHeadlessWrites = slices.Delete(slices.Clone(m.pendingFlowHeadlessWrites), index, index+1)
+	return m
+}
+
+func (m Model) pendingFlowHeadlessWriteIndex(flowID string) int {
+	return slices.IndexFunc(m.pendingFlowHeadlessWrites, func(pending pendingFlowHeadlessWrite) bool {
+		return pending.flowID == flowID
+	})
+}
+
+func (m Model) flowHeadlessWritePending(flowID string) bool {
+	_, ok := m.queuedFlowHeadlessValue(flowID)
+	return ok
+}
+
+// queuedFlowHeadlessValue reports the outstanding write for this Flow and the
+// value it is expected to leave persisted.
+func (m Model) queuedFlowHeadlessValue(flowID string) (pendingFlowHeadlessWrite, bool) {
+	index := m.pendingFlowHeadlessWriteIndex(flowID)
+	if index < 0 {
+		return pendingFlowHeadlessWrite{}, false
+	}
+	return m.pendingFlowHeadlessWrites[index], true
+}
+
+// resolveFlowHeadlessWrite retires the outstanding write for this Flow. When
+// toggles arrived while it was in flight, the coalesced intent is persisted by a
+// follow-up command so only one write is ever outstanding per Flow. The
+// follow-up carries the queued intent's own scope, not the scope of the write
+// that just completed.
+func (m Model) resolveFlowHeadlessWrite(msg FlowHeadlessSetMsg) (Model, tea.Cmd) {
+	queued, ok := m.queuedFlowHeadlessValue(msg.FlowID)
+	if !ok {
+		return m, nil
+	}
+	if queued.enabled == msg.Enabled {
+		return m.clearFlowHeadlessWritePending(msg.FlowID), nil
+	}
+	return m, m.setFlowHeadlessCmd(queued.repoPath, msg.FlowID, queued.enabled, queued.allRepositories)
+}
+
+func (m Model) setFlowHeadlessCmd(repoPath, flowID string, enabled, allRepositories bool) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := m.setFlowHeadless(flowstore.HeadlessUpdate{FlowID: flowID, Enabled: enabled})
+		if err != nil {
+			return FlowHeadlessSetFailedMsg{
+				RepoPath: repoPath, FlowID: flowID, Enabled: enabled, AllRepositories: allRepositories,
+				Err: fmt.Sprintf("failed to set Flow headless mode: %v", err),
+			}
+		}
+		return FlowHeadlessSetMsg{
+			RepoPath: repoPath, FlowID: flowID, Flow: flow, Enabled: enabled, AllRepositories: allRepositories,
+		}
+	}
 }
 
 func (m Model) handleTogglePlanPhases() (tea.Model, tea.Cmd) {
@@ -1361,63 +1541,6 @@ func (m Model) setReasoningEffort(command, effort string) tea.Cmd {
 	}
 }
 
-func (m Model) handleSetDefaultView() (tea.Model, tea.Cmd) {
-	m.modal = modal.OpenSelectWithLayout(
-		"Choose default view",
-		defaultViewSelectItems(),
-		selectedDefaultViewIndex(m.defaultView),
-		modal.Layout{Width: 28, Height: len(viewChoices) + 3, Placement: modal.PlacementCenter},
-		func(value string) tea.Cmd {
-			number, err := strconv.Atoi(value)
-			if err != nil {
-				return func() tea.Msg {
-					return DefaultViewSetFailedMsg{Mode: m.defaultView, Err: "Unsupported default view"}
-				}
-			}
-			mode, ok := ModeForViewNumber(number)
-			if !ok {
-				return func() tea.Msg {
-					return DefaultViewSetFailedMsg{Mode: m.defaultView, Err: "Unsupported default view"}
-				}
-			}
-			return m.setDefaultView(mode)
-		},
-	)
-	return m, nil
-}
-
-// defaultViewSelectItems labels the picker with the grouped view names while
-// each item keeps persisting its original frozen default_view number.
-func defaultViewSelectItems() []modal.SelectItem {
-	choices := ViewChoices()
-	items := make([]modal.SelectItem, 0, len(choices))
-	for _, choice := range choices {
-		items = append(items, modal.SelectItem{
-			Label: choice.Label,
-			Value: strconv.Itoa(choice.Number),
-		})
-	}
-	return items
-}
-
-func selectedDefaultViewIndex(mode ui.Mode) int {
-	for i, choice := range viewChoices {
-		if choice.Mode == mode {
-			return i
-		}
-	}
-	return len(viewChoices) - 1
-}
-
-func (m Model) setDefaultView(mode ui.Mode) tea.Cmd {
-	return func() tea.Msg {
-		if err := m.saveDefaultView(mode); err != nil {
-			return DefaultViewSetFailedMsg{Mode: mode, Err: err.Error()}
-		}
-		return DefaultViewSetMsg{Mode: mode}
-	}
-}
-
 const (
 	repoCreateFormPurpose       = "repo-create"
 	repoCreateNameField         = "name"
@@ -1581,6 +1704,7 @@ func (m Model) handleNewFlow() (tea.Model, tea.Cmd) {
 					values.Text[flowCreateTitleField],
 					values.Text[flowCreateInstructionsField],
 					values.Text[flowCreateBaseRefField],
+					values.Checked[flowCreateHeadlessField],
 				)
 			}
 			return func() tea.Msg {
@@ -1651,7 +1775,7 @@ func (m Model) handleFlowCreateFailed(msg FlowCreateFailedMsg) (Model, tea.Cmd) 
 		errText = "Unable to create flow"
 	}
 	m = m.setStatus(statusOther, errText)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1668,7 +1792,7 @@ func (m Model) handleFlowCreated(msg FlowCreatedMsg) (Model, tea.Cmd) {
 		title = "Flow"
 	}
 	m = m.setStatus(statusOther, "Created flow: "+title)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1689,7 +1813,7 @@ func (m Model) handleReadyBeadFlowCreated(msg ReadyBeadFlowCreatedMsg) (Model, t
 		title = "Flow"
 	}
 	m = m.setStatus(statusOther, "Created flow: "+title)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1708,7 +1832,7 @@ func (m Model) handleReadyBeadFlowCreateFailed(msg ReadyBeadFlowCreateFailedMsg)
 		errText = "Unable to create flow"
 	}
 	m = m.setStatus(statusOther, errText)
-	if m.flowSurfaceVisible() {
+	if m.flowRefreshSurfaceVisible() {
 		return m.startFlowSurfaceFetch()
 	}
 	return m, nil
@@ -1937,6 +2061,9 @@ func (m Model) handleOpenAgent() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
+	if record, ok := m.selectedFlow(); ok && m.flowHeadlessWritePending(record.FlowID) {
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
+	}
 	target, ok, next := m.selectedFlowNextLaunchTarget()
 	if !ok {
 		return next, nil
@@ -3054,47 +3181,44 @@ func (m Model) confirmWorktreePrune() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resetModeCursors zeroes the cursor and scroll positions for the ungrouped
-// right-pane views without discarding loaded list data. Git and Beads subview
-// selections are intentionally preserved across view switches so users can
-// inspect another view and return to the same selected row; refetches clamp any
-// stale index via SetItems.
-func (m Model) resetModeCursors() Model {
+// resetBottomPaneCursors zeroes cursor and expansion state owned by the
+// bottom pane without disturbing the top pane's sticky Git/Beads state.
+func (m Model) resetBottomPaneCursors() Model {
 	m.sessions = m.sessions.ResetSelection()
 	m.plans = m.plans.ResetSelection()
 	m.flows = m.flows.ResetSelection()
-	m.activeFlows = m.activeFlows.ResetSelection()
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
 	m.flows = m.flows.SetItemHeight(flowItemHeight(""))
-	m.expandedActiveFlowID = ""
-	m.selectedActiveFlowPhaseID = ""
-	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
 	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
-	m = m.clearInlineWorktreeSessions()
 	m = m.invalidateViewRequest()
 	return m
 }
 
 func (m Model) resetModeCursorsForSwitch(from, to ui.Mode) Model {
-	if isFlowMode(from) && isFlowMode(to) {
+	if from == ui.ModeActiveFlows || to == ui.ModeActiveFlows {
 		m.terminalFocus = terminalFocusList
 		m.terminalPrefixActive = false
-		m = m.invalidateViewRequest()
-	} else if ui.IsBeadsMode(from) && ui.IsBeadsMode(to) {
-		m = m.invalidateViewRequest()
-	} else {
-		m = m.resetModeCursors()
+		return m.invalidateViewRequest()
 	}
+	pane, ok := ui.PaneForMode(to)
+	if !ok {
+		return m.invalidateViewRequest()
+	}
+	if pane == ui.PaneBottom {
+		return m.resetBottomPaneCursors()
+	}
+	if from == ui.ModeWorktrees && to != ui.ModeWorktrees {
+		m = m.clearInlineWorktreeSessions()
+	}
+	m.terminalFocus = terminalFocusList
+	m.terminalPrefixActive = false
+	m = m.invalidateViewRequest()
 	// Terminal dimensions are mode-independent, so mode switches need no
 	// PTY resize.
 	return m
-}
-
-func isFlowMode(mode ui.Mode) bool {
-	return mode == ui.ModeFlows || mode == ui.ModeActiveFlows
 }
 
 func (m Model) clearBeadsRepoOwnedState() Model {
@@ -3115,7 +3239,18 @@ func (m Model) resetBeadsForRepoChange() Model {
 }
 
 func (m Model) resetRightPaneCursors() Model {
-	m = m.invalidateListRequests()
+	m = m.resetStoredPaneCursors()
+	m.listRequestSeq++
+	m.listRequests[int(ui.ModeActiveFlows)] = m.listRequestSeq
+	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
+	m.expandedActiveFlowID = ""
+	m.selectedActiveFlowPhaseID = ""
+	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
+	return m
+}
+
+func (m Model) resetStoredPaneCursors() Model {
+	m = m.invalidateStoredListRequests()
 	// Covers the rescan-driven repo changes in handleRepoRefreshResult, which
 	// never route through handleRepoSelectionChanged.
 	m = m.invalidateReadyBeadFlowCreateRequest()
@@ -3129,15 +3264,11 @@ func (m Model) resetRightPaneCursors() Model {
 	m.sessions = m.sessions.SetItems(nil).ResetSelection()
 	m.plans = m.plans.SetItems(nil).ResetSelection()
 	m.flows = m.flows.SetItems(nil).ResetSelection()
-	m.activeFlows = m.activeFlows.SetItems(nil).ResetSelection()
 	m = m.clearBeadsRepoOwnedState()
 	m = m.setExpandedPlanID("")
 	m.expandedFlowID = ""
 	m.selectedFlowPhaseID = ""
 	m.flows = m.flows.SetItemHeight(flowItemHeight(""))
-	m.expandedActiveFlowID = ""
-	m.selectedActiveFlowPhaseID = ""
-	m.activeFlows = m.activeFlows.SetItemHeight(flowItemHeight(""))
 	m.terminalFocus = terminalFocusList
 	m.terminalPrefixActive = false
 	m = m.clearInlineWorktreeSessions()
@@ -3165,23 +3296,19 @@ func (m Model) repoContentHeight() int {
 }
 
 func (m Model) rightContentHeight() int {
-	height := m.height - ui.BranchContentOverhead
-	if height <= 0 {
-		return 16
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
+	return m.paneContentHeight(m.focusedMode())
 }
 
 func (m Model) planContentHeight() int {
-	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
+	return m.paneContentHeight(ui.ModePlans)
 }
 
 func (m Model) flowContentHeight() int {
-	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
+	return m.paneContentHeight(ui.ModeFlows)
 }
 
 func (m Model) sessionContentHeight() int {
-	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.BranchContentOverhead, ui.TableHeaderRows)
+	return m.paneContentHeight(ui.ModeSessions)
 }
 
 func (m Model) worktreeSessionContentHeight() int {
@@ -3192,57 +3319,113 @@ func (m Model) worktreeSessionContentHeight() int {
 	return height
 }
 
-func (m Model) contentHeightForMode() int {
-	switch m.focusedMode() {
-	case ui.ModeWorktrees:
-		return m.worktreeContentHeight()
-	case ui.ModeStashes:
-		return m.stashContentHeight()
-	case ui.ModeBranches, ui.ModeHistory, ui.ModeReflog:
-		return m.gitPaneContentHeight()
-	case ui.ModeSessions:
-		return m.sessionContentHeight()
-	case ui.ModePlans:
-		return m.planContentHeight()
-	case ui.ModeFlows:
-		return m.flowContentHeight()
+func (m Model) contentHeightForMode(modes ...ui.Mode) int {
+	mode := m.focusedMode()
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
+	return m.paneContentHeight(mode)
+}
+
+func (m Model) paneContentHeight(mode ui.Mode) int {
+	sharedOuterRows := m.embeddedTerminalDockAllocation().SharedOuterRows
+	outerRows := sharedOuterRows
+	headerRows := 1
+	if mode != ui.ModeActiveFlows {
+		layout := ui.StackedContentLayout(sharedOuterRows, m.activePane, m.contentPane)
+		pane, ok := ui.PaneForMode(mode)
+		if !ok {
+			return 1
+		}
+		if pane == ui.PaneTop {
+			outerRows = layout.TopRows
+			headerRows = 2
+		} else {
+			outerRows = layout.BottomRows
+		}
+	}
+	rows := outerRows - 2 - headerRows
+	if mode == ui.ModeSessions || mode == ui.ModePlans || mode == ui.ModeFlows || mode == ui.ModeActiveFlows {
+		rows -= ui.TableHeaderRows
+	}
+	rows -= m.paneCachedWarningRows(mode)
+	// The positive floor predates the warning row and also covers hidden
+	// background panes, which are allocated no rows at all. Viewports this
+	// small cannot show a cached row either way, so the floor stays.
+	if rows <= 0 {
+		return 1
+	}
+	return rows
+}
+
+// paneCachedWarningRows is the list row the renderer spends on the "showing
+// cached data" banner when a refresh fails while rows are still cached.
+// Selection and scroll must use the same reduced viewport or the last visible
+// row is clipped.
+func (m Model) paneCachedWarningRows(mode ui.Mode) int {
+	if !ui.ShowsCachedListWarning(m.currentListError(mode), m.paneHasRows(mode), m.paneSourceCount(mode)) {
+		return 0
+	}
+	return 1
+}
+
+func (m Model) paneSourceCount(mode ui.Mode) int {
+	if mode == ui.ModeActiveFlows {
+		return m.activeItemPaneSourceCount()
+	}
+	return m.itemPaneSourceCount(mode)
+}
+
+// paneHasRows mirrors the renderer's view of whether a pane still has cached
+// rows to show, including the empty-repository reset the view applies.
+func (m Model) paneHasRows(mode ui.Mode) bool {
+	if len(m.filteredRepos()) == 0 {
+		return false
+	}
+	switch mode {
 	case ui.ModeActiveFlows:
-		return m.flowContentHeight()
-	case ui.ModeBeadsReady, ui.ModeBeadsBlocked, ui.ModeBeadsOpen, ui.ModeBeadsInProgress, ui.ModeBeadsClosed:
-		return m.beadsContentHeight()
+		return m.activeFlows.Len() > 0
+	case ui.ModeFlows:
+		return m.flows.Len() > 0
+	case ui.ModeWorktrees:
+		return m.worktrees.Len() > 0
+	case ui.ModeBranches:
+		return m.rows.Len() > 0
+	case ui.ModeStashes:
+		return m.stashes.Len() > 0
+	case ui.ModeHistory:
+		return m.commits.Len() > 0
+	case ui.ModeReflog:
+		return m.reflogs.Len() > 0
+	case ui.ModeSessions:
+		return m.sessions.Len() > 0
+	case ui.ModePlans:
+		return m.plans.Len() > 0
 	default:
-		return m.rightContentHeight()
+		if !ui.IsBeadsMode(mode) {
+			return false
+		}
+		state, ok := m.beadSubview(mode)
+		return ok && !state.pending && state.error == "" && state.pane.Len() > 0
 	}
 }
 
 func (m Model) beadsContentHeight() int {
-	height := m.height - ui.BeadsContentOverhead
-	if height <= 0 {
-		return 16
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
+	return m.paneContentHeight(m.topMode)
 }
 
 // gitPaneContentHeight is the list height for the branches, history, and
 // reflog subviews, which render under the two-row grouped Git header.
 func (m Model) gitPaneContentHeight() int {
-	height := m.height - ui.GitContentOverhead
-	if height <= 0 {
-		return 16
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
+	return m.paneContentHeight(m.topMode)
 }
 
 func (m Model) worktreeContentHeight() int {
-	height := m.height - ui.WorktreeContentOverhead
-	if height <= 0 {
-		return 16
-	}
-	return m.applyEmbeddedTerminalDockContentHeight(height, 0)
+	return m.paneContentHeight(ui.ModeWorktrees)
 }
 
 func (m Model) stashContentHeight() int {
-	return m.applyEmbeddedTerminalDockContentHeight(m.height-ui.StashContentOverhead, 0)
+	return m.paneContentHeight(ui.ModeStashes)
 }
 
 func (m Model) applyEmbeddedTerminalDockContentHeight(outerHeight, headerRows int) int {
@@ -3255,12 +3438,8 @@ func (m Model) applyEmbeddedTerminalDockContentHeight(outerHeight, headerRows in
 
 // embeddedTerminalDockRows is the number of full-width rows the top-level
 // terminal dock consumes below the pane row: the framed terminal pane when
-// expanded, or the always-reserved chip row that shows the terminal summary
-// when collapsed and the empty-state notice when no terminals run.
+// expanded, the collapsed chip when the viewport can fit it, or zero rows at
+// the existing degenerate-height boundary.
 func (m Model) embeddedTerminalDockRows() int {
-	state := ui.EmbeddedTerminalDockCollapsed
-	if len(m.embeddedTerminals) > 0 && m.terminalDockVisible {
-		state = ui.EmbeddedTerminalDockExpanded
-	}
-	return ui.EmbeddedTerminalDockRows(m.height, state)
+	return m.embeddedTerminalDockAllocation().DockRows
 }
