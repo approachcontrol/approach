@@ -22,9 +22,10 @@ type Preset struct {
 	Phases []PhaseSpec `toml:"phases"`
 }
 
-// CreateOptions configures Flow creation without changing the persisted schema.
+// CreateOptions configures Flow creation defaults and phase seeding.
 type CreateOptions struct {
-	Preset *Preset
+	Preset   *Preset
+	Headless *bool
 }
 
 // DefaultPreset returns the built-in phase graph used when callers do not

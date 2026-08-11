@@ -106,6 +106,13 @@ func runImmediateTestCommand(cmd tea.Cmd) (tea.Msg, bool) {
 	}
 }
 
+func flowStartRequestHeadless(req model.FlowStartRequest) bool {
+	if req.Headless == nil {
+		return true
+	}
+	return *req.Headless
+}
+
 func enterActiveFlowsWithRecords(t *testing.T, m model.Model, records []flowstore.FlowRecord) model.Model {
 	t.Helper()
 	if m.ActivePane() == ui.PaneRepos {
@@ -123,6 +130,7 @@ func flowWithPhaseDetails() flowstore.FlowRecord {
 		Title:    "Flow with phases",
 		Status:   flowstore.StatusInProgress,
 		Branch:   "flow/with-phases",
+		Headless: true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted},
 			{PhaseID: "plan-review", Title: "Plan Review", Status: flowstore.PhaseCompleted, Outcome: "approved"},
@@ -945,6 +953,7 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	var started actions.AgentLaunchContext
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	flow := flowWithPhaseDetails()
+	flow.Headless = false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -965,7 +974,6 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
@@ -990,6 +998,7 @@ func TestModel_InteractiveActiveFlowLaunchFocusesEmbeddedTerminal(t *testing.T) 
 func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	fakeTerm := &fakeEmbeddedTerminal{state: "running"}
 	flow := flowWithPhaseDetails()
+	flow.Headless = false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -1009,7 +1018,6 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 	m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command")
@@ -1038,6 +1046,7 @@ func TestModel_F3PassesThroughFocusedActiveFlowTerminal(t *testing.T) {
 func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	var flowTerm *fakeEmbeddedTerminal
 	flow := flowWithPhaseDetails()
+	flow.Headless = false
 	m := model.NewWithOptions(testRepos(), model.Options{
 		AgentCommand: "codex",
 		AddFlowPhaseLaunchID: func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -1066,7 +1075,6 @@ func TestModel_ActiveFlowLaunchOverSessionsUsesFlowTerminal(t *testing.T) {
 	if !strings.Contains(view, "flow/with-phases") || strings.Contains(view, "codex-session-1") {
 		t.Fatalf("active flows should visually override sessions mode:\n%s", view)
 	}
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if cmd == nil {
 		t.Fatal("expected active Flow launch command over Sessions")
@@ -1157,6 +1165,7 @@ func autoFlowWithPhases(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/auto",
 		AutoMode:     true,
+		Headless:     true,
 		Phases:       phases,
 	}
 }
@@ -1272,6 +1281,25 @@ func TestModel_FlowAutoLaunchUsesConfiguredCLIAgentAndEffort(t *testing.T) {
 		!launch.LaunchContext.Headless ||
 		!launch.LaunchContext.FlowLaunchTracked {
 		t.Fatalf("auto launch context = %#v", launch.LaunchContext)
+	}
+}
+
+func TestModel_FlowAutoLaunchIsAlwaysHeadlessRegardlessOfStoredManualPreference(t *testing.T) {
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored_%v", stored), func(t *testing.T) {
+			previous := autoFlowWithPhaseStatuses(map[string]string{
+				"plan": flowstore.PhaseRunning, "implementation": flowstore.PhasePending,
+			})
+			current := autoFlowWithPhaseStatuses(map[string]string{
+				"plan": flowstore.PhaseCompleted, "implementation": flowstore.PhaseReady,
+			})
+			previous.Headless = stored
+			current.Headless = stored
+			launch, _ := autoLaunchFromFlowRefresh(t, previous, current)
+			if !launch.LaunchContext.Headless || !launch.LaunchContext.FlowAutoLaunch {
+				t.Fatalf("auto launch context = %#v, want always-headless auto launch", launch.LaunchContext)
+			}
+		})
 	}
 }
 
@@ -1445,11 +1473,7 @@ func prepareSelectedFlowPhaseLaunch(t *testing.T, m model.Model, phaseID string)
 func prepareSelectedFlowPhaseHeadlessOffLaunch(t *testing.T, m model.Model, phaseID string) (model.Model, tea.Cmd) {
 	t.Helper()
 	m = selectFlowPhaseByID(t, m, phaseID)
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-	}
-	m, cmd = update(m, flowLaunchKey())
+	m, cmd := update(m, flowLaunchKey())
 	return m, cmd
 }
 
@@ -1512,6 +1536,308 @@ func TestModel_AKeyTogglesFlowAutoModeFromFlowRow(t *testing.T) {
 	if m.SelectedFlowPhaseID() != "" {
 		t.Fatalf("selected phase = %q, want Flow row selected", m.SelectedFlowPhaseID())
 	}
+}
+
+func TestModel_HKeyPersistsSelectedFlowFromPhaseRowWithoutAffectingAnotherFlow(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	first := flowWithPhaseDetails()
+	first.UpdatedAt = now
+	second := flowWithPhaseDetails()
+	second.FlowID = "flow-2"
+	second.Title = "Second Flow"
+	second.UpdatedAt = now
+	updated := first
+	updated.Headless = false
+	updated.UpdatedAt = now.Add(time.Minute)
+	var calls []flowstore.HeadlessUpdate
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			calls = append(calls, update)
+			return updated, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{first, second})
+	m = selectFlowPhaseByID(t, m, "implementation")
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd == nil {
+		t.Fatal("h on selected phase returned nil command")
+	}
+	m, _ = update(m, cmd())
+	if len(calls) != 1 || calls[0] != (flowstore.HeadlessUpdate{FlowID: first.FlowID, Enabled: false}) {
+		t.Fatalf("headless calls = %#v", calls)
+	}
+	flows := m.Flows()
+	if len(flows) != 2 || flows[0].Headless || !flows[1].Headless {
+		t.Fatalf("Flows() = %#v, want only first Flow disabled", flows)
+	}
+	if m.ExpandedFlowID() != first.FlowID || m.SelectedFlowPhaseID() != "implementation" {
+		t.Fatalf("expanded/phase = %q/%q, want %s/implementation", m.ExpandedFlowID(), m.SelectedFlowPhaseID(), first.FlowID)
+	}
+}
+
+func TestModel_HKeyPersistenceFailureAndNoSelectionLeaveVisibleStateUnchanged(t *testing.T) {
+	t.Run("persistence failure", func(t *testing.T) {
+		flow := flowWithPhaseDetails()
+		m := model.NewWithOptions(testRepos(), model.Options{
+			SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+				return flowstore.FlowRecord{}, errors.New("state root locked")
+			},
+		})
+		m = flowsInRightPane(t, m, []flowstore.FlowRecord{flow})
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		if cmd == nil {
+			t.Fatal("h returned nil persistence command")
+		}
+		m, _ = update(m, cmd())
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("Flows() = %#v, want unchanged headless preference", got)
+		}
+		if got := m.TransientError(); !strings.Contains(got, "failed to set Flow headless mode") || !strings.Contains(got, "state root locked") {
+			t.Fatalf("status = %q, want clear persistence error", got)
+		}
+	})
+
+	t.Run("no selection", func(t *testing.T) {
+		called := false
+		m := model.NewWithOptions(testRepos(), model.Options{
+			SetFlowHeadless: func(flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+				called = true
+				return flowstore.FlowRecord{}, nil
+			},
+		})
+		m = flowsInRightPane(t, m, nil)
+		m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+		if cmd != nil || called {
+			t.Fatalf("h without selection returned %T, adapter called=%v", cmd, called)
+		}
+		if strings.Contains(m.View(), "headless on") || strings.Contains(m.View(), "headless off") {
+			t.Fatalf("headless control should be hidden without a selected Flow:\n%s", m.View())
+		}
+	})
+}
+
+func TestModel_HKeyTogglesSelectedActiveFlowPhaseAndPreservesExpansion(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	updated := flow
+	updated.Headless = false
+	updated.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+	m := model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			if update.FlowID != flow.FlowID || update.Enabled {
+				t.Fatalf("SetFlowHeadless(%#v), want disable %s", update, flow.FlowID)
+			}
+			return updated, nil
+		},
+	})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{flow})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 20 && model.SelectedActiveFlowPhaseIDForTest(m) != "implementation"; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if cmd == nil {
+		t.Fatal("h on selected active phase returned nil command")
+	}
+	msg, ok := cmd().(model.FlowHeadlessSetMsg)
+	if !ok || !msg.AllRepositories {
+		t.Fatalf("active h command returned %#v, want all-repositories result", msg)
+	}
+	m, _ = update(m, msg)
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("active Flows = %#v, want disabled headless", got)
+	}
+	if model.SelectedActiveFlowPhaseIDForTest(m) != "implementation" {
+		t.Fatalf("selected active phase = %q, want implementation", model.SelectedActiveFlowPhaseIDForTest(m))
+	}
+}
+
+func TestModel_FlowHeadlessResultValidatesScopeIdentityAndCacheFreshness(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	normal := flowWithPhaseDetails()
+	normal.UpdatedAt = t0.Add(2 * time.Minute)
+	active := normal
+	active.UpdatedAt = t0
+	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{normal})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{active})
+
+	between := normal
+	between.Headless = false
+	between.UpdatedAt = t0.Add(time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: normal.FlowID, Flow: between, AllRepositories: true,
+	})
+	if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+		t.Fatalf("newer normal cache was downgraded: %#v", got)
+	}
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+		t.Fatalf("older active cache did not accept between result: %#v", got)
+	}
+
+	newer := between
+	newer.FlowID = "different-flow"
+	newer.UpdatedAt = t0.Add(3 * time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/alpha", FlowID: normal.FlowID, Flow: newer, AllRepositories: true,
+	})
+	if got := m.Flows(); !got[0].Headless {
+		t.Fatalf("mismatched message/record IDs changed normal cache: %#v", got)
+	}
+
+	offRepo := normal
+	offRepo.Headless = false
+	offRepo.UpdatedAt = t0.Add(4 * time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{RepoPath: "/dev/bravo", FlowID: normal.FlowID, Flow: offRepo})
+	if got := m.Flows(); !got[0].Headless {
+		t.Fatalf("off-repo normal result changed current cache: %#v", got)
+	}
+
+	bravo := flowWithPhaseDetails()
+	bravo.FlowID = "bravo-flow"
+	bravo.RepoPath = "/dev/bravo"
+	bravo.UpdatedAt = t0
+	m = flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{normal})
+	m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{bravo})
+	bravoUpdated := bravo
+	bravoUpdated.Headless = false
+	bravoUpdated.UpdatedAt = t0.Add(time.Minute)
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/bravo", FlowID: bravo.FlowID, Flow: bravoUpdated, AllRepositories: true,
+	})
+	if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].FlowID != bravo.FlowID || got[0].Headless {
+		t.Fatalf("valid cross-repo active result was not accepted: %#v", got)
+	}
+
+	older := bravoUpdated
+	older.Headless = true
+	older.UpdatedAt = t0
+	m, _ = update(m, model.FlowHeadlessSetMsg{
+		RepoPath: "/dev/bravo", FlowID: bravo.FlowID, Flow: older, AllRepositories: true,
+	})
+	if got := model.ActiveFlowsForTest(m); got[0].Headless {
+		t.Fatalf("out-of-order older result downgraded active cache: %#v", got)
+	}
+}
+
+func TestModel_NewerHeadlessResultSurvivesOlderWholeRecordResults(t *testing.T) {
+	t0 := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	older := flowWithPhaseDetails()
+	older.UpdatedAt = t0
+	newer := older
+	newer.Headless = false
+	newer.UpdatedAt = t0.Add(time.Minute)
+
+	t.Run("repository Flow list", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Flow list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Active Flows list replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("repository Flow list after Active Flows toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), nil)
+		m = enterActiveFlowsWithRecords(t, m, []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false, AllRepositories: true,
+		})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older repository Flow list replaced newer Active Flows result: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows list after repository Flow toggle", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m = enterActiveFlowsWithRecords(t, m, nil)
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		m, _ = update(m, model.ActiveFlowResultMsg{
+			Flows: []flowstore.FlowRecord{older}, ListRequest: m.ListRequest(ui.ModeActiveFlows),
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || got[0].Headless {
+			t.Fatalf("older Active Flows list replaced newer repository Flow result: %#v", got)
+		}
+	})
+
+	t.Run("auto-mode result", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{older})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: newer.FlowID, Flow: newer, Enabled: false,
+		})
+		autoModeResult := older
+		autoModeResult.AutoMode = true
+		m, _ = update(m, model.FlowAutoModeSetMsg{
+			RepoPath: "/dev/alpha", FlowID: older.FlowID, Flow: autoModeResult, Enabled: true,
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].Headless || !got[0].UpdatedAt.Equal(newer.UpdatedAt) {
+			t.Fatalf("older auto-mode result replaced newer headless record: %#v", got)
+		}
+	})
+
+	t.Run("authoritative deletion", func(t *testing.T) {
+		second := older
+		second.FlowID = "flow-2"
+		second.Title = "Second Flow"
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{newer, second})
+		m, _ = update(m, model.FlowResultMsg{
+			RepoPath: "/dev/alpha", Flows: []flowstore.FlowRecord{second}, ListRequest: m.ListRequest(ui.ModeFlows),
+		})
+		if got := m.Flows(); len(got) != 1 || got[0].FlowID != second.FlowID || m.FlowSelected() != 0 {
+			t.Fatalf("authoritative deletion did not remove cached Flow and select fallback: flows=%#v selected=%d", got, m.FlowSelected())
+		}
+	})
+}
+
+func TestModel_FlowHeadlessResultRejectsMissingReturnedRepoPath(t *testing.T) {
+	flow := flowWithPhaseDetails()
+	flow.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	malformed := flow
+	malformed.RepoPath = ""
+	malformed.Headless = false
+	malformed.UpdatedAt = flow.UpdatedAt.Add(time.Minute)
+
+	t.Run("repository Flows", func(t *testing.T) {
+		m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false,
+		})
+		if got := m.Flows(); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed repository Flow cache: %#v", got)
+		}
+	})
+
+	t.Run("Active Flows", func(t *testing.T) {
+		m := enterActiveFlowsWithRecords(t, model.New(testRepos()), []flowstore.FlowRecord{flow})
+		m, _ = update(m, model.FlowHeadlessSetMsg{
+			RepoPath: "/dev/alpha", FlowID: flow.FlowID, Flow: malformed, Enabled: false, AllRepositories: true,
+		})
+		if got := model.ActiveFlowsForTest(m); len(got) != 1 || !got[0].Headless {
+			t.Fatalf("malformed result changed Active Flows cache: %#v", got)
+		}
+	})
 }
 
 func TestModel_AKeyTogglesFlowAutoModeFromPhaseRowAndPreservesSelection(t *testing.T) {
@@ -4029,6 +4355,7 @@ func TestModel_GOnSelectedFlowPhaseLaunchesFirstLaunchablePhaseByDefaultHeadless
 		Branch:       "flow/selected",
 		Commit:       "abc123",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 			{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhaseReady, Order: 2},
@@ -4255,12 +4582,7 @@ func TestModel_GOnFlowPhaseWithHeadlessOffLaunchesEmbeddedInteractiveCLI(t *test
 				},
 			}})
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-			}
-
-			m, cmd = update(m, flowLaunchKey())
+			m, cmd := update(m, flowLaunchKey())
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded interactive launch")
 			}
@@ -4334,11 +4656,7 @@ func TestModel_GOnFlowPhaseEmbeddedInteractivePrefillSanitizesTerminalControls(t
 		},
 	}})
 	m = selectFlowPhaseByID(t, m, "implementation")
-	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-	}
-	m, cmd = update(m, flowLaunchKey())
+	m, cmd := update(m, flowLaunchKey())
 	if cmd == nil {
 		t.Fatal("g should prepare an embedded interactive launch")
 	}
@@ -4457,6 +4775,7 @@ func repairableFlowForShortcut() flowstore.FlowRecord {
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		AutoMode:     true,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{{
 			PhaseID: "implementation",
 			Title:   "Implementation",
@@ -4537,6 +4856,49 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 			}
 			if launchUpdates != 0 {
 				t.Fatalf("repair recorded %d phase launch updates, want zero", launchUpdates)
+			}
+		})
+	}
+}
+
+func TestModel_RepairLaunchRefreshUsesAuthoritativeFlowHeadlessPreference(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		cached        bool
+		authoritative bool
+	}{
+		{name: "cached on authoritative off", cached: true, authoritative: false},
+		{name: "cached off authoritative on", cached: false, authoritative: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cached := repairableFlowForShortcut()
+			cached.Headless = tt.cached
+			authoritative := cached
+			authoritative.Headless = tt.authoritative
+			authoritative.UpdatedAt = time.Date(2026, 8, 10, 12, 1, 0, 0, time.UTC)
+			var started actions.AgentLaunchContext
+			m := model.NewWithOptions(testRepos(), model.Options{
+				AgentCommand: "codex",
+				ListFlows: func(flowstore.FlowFilter) ([]flowstore.FlowRecord, error) {
+					return []flowstore.FlowRecord{authoritative}, nil
+				},
+				StartEmbeddedTerminal: func(ctx actions.AgentLaunchContext, width, height int) (model.EmbeddedTerminal, error) {
+					started = ctx
+					return &fakeEmbeddedTerminal{state: "running"}, nil
+				},
+			})
+			m = flowsInRightPane(t, m, []flowstore.FlowRecord{cached})
+			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+			if cmd == nil {
+				t.Fatal("R returned nil repair validation command")
+			}
+			msg, ok := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+			if !ok {
+				t.Fatalf("repair validation returned %T", msg)
+			}
+			m, _ = update(m, msg)
+			if started.Headless != tt.authoritative {
+				t.Fatalf("started repair headless = %v, want authoritative %v", started.Headless, tt.authoritative)
 			}
 		})
 	}
@@ -4843,6 +5205,7 @@ func TestModel_CtrlJWithLaunchableFlowPhaseDoesNotMutateOrLaunch(t *testing.T) {
 		RepoPath:     "/dev/alpha",
 		WorktreePath: "/dev/alpha-worktrees/flow-selected",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1},
 		},
@@ -4909,12 +5272,23 @@ func TestModel_GOutsideFlowsModesDoesNotMutateOrLaunch(t *testing.T) {
 }
 
 func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
-	m := flowsInRightPane(t, model.New(testRepos()), []flowstore.FlowRecord{flowWithPhaseDetails()})
+	record := flowWithPhaseDetails()
+	record.UpdatedAt = time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	var updates []flowstore.HeadlessUpdate
+	m := flowsInRightPane(t, model.NewWithOptions(testRepos(), model.Options{
+		SetFlowHeadless: func(update flowstore.HeadlessUpdate) (flowstore.FlowRecord, error) {
+			updates = append(updates, update)
+			record.Headless = update.Enabled
+			record.UpdatedAt = record.UpdatedAt.Add(time.Minute)
+			return record, nil
+		},
+	}), []flowstore.FlowRecord{record})
 
 	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("flows-mode h returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("flows-mode h returned nil command")
 	}
+	m, _ = update(m, cmd())
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("flows-mode h changed mode to %d, want flows", m.Mode())
 	}
@@ -4923,14 +5297,18 @@ func TestModel_HKeyInFlowsTogglesHeadlessWithoutNavigatingModes(t *testing.T) {
 	}
 
 	m, cmd = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if cmd != nil {
-		t.Fatalf("second flows-mode h returned command %T, want nil", cmd)
+	if cmd == nil {
+		t.Fatal("second flows-mode h returned nil command")
 	}
+	m, _ = update(m, cmd())
 	if m.Mode() != ui.ModeFlows {
 		t.Fatalf("second flows-mode h changed mode to %d, want flows", m.Mode())
 	}
 	if view := m.View(); !strings.Contains(view, "headless on") {
 		t.Fatalf("second flows-mode h should show headless on:\n%s", view)
+	}
+	if len(updates) != 2 || updates[0].FlowID != record.FlowID || updates[0].Enabled || !updates[1].Enabled {
+		t.Fatalf("headless updates = %#v", updates)
 	}
 }
 
@@ -5698,6 +6076,7 @@ func flowWithPullRequestTarget(flowID, prURL string) flowstore.FlowRecord {
 		Title:        "Flow with PR",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/add-pr-shortcut",
+		Headless:     true,
 		PR: flowstore.PullRequest{
 			Provider:   "github",
 			Number:     123,
@@ -5720,6 +6099,7 @@ func flowWithIssueTarget(flowID, issueURL string) flowstore.FlowRecord {
 		Title:        "Flow with issue",
 		Status:       flowstore.StatusInProgress,
 		Branch:       "flow/add-issue-shortcut",
+		Headless:     true,
 		Issue: flowstore.Issue{
 			Provider: "github",
 			Number:   123,
@@ -8082,6 +8462,7 @@ func TestModel_GLaunchesFlowPhaseImplementationInEmbeddedHeadlessTerminalByDefau
 		Commit:       "fed321",
 		Title:        "Implement saved plan",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		PlanID:       "plan-1",
 		PlanPath:     "/state/approach/sessions/v1/plans/plan-1/plan.md",
 		Phases: []flowstore.FlowPhase{
@@ -8708,6 +9089,7 @@ func TestModel_DismissedFlowTerminalRemovesActiveMarker(t *testing.T) {
 		Branch:       "flow/dismiss",
 		Title:        "Dismiss terminal flow",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
@@ -9138,11 +9520,7 @@ func TestModel_GFlowPhaseEmbeddedInteractivePrefillFailureCleansUpTerminal(t *te
 			}})
 
 			m = selectFlowPhaseByID(t, m, "implementation")
-			m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-			if cmd != nil {
-				t.Fatalf("h before Flow phase launch returned command %T, want nil", cmd)
-			}
-			m, cmd = update(m, flowLaunchKey())
+			m, cmd := update(m, flowLaunchKey())
 			if cmd == nil {
 				t.Fatal("g should prepare an embedded launch")
 			}
@@ -9193,6 +9571,7 @@ func TestModel_FlowTabCyclesListTerminalLeft(t *testing.T) {
 			WorktreePath: "/dev/alpha-worktrees/flow-one",
 			Title:        "Flow one",
 			Status:       flowstore.StatusInProgress,
+			Headless:     true,
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 			},
@@ -9459,6 +9838,7 @@ func TestModel_FlowSettingsKeysDoNotOpenPickersWhileFlowTerminalFocused(t *testi
 		WorktreePath: "/dev/alpha-worktrees/flow-one",
 		Title:        "Flow one",
 		Status:       flowstore.StatusInProgress,
+		Headless:     true,
 		Phases: []flowstore.FlowPhase{
 			{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 		},
@@ -9550,6 +9930,7 @@ func TestModel_FlowTerminalCommandModeCanEnterInputMode(t *testing.T) {
 			WorktreePath: "/dev/alpha-worktrees/flow-one",
 			Title:        "Flow one",
 			Status:       flowstore.StatusInProgress,
+			Headless:     true,
 			Phases: []flowstore.FlowPhase{
 				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady},
 			},
@@ -11215,6 +11596,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 						PlanPhaseStatus:  flowstore.PhaseRunning,
 						FlowID:           "flow-1",
 						FlowPhaseID:      "plan",
+						Headless:         flowStartRequestHeadless(req),
 						ReasoningEffort:  req.ReasoningEffort,
 						InitialPrompt:    "Use the approach-flow skill for this launch.\n\nBuild\nthe thing\n\nCreate and persist the plan with approach plan save, link it back with approach flow plan set.",
 					}}, nil
@@ -11263,6 +11645,7 @@ func TestModel_NewFlowDelegatesStartAndLaunchesPlanAgent(t *testing.T) {
 			}
 			if startRequest.AgentCommand != command ||
 				startRequest.SessionStateRoot != "/state/approach/sessions/v1" ||
+				startRequest.Headless == nil || !*startRequest.Headless ||
 				startRequest.PlanPhaseID != "" ||
 				startRequest.PlanPhaseTitle != "" ||
 				startRequest.PlanPhaseStatus != "" ||
@@ -11402,7 +11785,7 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 	m = inRightPane(m)
 	m, _ = switchTestMode(m, ui.ModeFlows)
 
-	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", true, false)
+	m, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked Flow", "Plan later", "main", false, false)
 	if cmd == nil {
 		t.Fatal("expected flow creation command")
 	}
@@ -11425,7 +11808,8 @@ func TestModel_NewFlowPlanNowOffCreatesFlowWithoutLaunch(t *testing.T) {
 		createRequest.Instructions != "Plan later" ||
 		createRequest.BaseRef != "main" ||
 		createRequest.AgentCommand != "" ||
-		createRequest.PlanPhaseStatus != "" {
+		createRequest.PlanPhaseStatus != "" ||
+		createRequest.Headless == nil || *createRequest.Headless {
 		t.Fatalf("create request = %#v", createRequest)
 	}
 	if embeddedCalls != 0 || externalCalls != 0 {
@@ -11457,6 +11841,7 @@ func TestModel_NewFlowLaunchNormalizesConfiguredAgentCommandForPlanAndTerminal(t
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           "flow-1",
 				FlowPhaseID:      "plan",
+				Headless:         flowStartRequestHeadless(req),
 				ReasoningEffort:  req.ReasoningEffort,
 			}}, nil
 		},
@@ -11516,6 +11901,7 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 						SessionStateRoot: req.SessionStateRoot,
 						FlowID:           "flow-1",
 						FlowPhaseID:      "plan",
+						Headless:         flowStartRequestHeadless(req),
 					}}, nil
 				},
 				LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
@@ -11551,10 +11937,6 @@ func TestModel_NewFlowCLIPlanLaunchUsesCheckedHeadlessOption(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("expected embedded launch repaint/fetch command")
 			}
-			if model.FlowHeadlessForTest(m) {
-				t.Fatal("checked create-form headless option should not mutate flows-mode headless toggle")
-			}
-
 			if started.Command != command ||
 				started.FlowID != "flow-1" ||
 				started.FlowPhaseID != "plan" ||
@@ -11583,6 +11965,7 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 				SessionStateRoot: req.SessionStateRoot,
 				FlowID:           "flow-1",
 				FlowPhaseID:      "plan",
+				Headless:         flowStartRequestHeadless(req),
 				InitialPrompt:    "Create and persist the plan.",
 			}}, nil
 		},
@@ -11619,10 +12002,6 @@ func TestModel_NewFlowInteractiveCLIPlanLaunchFocusesTerminalInput(t *testing.T)
 	if started.FlowPhaseID != "plan" || started.Headless || !started.Embedded || !started.FlowLaunchTracked {
 		t.Fatalf("interactive new Flow plan launch context = %#v", started)
 	}
-	if !model.FlowHeadlessForTest(m) {
-		t.Fatal("unchecked create-form headless option should not mutate flows-mode headless toggle")
-	}
-
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	wantPrefill := "\x1b[200~Create and persist the plan.\x1b[201~"
 	if len(fakeTerm.writes) != 2 || fakeTerm.writes[0] != wantPrefill || fakeTerm.writes[1] != "z" {

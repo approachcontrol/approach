@@ -28,6 +28,7 @@ type FlowStartRequest struct {
 	PlanPhaseID                 string
 	PlanPhaseTitle              string
 	PlanPhaseStatus             string
+	Headless                    *bool
 }
 
 // FlowStartResult is the prepared or launch-ready result of creating a new Flow.
@@ -43,7 +44,7 @@ type FlowStartResult struct {
 // FlowStarterOptions groups the deeper orchestration adapters for starting a
 // Flow. Tests can replace these directly without widening Model.Options.
 type FlowStarterOptions struct {
-	CreateFlow           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	CreateFlow           func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
 	CreateWorktree       func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	SetStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -58,7 +59,7 @@ type FlowStarterOptions struct {
 // FlowStarter owns the persistence, worktree, bootstrap, and recovery sequence
 // for the initial Flow plan phase.
 type FlowStarter struct {
-	createFlow           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	createFlow           func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error)
 	createWorktree       func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	setStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	setPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -84,7 +85,7 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 		flowPromptTemplates:  opts.FlowPromptTemplates,
 	}
 	if starter.createFlow == nil {
-		starter.createFlow = func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		starter.createFlow = func(flowstore.FlowRecord, flowstore.CreateOptions) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, fmt.Errorf("flow starter missing CreateFlow")
 		}
 	}
@@ -177,6 +178,7 @@ func (s FlowStarter) StartPlan(req FlowStartRequest) (FlowStartResult, error) {
 		FlowID:           flow.FlowID,
 		FlowPhaseID:      phaseID,
 		FlowPhaseKind:    flowstore.SemanticKind(phase),
+		Headless:         flow.Headless,
 		InitialPrompt:    initialFlowLaunchPrompt(flowStartPromptRecord(flow, req, worktree, commit), phase, s.promptTemplatesForRequest(req)),
 	}
 	return result, nil
@@ -202,7 +204,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		Instructions: req.Instructions,
 		RepoPath:     req.RepoPath,
 		BaseRef:      req.BaseRef,
-	})
+	}, flowstore.CreateOptions{Headless: req.Headless})
 	if err != nil {
 		return FlowStartResult{}, err
 	}

@@ -4747,7 +4747,7 @@ func TestStatusBar_ArrowViewHintFitsNarrowFooter(t *testing.T) {
 	}{
 		{name: "worktrees repos pane", mode: ModeWorktrees, pane: PaneRepos},
 		{name: "branches", mode: ModeBranches, pane: PaneTop, wantArrow: true},
-		{name: "flows", mode: ModeFlows, pane: PaneBottom, wantArrow: true},
+		{name: "flows without selection", mode: ModeFlows, pane: PaneBottom},
 		{name: "beads repos pane", mode: ModeBeadsOpen, pane: PaneRepos},
 		{name: "beads top pane", mode: ModeBeadsOpen, pane: PaneTop, wantArrow: true},
 	} {

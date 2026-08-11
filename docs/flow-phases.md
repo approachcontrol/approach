@@ -223,9 +223,11 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 
 ## Compatibility and migration
 
-- The persisted schema is unchanged: `schema_version` stays `1` and no status
-  strings were added, removed, or renamed. Existing Flow JSON needs no
-  migration.
+- `schema_version` stays `1` and no status strings were added, removed, or
+  renamed. New records always persist the metadata field `headless`. Existing
+  Flow JSON needs no migration: a missing legacy field normalizes to `true` on
+  read without forcing a rewrite, while an explicit `false` remains false and
+  is serialized by the next ordinary write.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
   `ResetRecoverableRunningPhase`) re-derive readiness for any graph. Records

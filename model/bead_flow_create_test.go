@@ -372,7 +372,8 @@ func TestBeadsReadyCreateFlowPreparesSelectedVisibleBeadWithoutLaunch(t *testing
 	}
 	if createdRequest.RepoPath != "/dev/alpha" || createdRequest.BaseRef != "" ||
 		createdRequest.AgentCommand != "" || createdRequest.Model != "" || createdRequest.ReasoningEffort != "" ||
-		createdRequest.PlanPhaseID != "" || createdRequest.PlanPhaseTitle != "" || createdRequest.PlanPhaseStatus != "" {
+		createdRequest.PlanPhaseID != "" || createdRequest.PlanPhaseTitle != "" || createdRequest.PlanPhaseStatus != "" ||
+		createdRequest.Headless != nil {
 		t.Fatalf("Ready create request carried launch metadata: %#v", createdRequest)
 	}
 	if got := m.TransientError(); got != "Created flow: bd-selected: Selected work" {
