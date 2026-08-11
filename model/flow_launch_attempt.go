@@ -40,11 +40,13 @@ func (state flowLaunchState) String() string {
 // re-reserves while the slot it is about to dismiss is still installed, which
 // is what keeps the Flow owned across the correction.
 type flowLaunchAttempt struct {
-	Token   string
-	Kind    flowLaunchKind
-	State   flowLaunchState
-	FlowID  string
-	PhaseID string
+	Token    string
+	Kind     flowLaunchKind
+	State    flowLaunchState
+	FlowID   string
+	PhaseID  string
+	Origin   flowLaunchOrigin
+	Settings flowLaunchAgentSettingsSnapshot
 	// MutatedPhase records that AddPhaseLaunchID succeeded, so a later failure
 	// has a persisted running phase to correct. Without it a failure between
 	// phase resolution and persistence would clobber a still-ready phase.

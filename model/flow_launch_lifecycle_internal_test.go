@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/scanner"
 	"github.com/approachcontrol/approach/sessions"
@@ -244,28 +245,26 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			wantStatus:   "No launchable Flow phase",
 		},
 		{
-			name:         "occupancy reported once a phase is launchable",
+			name:         "occupancy reuses the existing launchability refusal",
 			record:       launchable,
 			agentCommand: "",
 			occupy:       true,
-			wantStatus:   flowLaunchBusyStatus,
+			wantStatus:   noLaunchableFlowPhaseStatus,
 		},
 		{
-			name:         "occupancy wins over a pending headless write",
+			name:         "pending headless write wins over occupancy",
 			record:       launchable,
 			agentCommand: "",
 			occupy:       true,
 			headlessWait: true,
-			wantStatus:   flowLaunchBusyStatus,
+			wantStatus:   flowHeadlessWritePendingStatus,
 		},
 		{
-			// The Flow is not waiting on the write when it has nothing to
-			// launch, so reporting the write would name the wrong obstacle.
-			name:         "no launchable phase wins over a pending headless write",
+			name:         "pending headless write wins over no launchable phase",
 			record:       blocked,
 			agentCommand: "",
 			headlessWait: true,
-			wantStatus:   "No launchable Flow phase",
+			wantStatus:   flowHeadlessWritePendingStatus,
 		},
 		{
 			name:         "no launchable phase wins over unset agent",
@@ -325,6 +324,75 @@ func TestManualFlowLaunchStatusPrecedence(t *testing.T) {
 			}
 			if len(h.launchUpdates) != 0 {
 				t.Fatalf("rejected launch persisted a launch ID: %#v", h.launchUpdates)
+			}
+		})
+	}
+}
+
+func TestManualFlowLaunchPreservesAdmissionAgentSettings(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+
+	next, readCmd := m.handleLaunchNextFlowPhase()
+	m = next.(Model)
+	if readCmd == nil {
+		t.Fatal("manual launch should schedule the authoritative read")
+	}
+
+	// Settings may change while the store read is in flight. This launch must
+	// keep the snapshot that admission validated instead of changing route.
+	m.agentCommand = agent.CommandCodexApp
+	readMsg := readCmd()
+	nextModel, prepareCmd := m.Update(readMsg)
+	m = nextModel.(Model)
+	if prepareCmd == nil {
+		t.Fatal("authoritative read should schedule preparation")
+	}
+	preparedMsg := prepareCmd()
+	nextModel, handoffCmd := m.Update(preparedMsg)
+	_ = nextModel
+	_ = handoffCmd
+
+	if len(h.launchContexts) != 1 {
+		t.Fatalf("embedded launches = %d, want 1", len(h.launchContexts))
+	}
+	if len(h.agentContexts) != 0 {
+		t.Fatalf("external launches = %d, want 0", len(h.agentContexts))
+	}
+	if got := h.launchContexts[0].Command; got != agent.CommandCodex {
+		t.Fatalf("launch command = %q, want admission snapshot %q", got, agent.CommandCodex)
+	}
+}
+
+func TestManualFlowLaunchPreservesSubmittingSurface(t *testing.T) {
+	tests := []struct {
+		name   string
+		active bool
+		want   flowLaunchOrigin
+	}{
+		{name: "flows", want: flowLaunchOriginFlows},
+		{name: "active flows", active: true, want: flowLaunchOriginActiveFlows},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			record := manualLaunchFlowRecord()
+			h := newManualLaunchHarness(t, record)
+			m := h.model()
+			if tc.active {
+				m.activeFlowSurface = true
+				m.activeFlows = m.activeFlows.SetItems([]flowstore.FlowRecord{record})
+			}
+
+			next, cmd := m.handleLaunchNextFlowPhase()
+			m = next.(Model)
+			if cmd == nil {
+				t.Fatal("manual launch should schedule the authoritative read")
+			}
+			attempt, ok := m.flowLaunchAttempt(record.FlowID)
+			if !ok || attempt.Origin != tc.want {
+				t.Fatalf("attempt origin = %v, want %v (attempt=%#v)", attempt.Origin, tc.want, attempt)
 			}
 		})
 	}
@@ -510,8 +578,8 @@ func TestFlowLaunchDuplicateIntentIsRefused(t *testing.T) {
 	if secondCmd != nil {
 		t.Fatal("second launch should not start any work")
 	}
-	if got := second.status.Text; got != flowLaunchBusyStatus {
-		t.Fatalf("second launch status = %q, want %q", got, flowLaunchBusyStatus)
+	if got := second.status.Text; got != noLaunchableFlowPhaseStatus {
+		t.Fatalf("second launch status = %q, want %q", got, noLaunchableFlowPhaseStatus)
 	}
 	if again, _ := h.attempt(second, record.FlowID); again.Token != attempt.Token {
 		t.Fatalf("second launch replaced the live attempt: %#v", again)
@@ -579,8 +647,8 @@ func TestFlowLaunchAdmissionRejectsLegacyOccupancy(t *testing.T) {
 			if cmd != nil {
 				t.Fatal("occupied Flow should not start any launch work")
 			}
-			if got := next.status.Text; got != flowLaunchBusyStatus {
-				t.Fatalf("status = %q, want %q", got, flowLaunchBusyStatus)
+			if got := next.status.Text; got != noLaunchableFlowPhaseStatus {
+				t.Fatalf("status = %q, want %q", got, noLaunchableFlowPhaseStatus)
 			}
 			if _, ok := h.attempt(next, record.FlowID); ok {
 				t.Fatal("occupied Flow must not reserve an attempt")
@@ -751,6 +819,14 @@ func TestFlowLaunchStaleEventsAreIgnored(t *testing.T) {
 			event: flowLaunchEventMsg{Token: "token-1", Kind: flowLaunchKindManualPhase, From: flowLaunchStatePreparing, FlowID: record.FlowID, Stage: flowLaunchStagePrepared, PhaseID: record.Phases[0].PhaseID, Record: record},
 		},
 		{
+			name:  "read stage with preparing state",
+			event: flowLaunchEventMsg{Token: "token-1", Kind: flowLaunchKindManualPhase, From: flowLaunchStatePreparing, FlowID: record.FlowID, Stage: flowLaunchStageRead, PhaseID: record.Phases[0].PhaseID, Record: record},
+		},
+		{
+			name:  "prepared stage with reading state",
+			event: flowLaunchEventMsg{Token: "token-1", Kind: flowLaunchKindManualPhase, From: flowLaunchStateReading, FlowID: record.FlowID, Stage: flowLaunchStagePrepared, PhaseID: record.Phases[0].PhaseID, Record: record},
+		},
+		{
 			name:  "unknown flow",
 			event: flowLaunchEventMsg{Token: "token-1", Kind: flowLaunchKindManualPhase, From: flowLaunchStateReading, FlowID: "flow-other", Stage: flowLaunchStageRead},
 		},
@@ -847,10 +923,9 @@ func TestFlowLaunchLiveSessionScope(t *testing.T) {
 			if launched != tc.wantLaunch {
 				t.Fatalf("launch persisted = %v, want %v (status %q)", launched, tc.wantLaunch, m.status.Text)
 			}
-			// Every blocking case here is a live session, which holds the
-			// launch slot rather than making the phase unlaunchable.
-			if !tc.wantLaunch && m.status.Text != flowLaunchBusyStatus {
-				t.Fatalf("status = %q, want %q", m.status.Text, flowLaunchBusyStatus)
+			// Live-session occupancy preserves the existing launch-refusal text.
+			if !tc.wantLaunch && m.status.Text != noLaunchableFlowPhaseStatus {
+				t.Fatalf("status = %q, want %q", m.status.Text, noLaunchableFlowPhaseStatus)
 			}
 		})
 	}

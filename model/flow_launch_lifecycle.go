@@ -13,17 +13,11 @@ import (
 	"github.com/approachcontrol/approach/ui"
 )
 
-// noLaunchableFlowPhaseStatus is refusal for a Flow that has no eligible phase
-// at all: nothing is ready, or the fresh record disagrees with the list row.
+// noLaunchableFlowPhaseStatus covers every reason a launch is refused before it
+// reaches preflight: no eligible phase, an occupied Flow, or a live session on
+// the phase. Occupancy deliberately reuses this text so the migration adds no
+// user-visible strings.
 const noLaunchableFlowPhaseStatus = "No launchable Flow phase"
-
-// flowLaunchBusyStatus is refusal for a Flow whose launch slot is already taken
-// — by another lifecycle attempt, an embedded terminal, a pending repair or
-// phase resume, or a live session on the phase being launched. It is
-// deliberately distinct from noLaunchableFlowPhaseStatus: the phase is
-// launchable and reporting otherwise would be false, and the remedy the guide
-// documents (dismiss the terminal) is only actionable if the refusal names it.
-const flowLaunchBusyStatus = "Flow is busy; dismiss its terminal or wait for the running session"
 
 // flowLaunchStage names the two asynchronous hops the lifecycle emits. Handoff
 // results and failure persistence arrive on messages that already exist, so
@@ -57,6 +51,36 @@ type flowLaunchEventMsg struct {
 	Err          string
 }
 
+// flowLaunchAgentSettingsSnapshot freezes the mutable settings that admission
+// validated. A user may change them while the authoritative read is in flight;
+// that must affect the next launch, not change this launch's route or prompt.
+type flowLaunchAgentSettingsSnapshot struct {
+	Command          string
+	Model            string
+	ReasoningEffort  string
+	SessionStateRoot string
+	PromptTemplates  FlowPromptTemplates
+}
+
+func snapshotFlowLaunchAgentSettings(launcher FlowPhaseLauncher) flowLaunchAgentSettingsSnapshot {
+	return flowLaunchAgentSettingsSnapshot{
+		Command:          launcher.AgentCommand,
+		Model:            launcher.Model,
+		ReasoningEffort:  launcher.ReasoningEffort,
+		SessionStateRoot: launcher.SessionStateRoot,
+		PromptTemplates:  launcher.PromptTemplates,
+	}
+}
+
+func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher FlowPhaseLauncher) FlowPhaseLauncher {
+	launcher.AgentCommand = snapshot.Command
+	launcher.Model = snapshot.Model
+	launcher.ReasoningEffort = snapshot.ReasoningEffort
+	launcher.SessionStateRoot = snapshot.SessionStateRoot
+	launcher.PromptTemplates = snapshot.PromptTemplates
+	return launcher
+}
+
 // requestFlowLaunch is the lifecycle's only entry point. It admits or refuses
 // the intent synchronously, installs the reservation before any asynchronous
 // work starts, and returns the authoritative read command.
@@ -67,25 +91,15 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 	}
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
+	if flowID != "" && m.flowHeadlessWritePending(flowID) {
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
+	}
 	if flowID == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
-	// Each refusal names the obstacle the user can actually act on, so every
-	// check is ordered by whether clearing it would change the answer. A Flow
-	// with nothing to launch stays unlaunchable however busy it is, so
-	// launchability is answered first; telling someone to dismiss a terminal
-	// that would reveal no ready phase sends them to do nothing.
-	record, phase, ok := m.cachedFlowLaunchTarget(intent)
+	record, phase, ok := m.previewFlowLaunch(intent)
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
-	}
-	if m.flowLaunchAdmissionOccupied(flowID) {
-		return m.setStatus(statusOther, flowLaunchBusyStatus), nil
-	}
-	// After launchability, so a Flow with nothing to launch reports that rather
-	// than a transient write it is not waiting on.
-	if m.flowHeadlessWritePending(flowID) {
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
 	}
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
@@ -96,14 +110,17 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 	if token == "" {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
 	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
-		Token:   token,
-		Kind:    intent.Kind,
-		FlowID:  record.FlowID,
-		PhaseID: phase.PhaseID,
+		Token:    token,
+		Kind:     intent.Kind,
+		FlowID:   record.FlowID,
+		PhaseID:  phase.PhaseID,
+		Origin:   intent.Origin,
+		Settings: settings,
 	}, flowLaunchStateReserved)
 	if !reserved {
-		return m.setStatus(statusOther, flowLaunchBusyStatus), nil
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
 	m = next
 	// A failure here would leave the attempt in reserved, where no event fence
@@ -113,7 +130,7 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 		return m.releaseFlowLaunchAttempt(record.FlowID, token).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
 	m = next
-	return m, m.flowLaunchReadCmd(intent, token)
+	return m, m.flowLaunchReadCmd(intent, token, settings)
 }
 
 // previewFlowLaunch answers the cached, non-authoritative question the footer
@@ -209,9 +226,9 @@ func (m Model) flowLaunchLauncher(token string) FlowPhaseLauncher {
 	return launcher
 }
 
-func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string) tea.Cmd {
+func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	seams := m.launchSeams
-	launcher := m.flowLaunchLauncher(token)
+	launcher := settings.apply(m.flowLaunchLauncher(token))
 	phaseID := intent.PhaseID
 	return func() tea.Msg {
 		event := flowLaunchEventMsg{
@@ -237,8 +254,9 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string) tea.Cmd 
 			return event
 		}
 		if flowLaunchPhaseSessionOccupied(phase, records) {
-			// The phase is launchable; a live session on it is holding the slot.
-			event.Err = flowLaunchBusyStatus
+			// A live session on the phase means it is effectively still
+			// running, which is what the existing text already says.
+			event.Err = noLaunchableFlowPhaseStatus
 			return event
 		}
 		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{
@@ -259,8 +277,8 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string) tea.Cmd 
 	}
 }
 
-func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd {
-	launcher := m.flowLaunchLauncher(msg.Token)
+func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
+	launcher := settings.apply(m.flowLaunchLauncher(msg.Token))
 	phase, ok := flowPhaseByID(msg.Record, msg.PhaseID)
 	if !ok {
 		return func() tea.Msg {
@@ -308,7 +326,11 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg) tea.Cmd {
 // fence mismatch returns without touching anything: no phase write, no
 // terminal, no release, and no status replacement.
 func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
-	attempt, ok := m.matchingFlowLaunchAttempt(msg.FlowID, msg.Token, msg.Kind, msg.From)
+	want, validStage := flowLaunchStageState(msg.Stage)
+	if !validStage || msg.From != want {
+		return m, nil
+	}
+	attempt, ok := m.matchingFlowLaunchAttempt(msg.FlowID, msg.Token, msg.Kind, want)
 	if !ok {
 		return m, nil
 	}
@@ -324,7 +346,7 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m = next.withFlowLaunchAttemptPhase(attempt.FlowID, attempt.Token, msg.PhaseID)
-		return m, m.flowLaunchPrepareCmd(msg)
+		return m, m.flowLaunchPrepareCmd(msg, attempt.Settings)
 	case flowLaunchStagePrepared:
 		if msg.Skipped {
 			return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token), nil
@@ -340,6 +362,17 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		return m.handoffFlowLaunchExternal(attempt, msg)
 	}
 	return m, nil
+}
+
+func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
+	switch stage {
+	case flowLaunchStageRead:
+		return flowLaunchStateReading, true
+	case flowLaunchStagePrepared:
+		return flowLaunchStatePreparing, true
+	default:
+		return 0, false
+	}
 }
 
 // installFlowLaunchEmbedded reproduces everything the

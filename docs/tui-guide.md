@@ -464,11 +464,9 @@ On a Flow row or an expanded phase row:
   record disagrees. A launch is rejected — not merely unadvertised — while an
   embedded terminal, a pending repair, a pending phase resume, or another
   launch already holds that Flow, and while a live session is attached to the
-  phase being launched. Refusals name the obstacle you can act on: a Flow with
-  a launchable phase reports that it is busy, so dismiss or detach its terminal
-  before launching the next phase, while a Flow with nothing ready reports that
-  instead — dismissing its terminal would not reveal any work. Both `g`
-  bindings (flows view and Active Flows) behave identically.
+  phase being launched. Dismiss or detach the Flow's terminal before launching
+  its next phase. Both `g` bindings (flows view and Active Flows) behave
+  identically.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
   row or an expanded phase row. The shortcut is shown only when no phase can
   be launched manually, no healthy phase session is running, no Flow terminal

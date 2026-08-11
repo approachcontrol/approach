@@ -5007,8 +5007,8 @@ func TestModel_ManualPhaseLaunchWaitsForPendingOrRetainedRepair(t *testing.T) {
 			if launchUpdates != 0 {
 				t.Fatalf("manual launch persisted %d phase updates during repair", launchUpdates)
 			}
-			if got := m.TransientError(); got != "Flow is busy; dismiss its terminal or wait for the running session" {
-				t.Fatalf("manual launch status = %q, want repair occupancy reported as a busy Flow", got)
+			if got := m.TransientError(); got != "No launchable Flow phase" {
+				t.Fatalf("manual launch status = %q, want compatibility refusal", got)
 			}
 		})
 	}

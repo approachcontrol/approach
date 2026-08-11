@@ -1994,6 +1994,7 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	return m.requestFlowLaunch(flowLaunchIntent{
 		Kind:   flowLaunchKindManualPhase,
 		FlowID: record.FlowID,
+		Origin: m.flowLaunchOrigin(),
 	})
 }
 

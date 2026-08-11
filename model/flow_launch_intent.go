@@ -15,6 +15,18 @@ const (
 	flowLaunchKindSavedSessionResume
 )
 
+// flowLaunchOrigin records which surface submitted the intent. Nothing branches
+// on it yet; preserving it at admission lets routing tests distinguish the two
+// manual entry points and gives later lifecycle kinds explicit provenance.
+type flowLaunchOrigin int
+
+const (
+	flowLaunchOriginFlows flowLaunchOrigin = iota + 1
+	flowLaunchOriginActiveFlows
+	flowLaunchOriginAutoMode
+	flowLaunchOriginRepair
+)
+
 // flowLaunchRoute selects the handoff the prepared context takes.
 type flowLaunchRoute int
 
@@ -26,11 +38,16 @@ const (
 // flowLaunchIntent is what a caller submits. It carries only what the caller
 // knows: everything else — agent settings, prompt templates, phase, headless
 // preference — the lifecycle reads from the Model or the authoritative record.
-// The resume, create, and AutoMode kinds will need per-kind payloads, and
-// routing may need the submitting surface; both are added with the code that
-// reads them rather than declared unused here.
 type flowLaunchIntent struct {
 	Kind    flowLaunchKind
 	FlowID  string
 	PhaseID string
+	Origin  flowLaunchOrigin
+}
+
+func (m Model) flowLaunchOrigin() flowLaunchOrigin {
+	if m.activeFlowSurfaceVisible() {
+		return flowLaunchOriginActiveFlows
+	}
+	return flowLaunchOriginFlows
 }
