@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/planstore"
 )
@@ -24,10 +25,12 @@ const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
 
-var (
-	errFlowNotFound       = errors.New("flow not found")
-	errAutoLaunchOutdated = errors.New("auto launch outdated")
-)
+var errFlowNotFound = errors.New("flow not found")
+
+// ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
+// wraps. It is exported so callers outside this package can build the rejection
+// their AutoMode handling has to survive.
+var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
 
 const (
 	StatusPending        = "pending"
@@ -125,25 +128,130 @@ func IsNotFound(err error) bool {
 // IsAutoLaunchOutdated reports whether err means an automatic launch request
 // lost its race with newer Flow state and should be ignored.
 func IsAutoLaunchOutdated(err error) bool {
-	return errors.Is(err, errAutoLaunchOutdated)
+	return errors.Is(err, ErrAutoLaunchOutdated)
 }
 
 // FlowPhase is one phase in the persisted Flow pipeline.
 type FlowPhase struct {
-	PhaseID       string    `json:"phase_id"`
-	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
-	Title         string    `json:"title"`
-	Kind          string    `json:"kind"`
-	DependsOn     []string  `json:"depends_on"`
-	Status        string    `json:"status"`
-	Order         int       `json:"order"`
-	Outcome       string    `json:"outcome,omitempty"`
-	Notes         string    `json:"notes,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	LaunchIDs     []string  `json:"launch_ids,omitempty"`
-	Sessions      []Session `json:"sessions,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	PhaseID       string `json:"phase_id"`
+	ParentPhaseID string `json:"parent_phase_id,omitempty"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	// Agent, Model, and ReasoningEffort are captured when the Flow is created
+	// and are not consumed at launch yet; see PhaseAgentSettings.
+	Agent           string    `json:"agent,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	DependsOn       []string  `json:"depends_on"`
+	Status          string    `json:"status"`
+	Order           int       `json:"order"`
+	Outcome         string    `json:"outcome,omitempty"`
+	Notes           string    `json:"notes,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
+	LaunchIDs       []string  `json:"launch_ids,omitempty"`
+	Sessions        []Session `json:"sessions,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// PhaseAgentSettings is the agent selection captured for a Flow phase.
+//
+// Each field is read independently: an empty field means nothing was captured
+// and the value must be resolved from the global setting in effect at launch,
+// while "default" means the provider default was captured explicitly. Writing
+// them is not independent — see Validate.
+type PhaseAgentSettings struct {
+	Agent           string
+	Model           string
+	ReasoningEffort string
+}
+
+// PhaseAgentSettingsFrom converts a resolved launch selection into the
+// persistence shape. It is the only conversion between the two triples, so
+// callers holding an agent.Settings should route through it rather than
+// assigning the three fields by hand.
+func PhaseAgentSettingsFrom(settings agent.Settings) PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           settings.Command,
+		Model:           settings.Model,
+		ReasoningEffort: settings.ReasoningEffort,
+	}
+}
+
+// IsZero reports whether no setting was captured. Emptiness is evaluated after
+// normalization, so whitespace-only fields count as empty.
+func (s PhaseAgentSettings) IsZero() bool {
+	return s.Normalize().isEmpty()
+}
+
+// isEmpty is the plain emptiness check on an already-normalized triple.
+func (s PhaseAgentSettings) isEmpty() bool {
+	return s.Agent == "" && s.Model == "" && s.ReasoningEffort == ""
+}
+
+// Normalize lowercases and trims every field.
+func (s PhaseAgentSettings) Normalize() PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           agent.Normalize(s.Agent),
+		Model:           agent.NormalizeModel(s.Model),
+		ReasoningEffort: agent.NormalizeReasoningEffort(s.ReasoningEffort),
+	}
+}
+
+// Validate checks the normalized triple as a unit: an unset selection is
+// allowed, but a model or reasoning effort without an agent is not, because a
+// model cannot be interpreted without knowing its agent.
+func (s PhaseAgentSettings) Validate() error {
+	s = s.Normalize()
+	if s.isEmpty() {
+		return nil
+	}
+	if err := agent.Validate(s.Agent); err != nil {
+		return err
+	}
+	if err := agent.ValidateModel(s.Agent, s.Model); err != nil {
+		return err
+	}
+	return agent.ValidateReasoningEffort(s.Agent, s.ReasoningEffort)
+}
+
+// AgentSettings returns the agent selection captured for this phase.
+func (p FlowPhase) AgentSettings() PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           p.Agent,
+		Model:           p.Model,
+		ReasoningEffort: p.ReasoningEffort,
+	}
+}
+
+func (p FlowPhase) withAgentSettings(settings PhaseAgentSettings) FlowPhase {
+	p.Agent = settings.Agent
+	p.Model = settings.Model
+	p.ReasoningEffort = settings.ReasoningEffort
+	return p
+}
+
+// applyDeclaredPhaseAgentSettings treats each declared phase's settings as
+// all-or-nothing: a phase that declares none of the three takes the create
+// defaults, and a phase that declares any of them keeps its own triple, which
+// is then validated as a unit. Nothing is merged per field, so a phase that
+// declares a model without an agent fails rather than silently inheriting one.
+//
+// Phases are stamped in place, so a rejected phase leaves the ones before it
+// already stamped. Callers must discard the slice on error rather than reuse
+// it; CreateWithOptions does, by returning no record at all.
+func applyDeclaredPhaseAgentSettings(phases []FlowPhase, defaults PhaseAgentSettings) ([]FlowPhase, error) {
+	for i, phase := range phases {
+		settings := phase.AgentSettings().Normalize()
+		if settings.isEmpty() {
+			settings = defaults
+		}
+		if err := settings.Validate(); err != nil {
+			return nil, fmt.Errorf("phase %q agent settings: %w", phase.PhaseID, err)
+		}
+		phases[i] = phase.withAgentSettings(settings)
+	}
+	return phases, nil
 }
 
 // Session references a provider session without duplicating transcript contents.
@@ -475,6 +583,12 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	if err := validateClosure(record.Closed); err != nil {
 		return FlowRecord{}, err
 	}
+	// Validate the captured agent settings before any record is written, so a
+	// rejected selection can never leave a partial Flow behind.
+	phaseAgent := opts.PhaseAgent.Normalize()
+	if err := phaseAgent.Validate(); err != nil {
+		return FlowRecord{}, fmt.Errorf("flow phase agent settings: %w", err)
+	}
 	if record.FlowID == "" {
 		// Create reads the clock twice: once to allocate the timestamped ID and
 		// again below for the record's own timestamps. Both reads are counted by
@@ -521,12 +635,17 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 			if err := validatePreset(preset); err != nil {
 				return FlowRecord{}, err
 			}
-			draft.Phases = seedPhases(preset.Phases, draft.CreatedAt, draft.UpdatedAt)
+			draft.Phases = seedPhases(preset.Phases, phaseAgent, draft.CreatedAt, draft.UpdatedAt)
 			draft = refreshPhaseReadiness(draft, now)
 		} else {
 			if err := validateDeclaredPhaseDependencies(draft.Phases); err != nil {
 				return FlowRecord{}, err
 			}
+			phases, err := applyDeclaredPhaseAgentSettings(draft.Phases, phaseAgent)
+			if err != nil {
+				return FlowRecord{}, err
+			}
+			draft.Phases = phases
 			authoritativeEdges := graphHasAuthoritativeEdges(draft.Phases)
 			draft.Phases = backfillLinearDependsOnForCreate(draft.Phases)
 			if err := validateUniqueMergePhaseKind(draft.Phases); err != nil {
@@ -735,6 +854,9 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			record = refreshPhaseReadiness(record, now)
 			return record, nil
 		}
+		// New children inherit the implementation parent's captured settings;
+		// existing children keep whatever they already carry, since
+		// AddChildPhase is re-run idempotently.
 		child := FlowPhase{
 			PhaseID:       update.PhaseID,
 			ParentPhaseID: update.ParentPhaseID,
@@ -744,7 +866,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			Order:         update.Order,
 			CreatedAt:     now,
 			UpdatedAt:     now,
-		}
+		}.withAgentSettings(record.Phases[parentIndex].AgentSettings())
 		record.Phases = append(record.Phases, child)
 		record.Phases = orderImplementationChildren(record.Phases, update.ParentPhaseID)
 		record.UpdatedAt = now
@@ -1189,7 +1311,7 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		if FlowClosed(record) {
 			if update.AutoLaunch {
 				return FlowRecord{}, fmt.Errorf("auto launch target %q is not eligible because flow %q is closed: %w",
-					update.PhaseID, record.FlowID, errAutoLaunchOutdated)
+					update.PhaseID, record.FlowID, ErrAutoLaunchOutdated)
 			}
 			return FlowRecord{}, closedFlowMutationError(record, "record a phase launch for")
 		}
@@ -1275,7 +1397,7 @@ func validateFlowLaunchOccupancy(record FlowRecord, targetIndex int, autoLaunch 
 		}
 		message := fmt.Sprintf("flow %q already has running phase %q", record.FlowID, phase.PhaseID)
 		if autoLaunch {
-			return fmt.Errorf("%s: %w", message, errAutoLaunchOutdated)
+			return fmt.Errorf("%s: %w", message, ErrAutoLaunchOutdated)
 		}
 		return fmt.Errorf("%s", message)
 	}
@@ -1310,13 +1432,13 @@ func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
 	}
 	switch {
 	case !record.AutoMode:
-		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, ErrAutoLaunchOutdated)
 	case artifacts.NormalizePhaseID(phase.PhaseID) == "" || SemanticKind(phase) == KindMerge:
-		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	case phase.Status != PhaseReady:
-		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, ErrAutoLaunchOutdated)
 	case !phaseLaunchEligibleAtIndex(record, phaseIndex):
-		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	default:
 		return nil
 	}
@@ -2220,7 +2342,7 @@ func DeriveStatus(record FlowRecord) string {
 }
 
 func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
-	return seedPhases(DefaultPreset().Phases, createdAt, updatedAt)
+	return seedPhases(DefaultPreset().Phases, PhaseAgentSettings{}, createdAt, updatedAt)
 }
 
 // saveSession validates and normalizes one record, then persists it through the
@@ -2407,7 +2529,18 @@ func normalizeRecordBase(record FlowRecord) FlowRecord {
 		record.Merge.Status = MergePending
 	}
 	record.Phases = backfillPhaseKinds(record.Phases)
+	record.Phases = normalizePhaseAgentSettings(record.Phases)
 	return record
+}
+
+// normalizePhaseAgentSettings trims and lowercases stored phase settings on
+// read. It deliberately does not validate them: an odd record still has to be
+// readable, and validation belongs to the create boundary.
+func normalizePhaseAgentSettings(phases []FlowPhase) []FlowPhase {
+	for i := range phases {
+		phases[i] = phases[i].withAgentSettings(phases[i].AgentSettings().Normalize())
+	}
+	return phases
 }
 
 func normalizeReviewOutcomes(record FlowRecord) FlowRecord {
@@ -2442,8 +2575,9 @@ func hasPlanReviewKind(record FlowRecord) bool {
 // collapseDuplicatePhaseRows keeps the row at keepIndex and drops every other
 // row whose normalized phase id matches it, repairing records that duplicated
 // one logical phase before phase ids were normalized. Launch and session
-// history from dropped rows is merged into the survivor; dropped notes and
-// summaries are kept only when the survivor's own fields are empty.
+// history from dropped rows is merged into the survivor; dropped notes,
+// summaries, and agent settings are kept only when the survivor's own fields
+// are empty.
 func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 	survivor := phases[keepIndex]
 	want := artifacts.NormalizePhaseID(survivor.PhaseID)
@@ -2470,6 +2604,12 @@ func collapseDuplicatePhaseRows(phases []FlowPhase, keepIndex int) []FlowPhase {
 		}
 		if survivor.Summary == "" {
 			survivor.Summary = phase.Summary
+		}
+		// Agent settings fall back as a whole triple, never per field, so a
+		// survivor never ends up with a model from one row and an agent from
+		// another.
+		if survivor.AgentSettings().IsZero() {
+			survivor = survivor.withAgentSettings(phase.AgentSettings())
 		}
 	}
 	kept[survivorPos] = survivor

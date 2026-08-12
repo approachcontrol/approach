@@ -2367,3 +2367,106 @@ func savePlanArtifact(t *testing.T, root, planID string) {
 		t.Fatalf("SavePlan() error = %v", err)
 	}
 }
+
+func TestRunFlowCreateStampsConfiguredAgentSettings(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "create",
+		"--title", "Stamped",
+		"--instructions", "capture the agent",
+		"--repo-path", repoPath,
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Agent: config.AgentConfig{
+				Command:               "claude",
+				ClaudeModel:           "claude-opus-5",
+				ClaudeReasoningEffort: "high",
+				CodexModel:            "gpt-5.5",
+				CodexReasoningEffort:  "medium",
+			}}, nil
+		},
+		stdout: &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if len(record.Phases) == 0 {
+		t.Fatal("created record has no phases")
+	}
+	want := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	for _, phase := range record.Phases {
+		if got := phase.AgentSettings(); got != want {
+			t.Fatalf("phase %q settings = %#v, want %#v", phase.PhaseID, got, want)
+		}
+	}
+}
+
+func TestRunFlowCreateWithoutAgentConfigStampsNothing(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	var stdout bytes.Buffer
+	err := run([]string{
+		"approach", "flow", "create",
+		"--title", "Unstamped",
+		"--instructions", "no agent configured",
+		"--repo-path", repoPath,
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) { return config.Config{}, nil },
+		stdout:     &stdout,
+	}))
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	var record flowstore.FlowRecord
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if len(record.Phases) == 0 {
+		t.Fatal("created record has no phases")
+	}
+	for _, phase := range record.Phases {
+		if got := phase.AgentSettings(); !got.IsZero() {
+			t.Fatalf("phase %q settings = %#v, want zero", phase.PhaseID, got)
+		}
+	}
+}
+
+func TestRunFlowCreateRejectsInvalidAgentConfig(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	err := run([]string{
+		"approach", "flow", "create",
+		"--title", "Invalid",
+		"--instructions", "mismatched model",
+		"--repo-path", repoPath,
+		"--json",
+		"--state-root", root,
+	}, noScanDeps(t, runDeps{
+		loadConfig: func() (config.Config, error) {
+			return config.Config{Agent: config.AgentConfig{Command: "claude", ClaudeModel: "gpt-5.5"}}, nil
+		},
+		stdout: &bytes.Buffer{},
+	}))
+	if err == nil || !strings.Contains(err.Error(), `unsupported model "gpt-5.5" for claude`) {
+		t.Fatalf("run error = %v, want unsupported model error", err)
+	}
+	entries, readErr := os.ReadDir(filepath.Join(root, "flows"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir(flows) error = %v", readErr)
+	}
+	for _, entry := range entries {
+		if entry.Name() != ".locks" {
+			t.Fatalf("flow record %q was written for rejected agent config", entry.Name())
+		}
+	}
+}

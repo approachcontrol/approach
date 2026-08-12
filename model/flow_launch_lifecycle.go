@@ -9,6 +9,7 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
+	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/sessions"
 	"github.com/approachcontrol/approach/ui"
 )
@@ -29,6 +30,24 @@ const (
 	flowLaunchStagePrepared
 )
 
+// flowLaunchOutcome classifies what an autoPhase read stage decided. It exists
+// so the handler can release, re-arm, or drop without matching on error text.
+// The zero value is inert on purpose, so that an auto read event built without
+// explicitly classifying itself falls into handleAutoFlowLaunchRead's default
+// branch and releases the attempt. Starting the enum at "ok" would make that
+// same omission launch instead, which is the one outcome a misclassified event
+// must never reach. What keeps the field from being read on the prepared hop is
+// the Stage switch in handleFlowLaunchEvent, not this ordering.
+type flowLaunchOutcome int
+
+const (
+	flowLaunchOutcomeNone flowLaunchOutcome = iota
+	flowLaunchOutcomeOK
+	flowLaunchOutcomeRetry
+	flowLaunchOutcomeStale
+	flowLaunchOutcomeFailed
+)
+
 // flowLaunchEventMsg carries one asynchronous hop back into Update. Token,
 // Kind, and From together fence it against the attempt that started it.
 type flowLaunchEventMsg struct {
@@ -42,6 +61,17 @@ type flowLaunchEventMsg struct {
 	Context actions.AgentLaunchContext
 	Route   flowLaunchRoute
 	Skipped bool
+	// Outcome is read-stage-only and autoPhase-only; every dispatch on it is
+	// gated on Stage for that reason.
+	Outcome flowLaunchOutcome
+	// FlowTitle is seeded from the intent so a failed read still has a title,
+	// then overwritten from the fresh record once the read succeeds.
+	FlowTitle string
+	// Headless and AutoLaunch are resolved once in the read stage and carried,
+	// so prepare cannot re-derive headless from the record and launch an
+	// AutoMode phase interactively.
+	Headless   bool
+	AutoLaunch bool
 	// Preflight-resolved paths threaded from read to prepare. RepoPath is not
 	// Record.RepoPath: it falls back to the current repo, and ActionFailedMsg
 	// gates its status on it.
@@ -84,32 +114,43 @@ func (snapshot flowLaunchAgentSettingsSnapshot) apply(launcher FlowPhaseLauncher
 
 // requestFlowLaunch is the lifecycle's only entry point. It admits or refuses
 // the intent synchronously, installs the reservation before any asynchronous
-// work starts, and returns the authoritative read command.
-func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
-	if intent.Kind != flowLaunchKindManualPhase {
+// work starts, and returns the authoritative read command. The bool is the
+// admission verdict: AutoMode needs it synchronously to decide whether to
+// disarm its drain, and a refusal's text never has to reach a caller because
+// any status it produces is already applied to the returned Model.
+func (m Model) requestFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
+	switch intent.Kind {
+	case flowLaunchKindManualPhase:
+		return m.admitManualFlowLaunch(intent)
+	case flowLaunchKindAutoPhase:
+		return m.admitAutoFlowLaunch(intent)
+	default:
 		// Later beads route the remaining kinds; nothing submits them yet.
-		return m, nil
+		return m, nil, false
 	}
+}
+
+func (m Model) admitManualFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
 	flowID := strings.TrimSpace(intent.FlowID)
 	intent.FlowID = flowID
 	if flowID != "" && m.flowHeadlessWritePending(flowID) {
-		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil
+		return m.setStatus(statusOther, flowHeadlessWritePendingStatus), nil, false
 	}
 	if flowID == "" {
-		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	record, phase, ok := m.previewFlowLaunch(intent)
 	if !ok {
-		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	// Kept synchronous, and after launchability, so the order statuses appear in
 	// does not change.
 	if command, _, _ := m.flowLaunchAgentSettings(); agent.Normalize(command) == "" {
-		return m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent"), nil
+		return m.setStatus(statusOther, "Press A to choose "+ui.AgentInputPlaceholder+" before launching an agent"), nil, false
 	}
 	token := strings.TrimSpace(m.launchSeams.newLaunchID())
 	if token == "" {
-		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
 	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
@@ -121,17 +162,59 @@ func (m Model) requestFlowLaunch(intent flowLaunchIntent) (tea.Model, tea.Cmd) {
 		Settings: settings,
 	}, flowLaunchStateReserved)
 	if !reserved {
-		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	m = next
 	// A failure here would leave the attempt in reserved, where no event fence
 	// matches, and the Flow would be held forever. Release rather than continue.
 	next, advanced := m.transitionFlowLaunchAttempt(record.FlowID, token, flowLaunchStateReserved, flowLaunchStateReading)
 	if !advanced {
-		return m.releaseFlowLaunchAttempt(record.FlowID, token).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
+		return m.releaseFlowLaunchAttempt(record.FlowID, token).setStatus(statusOther, noLaunchableFlowPhaseStatus), nil, false
 	}
 	m = next
-	return m, m.flowLaunchReadCmd(intent, token, settings)
+	return m, m.flowLaunchReadCmd(intent, token, settings), true
+}
+
+// admitAutoFlowLaunch refuses in silence, without exception. The advance poll
+// runs at 1 Hz and is view-independent, so any status a refusal set would be
+// repainted every second over whatever the user is actually looking at. It also
+// skips previewFlowLaunch: that resolves through the display caches, which the
+// poll's Flows are frequently absent from, so launchability is left entirely to
+// the authoritative read. No agent-command check happens here either — with no
+// admission-time announcement to withhold, an unconfigured agent simply fails
+// Preflight in the read stage and produces today's transient status.
+func (m Model) admitAutoFlowLaunch(intent flowLaunchIntent) (Model, tea.Cmd, bool) {
+	flowID := strings.TrimSpace(intent.FlowID)
+	intent.FlowID = flowID
+	if flowID == "" || m.flowLaunchAdmissionOccupied(flowID) {
+		return m, nil, false
+	}
+	token := strings.TrimSpace(m.launchSeams.newLaunchID())
+	if token == "" {
+		return m, nil, false
+	}
+	// The settings snapshot is still taken. Only the refusal on an empty agent
+	// command is dropped: a zero-value snapshot would make every auto launch
+	// fail Preflight with "Press A to choose …".
+	settings := snapshotFlowLaunchAgentSettings(m.flowLaunchLauncher(token))
+	next, reserved := m.reserveFlowLaunchAttempt(flowLaunchAttempt{
+		Token:    token,
+		Kind:     intent.Kind,
+		FlowID:   flowID,
+		PhaseID:  intent.PhaseID,
+		Origin:   intent.Origin,
+		Settings: settings,
+	}, flowLaunchStateReserved)
+	if !reserved {
+		return m, nil, false
+	}
+	m = next
+	next, advanced := m.transitionFlowLaunchAttempt(flowID, token, flowLaunchStateReserved, flowLaunchStateReading)
+	if !advanced {
+		return m.releaseFlowLaunchAttempt(flowID, token), nil, false
+	}
+	m = next
+	return m, m.flowLaunchReadCmd(intent, token, settings), true
 }
 
 // previewFlowLaunch answers the cached, non-authoritative question the footer
@@ -214,6 +297,53 @@ func flowLaunchablePhase(record flowstore.FlowRecord, phaseID string) (flowstore
 	return flowstore.FlowPhase{}, false
 }
 
+// flowLaunchCandidatePhase resolves the phase a kind is allowed to launch. The
+// two rules deliberately differ and must not be merged: manual launch also
+// offers ready merge phases and autoreview recovery on a PR target, neither of
+// which AutoMode may ever start on its own.
+func flowLaunchCandidatePhase(kind flowLaunchKind, record flowstore.FlowRecord, phaseID string) (flowstore.FlowPhase, bool) {
+	if kind != flowLaunchKindAutoPhase {
+		return flowLaunchablePhase(record, phaseID)
+	}
+	if strings.TrimSpace(phaseID) == "" {
+		return nextAutoLaunchPhase(record)
+	}
+	// A named candidate is validated on its own merits rather than required to
+	// still be first: an earlier phase becoming ready between poll and read
+	// leaves this one perfectly launchable, and the store would accept it.
+	ordered := flowstore.OrderedPhases(record.Phases)
+	orderedRecord := record
+	orderedRecord.Phases = ordered
+	want := artifacts.NormalizePhaseID(phaseID)
+	for i, phase := range ordered {
+		if artifacts.NormalizePhaseID(phase.PhaseID) != want {
+			continue
+		}
+		if !flowstore.PhaseLaunchEligible(orderedRecord, i) {
+			return flowstore.FlowPhase{}, false
+		}
+		return phase, true
+	}
+	return flowstore.FlowPhase{}, false
+}
+
+// flowRecordHasOtherRunningPhase is flowAutoAdvanceOccupied's running-phase
+// signal applied to the fresh record, minus the candidate itself. A running
+// candidate means another source took it, which is staleness rather than
+// occupancy, and the candidate check classifies that first.
+func flowRecordHasOtherRunningPhase(record flowstore.FlowRecord, phaseID string) bool {
+	candidate := artifacts.NormalizePhaseID(phaseID)
+	for _, phase := range record.Phases {
+		if phase.Status != flowstore.PhaseRunning {
+			continue
+		}
+		if artifacts.NormalizePhaseID(phase.PhaseID) != candidate {
+			return true
+		}
+	}
+	return false
+}
+
 // flowLaunchLauncher borrows the preflight and prepare steps through the
 // lifecycle's own seams. NewLaunchID is pinned to the admission token: a second
 // generated ID would make every LaunchID-keyed fence miss and strand the
@@ -230,6 +360,9 @@ func (m Model) flowLaunchLauncher(token string) FlowPhaseLauncher {
 func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings flowLaunchAgentSettingsSnapshot) tea.Cmd {
 	seams := m.launchSeams
 	launcher := settings.apply(m.flowLaunchLauncher(token))
+	if intent.Kind == flowLaunchKindAutoPhase {
+		return autoFlowLaunchReadCmd(seams, launcher, intent, token)
+	}
 	phaseID := intent.PhaseID
 	return func() tea.Msg {
 		event := flowLaunchEventMsg{
@@ -244,7 +377,7 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 			event.Err = err.Error()
 			return event
 		}
-		phase, ok := flowLaunchablePhase(record, phaseID)
+		phase, ok := flowLaunchCandidatePhase(intent.Kind, record, phaseID)
 		if !ok {
 			event.Err = noLaunchableFlowPhaseStatus
 			return event
@@ -271,6 +404,79 @@ func (m Model) flowLaunchReadCmd(intent flowLaunchIntent, token string, settings
 		}
 		event.PhaseID = phase.PhaseID
 		event.Record = record
+		event.Headless = record.Headless
+		event.RepoPath = prepared.RepoPath
+		event.WorktreePath = prepared.WorktreePath
+		event.PlanPath = prepared.PlanPath
+		return event
+	}
+}
+
+// autoFlowLaunchReadCmd is the authoritative read for AutoMode. The check order
+// is normative: two checks can both hold and they yield different outcomes, and
+// Preflight runs before the session list because it is in-memory while
+// ListFlowSessions scans the whole session store once per poll.
+func autoFlowLaunchReadCmd(seams flowLaunchSeams, launcher FlowPhaseLauncher, intent flowLaunchIntent, token string) tea.Cmd {
+	return func() tea.Msg {
+		event := flowLaunchEventMsg{
+			Token:   token,
+			Kind:    intent.Kind,
+			From:    flowLaunchStateReading,
+			FlowID:  intent.FlowID,
+			PhaseID: intent.PhaseID,
+			Stage:   flowLaunchStageRead,
+			// Seeded so a failed read still renders "Flow <title>: <err>";
+			// overwritten from the fresh record the moment one exists.
+			FlowTitle:  intent.FlowTitle,
+			AutoLaunch: true,
+			Headless:   true,
+			Outcome:    flowLaunchOutcomeOK,
+		}
+		record, err := seams.ReadFlow(intent.FlowID)
+		if err != nil {
+			event.Outcome = flowLaunchOutcomeFailed
+			event.Err = err.Error()
+			return event
+		}
+		event.FlowTitle = flowTitleForStatus(record)
+		if !record.AutoMode {
+			event.Outcome = flowLaunchOutcomeStale
+			return event
+		}
+		phase, ok := flowLaunchCandidatePhase(intent.Kind, record, intent.PhaseID)
+		if !ok {
+			event.Outcome = flowLaunchOutcomeStale
+			return event
+		}
+		if flowRecordHasOtherRunningPhase(record, phase.PhaseID) {
+			event.Outcome = flowLaunchOutcomeRetry
+			return event
+		}
+		prepared, err := launcher.Preflight(FlowPhaseLaunchRequest{
+			Record:     record,
+			Phase:      phase,
+			AutoLaunch: true,
+			Headless:   true,
+		})
+		if err != nil {
+			event.Outcome = flowLaunchOutcomeFailed
+			event.Err = err.Error()
+			return event
+		}
+		records, err := seams.ListFlowSessions(intent.FlowID)
+		if err != nil {
+			event.Outcome = flowLaunchOutcomeFailed
+			event.Err = err.Error()
+			return event
+		}
+		if flowLaunchPhaseSessionOccupied(phase, records) {
+			// The previous run of this phase is still alive. It clears on its
+			// own, so this re-arms rather than dropping the launch.
+			event.Outcome = flowLaunchOutcomeRetry
+			return event
+		}
+		event.PhaseID = phase.PhaseID
+		event.Record = record
 		event.RepoPath = prepared.RepoPath
 		event.WorktreePath = prepared.WorktreePath
 		event.PlanPath = prepared.PlanPath
@@ -292,9 +498,13 @@ func (m Model) flowLaunchPrepareCmd(msg flowLaunchEventMsg, settings flowLaunchA
 	}
 	prepared := FlowPhaseLaunchPreparedRequest{
 		FlowPhaseLaunchRequest: FlowPhaseLaunchRequest{
-			Record:   msg.Record,
-			Phase:    phase,
-			Headless: msg.Record.Headless,
+			Record: msg.Record,
+			Phase:  phase,
+			// Resolved once in the read stage. Re-deriving it from the record
+			// here would launch an AutoMode Flow with persisted headless=false
+			// as an interactive, focus-stealing terminal.
+			Headless:   msg.Headless,
+			AutoLaunch: msg.AutoLaunch,
 		},
 		RepoPath:     msg.RepoPath,
 		WorktreePath: msg.WorktreePath,
@@ -345,6 +555,9 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 	}
 	switch msg.Stage {
 	case flowLaunchStageRead:
+		if msg.Kind == flowLaunchKindAutoPhase {
+			return m.handleAutoFlowLaunchRead(attempt, msg)
+		}
 		if msg.Err != "" {
 			// Nothing has been persisted at this point and no context exists,
 			// so the attempt simply goes away with a status.
@@ -373,6 +586,52 @@ func (m Model) handleFlowLaunchEvent(msg flowLaunchEventMsg) (Model, tea.Cmd) {
 		return m.handoffFlowLaunchExternal(attempt, msg)
 	}
 	return m, nil
+}
+
+// handleAutoFlowLaunchRead splits by stage, not by error class, so no error
+// type has to survive the string-only Err hop. Every branch here is forbidden
+// from calling setStatus(statusOther, …): the poll runs at 1 Hz, so a sticky
+// status would be re-set every second over whatever the user is looking at.
+func (m Model) handleAutoFlowLaunchRead(attempt flowLaunchAttempt, msg flowLaunchEventMsg) (Model, tea.Cmd) {
+	switch msg.Outcome {
+	case flowLaunchOutcomeOK:
+	case flowLaunchOutcomeFailed:
+		// The re-arm sits behind matchingFlowLaunchAttempt, so a superseded
+		// attempt cannot re-arm a drain a newer one owns. The status is the
+		// 3 s transient today's synchronous preflight failure already sets;
+		// its expiry command has to be returned or it never fires. The re-arm
+		// is also what makes this failure repeat on the next poll, which is why
+		// it reports through the yielding setter: it will be back, and the
+		// transition it would otherwise overwrite will not.
+		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID)
+		return m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + msg.Err)
+	case flowLaunchOutcomeRetry:
+		// The blocker clears on its own, so re-arming is what makes the launch
+		// resume without waiting for another completion edge.
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token).armAutoAdvanceDrain(attempt.FlowID), nil
+	default:
+		// stale, and the inert zero value: drop the attempt and leave the drain
+		// disarmed. Whatever superseded the candidate produces its own edge.
+		return m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token), nil
+	}
+	next, ok := m.transitionFlowLaunchAttempt(attempt.FlowID, attempt.Token, flowLaunchStateReading, flowLaunchStatePreparing)
+	if !ok {
+		return m, nil
+	}
+	m = next.withFlowLaunchAttemptPhase(attempt.FlowID, attempt.Token, msg.PhaseID)
+	prepareCmd := m.flowLaunchPrepareCmd(msg, attempt.Settings)
+	// The queued announcement lands here rather than at admission, so it still
+	// means "preflight passed" and cannot repeat every poll for a Flow that is
+	// refused before it launches. Arriving a hop after the transition statuses
+	// its own poll computed is why it announces through the yielding setter
+	// rather than the replacing one. The blank-title guard is on the record: the
+	// event's title has already fallen back to the Flow ID, so guarding on it
+	// would be dead code that ships a status a titleless Flow never had.
+	var statusCmd tea.Cmd
+	if strings.TrimSpace(msg.Record.Title) != "" {
+		m, statusCmd = m.setAutoAdvanceLaunchStatus("Flow " + msg.FlowTitle + ": " + autoAdvancePhaseLabel(msg.PhaseID) + " queued")
+	}
+	return m, batchNonNil(statusCmd, prepareCmd)
 }
 
 func flowLaunchStageState(stage flowLaunchStage) (flowLaunchState, bool) {
@@ -461,9 +720,18 @@ func (m Model) failFlowLaunch(attempt flowLaunchAttempt, ctx actions.AgentLaunch
 		// Nothing was written, so the phase must stay as it is. ActionFailedMsg
 		// keeps main's repo gate and Flow surface refresh; a bare status drops
 		// both.
-		m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		failure := ActionFailedMsg{RepoPath: repoPath, Err: errText}
+		if attempt.Kind == flowLaunchKindAutoPhase {
+			// Keep the attempt until ActionFailedMsg is consumed. A newer stop
+			// edge can cancel it first, making that delayed message a fenced no-op.
+			failure.AutoAdvanceRetryFlowID = attempt.FlowID
+			failure.AutoAdvanceRetryPhaseID = attempt.PhaseID
+			failure.AutoAdvanceLaunchID = attempt.Token
+		} else {
+			m = m.releaseFlowLaunchAttempt(attempt.FlowID, attempt.Token)
+		}
 		return m, func() tea.Msg {
-			return ActionFailedMsg{RepoPath: repoPath, Err: errText}
+			return failure
 		}
 	}
 	update, ok := m.flowLaunchFailureUpdate(ctx, errText)

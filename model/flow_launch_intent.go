@@ -2,7 +2,8 @@ package model
 
 // flowLaunchKind is the closed set of launch intents the lifecycle can be asked
 // to run. Every kind is declared now so later beads add implementations rather
-// than constants; only flowLaunchKindManualPhase is implemented today.
+// than constants; flowLaunchKindManualPhase and flowLaunchKindAutoPhase are
+// implemented today and requestFlowLaunch refuses the rest.
 type flowLaunchKind int
 
 const (
@@ -43,6 +44,12 @@ type flowLaunchIntent struct {
 	FlowID  string
 	PhaseID string
 	Origin  flowLaunchOrigin
+	// FlowTitle is the submitter's snapshot title, already resolved through
+	// flowTitleForStatus. It exists so a failed authoritative read still renders
+	// "Flow <title>: <err>"; admission has no other source, because AutoMode
+	// deliberately skips the display cache and the fresh record does not exist
+	// yet. Manual launch leaves it empty.
+	FlowTitle string
 }
 
 func (m Model) flowLaunchOrigin() flowLaunchOrigin {

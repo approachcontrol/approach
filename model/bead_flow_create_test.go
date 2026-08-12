@@ -839,3 +839,40 @@ func equalStrings(left, right []string) bool {
 	}
 	return true
 }
+
+func TestBeadsReadyCreateFlowCapturesAgentSettings(t *testing.T) {
+	var createdRequest model.FlowStartRequest
+	m := inBeadsPane(model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:          "claude",
+		ClaudeModel:           "claude-opus-5",
+		ClaudeReasoningEffort: "high",
+		CodexModel:            "gpt-5.5",
+		CodexReasoningEffort:  "medium",
+		ListReadyBeads:        func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		ListOpenBeads:         func(string) ([]beadsquery.Bead, error) { return nil, nil },
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			createdRequest = req
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-1", RepoPath: req.RepoPath, Title: req.Title}}, nil
+		},
+	}))
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 20})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = applyBeadsResult(t, m, ui.ModeBeadsReady, true, []beadsquery.Bead{{ID: "bd-1", Title: "One"}})
+
+	_, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatal("Ready Bead Flow creation returned nil command")
+	}
+	cmd()
+	if createdRequest.AgentCommand != "claude" {
+		t.Fatalf("AgentCommand = %q, want claude", createdRequest.AgentCommand)
+	}
+	if createdRequest.Model != "claude-opus-5" {
+		t.Fatalf("Model = %q, want claude-opus-5", createdRequest.Model)
+	}
+	if createdRequest.ReasoningEffort != "high" {
+		t.Fatalf("ReasoningEffort = %q, want high", createdRequest.ReasoningEffort)
+	}
+}

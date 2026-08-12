@@ -36,7 +36,8 @@ func populatedFlowRecord() FlowRecord {
 		Headless:      true,
 		Phases: []FlowPhase{{
 			PhaseID: "implementation", ParentPhaseID: "plan", Title: "Implementation",
-			Kind: KindImplementation, DependsOn: []string{"plan"}, Status: PhaseRunning,
+			Kind: KindImplementation, Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high",
+			DependsOn: []string{"plan"}, Status: PhaseRunning,
 			Order: 1, Outcome: OutcomeApproved, Notes: "notes", Summary: "summary",
 			LaunchIDs: []string{"launch-1"},
 			Sessions:  []Session{{Provider: "claude", SessionID: "s1", LaunchID: "launch-1", Status: "ended", StartedAt: created, EndedAt: updated, TranscriptPath: "/tmp/t.jsonl"}},

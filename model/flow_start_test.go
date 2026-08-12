@@ -981,3 +981,72 @@ func TestFlowStarterStartPlanWorktreeFailureReportsBlockedPhaseUpdateFailure(t *
 		t.Fatalf("error = %q, want worktree and flow-update failures", err)
 	}
 }
+
+func TestPrepareFlowStampsRequestAgentSettings(t *testing.T) {
+	var captured flowstore.PhaseAgentSettings
+	starter := model.NewFlowStarter(model.FlowStarterOptions{
+		CreateFlow: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+			captured = opts.PhaseAgent
+			record.FlowID = "flow-1"
+			record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
+			return record, nil
+		},
+		CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+			return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-one", Branch: "flow/one"}, nil
+		},
+		ResolveCommit: func(string) string { return "abc123" },
+	})
+
+	if _, err := starter.PrepareFlow(model.FlowStartRequest{
+		RepoPath:        "/dev/alpha",
+		Title:           "One",
+		Instructions:    "Build it",
+		AgentCommand:    "claude",
+		Model:           "claude-opus-5",
+		ReasoningEffort: "high",
+	}); err != nil {
+		t.Fatalf("PrepareFlow() error = %v", err)
+	}
+	want := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	if captured != want {
+		t.Fatalf("createFlow settings = %#v, want %#v", captured, want)
+	}
+}
+
+func TestPrepareFlowDropsUnusableAgentSettings(t *testing.T) {
+	tests := []struct {
+		name string
+		req  model.FlowStartRequest
+	}{
+		{name: "unsupported command", req: model.FlowStartRequest{AgentCommand: "gemini", Model: "claude-opus-5", ReasoningEffort: "high"}},
+		{name: "model from another agent", req: model.FlowStartRequest{AgentCommand: "codex", Model: "claude-opus-5"}},
+		{name: "no command", req: model.FlowStartRequest{Model: "claude-opus-5"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			captured := flowstore.PhaseAgentSettings{Agent: "sentinel"}
+			starter := model.NewFlowStarter(model.FlowStarterOptions{
+				CreateFlow: func(record flowstore.FlowRecord, opts flowstore.CreateOptions) (flowstore.FlowRecord, error) {
+					captured = opts.PhaseAgent
+					record.FlowID = "flow-1"
+					record.Phases = []flowstore.FlowPhase{{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseReady}}
+					return record, nil
+				},
+				CreateWorktree: func(string, string, string) (actions.FlowWorktreeCreateResult, error) {
+					return actions.FlowWorktreeCreateResult{WorktreePath: "/dev/alpha-worktrees/flow-one", Branch: "flow/one"}, nil
+				},
+				ResolveCommit: func(string) string { return "abc123" },
+			})
+			req := tc.req
+			req.RepoPath = "/dev/alpha"
+			req.Title = "One"
+			req.Instructions = "Build it"
+			if _, err := starter.PrepareFlow(req); err != nil {
+				t.Fatalf("PrepareFlow() error = %v", err)
+			}
+			if !captured.IsZero() {
+				t.Fatalf("createFlow settings = %#v, want nothing stamped", captured)
+			}
+		})
+	}
+}

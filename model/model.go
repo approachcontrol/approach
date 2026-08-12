@@ -173,21 +173,20 @@ type Model struct {
 	flowLaunchAttempts            map[string]flowLaunchAttempt
 	launchSeams                   flowLaunchSeams
 
-	pendingFlowPhaseResumes   map[flowPhaseResumeKey]string
-	embeddedTerminalTickGen   uint64
-	flowRefreshTickGen        uint64
-	flowRefreshInFlight       uint64
-	flowRefreshInFlightMode   ui.Mode
-	autoAdvanceRequestSeq     uint64
-	autoAdvanceInFlight       uint64
-	autoAdvanceSnapshot       []flowstore.FlowRecord
-	autoAdvanceLaunchedPhases []autoAdvanceLaunchedPhase
-	terminalPrefixActive      bool
-	terminalConfirmID         embeddedTerminalID
-	finalizeAgentSession      func(actions.AgentLaunchContext) error
-	sessionStateRoot          string
-	bootstrapHookForRepo      func(string) (actions.BootstrapHook, bool)
-	runBootstrapHook          func(actions.BootstrapContext, actions.BootstrapHook) error
+	pendingFlowPhaseResumes map[flowPhaseResumeKey]string
+	embeddedTerminalTickGen uint64
+	flowRefreshTickGen      uint64
+	flowRefreshInFlight     uint64
+	flowRefreshInFlightMode ui.Mode
+	autoAdvanceRequestSeq   uint64
+	autoAdvanceInFlight     uint64
+	autoAdvanceSnapshot     []flowstore.FlowRecord
+	terminalPrefixActive    bool
+	terminalConfirmID       embeddedTerminalID
+	finalizeAgentSession    func(actions.AgentLaunchContext) error
+	sessionStateRoot        string
+	bootstrapHookForRepo    func(string) (actions.BootstrapHook, bool)
+	runBootstrapHook        func(actions.BootstrapContext, actions.BootstrapHook) error
 }
 
 type flowPhaseResumeKey struct {
@@ -213,6 +212,9 @@ type statusError struct {
 	FetchKind FetchKind
 	Mode      ui.Mode
 	FadeStep  int
+	// AutoRank orders the messages that share statusFlowAutoAdvance. It is
+	// meaningless for every other source.
+	AutoRank autoAdvanceStatusRank
 }
 
 type visibleRepoFetchState struct {
@@ -934,27 +936,21 @@ func (m Model) ModelFor(command string) string {
 	}
 }
 
-func (m Model) launchModelFor(command string) string {
-	switch agent.Normalize(command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m.ModelFor(command)
-	default:
-		return ""
-	}
-}
-
-func (m Model) launchReasoningEffortFor(command string) string {
-	switch agent.Normalize(command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m.ReasoningEffortFor(command)
-	default:
-		return ""
-	}
+// launchAgentSettings resolves the stored per-provider selections down to the
+// single model and reasoning effort that apply to command.
+func (m Model) launchAgentSettings(command string) agent.Settings {
+	return agent.Resolve(agent.Preferences{
+		Command:      command,
+		CodexModel:   m.codexModel,
+		ClaudeModel:  m.claudeModel,
+		CodexEffort:  m.codexReasoningEffort,
+		ClaudeEffort: m.claudeReasoningEffort,
+	})
 }
 
 func (m Model) flowLaunchAgentSettings() (string, string, string) {
-	command := agent.Normalize(m.agentCommand)
-	return command, m.launchModelFor(command), m.launchReasoningEffortFor(command)
+	settings := m.launchAgentSettings(m.agentCommand)
+	return settings.Command, settings.Model, settings.ReasoningEffort
 }
 
 func (m Model) flowModelLabel() string {
@@ -1785,21 +1781,6 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case PromptTemplateResetFailedMsg:
 		return m.handlePromptTemplateResetFailed(msg), nil
 	case PlanLaunchRequestedMsg:
-		if attempt, ok := m.matchingFlowLaunchAttempt(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
-			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
-			attempt.MutatedPhase = true
-			return m.handoffFlowLaunchExternal(attempt, flowLaunchEventMsg{
-				Token:    attempt.Token,
-				Kind:     attempt.Kind,
-				From:     attempt.State,
-				FlowID:   attempt.FlowID,
-				PhaseID:  attempt.PhaseID,
-				Context:  msg.LaunchContext,
-				Route:    flowLaunchRouteExternal,
-				RepoPath: msg.LaunchContext.RepoPath,
-				Release:  msg.LaunchRelease,
-			})
-		}
 		if msg.Request != 0 && (!m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request)) {
 			releaseFlowLaunchReservation(msg.LaunchRelease)
 			return m, nil
@@ -1812,21 +1793,6 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		return next, launchCmd
 	case FlowEmbeddedLaunchRequestedMsg:
-		if attempt, ok := m.matchingFlowLaunchAttempt(msg.LaunchContext.FlowID, msg.LaunchContext.LaunchID, flowLaunchKindAutoPhase, flowLaunchStatePreparing); ok {
-			m = m.markFlowLaunchAttemptMutatedPhase(attempt.FlowID, attempt.Token)
-			attempt.MutatedPhase = true
-			return m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
-				Token:    attempt.Token,
-				Kind:     attempt.Kind,
-				From:     attempt.State,
-				FlowID:   attempt.FlowID,
-				PhaseID:  attempt.PhaseID,
-				Context:  msg.LaunchContext,
-				Route:    flowLaunchRouteEmbedded,
-				RepoPath: msg.LaunchContext.RepoPath,
-				Release:  msg.LaunchRelease,
-			})
-		}
 		if msg.Request != 0 {
 			if !m.isCurrentRepo(msg.LaunchContext.RepoPath) || !m.isCurrentFlowCreateRequest(msg.Request) {
 				releaseFlowLaunchReservation(msg.LaunchRelease)

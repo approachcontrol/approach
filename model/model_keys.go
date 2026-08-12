@@ -2127,11 +2127,14 @@ func (m Model) handleLaunchNextFlowPhase() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m.setStatus(statusOther, noLaunchableFlowPhaseStatus), nil
 	}
-	return m.requestFlowLaunch(flowLaunchIntent{
+	// Manual launch surfaces the refusal through the returned Model's status,
+	// so the admission verdict itself is only AutoMode's concern.
+	next, cmd, _ := m.requestFlowLaunch(flowLaunchIntent{
 		Kind:   flowLaunchKindManualPhase,
 		FlowID: record.FlowID,
 		Origin: m.flowLaunchOrigin(),
 	})
+	return next, cmd
 }
 
 func (m Model) handleResetSelectedFlowPhase() (tea.Model, tea.Cmd) {
@@ -2521,10 +2524,11 @@ func (m Model) planLaunchContext() (actions.AgentLaunchContext, bool, Model) {
 		m = m.setStatus(statusOther, "Cannot determine launch path for this plan")
 		return actions.AgentLaunchContext{}, false, m
 	}
+	launch := m.launchAgentSettings(m.agentCommand)
 	ctx := actions.AgentLaunchContext{
 		Command:          m.agentCommand,
-		Model:            m.launchModelFor(m.agentCommand),
-		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+		Model:            launch.Model,
+		ReasoningEffort:  launch.ReasoningEffort,
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     launchPath,
@@ -3056,10 +3060,11 @@ func (m Model) agentLaunchContext(path string) actions.AgentLaunchContext {
 			branch = row.Branch.Name
 		}
 	}
+	launch := m.launchAgentSettings(m.agentCommand)
 	return actions.AgentLaunchContext{
 		Command:          m.agentCommand,
-		Model:            m.launchModelFor(m.agentCommand),
-		ReasoningEffort:  m.launchReasoningEffortFor(m.agentCommand),
+		Model:            launch.Model,
+		ReasoningEffort:  launch.ReasoningEffort,
 		LaunchID:         newLaunchID(),
 		RepoPath:         repoPath,
 		WorktreePath:     path,
