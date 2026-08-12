@@ -538,14 +538,43 @@ never by editing artifact JSON, and never to launch the next phase itself.
 
 When auto mode is on, Approach runs an always-on, all-repos advance poll that
 detects live completed-phase transitions and drains the Flow by launching the
-first ready non-merge phase in display order. Auto-launched CLI phases are
+first ready non-merge phase in display order. That choice is then re-checked
+against freshly read Flow state, but not re-made: the phase the poll picked
+launches as long as it is still launchable, even if an earlier phase became
+ready in the meantime. Auto-launched CLI phases are
 always headless and do not change the current view or focus. Approach launches
 at most one phase per Flow at a time: if any phase is running or any
 Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
+It also waits while a manual phase resume or a repair on that Flow is still
+being written, and while a session recorded against the phase it would launch
+has not ended. Each of those defers the launch silently and it resumes on a
+later poll.
+
+That last one has no recovery path today. A session is treated as live until it
+is recorded as ended, and only an orderly exit records that, so an agent whose
+session is never finalized — Approach killed, the machine lost — leaves the
+phase looking permanently busy. Auto mode then waits forever, and the other
+routes out are all closed: launching the phase manually with `g` is refused with
+`No launchable Flow phase` even though the phase is ready, repair reports no
+obstruction because the phase is still launchable, and reset applies only to
+`running` phases. Recovering means editing the Flow record's session metadata by
+hand.
+
 A 3 s status message announces auto-launches, `needs_attention`, and
-merge-ready transitions unless another status message is active. Skipped,
-blocked, needs-attention, failed-launch, or missing-PR-metadata states do not
-auto-launch. Automation stops before Merge: if Autoreview completes and Merge
+merge-ready transitions. Any status from elsewhere in the app blocks all of
+them. Among themselves they are ranked rather than ordered by arrival, because
+auto-launch and launch-failure messages are emitted after the Flow is re-read
+rather than when the poll decides and would otherwise displace a transition
+raised by the same poll, possibly on a different Flow. A `needs_attention` or
+merge-ready message therefore outranks both and is not replaced while it is on
+screen; two launch messages replace each other, so the most recent one shows.
+One consequence is deliberate: a launch that happens within 3 s of a transition
+is never announced, because the announcement is not retried. The launch still
+runs and the phase still shows as running. A launch *failure* is retried, so it
+appears once the transition clears.
+
+Skipped, blocked, needs-attention, failed-launch, or missing-PR-metadata states
+do not auto-launch. Automation stops before Merge: if Autoreview completes and Merge
 becomes ready, Approach keeps auto mode on and requires the manual Merge launch.
 A repair terminal that exits cleanly and is then auto-closed or dismissed arms
 a one-shot, generation-fenced auto drain. The first successful all-Flows poll

@@ -24,10 +24,12 @@ const schemaVersion = 1
 
 const defaultLockTimeout = 5 * time.Second
 
-var (
-	errFlowNotFound       = errors.New("flow not found")
-	errAutoLaunchOutdated = errors.New("auto launch outdated")
-)
+var errFlowNotFound = errors.New("flow not found")
+
+// ErrAutoLaunchOutdated is the sentinel every outdated-auto-launch rejection
+// wraps. It is exported so callers outside this package can build the rejection
+// their AutoMode handling has to survive.
+var ErrAutoLaunchOutdated = errors.New("auto launch outdated")
 
 const (
 	StatusPending        = "pending"
@@ -118,7 +120,7 @@ func IsNotFound(err error) bool {
 // IsAutoLaunchOutdated reports whether err means an automatic launch request
 // lost its race with newer Flow state and should be ignored.
 func IsAutoLaunchOutdated(err error) bool {
-	return errors.Is(err, errAutoLaunchOutdated)
+	return errors.Is(err, ErrAutoLaunchOutdated)
 }
 
 // FlowPhase is one phase in the persisted Flow pipeline.
@@ -1101,7 +1103,7 @@ func validateFlowLaunchOccupancy(record FlowRecord, targetIndex int, autoLaunch 
 		}
 		message := fmt.Sprintf("flow %q already has running phase %q", record.FlowID, phase.PhaseID)
 		if autoLaunch {
-			return fmt.Errorf("%s: %w", message, errAutoLaunchOutdated)
+			return fmt.Errorf("%s: %w", message, ErrAutoLaunchOutdated)
 		}
 		return fmt.Errorf("%s", message)
 	}
@@ -1136,13 +1138,13 @@ func validateAutoPhaseLaunch(record FlowRecord, phaseIndex int) error {
 	}
 	switch {
 	case !record.AutoMode:
-		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch for flow %q is disabled: %w", record.FlowID, ErrAutoLaunchOutdated)
 	case artifacts.NormalizePhaseID(phase.PhaseID) == "" || SemanticKind(phase) == KindMerge:
-		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	case phase.Status != PhaseReady:
-		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is %s, not ready: %w", phase.PhaseID, phase.Status, ErrAutoLaunchOutdated)
 	case !phaseLaunchEligibleAtIndex(record, phaseIndex):
-		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, errAutoLaunchOutdated)
+		return fmt.Errorf("auto launch target %q is not eligible: %w", phase.PhaseID, ErrAutoLaunchOutdated)
 	default:
 		return nil
 	}

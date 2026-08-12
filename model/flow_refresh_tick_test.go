@@ -17,6 +17,12 @@ func flowRefreshTestRepos() []scanner.Repo {
 }
 
 func updateFlowRefreshTest(m Model, msg tea.Msg) (Model, tea.Cmd) {
+	// The advance poll's snapshot is also what the lifecycle's authoritative
+	// read must return, so registering here keeps the two in step across
+	// sequential polls without every test wiring its own ReadFlow.
+	if result, ok := msg.(AutoAdvanceResultMsg); ok {
+		recordAutoAdvanceTestFlows(result.Flows)
+	}
 	tm, cmd := m.Update(msg)
 	return tm.(Model), cmd
 }
