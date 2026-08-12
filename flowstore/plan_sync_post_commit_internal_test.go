@@ -1000,6 +1000,92 @@ func TestSetPhaseSkipsCompensationWhenTheMergeWasRecordedDuringTheWindow(t *test
 	}
 }
 
+// TestSetPhaseSkipsCompensationWhenAMergeLandedDownstream is the same invariant
+// one hop away. The compensated phase is the merge phase's PREDECESSOR, so the
+// demotion does not touch the merge row directly — readiness does, resetting it
+// to pending because its gate is no longer satisfied. That would leave merged
+// merge metadata beside a pending merge phase, which is the state
+// validateMergeUpdate exists to prevent, and DeriveStatus would still report the
+// Flow as merged with the predecessor's needs_attention hidden behind it.
+func TestSetPhaseSkipsCompensationWhenAMergeLandedDownstream(t *testing.T) {
+	syncer := &phaseScopedPlanSyncer{failPhase: "autoreview", err: errors.New("plan write exploded")}
+	store, linked, _ := newPostCommitSeamStore(t, syncer, StoreOptions{
+		LockTimeout: 10 * time.Second,
+		Now:         advancingClock(time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), time.Millisecond),
+	})
+	if _, err := store.SetStartMetadata(StartMetadataUpdate{FlowID: linked.FlowID, Branch: "feat/seam"}); err != nil {
+		t.Fatalf("SetStartMetadata() error = %v", err)
+	}
+	prURL := "https://github.com/o/r/pull/42"
+	if _, err := store.SetPR(PRUpdate{
+		FlowID: linked.FlowID, Provider: "github", Number: 42,
+		URL: prURL, HeadBranch: "feat/seam", BaseBranch: "main", Status: "open",
+	}); err != nil {
+		t.Fatalf("SetPR() error = %v", err)
+	}
+	for _, step := range []struct{ id, outcome string }{
+		{"plan", ""},
+		{"plan-review", OutcomeApproved},
+		{"implementation", ""},
+		{"review-loop", OutcomeApproved},
+		{"pr-creation", ""},
+	} {
+		if _, err := store.SetPhase(PhaseUpdate{
+			FlowID: linked.FlowID, PhaseID: step.id, Status: PhaseCompleted, Outcome: step.outcome,
+		}); err != nil {
+			t.Fatalf("SetPhase(%s) error = %v", step.id, err)
+		}
+	}
+
+	block := newOneShotSyncBlock()
+	store.beforeLinkedPlanPhaseSync = block.hook
+	results := make(chan syncOutcome, 1)
+	finished := make(chan struct{})
+	defer func() { <-finished }()
+	defer block.release()
+	go func() {
+		defer close(finished)
+		record, err := store.SetPhase(PhaseUpdate{
+			FlowID: linked.FlowID, PhaseID: "autoreview", Status: PhaseCompleted, Outcome: OutcomeApproved,
+		})
+		results <- syncOutcome{record: record, err: err}
+	}()
+	block.waitReached(t)
+
+	// The merge phase is legitimately ready inside the window, so this whole
+	// manual merge is a legal write that succeeds.
+	if _, err := store.MarkManualMerge(ManualMergeUpdate{
+		FlowID:   linked.FlowID,
+		PRNumber: 42,
+		PRURL:    prURL,
+		Commit:   "deadbeef",
+		MergedAt: time.Date(2026, 5, 6, 9, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("MarkManualMerge(during the window) error = %v", err)
+	}
+
+	block.release()
+	got := <-results
+	if got.err == nil || !strings.Contains(got.err.Error(), "sync linked plan phase") {
+		t.Fatalf("SetPhase() error = %v, want the sync failure returned even when compensation is skipped", got.err)
+	}
+	predecessor := phaseFromStore(t, store, linked.FlowID, "autoreview")
+	if predecessor.Status != PhaseCompleted {
+		t.Fatalf("autoreview status = %q, want %q kept so the merge stays coherent", predecessor.Status, PhaseCompleted)
+	}
+	merge := phaseFromStore(t, store, linked.FlowID, "merge")
+	if merge.Status != PhaseCompleted {
+		t.Fatalf("merge phase status = %q, want the concurrent merge left %q", merge.Status, PhaseCompleted)
+	}
+	stored, err := store.Read(linked.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if stored.Merge.Status != MergeMerged || stored.Merge.Commit != "deadbeef" {
+		t.Fatalf("stored merge = %+v, want the concurrent writer's merge preserved", stored.Merge)
+	}
+}
+
 // TestCompensatedPhaseRecoversThroughRestartAndCompletion pins the documented
 // recovery for the case where the compensation DID land, which is not the same
 // one as for the no-marker windows. A demoted phase cannot simply be completed

@@ -815,11 +815,18 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 // completed, so "Merge merged beside a merge phase that is not completed" was
 // unreachable while the sync held the Flow writer. Post-commit it is reachable:
 // the phase is durably completed for the length of the sync, so a concurrent
-// SetMerge is legal, and demoting afterwards would leave merged metadata that
+// merge write is legal, and demoting afterwards would leave merged metadata that
 // DeriveStatus reads as a merged Flow — hiding the needs_attention phase behind
 // a status the TUI drops from its active list. Declining keeps the phase
 // completed, which is the accepted no-marker window and leaves the idempotent
 // retry available.
+//
+// That test is made on the compensated record rather than on the row being
+// demoted, because the merge phase does not have to be the demoted one. Demoting
+// any phase the merge depends on unsatisfies its gate, and the readiness refresh
+// then resets the merge row to pending — same contradiction, one hop away. So
+// the compensation is computed into a copy first and saved only if the pairing
+// still holds.
 func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPhase, syncErr error) (FlowRecord, error) {
 	return s.backend.update(flowID, func(sess flowSession) (FlowRecord, error) {
 		stored, ok, err := sess.get()
@@ -834,23 +841,37 @@ func (s *Store) compensatePhaseSyncFailure(flowID string, committedPhase FlowPha
 		if index < 0 || !phaseStillHoldsCommittedCompletion(record.Phases[index], committedPhase) {
 			return record, nil
 		}
-		if record.Merge.Status == MergeMerged && index == mergePhaseIndex(record) {
-			return record, nil
-		}
 		// One fresh clock read for all three stamps. Reusing the committing
 		// update's now would leave the compensated phase — and the record — at or
 		// behind a concurrent writer's timestamp, and the TUI drops a record whose
 		// UpdatedAt is behind the one it already holds.
 		now := s.now()
-		record.Phases[index] = markPhaseSyncNeedsAttention(record.Phases[index], syncErr, now)
-		record.UpdatedAt = now
-		record = refreshPhaseReadiness(record, now)
-		record.Status = DeriveStatus(record)
-		if err := s.saveSession(sess, record); err != nil {
+		compensated := record
+		compensated.Phases = append([]FlowPhase(nil), record.Phases...)
+		compensated.Phases[index] = markPhaseSyncNeedsAttention(compensated.Phases[index], syncErr, now)
+		compensated.UpdatedAt = now
+		compensated = refreshPhaseReadiness(compensated, now)
+		compensated.Status = DeriveStatus(compensated)
+		if !recordedMergeKeepsItsCompletedPhase(compensated) {
+			return record, nil
+		}
+		if err := s.saveSession(sess, compensated); err != nil {
 			return FlowRecord{}, err
 		}
-		return record, nil
+		return compensated, nil
 	})
+}
+
+// recordedMergeKeepsItsCompletedPhase reports whether a record's merged Merge
+// metadata still sits beside a completed merge phase. That pairing is what
+// validateMergeUpdate enforces on every ordinary write, so a record that breaks
+// it is one no caller could have produced directly.
+func recordedMergeKeepsItsCompletedPhase(record FlowRecord) bool {
+	if record.Merge.Status != MergeMerged {
+		return true
+	}
+	index := mergePhaseIndex(record)
+	return index >= 0 && record.Phases[index].Status == PhaseCompleted
 }
 
 // committedPhaseRow returns the phase row as it was actually stored, which is
