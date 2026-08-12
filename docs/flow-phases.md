@@ -268,6 +268,61 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.
 
+The plan write happens **after** the Flow phase change commits, so there is a
+brief window in which the phase reads as completed before a failed sync demotes
+it. The demotion can also fail to land at all — on a crash inside the window, on
+a second write that cannot acquire the writer, or when the demotion is
+deliberately declined rather than allowed to overwrite a concurrent writer:
+because that writer re-completed the phase in the meantime, or because it
+recorded a merge against a completed Merge phase, which a demotion would leave in
+a state `approach flow merge set` itself refuses to create. The Flow then keeps a completed phase
+beside a stale plan, with no `needs_attention` marker and only the returned error
+as a signal. Writes that do not change the completion — attaching an agent
+session, recording a resume launch — do not trigger that decline; only a
+different completion does. The manual-merge rollback has the same exception:
+when a concurrent write already owns that state, the Flow stays `merged` and the
+error is the only signal.
+
+That window is externally visible, not just a crash hazard. While it is open the
+phase reads as legitimately completed and its successor as legitimately ready, so
+auto-advance can launch that successor; the failed sync then demotes the
+predecessor and readiness resets the just-launched successor to `pending` while
+its launch attempt stays recorded against it. The launched agent is not wedged —
+its session ends normally, and readiness re-promotes the row — but the agent's
+own completion write is rejected while its phase sits at `pending`. A successor
+that gets all the way to `completed` or `skipped` inside the window is reset the
+same way, and its outcome is cleared: demoting a phase resets every downstream
+phase whose dependency gate it satisfied, so repeating the predecessor's
+completion makes the successor ready again but does not restore its outcome. The
+same states are reachable without any sync failure, by restarting a completed
+predecessor.
+
+Recovery is always the same idempotent plan write, but which command reaches it
+depends on the state the Flow was left in.
+
+- **The phase is still `completed` and carries no marker** — the crash, lost
+  writer, and declined-guard windows above. Repeat the phase completion, or
+  re-record the manual merge with the same metadata. `completed` → `completed`
+  and an already-merged repeat are both accepted as idempotent no-ops that re-run
+  the plan write, and neither demotes state that is already correct.
+- **The phase was demoted to `needs_attention`** — the compensation landed, which
+  is the ordinary sync failure. Repeating the completion is rejected here:
+  `needs_attention → completed` is not a legal transition. Restart the phase
+  first (`approach flow phase restart`), then complete it; that completion runs
+  the plan write.
+- **The Flow already reads as `merged`** — a manual merge whose compensation did
+  not land. The store accepts the already-merged repeat, but the TUI offers its
+  manual-merge action only while the Flow is not yet derived as `merged`, so that
+  repeat is not reachable from the TUI once the merge is durable. The linked plan
+  is the only stale artifact, so repair it directly:
+  `approach plan phase set --plan-id "$PLAN_ID" --phase-id merge --status completed`.
+
+One caveat on both retries: because neither may demote state that is already
+durable, each **discards** a second sync failure and returns success. A repeated
+completion of an already-completed phase reports success even when the plan write
+failed again, and so does an already-merged manual merge. Confirm the linked
+plan's own phase status rather than trusting either return value.
+
 ## Per-phase agent settings
 
 Every phase persists three optional fields — `agent`, `model`, and
