@@ -2326,42 +2326,22 @@ func (m Model) handleResumeFlowPhaseSession() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if reason, ok := flowstore.RecoverableRunningPhaseResetReason(phase); ok {
-		if reason == flowstore.PhaseResetReasonAwaitSession {
-			m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
+	// Everything past surface, selection, and closure is the lifecycle's: the
+	// resolver owns the snapshot refusals, and admission owns occupancy. The
+	// check order is unchanged, because occupancy already ran last.
+	intent, refusal, ok := m.flowPhaseResumeRequest(record, phase)
+	if !ok {
+		if refusal == "" {
 			return m, nil
 		}
-		m = m.setStatus(statusOther, "Flow phase has an ended session; reset it to ready")
-		return m, nil
+		return m.setStatus(statusOther, refusal), nil
 	}
-	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseAwaitingSession(phase) {
-		m = m.setStatus(statusOther, "Flow phase is awaiting session capture")
-		return m, nil
-	}
-	if phase.Status == flowstore.PhaseRunning && flowstore.PhaseLatestLaunchEnded(phase) {
-		m = m.setStatus(statusOther, "Flow phase has an ended session and cannot be resumed")
-		return m, nil
-	}
-	if session, ok := flowstore.LatestPhaseSession(phase, false); ok && strings.TrimSpace(session.SessionID) == "" {
-		m = m.setStatus(statusOther, "Flow phase has missing session id")
-		return m, nil
-	}
-	session, ok := flowstore.LatestPhaseSession(phase, true)
-	if !ok {
-		m = m.setStatus(statusOther, "Flow phase has no session to resume")
-		return m, nil
-	}
-	ctx, ok, next := m.flowPhaseSessionResumeLaunchContext(record, phase, session)
-	if !ok {
-		return next, nil
-	}
-	if ctx.Command == agent.CommandCodexApp {
-		// Codex App resume deep links cannot carry approach launch metadata, so treat
-		// them as app navigation instead of a tracked Flow launch attempt. Keep the
-		// Flow identity until a lock-backed authoritative admission check succeeds.
-		return next, next.untrackedCodexAppFlowPhaseResumeCmd(ctx)
-	}
-	return next.launchTrackedFlowPhaseResumeWithContext(ctx)
+	intent.Origin = m.flowLaunchOrigin()
+	next, cmd, _ := m.requestFlowLaunch(intent)
+	// The verdict is deliberately ignored: a codex-app resume returns its
+	// navigation command with admitted = false, because no attempt holds the
+	// Flow.
+	return next, cmd
 }
 
 func (m Model) untrackedCodexAppFlowPhaseResumeCmd(ctx actions.AgentLaunchContext) tea.Cmd {
@@ -2464,52 +2444,6 @@ func (m Model) sessionResumeLaunchContext(record sessions.SessionRecord) (action
 		PlanPath:         record.PlanPath,
 	}
 	return ctx, release, true, m
-}
-
-func (m Model) flowPhaseSessionResumeLaunchContext(record flowstore.FlowRecord, phase flowstore.FlowPhase, session flowstore.Session) (actions.AgentLaunchContext, bool, Model) {
-	command := agent.Normalize(strings.TrimSpace(session.Provider))
-	if command == "" {
-		m = m.setStatus(statusOther, "Flow phase session has no provider")
-		return actions.AgentLaunchContext{}, false, m
-	}
-	if command == agent.CommandCodex && agent.Normalize(m.agentCommand) == agent.CommandCodexApp {
-		command = agent.CommandCodexApp
-	}
-	if err := agent.Validate(command); err != nil {
-		m = m.setStatus(statusOther, err.Error())
-		return actions.AgentLaunchContext{}, false, m
-	}
-	sessionID := strings.TrimSpace(session.SessionID)
-	if sessionID == "" {
-		m = m.setStatus(statusOther, "Flow phase has missing session id")
-		return actions.AgentLaunchContext{}, false, m
-	}
-	repoPath := record.RepoPath
-	if repoPath == "" {
-		repoPath, _ = m.currentRepoPath()
-	}
-	workingDir := record.WorktreePath
-	if workingDir == "" && command != agent.CommandCodexApp {
-		m = m.setStatus(statusOther, "Flow phase has no worktree path to resume from")
-		return actions.AgentLaunchContext{}, false, m
-	}
-	ctx := actions.AgentLaunchContext{
-		Command:           command,
-		RepoPath:          repoPath,
-		WorktreePath:      record.WorktreePath,
-		WorkingDir:        workingDir,
-		Branch:            record.Branch,
-		Commit:            record.Commit,
-		SessionStateRoot:  m.sessionStateRoot,
-		ResumeSessionID:   sessionID,
-		PlanID:            record.PlanID,
-		PlanPath:          record.PlanPath,
-		FlowID:            record.FlowID,
-		FlowPhaseID:       phase.PhaseID,
-		FlowPhaseKind:     flowstore.SemanticKind(phase),
-		FlowPhaseTerminal: flowstore.PhaseStatusTerminal(phase.Status),
-	}
-	return ctx, true, m
 }
 
 func (m Model) handleImplementPlan() (tea.Model, tea.Cmd) {
@@ -2783,151 +2717,6 @@ func (m Model) updateFlowTerminalFocusAfterLaunch(ctx actions.AgentLaunchContext
 		return m
 	}
 	return m.focusEmbeddedTerminalInput()
-}
-
-func (m Model) launchTrackedFlowPhaseResumeWithContext(ctx actions.AgentLaunchContext) (Model, tea.Cmd) {
-	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-	if !ok || m.pendingFlowPhaseResumes[key] != "" || m.hasPendingFlowRepairLaunch(key.FlowID) ||
-		m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) ||
-		m.flowLaunchAttemptOccupied(key.FlowID) ||
-		m.hasRunningFlowEmbeddedTerminalForPhase(key.FlowID, key.PhaseID) {
-		return m, nil
-	}
-	ctx.FlowID = key.FlowID
-	ctx.LaunchID = newLaunchID()
-	ctx.FlowLaunchTracked = true
-	ctx.Embedded = true
-	ctx.Headless = false
-	m = m.withPendingFlowPhaseResume(key, ctx.LaunchID)
-	return m, func() tea.Msg {
-		_, release, reserveErr := m.reserveTrackedFlowLaunch(ctx.FlowID)
-		if reserveErr != nil {
-			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: reserveErr}
-		}
-		updated, err := m.addFlowPhaseLaunchID(flowstore.PhaseLaunchUpdate{
-			FlowID:   ctx.FlowID,
-			PhaseID:  ctx.FlowPhaseID,
-			LaunchID: ctx.LaunchID,
-			Resume:   true,
-		})
-		if err != nil {
-			releaseFlowLaunchReservation(release)
-			return flowPhaseResumePersistFailedMsg{LaunchContext: ctx, Err: err}
-		}
-		return flowPhaseResumePersistedMsg{LaunchContext: ctx, Flow: updated, LaunchRelease: release}
-	}
-}
-
-func (m Model) handleFlowPhaseResumePersisted(msg flowPhaseResumePersistedMsg) (Model, tea.Cmd) {
-	defer releaseFlowLaunchReservation(msg.LaunchRelease)
-	key, ok := m.matchingPendingFlowPhaseResume(msg.LaunchContext)
-	if !ok {
-		return m, nil
-	}
-	m = m.withoutPendingFlowPhaseResume(key)
-	ctx := msg.LaunchContext
-	// The store decided from the persisted record whether this resume preserved
-	// a terminal phase or reopened a running one; the snapshot the launch
-	// context was built from may be stale, so failure handling must follow the
-	// persisted status.
-	if phase, ok := flowPhaseByID(msg.Flow, ctx.FlowPhaseID); ok {
-		ctx.FlowPhaseTerminal = flowstore.PhaseStatusTerminal(phase.Status)
-	}
-	if m.hasFlowRepairEmbeddedTerminalForFlow(key.FlowID) {
-		return m.startFlowLaunchFailure(ctx, "Flow phase resume canceled because a repair terminal is already open for this Flow")
-	}
-	needsTick := !m.hasRunningEmbeddedTerminal()
-	next, opened, err, prefillCmd := m.openFlowEmbeddedTerminalReserved(ctx)
-	if err != nil || !opened {
-		errText := "Maximum embedded terminals reached"
-		if err != nil {
-			errText = err.Error()
-		}
-		return next.startFlowLaunchFailure(ctx, errText)
-	}
-	if prefillCmd == nil {
-		next = next.updateFlowTerminalFocusAfterLaunch(ctx)
-	}
-	var launchCmd tea.Cmd
-	if needsTick {
-		next, launchCmd = next.startEmbeddedTerminalTick()
-	}
-	launchCmd = batchNonNil(prefillCmd, launchCmd)
-	if next.flowSurfaceVisible() {
-		next, fetchCmd := next.startFlowSurfaceFetch()
-		return next, tea.Batch(fetchCmd, launchCmd)
-	}
-	return next, launchCmd
-}
-
-func (m Model) handleFlowPhaseResumePersistFailed(msg flowPhaseResumePersistFailedMsg) (Model, tea.Cmd) {
-	key, ok := m.matchingPendingFlowPhaseResume(msg.LaunchContext)
-	if !ok {
-		return m, nil
-	}
-	m = m.withoutPendingFlowPhaseResume(key)
-	m = m.setStatus(statusOther, fmt.Sprintf("failed to mark flow phase resume: %v", msg.Err))
-	if msg.LaunchContext.FlowID != "" && m.flowSurfaceVisible() {
-		return m.startFlowSurfaceFetch()
-	}
-	return m, nil
-}
-
-func newFlowPhaseResumeKey(flowID, phaseID string) (flowPhaseResumeKey, bool) {
-	key := flowPhaseResumeKey{
-		FlowID:  strings.TrimSpace(flowID),
-		PhaseID: artifacts.NormalizePhaseID(phaseID),
-	}
-	return key, key.FlowID != "" && key.PhaseID != ""
-}
-
-func (m Model) matchingPendingFlowPhaseResume(ctx actions.AgentLaunchContext) (flowPhaseResumeKey, bool) {
-	key, ok := newFlowPhaseResumeKey(ctx.FlowID, ctx.FlowPhaseID)
-	if !ok {
-		return flowPhaseResumeKey{}, false
-	}
-	launchID := strings.TrimSpace(ctx.LaunchID)
-	return key, launchID != "" && m.pendingFlowPhaseResumes[key] == launchID
-}
-
-func (m Model) hasPendingFlowPhaseResumeForFlow(flowID string) bool {
-	flowID = strings.TrimSpace(flowID)
-	if flowID == "" {
-		return false
-	}
-	for key, launchID := range m.pendingFlowPhaseResumes {
-		if key.FlowID == flowID && strings.TrimSpace(launchID) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func (m Model) withPendingFlowPhaseResume(key flowPhaseResumeKey, launchID string) Model {
-	pending := make(map[flowPhaseResumeKey]string, len(m.pendingFlowPhaseResumes)+1)
-	for existingKey, existingLaunchID := range m.pendingFlowPhaseResumes {
-		pending[existingKey] = existingLaunchID
-	}
-	pending[key] = strings.TrimSpace(launchID)
-	m.pendingFlowPhaseResumes = pending
-	return m
-}
-
-func (m Model) withoutPendingFlowPhaseResume(key flowPhaseResumeKey) Model {
-	if _, ok := m.pendingFlowPhaseResumes[key]; !ok {
-		return m
-	}
-	pending := make(map[flowPhaseResumeKey]string, len(m.pendingFlowPhaseResumes)-1)
-	for existingKey, launchID := range m.pendingFlowPhaseResumes {
-		if existingKey != key {
-			pending[existingKey] = launchID
-		}
-	}
-	if len(pending) == 0 {
-		pending = nil
-	}
-	m.pendingFlowPhaseResumes = pending
-	return m
 }
 
 func (m Model) runAgentLaunchWithContext(ctx actions.AgentLaunchContext, launch actions.TerminalLaunchSpec) (Model, tea.Cmd) {

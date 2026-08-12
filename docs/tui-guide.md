@@ -463,9 +463,9 @@ On a Flow row or an expanded phase row:
   lifecycle reserves the Flow, re-reads the persisted record, and decides from
   it, so a launch the list advertised can still be refused once the fresh
   record disagrees. A launch is rejected — not merely unadvertised — while an
-  embedded terminal, a pending repair, a pending phase resume, or another
-  launch already holds that Flow, and while a live session is attached to the
-  phase being launched. Dismiss or detach the Flow's terminal before launching
+  embedded terminal, a pending repair, or another launch or resume already
+  holds that Flow, and while a live session is attached to the phase being
+  launched. Dismiss or detach the Flow's terminal before launching
   its next phase. Both `g` bindings (flows view and Active Flows) behave
   identically.
 - `R` repairs a genuinely stalled nonterminal Flow from either its top-level
@@ -475,14 +475,30 @@ On a Flow row or an expanded phase row:
   is not completed, merged, abandoned, closed, or at a ready/manual Merge
   boundary.
   Like `g`, a refusal names the obstacle, preferring a durable one (a pending
-  repair, a pending resume, an open terminal) over the transient write.
+  repair, a phase resume holding the Flow, an open terminal) over the transient
+  write.
 - `i` opens the linked GitHub issue and `p` opens the linked PR in the
   browser, when that metadata exists.
 - `c` copies the selected Flow ID; `y` copies the selected Flow worktree path.
 - `r` on an expanded phase row with an attached provider session resumes that
   session. CLI resumes are recorded as a fresh Flow phase launch attempt;
   `codex-app` resumes navigate to the existing app thread without extra launch
-  tracking.
+  tracking. Like `g`, the key press only submits an intent: the launch
+  lifecycle re-reads the persisted Flow and re-checks the phase and its latest
+  resumable session, so a resume the list advertised can still be refused with
+  `Flow phase changed; refresh and try again` once the fresh record names a
+  different session. A CLI resume is refused while any embedded terminal holds
+  that Flow — including a retained slot whose agent has already exited, and
+  including a terminal on another phase — with `Close, detach, or dismiss the
+  existing Flow terminal before resuming this phase`; `r` is withdrawn from the
+  footer for exactly that case. A lifecycle launch, a pending repair, or an
+  open repair terminal refuses silently, and `codex-app` resumes bypass
+  occupancy entirely. A different live session on the same phase refuses with
+  `Flow phase already has a running session`; the session being resumed does
+  not count against itself, which is what keeps `r` open for a phase whose
+  agent died without recording an end. That exemption is keyed on the store's
+  own identity — provider and session ID together — so a live session from a
+  different provider still refuses even when it shares the target's ID.
 - `a` toggles per-Flow auto mode, which is on by default for new Flows and
   persisted on that Flow record. Flows created before this field existed
   remain manual until toggled on.
@@ -558,9 +574,9 @@ ready in the meantime. Auto-launched CLI phases are
 always headless and do not change the current view or focus. Approach launches
 at most one phase per Flow at a time: if any phase is running or any
 Flow-scoped embedded terminal is still open or auto-closing, the drain waits.
-It also waits while a manual phase resume or a repair on that Flow is still
-being written, and while a session recorded against the phase it would launch
-has not ended. Each of those defers the launch silently and it resumes on a
+It also waits while a manual phase resume or a repair on that Flow is still in
+flight, and while a session recorded against the phase it would launch has not
+ended. Each of those defers the launch silently and it resumes on a
 later poll.
 
 That last one has no recovery path today. A session is treated as live until it
@@ -570,8 +586,11 @@ phase looking permanently busy. Auto mode then waits forever, and the other
 routes out are all closed: launching the phase manually with `g` is refused with
 `No launchable Flow phase` even though the phase is ready, repair reports no
 obstruction because the phase is still launchable, and reset applies only to
-`running` phases. Recovering means editing the Flow record's session metadata by
-hand.
+`running` phases. Resuming the stalled session with `r` is the one route back
+into the work — resume deliberately does not count the session it is
+reattaching to as occupancy — but it is not a fix: reattaching does not record
+the old session as ended, so auto mode stays blocked. Clearing the stall means
+editing the Flow record's session metadata by hand.
 
 A 3 s status message announces auto-launches, `needs_attention`, and
 merge-ready transitions. Any status from elsewhere in the app blocks all of

@@ -173,7 +173,6 @@ type Model struct {
 	flowLaunchAttempts            map[string]flowLaunchAttempt
 	launchSeams                   flowLaunchSeams
 
-	pendingFlowPhaseResumes map[flowPhaseResumeKey]string
 	embeddedTerminalTickGen uint64
 	flowRefreshTickGen      uint64
 	flowRefreshInFlight     uint64
@@ -187,11 +186,6 @@ type Model struct {
 	sessionStateRoot        string
 	bootstrapHookForRepo    func(string) (actions.BootstrapHook, bool)
 	runBootstrapHook        func(actions.BootstrapContext, actions.BootstrapHook) error
-}
-
-type flowPhaseResumeKey struct {
-	FlowID  string
-	PhaseID string
 }
 
 type statusSource int
@@ -1807,10 +1801,6 @@ func (m Model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			return next, tea.Batch(fetchCmd, launchCmd)
 		}
 		return next, launchCmd
-	case flowPhaseResumePersistedMsg:
-		return m.handleFlowPhaseResumePersisted(msg)
-	case flowPhaseResumePersistFailedMsg:
-		return m.handleFlowPhaseResumePersistFailed(msg)
 	case FlowCreatedMsg:
 		return m.handleFlowCreated(msg)
 	case FlowCreateFailedMsg:
@@ -2048,8 +2038,10 @@ func (m Model) selectedFlowPhaseIndex() (int, bool) {
 func (m Model) selectedFlowPhaseResumable() bool {
 	// Unlike selectedFlowPhaseResettable, this accessor has no record in scope,
 	// so the closed-Flow gate needs its own lookup to keep the r hint in step
-	// with the handler.
-	if record, ok := m.selectedFlow(); ok && flowstore.FlowClosed(record) {
+	// with the handler. The record is bound rather than scoped to the gate
+	// because the occupancy preview below needs its Flow ID.
+	record, ok := m.selectedFlow()
+	if !ok || flowstore.FlowClosed(record) {
 		return false
 	}
 	phase, ok := m.selectedFlowPhase()
@@ -2064,7 +2056,14 @@ func (m Model) selectedFlowPhaseResumable() bool {
 	if !ok {
 		return false
 	}
-	return agent.Validate(agent.Normalize(strings.TrimSpace(session.Provider))) == nil
+	provider := agent.Normalize(strings.TrimSpace(session.Provider))
+	if agent.Validate(provider) != nil {
+		return false
+	}
+	// The codex → codex-app mapping does not change what the validation above
+	// returns — agent.Validate accepts both spellings — and is applied only so
+	// the preview knows which route this phase would actually take.
+	return m.previewPhaseResume(record.FlowID, flowPhaseResumeCommand(provider, m.agentCommand))
 }
 
 func flowPhaseHasRecoverableRunningSession(phase flowstore.FlowPhase) bool {

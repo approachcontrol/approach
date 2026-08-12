@@ -218,17 +218,19 @@ func TestSelectedFlowRepairReadyUsesBothFlowSurfacesAndTerminalOccupancy(t *test
 	}
 }
 
-func TestFlowPhaseResumePersistenceDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
+// The repair-terminal backstop is unreachable through admission, but it is the
+// last guard between an open repair agent and a second agent in the same
+// worktree, so it keeps its own coverage — including the wording, which names
+// the resume rather than a launch.
+func TestFlowPhaseResumeDoesNotOpenAlongsideRepairTerminal(t *testing.T) {
 	const (
 		flowID   = "flow-1"
 		phaseID  = "implementation"
 		launchID = "resume-launch"
 	)
-	key := flowPhaseResumeKey{FlowID: flowID, PhaseID: phaseID}
 	starts := 0
 	var failureUpdate flowstore.PhaseUpdate
 	m := Model{
-		pendingFlowPhaseResumes: map[flowPhaseResumeKey]string{key: launchID},
 		embeddedTerminals: []embeddedTerminalSlot{{
 			Scope:      embeddedTerminalScopeFlow,
 			FlowID:     flowID,
@@ -244,30 +246,52 @@ func TestFlowPhaseResumePersistenceDoesNotOpenAlongsideRepairTerminal(t *testing
 			return flowstore.FlowRecord{}, nil
 		},
 	}
-	ctx := actions.AgentLaunchContext{
-		Command:           "codex",
-		LaunchID:          launchID,
-		FlowID:            flowID,
-		FlowPhaseID:       phaseID,
-		ResumeSessionID:   "codex-session",
-		FlowLaunchTracked: true,
-		Embedded:          true,
+	m.launchSeams.SetPhase = m.setFlowPhase
+	attempt := flowLaunchAttempt{
+		Token:        launchID,
+		Kind:         flowLaunchKindPhaseResume,
+		FlowID:       flowID,
+		PhaseID:      phaseID,
+		State:        flowLaunchStatePreparing,
+		MutatedPhase: true,
 	}
-	next, cmd := m.handleFlowPhaseResumePersisted(flowPhaseResumePersistedMsg{
-		LaunchContext: ctx,
-		Flow: flowstore.FlowRecord{FlowID: flowID, Phases: []flowstore.FlowPhase{{
+	m, ok := m.reserveFlowLaunchAttempt(attempt, flowLaunchStatePreparing)
+	if !ok {
+		t.Fatal("reservation should succeed on a free Flow")
+	}
+	released := 0
+	next, cmd := m.installFlowLaunchEmbedded(attempt, flowLaunchEventMsg{
+		Token:   launchID,
+		Kind:    flowLaunchKindPhaseResume,
+		FlowID:  flowID,
+		PhaseID: phaseID,
+		Record: flowstore.FlowRecord{FlowID: flowID, Phases: []flowstore.FlowPhase{{
 			PhaseID: phaseID,
 			Status:  flowstore.PhaseRunning,
 		}}},
+		Context: actions.AgentLaunchContext{
+			Command:           "codex",
+			LaunchID:          launchID,
+			FlowID:            flowID,
+			FlowPhaseID:       phaseID,
+			ResumeSessionID:   "codex-session",
+			FlowLaunchTracked: true,
+			Embedded:          true,
+		},
+		Release: func() { released++ },
 	})
 	if starts != 0 || len(next.embeddedTerminals) != 1 {
 		t.Fatalf("resume opened alongside repair: starts=%d terminals=%d", starts, len(next.embeddedTerminals))
+	}
+	if released != 1 {
+		t.Fatalf("cross-process reservation releases = %d, want exactly one", released)
 	}
 	if cmd == nil {
 		t.Fatal("occupied resume should persist launch-failure state")
 	}
 	_ = cmd()
-	if failureUpdate.Status != flowstore.PhaseNeedsAttention || !strings.Contains(failureUpdate.Notes, "repair terminal") {
+	if failureUpdate.Status != flowstore.PhaseNeedsAttention ||
+		!strings.Contains(failureUpdate.Notes, "Flow phase resume canceled because a repair terminal is already open") {
 		t.Fatalf("failure update = %#v, want repair-terminal needs_attention guidance", failureUpdate)
 	}
 }
