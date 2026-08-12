@@ -922,8 +922,9 @@ type manualMergeCommit struct {
 // those fields is indistinguishable from a metadata write, so it is accepted and
 // may demote a phase whose plan a concurrent writer already synced. Only a
 // per-phase completion counter would be exact. That residual is the cheap
-// direction: it costs a visible needs_attention marker an operator can clear by
-// repeating the completion, against the silent staleness of the alternative.
+// direction: it costs a visible needs_attention marker, which an operator clears
+// with RestartPhase and then a fresh completion — needs_attention -> completed is
+// not a legal transition — against the silent staleness of the alternative.
 //
 // When it rejects, the caller saves nothing. The operator-visible result is a
 // completed phase with a stale linked plan, NO needs_attention marker anywhere,
