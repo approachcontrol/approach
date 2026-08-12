@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/planstore"
 )
@@ -5420,6 +5421,78 @@ func TestStoreCollapseMergesLaunchAndSessionMetadataFromDuplicateRows(t *testing
 	}
 }
 
+func TestStoreCollapseCarriesPhaseAgentSettingsAsAWholeTriple(t *testing.T) {
+	claude := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	codex := flowstore.PhaseAgentSettings{Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium"}
+	collapse := func(t *testing.T, first, second flowstore.PhaseAgentSettings) flowstore.FlowPhase {
+		t.Helper()
+		root := t.TempDir()
+		now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+		store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		record, err := store.Create(flowstore.FlowRecord{
+			FlowID:       "duplicate-agent-settings",
+			Title:        "Duplicate agent settings",
+			Instructions: "collapse duplicate child rows",
+			RepoPath:     filepath.Join(root, "repo"),
+			CreatedAt:    now,
+			UpdatedAt:    now,
+			Phases: []flowstore.FlowPhase{
+				{PhaseID: "plan", Title: "Plan", Status: flowstore.PhaseCompleted, Order: 1, CreatedAt: now, UpdatedAt: now},
+				{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 2, CreatedAt: now, UpdatedAt: now},
+				{
+					PhaseID: "Step-1", ParentPhaseID: "implementation", Title: "Step 1",
+					Status: flowstore.PhaseReady, Kind: "implementation_child", Order: 10,
+					Agent: first.Agent, Model: first.Model, ReasoningEffort: first.ReasoningEffort,
+					CreatedAt: now, UpdatedAt: now,
+				},
+				{
+					PhaseID: "step-1", ParentPhaseID: "implementation", Title: "Step 1",
+					Status: flowstore.PhasePending, Kind: "implementation_child", Order: 10,
+					Agent: second.Agent, Model: second.Model, ReasoningEffort: second.ReasoningEffort,
+					CreatedAt: now, UpdatedAt: now,
+				},
+				{PhaseID: "review-loop", Title: "Review loop", Status: flowstore.PhasePending, Order: 3, CreatedAt: now, UpdatedAt: now},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "step-1", Status: flowstore.PhaseCompleted})
+		if err != nil {
+			t.Fatalf("SetPhase(step-1 completed) error = %v", err)
+		}
+		var survivors []flowstore.FlowPhase
+		for _, phase := range record.Phases {
+			if phase.ParentPhaseID == "implementation" {
+				survivors = append(survivors, phase)
+			}
+		}
+		if len(survivors) != 1 {
+			t.Fatalf("duplicate child rows not collapsed: %#v", record.Phases)
+		}
+		return survivors[0]
+	}
+
+	t.Run("survivor without settings takes the dropped row's", func(t *testing.T) {
+		got := collapse(t, flowstore.PhaseAgentSettings{}, claude).AgentSettings()
+		if got != claude {
+			t.Fatalf("collapsed settings = %#v, want the dropped row's %#v", got, claude)
+		}
+	})
+
+	t.Run("conflicting rows never mix fields", func(t *testing.T) {
+		// Whichever row survives, the result must be one intact triple: a
+		// survivor must never end up with one row's agent and another's model.
+		got := collapse(t, codex, claude).AgentSettings()
+		if got != codex && got != claude {
+			t.Fatalf("collapsed settings = %#v, want either %#v or %#v intact", got, codex, claude)
+		}
+	})
+}
+
 func TestStoreAddChildPhaseIdempotentRerunStillCollapsesDuplicates(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
@@ -7060,4 +7133,525 @@ func assertPhaseOrder(t *testing.T, record flowstore.FlowRecord, phaseIDs []stri
 
 func flowLockPath(root, flowID string) string {
 	return filepath.Join(root, "flows", ".locks", flowID+".lock")
+}
+
+func TestCreateWithOptionsStampsPhaseAgentSettings(t *testing.T) {
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	want := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	record, err := store.CreateWithOptions(flowstore.FlowRecord{
+		Title:        "Stamp agent settings",
+		Instructions: "Capture the active agent settings.",
+		RepoPath:     repoPath,
+	}, flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{
+		Agent:           " Claude ",
+		Model:           "Claude-Opus-5",
+		ReasoningEffort: "HIGH",
+	}})
+	if err != nil {
+		t.Fatalf("CreateWithOptions() error = %v", err)
+	}
+	for _, phase := range record.Phases {
+		if got := phase.AgentSettings(); got != want {
+			t.Fatalf("phase %q settings = %#v, want %#v", phase.PhaseID, got, want)
+		}
+	}
+
+	reread, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	for _, phase := range reread.Phases {
+		if got := phase.AgentSettings(); got != want {
+			t.Fatalf("reread phase %q settings = %#v, want %#v", phase.PhaseID, got, want)
+		}
+	}
+
+	data := readSQLiteRecordForTest(t, root, record.FlowID)
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
+	}
+	if len(raw.Phases) == 0 {
+		t.Fatalf("meta.json has no phases:\n%s", data)
+	}
+	for _, phase := range raw.Phases {
+		for key, wantValue := range map[string]string{
+			"agent":            `"claude"`,
+			"model":            `"claude-opus-5"`,
+			"reasoning_effort": `"high"`,
+		} {
+			got, ok := phase[key]
+			if !ok {
+				t.Fatalf("meta.json phase missing %q:\n%s", key, data)
+			}
+			if string(got) != wantValue {
+				t.Fatalf("meta.json phase %s = %s, want %s", key, got, wantValue)
+			}
+		}
+	}
+}
+
+func TestCreateWithOptionsValidatesPhaseAgentSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings flowstore.PhaseAgentSettings
+		wantErr  string
+	}{
+		{
+			name:     "unsupported command",
+			settings: flowstore.PhaseAgentSettings{Agent: "gemini"},
+			wantErr:  `unsupported agent "gemini"`,
+		},
+		{
+			name:     "unsupported model for command",
+			settings: flowstore.PhaseAgentSettings{Agent: "claude", Model: "gpt-5.5"},
+			wantErr:  `unsupported model "gpt-5.5" for claude`,
+		},
+		{
+			name:     "unsupported reasoning effort for command",
+			settings: flowstore.PhaseAgentSettings{Agent: "codex", ReasoningEffort: "max"},
+			wantErr:  `unsupported reasoning effort "max" for codex`,
+		},
+		{
+			name:     "model without command",
+			settings: flowstore.PhaseAgentSettings{Model: "claude-opus-5"},
+			wantErr:  "agent is not set",
+		},
+		{
+			name:     "reasoning effort without command",
+			settings: flowstore.PhaseAgentSettings{ReasoningEffort: "high"},
+			wantErr:  "agent is not set",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+			_, err = store.CreateWithOptions(flowstore.FlowRecord{
+				Title:        "Invalid settings",
+				Instructions: "Reject unsupported agent settings.",
+				RepoPath:     filepath.Join(root, "repo"),
+			}, flowstore.CreateOptions{PhaseAgent: tc.settings})
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("CreateWithOptions() error = %v, want error containing %q", err, tc.wantErr)
+			}
+			assertNoSQLiteFlowRows(t, root)
+		})
+	}
+}
+
+func TestCreateWithOptionsAcceptsEmptyPhaseAgentSettings(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.CreateWithOptions(flowstore.FlowRecord{
+		Title:        "No settings",
+		Instructions: "Stamp nothing when no settings are supplied.",
+		RepoPath:     filepath.Join(root, "repo"),
+	}, flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{
+		Agent:           "  ",
+		Model:           "\t",
+		ReasoningEffort: " ",
+	}})
+	if err != nil {
+		t.Fatalf("CreateWithOptions() error = %v", err)
+	}
+	for _, phase := range record.Phases {
+		if got := phase.AgentSettings(); !got.IsZero() {
+			t.Fatalf("phase %q settings = %#v, want zero", phase.PhaseID, got)
+		}
+	}
+	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
+}
+
+func TestLegacyFlowRecordWithoutPhaseAgentSettingsStaysClean(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	record, err := store.Create(flowstore.FlowRecord{
+		Title:        "Legacy flow",
+		Instructions: "Created before per-phase agent settings existed.",
+		RepoPath:     filepath.Join(root, "repo"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
+
+	if _, err := store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{
+		FlowID:   record.FlowID,
+		PhaseID:  "plan",
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatalf("AddPhaseLaunchID() error = %v", err)
+	}
+	if _, err := store.SetPhase(flowstore.PhaseUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Status:  flowstore.PhaseBlocked,
+		Notes:   "blocked for the fixture",
+	}); err != nil {
+		t.Fatalf("SetPhase() error = %v", err)
+	}
+	if _, err := store.RestartPhase(flowstore.PhaseRestartUpdate{
+		FlowID:  record.FlowID,
+		PhaseID: "plan",
+		Notes:   "restarting",
+	}); err != nil {
+		t.Fatalf("RestartPhase() error = %v", err)
+	}
+
+	reread, err := store.Read(record.FlowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	for _, phase := range reread.Phases {
+		if got := phase.AgentSettings(); !got.IsZero() {
+			t.Fatalf("phase %q settings = %#v, want zero", phase.PhaseID, got)
+		}
+	}
+	assertNoPhaseAgentKeys(t, readSQLiteRecordForTest(t, root, record.FlowID))
+}
+
+func TestMetadataOnlyUpdatePreservesPhaseAgentSettingsOnUnresolvedGraph(t *testing.T) {
+	root := t.TempDir()
+	flowID := "20260607T120000Z-unresolved-agent-settings"
+	writeRawFlowMeta(t, root, flowID, `
+  "preset_name": "research",
+  "phases": [
+    {"phase_id": "research", "title": "Research", "kind": "plan", "status": "running", "order": 1, "agent": " CLAUDE ", "model": "Claude-Opus-5", "reasoning_effort": "HIGH ", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+    {"phase_id": "draft", "title": "Draft", "kind": "implementation", "status": "pending", "order": 2, "agent": "claude", "model": "claude-opus-5", "reasoning_effort": "high", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+	    {"phase_id": "publish", "title": "Publish", "kind": "merge", "status": "pending", "order": 3, "agent": "claude", "model": "claude-opus-5", "reasoning_effort": "high", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+	  ]`)
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if _, err := store.AttachSession(flowstore.SessionAttachUpdate{
+		FlowID:  flowID,
+		PhaseID: "research",
+		Session: flowstore.Session{Provider: "claude", SessionID: "session-1", LaunchID: "launch-1"},
+	}); err != nil {
+		t.Fatalf("AttachSession() error = %v", err)
+	}
+
+	reread, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if reread.GraphRecovery.Status != flowstore.GraphRecoveryMissingEdgesUnresolved {
+		t.Fatalf("GraphRecovery.Status = %q, want %q", reread.GraphRecovery.Status, flowstore.GraphRecoveryMissingEdgesUnresolved)
+	}
+	want := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	for _, phase := range reread.Phases {
+		if got := phase.AgentSettings(); got != want {
+			t.Fatalf("phase %q settings = %#v, want %#v", phase.PhaseID, got, want)
+		}
+	}
+
+	data := readSQLiteRecordForTest(t, root, flowID)
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
+	}
+	for _, phase := range raw.Phases {
+		for key, wantValue := range map[string]string{
+			"agent":            `"claude"`,
+			"model":            `"claude-opus-5"`,
+			"reasoning_effort": `"high"`,
+		} {
+			got, ok := phase[key]
+			if !ok {
+				t.Fatalf("meta.json phase missing %q after metadata-only write:\n%s", key, data)
+			}
+			if string(got) != wantValue {
+				t.Fatalf("meta.json phase %s = %s, want %s", key, got, wantValue)
+			}
+		}
+	}
+}
+
+func TestCreateWithOptionsDeclaredPhaseAgentSettings(t *testing.T) {
+	declared := func(phases ...flowstore.FlowPhase) flowstore.FlowRecord {
+		return flowstore.FlowRecord{
+			Title:        "Declared phases",
+			Instructions: "Declared phases carry their own settings.",
+			Phases:       phases,
+		}
+	}
+	t.Run("empty declared settings take the create defaults", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		record := declared(
+			flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhasePending, Order: 1},
+			flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2},
+		)
+		record.RepoPath = filepath.Join(root, "repo")
+		created, err := store.CreateWithOptions(record, flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{
+			Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium",
+		}})
+		if err != nil {
+			t.Fatalf("CreateWithOptions() error = %v", err)
+		}
+		want := flowstore.PhaseAgentSettings{Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium"}
+		for _, phase := range created.Phases {
+			if got := phase.AgentSettings(); got != want {
+				t.Fatalf("phase %q settings = %#v, want %#v", phase.PhaseID, got, want)
+			}
+		}
+	})
+
+	t.Run("declared settings win over the create defaults", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		record := declared(
+			flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhasePending, Order: 1, Agent: "claude"},
+			flowstore.FlowPhase{PhaseID: "implementation", Title: "Implementation", Kind: flowstore.KindImplementation, Status: flowstore.PhasePending, Order: 2},
+		)
+		record.RepoPath = filepath.Join(root, "repo")
+		created, err := store.CreateWithOptions(record, flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{
+			Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium",
+		}})
+		if err != nil {
+			t.Fatalf("CreateWithOptions() error = %v", err)
+		}
+		if got := phaseByID(t, created, "plan").AgentSettings(); got != (flowstore.PhaseAgentSettings{Agent: "claude"}) {
+			t.Fatalf("plan settings = %#v, want claude only", got)
+		}
+		want := flowstore.PhaseAgentSettings{Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium"}
+		if got := phaseByID(t, created, "implementation").AgentSettings(); got != want {
+			t.Fatalf("implementation settings = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("declared model without an agent is rejected", func(t *testing.T) {
+		root := t.TempDir()
+		store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+		if err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+		record := declared(
+			flowstore.FlowPhase{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhasePending, Order: 1, Model: "claude-opus-5"},
+		)
+		record.RepoPath = filepath.Join(root, "repo")
+		_, err = store.CreateWithOptions(record, flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{
+			Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium",
+		}})
+		if err == nil || !strings.Contains(err.Error(), "agent is not set") {
+			t.Fatalf("CreateWithOptions() error = %v, want agent is not set", err)
+		}
+	})
+}
+
+func TestAddChildPhaseInheritsImplementationAgentSettings(t *testing.T) {
+	root := t.TempDir()
+	store, err := flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	// Two implementation phases carrying different settings, so the assertion
+	// can only pass if the child copied from its own parent rather than from
+	// the create defaults or the first phase in the record.
+	wantFirst := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	wantSecond := flowstore.PhaseAgentSettings{Agent: "codex", Model: "gpt-5.5", ReasoningEffort: "medium"}
+	record, err := store.CreateWithOptions(flowstore.FlowRecord{
+		Title:        "Child inheritance",
+		Instructions: "Children inherit their own implementation phase settings.",
+		RepoPath:     filepath.Join(root, "repo"),
+		Phases: []flowstore.FlowPhase{
+			{PhaseID: "plan", Title: "Plan", Kind: flowstore.KindPlan, Status: flowstore.PhasePending, Order: 1},
+			{
+				PhaseID: "implementation-first", Title: "First", Kind: flowstore.KindImplementation,
+				Status: flowstore.PhasePending, Order: 2,
+				Agent: wantFirst.Agent, Model: wantFirst.Model, ReasoningEffort: wantFirst.ReasoningEffort,
+			},
+			{
+				PhaseID: "implementation-second", Title: "Second", Kind: flowstore.KindImplementation,
+				Status: flowstore.PhasePending, Order: 3,
+				Agent: wantSecond.Agent, Model: wantSecond.Model, ReasoningEffort: wantSecond.ReasoningEffort,
+			},
+		},
+	}, flowstore.CreateOptions{PhaseAgent: flowstore.PhaseAgentSettings{
+		Agent: "claude", Model: "claude-sonnet-5", ReasoningEffort: "low",
+	}})
+	if err != nil {
+		t.Fatalf("CreateWithOptions() error = %v", err)
+	}
+	updated, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation-second",
+		PhaseID:       "implementation-second-step-1",
+		Title:         "Step one",
+		Order:         1,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase() error = %v", err)
+	}
+	if got := phaseByID(t, updated, "implementation-second-step-1").AgentSettings(); got != wantSecond {
+		t.Fatalf("child settings = %#v, want its own parent's %#v", got, wantSecond)
+	}
+
+	rewritten, err := store.AddChildPhase(flowstore.ChildPhaseUpdate{
+		FlowID:        record.FlowID,
+		ParentPhaseID: "implementation-second",
+		PhaseID:       "implementation-second-step-1",
+		Title:         "Step one renamed",
+		Order:         1,
+	})
+	if err != nil {
+		t.Fatalf("AddChildPhase() re-run error = %v", err)
+	}
+	if got := phaseByID(t, rewritten, "implementation-second-step-1"); got.Title != "Step one renamed" {
+		t.Fatalf("re-run title = %q, want the update branch to have run", got.Title)
+	}
+	if got := phaseByID(t, rewritten, "implementation-second-step-1").AgentSettings(); got != wantSecond {
+		t.Fatalf("child settings after re-run = %#v, want %#v", got, wantSecond)
+	}
+	if got := phaseByID(t, rewritten, "implementation-first").AgentSettings(); got != wantFirst {
+		t.Fatalf("sibling implementation settings = %#v, want %#v", got, wantFirst)
+	}
+}
+
+func TestPhaseAgentSettingsNormalizeValidateAndIsZero(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings flowstore.PhaseAgentSettings
+		want     flowstore.PhaseAgentSettings
+		wantZero bool
+		wantErr  string
+	}{
+		{
+			name:     "trims and lowercases",
+			settings: flowstore.PhaseAgentSettings{Agent: " CLAUDE ", Model: "Claude-Opus-5", ReasoningEffort: "HIGH "},
+			want:     flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"},
+		},
+		{
+			name:     "whitespace only is zero",
+			settings: flowstore.PhaseAgentSettings{Agent: " ", Model: "\t", ReasoningEffort: "\n"},
+			want:     flowstore.PhaseAgentSettings{},
+			wantZero: true,
+		},
+		{
+			name:     "agent alone is valid",
+			settings: flowstore.PhaseAgentSettings{Agent: "codex"},
+			want:     flowstore.PhaseAgentSettings{Agent: "codex"},
+		},
+		{
+			// codex-app carries no provider selection, so an agent-only triple
+			// is the most it can ever capture.
+			name:     "codex-app is a supported agent",
+			settings: flowstore.PhaseAgentSettings{Agent: "codex-app"},
+			want:     flowstore.PhaseAgentSettings{Agent: "codex-app"},
+		},
+		{
+			name:     "codex-app rejects a concrete model",
+			settings: flowstore.PhaseAgentSettings{Agent: "codex-app", Model: "gpt-5.5"},
+			want:     flowstore.PhaseAgentSettings{Agent: "codex-app", Model: "gpt-5.5"},
+			wantErr:  `unsupported model "gpt-5.5" for codex-app`,
+		},
+		{
+			name:     "default is stored verbatim",
+			settings: flowstore.PhaseAgentSettings{Agent: "claude", Model: "default", ReasoningEffort: "default"},
+			want:     flowstore.PhaseAgentSettings{Agent: "claude", Model: "default", ReasoningEffort: "default"},
+		},
+		{
+			name:     "model without an agent is rejected",
+			settings: flowstore.PhaseAgentSettings{Model: "claude-opus-5"},
+			want:     flowstore.PhaseAgentSettings{Model: "claude-opus-5"},
+			wantErr:  "agent is not set",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.settings.Normalize(); got != tc.want {
+				t.Fatalf("Normalize() = %#v, want %#v", got, tc.want)
+			}
+			if got := tc.settings.IsZero(); got != tc.wantZero {
+				t.Fatalf("IsZero() = %t, want %t", got, tc.wantZero)
+			}
+			err := tc.settings.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Validate() error = %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPhaseAgentSettingsFromResolvedAgentSettings(t *testing.T) {
+	got := flowstore.PhaseAgentSettingsFrom(agent.Settings{
+		Command:         "claude",
+		Model:           "claude-opus-5",
+		ReasoningEffort: "high",
+	})
+	want := flowstore.PhaseAgentSettings{Agent: "claude", Model: "claude-opus-5", ReasoningEffort: "high"}
+	if got != want {
+		t.Fatalf("PhaseAgentSettingsFrom() = %#v, want %#v", got, want)
+	}
+}
+
+func assertNoSQLiteFlowRows(t *testing.T, root string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatalf("open approach.db: %v", err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM flows").Scan(&count); err != nil {
+		t.Fatalf("count SQLite Flow rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("SQLite Flow row count = %d, want zero after rejected settings", count)
+	}
+}
+
+func assertNoPhaseAgentKeys(t *testing.T, data []byte) {
+	t.Helper()
+	var raw struct {
+		Phases []map[string]json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal(meta.json) error = %v\n%s", err, data)
+	}
+	for _, phase := range raw.Phases {
+		for _, key := range []string{"agent", "model", "reasoning_effort"} {
+			if _, ok := phase[key]; ok {
+				t.Fatalf("meta.json phase unexpectedly carries %q:\n%s", key, data)
+			}
+		}
+	}
 }

@@ -236,11 +236,55 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.
 
+## Per-phase agent settings
+
+Every phase persists three optional fields — `agent`, `model`, and
+`reasoning_effort` — captured from the agent settings in effect when the Flow is
+created. All Flow creation paths stamp them: the TUI "create Flow" and "create
+Flow and plan now" actions, the Ready-Beads shortcut, and `approach flow create`
+(from the `[agent]` config). Implementation child phases inherit their parent
+implementation phase's values when they are first created; re-running
+`approach flow phase add-child` never overwrites them.
+
+The fields are validated against the same rules as the `[agent]` config, with
+one addition: the stored model and reasoning effort are checked against the
+phase's own agent. The agent is required whenever a model or reasoning effort is
+set, so a model with no agent is rejected; an agent on its own is fine.
+
+Two layers enforce that, and they behave differently on purpose:
+
+- The store is the invariant. `flowstore.Store.CreateWithOptions` rejects an
+  unusable triple and writes no record, for both the create-time default and any
+  phase that declares its own settings.
+- The TUI request mapping drops before it stores. `FlowStarter` discards an
+  unusable triple rather than passing it down, so Flow creation cannot start
+  failing on an agent selection that used to be accepted. A dropped triple
+  stamps nothing, which reads as "resolve from the global setting at launch".
+
+In practice neither path is reachable from normal use: config loading already
+validates the `[agent]` block, and the TUI picks models and efforts from fixed
+choice lists.
+
+Each field means something on its own:
+
+- Empty — nothing was captured; resolve that field from the global setting in
+  effect at launch.
+- `default` — captured, and means the provider default. It is stored verbatim.
+- Anything else — captured and concrete.
+
+Nothing consumes these values at launch yet: `FlowPhaseLauncher`,
+`FlowStarter.StartPlan`, and Flow repair still resolve the agent, model, and
+reasoning effort from the current global settings. The fields are recorded for
+the follow-up that surfaces and then honors them.
+
 ## Compatibility and migration
 
-- `schema_version` stays `1` and no status strings were added, removed, or
-  renamed. New records always persist the metadata field `headless`, and a
-  legacy record that omitted it migrates to `true`.
+- The persisted schema gains three optional phase fields (`agent`, `model`,
+  `reasoning_effort`); `schema_version` stays `1` and no status strings were
+  added, removed, or renamed. Records written without those phase fields keep
+  reading and writing without them. New records also always persist the
+  metadata field `headless`, and a legacy record that omitted it migrates to
+  `true`.
 - Records themselves are migrated once, on first open: `flows/<id>/meta.json`
   is imported into `approach.db` and the old tree is left untouched in place.
   See `docs/config.md` for the cutover's guarantees. Phase and

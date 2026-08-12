@@ -875,27 +875,21 @@ func (m Model) ModelFor(command string) string {
 	}
 }
 
-func (m Model) launchModelFor(command string) string {
-	switch agent.Normalize(command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m.ModelFor(command)
-	default:
-		return ""
-	}
-}
-
-func (m Model) launchReasoningEffortFor(command string) string {
-	switch agent.Normalize(command) {
-	case agent.CommandCodex, agent.CommandClaude:
-		return m.ReasoningEffortFor(command)
-	default:
-		return ""
-	}
+// launchAgentSettings resolves the stored per-provider selections down to the
+// single model and reasoning effort that apply to command.
+func (m Model) launchAgentSettings(command string) agent.Settings {
+	return agent.Resolve(agent.Preferences{
+		Command:      command,
+		CodexModel:   m.codexModel,
+		ClaudeModel:  m.claudeModel,
+		CodexEffort:  m.codexReasoningEffort,
+		ClaudeEffort: m.claudeReasoningEffort,
+	})
 }
 
 func (m Model) flowLaunchAgentSettings() (string, string, string) {
-	command := agent.Normalize(m.agentCommand)
-	return command, m.launchModelFor(command), m.launchReasoningEffortFor(command)
+	settings := m.launchAgentSettings(m.agentCommand)
+	return settings.Command, settings.Model, settings.ReasoningEffort
 }
 
 func (m Model) flowModelLabel() string {

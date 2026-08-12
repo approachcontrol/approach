@@ -12940,3 +12940,39 @@ func fillNewFlowForm(t *testing.T, m model.Model, title, instructions, baseRef s
 	}
 	return m
 }
+
+func TestModel_NewFlowParkedCreateCapturesAgentSettings(t *testing.T) {
+	var createRequest model.FlowStartRequest
+	m := model.NewWithOptions(testRepos(), model.Options{
+		AgentCommand:          "claude",
+		ClaudeModel:           "claude-opus-5",
+		ClaudeReasoningEffort: "high",
+		CodexModel:            "gpt-5.5",
+		CodexReasoningEffort:  "medium",
+		CreateFlow: func(req model.FlowStartRequest) (model.FlowStartResult, error) {
+			createRequest = req
+			return model.FlowStartResult{Flow: flowstore.FlowRecord{FlowID: "flow-parked", RepoPath: req.RepoPath, Title: req.Title}}, nil
+		},
+		StartFlowPlan: func(model.FlowStartRequest) (model.FlowStartResult, error) {
+			t.Fatal("Plan Now off should not start an agent")
+			return model.FlowStartResult{}, nil
+		},
+	})
+	m = inRightPane(m)
+	m, _ = switchTestMode(m, ui.ModeFlows)
+
+	_, cmd := submitNewFlowPromptsWithCreateOptions(t, m, "Parked With Agent", "Plan later", "main", false, false)
+	if cmd == nil {
+		t.Fatal("expected parked Flow creation command")
+	}
+	cmd()
+	if createRequest.AgentCommand != "claude" {
+		t.Fatalf("AgentCommand = %q, want claude", createRequest.AgentCommand)
+	}
+	if createRequest.Model != "claude-opus-5" {
+		t.Fatalf("Model = %q, want claude-opus-5", createRequest.Model)
+	}
+	if createRequest.ReasoningEffort != "high" {
+		t.Fatalf("ReasoningEffort = %q, want high", createRequest.ReasoningEffort)
+	}
+}

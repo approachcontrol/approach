@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/approachcontrol/approach/actions"
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/flowstore"
 )
 
@@ -204,7 +205,10 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		Instructions: req.Instructions,
 		RepoPath:     req.RepoPath,
 		BaseRef:      req.BaseRef,
-	}, flowstore.CreateOptions{Headless: req.Headless})
+	}, flowstore.CreateOptions{
+		Headless:   req.Headless,
+		PhaseAgent: phaseAgentSettingsForRequest(req),
+	})
 	if err != nil {
 		return FlowStartResult{}, err
 	}
@@ -241,6 +245,23 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	}
 
 	return result, nil
+}
+
+// phaseAgentSettingsForRequest captures the request's agent selection for the
+// seeded phases, but only when the triple is valid: Flow creation succeeded for
+// every agent selection before phases carried settings, and it must keep doing
+// so. An unusable selection stamps nothing, which means "resolve from the
+// global setting at launch".
+func phaseAgentSettingsForRequest(req FlowStartRequest) flowstore.PhaseAgentSettings {
+	settings := flowstore.PhaseAgentSettingsFrom(agent.Settings{
+		Command:         req.AgentCommand,
+		Model:           req.Model,
+		ReasoningEffort: req.ReasoningEffort,
+	}).Normalize()
+	if settings.Validate() != nil {
+		return flowstore.PhaseAgentSettings{}
+	}
+	return settings
 }
 
 func initialFlowLaunchPhase(flow flowstore.FlowRecord, requestedPhaseID string) (flowstore.FlowPhase, bool) {

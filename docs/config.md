@@ -259,6 +259,11 @@ model_reasoning_effort=<effort>`; new Claude Code launches use
 or effort flags. `codex-app` launches keep app-side/default model and reasoning
 because the current deep-link path cannot carry verified provider settings.
 
+These values are also stamped onto every phase of a Flow when it is created, so
+each Flow records the agent, model, and reasoning effort that were in effect at
+creation time; see `docs/flow-phases.md`. Nothing consumes the stamped values at
+launch yet.
+
 ### `[flow_prompts]`
 
 Optional templates for Flow phase launch prompts. Blank or omitted keys use

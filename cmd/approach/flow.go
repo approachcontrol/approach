@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 )
@@ -175,11 +176,26 @@ func runFlowCreate(args []string, deps runDeps) error {
 		Branch:       *branch,
 		BaseRef:      *baseRef,
 		Commit:       *commit,
-	}, flowstore.CreateOptions{Preset: preset})
+	}, flowstore.CreateOptions{
+		Preset:     preset,
+		PhaseAgent: flowstore.PhaseAgentSettingsFrom(configuredAgentSettings(cfg)),
+	})
 	if err != nil {
 		return err
 	}
 	return writeFlowJSON(deps.stdout, record)
+}
+
+// configuredAgentSettings resolves the [agent] config into the single
+// provider-matched selection stamped onto the Flow's phases.
+func configuredAgentSettings(cfg config.Config) agent.Settings {
+	return agent.Resolve(agent.Preferences{
+		Command:      cfg.Agent.Command,
+		CodexModel:   cfg.Agent.CodexModel,
+		ClaudeModel:  cfg.Agent.ClaudeModel,
+		CodexEffort:  cfg.Agent.CodexReasoningEffort,
+		ClaudeEffort: cfg.Agent.ClaudeReasoningEffort,
+	})
 }
 
 func resolveConfiguredFlowPreset(cfg config.Config, requested string) (*flowstore.Preset, error) {
