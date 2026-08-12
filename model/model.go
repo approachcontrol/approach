@@ -483,12 +483,15 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	createFlowForRepo := opts.CreateFlow
 	startFlowPlan := opts.StartFlowPlan
 	if createFlowForRepo == nil || startFlowPlan == nil {
-		createFlow := func(record flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		createFlow := func(record flowstore.FlowRecord, phaseAgent flowstore.PhaseAgentSettings) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
 			if err != nil {
 				return flowstore.FlowRecord{}, err
 			}
-			return store.CreateWithOptions(record, flowstore.CreateOptions{Preset: opts.FlowPreset})
+			return store.CreateWithOptions(record, flowstore.CreateOptions{
+				Preset:     opts.FlowPreset,
+				PhaseAgent: phaseAgent,
+			})
 		}
 		setFlowStartMetadata := func(update flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error) {
 			store, err := newFlowStore()
@@ -813,8 +816,14 @@ func (m Model) launchReasoningEffortFor(command string) string {
 }
 
 func (m Model) flowLaunchAgentSettings() (string, string, string) {
-	command := agent.Normalize(m.agentCommand)
-	return command, m.launchModelFor(command), m.launchReasoningEffortFor(command)
+	settings := agent.Resolve(agent.Preferences{
+		Command:      m.agentCommand,
+		CodexModel:   m.codexModel,
+		ClaudeModel:  m.claudeModel,
+		CodexEffort:  m.codexReasoningEffort,
+		ClaudeEffort: m.claudeReasoningEffort,
+	})
+	return settings.Command, settings.Model, settings.ReasoningEffort
 }
 
 func (m Model) flowModelLabel() string {

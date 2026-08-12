@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/approachcontrol/approach/agent"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/planstore"
 )
@@ -110,20 +111,114 @@ func IsAutoLaunchOutdated(err error) bool {
 
 // FlowPhase is one phase in the persisted Flow pipeline.
 type FlowPhase struct {
-	PhaseID       string    `json:"phase_id"`
-	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
-	Title         string    `json:"title"`
-	Kind          string    `json:"kind"`
-	DependsOn     []string  `json:"depends_on"`
-	Status        string    `json:"status"`
-	Order         int       `json:"order"`
-	Outcome       string    `json:"outcome,omitempty"`
-	Notes         string    `json:"notes,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	LaunchIDs     []string  `json:"launch_ids,omitempty"`
-	Sessions      []Session `json:"sessions,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	PhaseID       string `json:"phase_id"`
+	ParentPhaseID string `json:"parent_phase_id,omitempty"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	// Agent, Model, and ReasoningEffort are captured when the Flow is created
+	// and are not consumed at launch yet; see PhaseAgentSettings.
+	Agent           string    `json:"agent,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	DependsOn       []string  `json:"depends_on"`
+	Status          string    `json:"status"`
+	Order           int       `json:"order"`
+	Outcome         string    `json:"outcome,omitempty"`
+	Notes           string    `json:"notes,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
+	LaunchIDs       []string  `json:"launch_ids,omitempty"`
+	Sessions        []Session `json:"sessions,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// PhaseAgentSettings is the agent selection captured for a Flow phase.
+//
+// Each field is independent: an empty field means nothing was captured and the
+// value must be resolved from the global setting in effect at launch, while
+// "default" means the provider default was captured explicitly.
+type PhaseAgentSettings struct {
+	Agent           string
+	Model           string
+	ReasoningEffort string
+}
+
+// PhaseAgentSettingsFrom converts a resolved launch selection into the
+// persistence shape. It is the only conversion between the two triples.
+func PhaseAgentSettingsFrom(settings agent.Settings) PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           settings.Command,
+		Model:           settings.Model,
+		ReasoningEffort: settings.ReasoningEffort,
+	}
+}
+
+// IsZero reports whether no setting was captured. Emptiness is evaluated after
+// normalization, so whitespace-only fields count as empty.
+func (s PhaseAgentSettings) IsZero() bool {
+	s = s.Normalize()
+	return s.Agent == "" && s.Model == "" && s.ReasoningEffort == ""
+}
+
+// Normalize lowercases and trims every field.
+func (s PhaseAgentSettings) Normalize() PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           agent.Normalize(s.Agent),
+		Model:           agent.NormalizeModel(s.Model),
+		ReasoningEffort: agent.NormalizeReasoningEffort(s.ReasoningEffort),
+	}
+}
+
+// Validate checks the normalized triple as a unit: an unset selection is
+// allowed, but a model or reasoning effort without an agent is not, because a
+// model cannot be interpreted without knowing its agent.
+func (s PhaseAgentSettings) Validate() error {
+	s = s.Normalize()
+	if s.IsZero() {
+		return nil
+	}
+	if err := agent.Validate(s.Agent); err != nil {
+		return err
+	}
+	if err := agent.ValidateModel(s.Agent, s.Model); err != nil {
+		return err
+	}
+	return agent.ValidateReasoningEffort(s.Agent, s.ReasoningEffort)
+}
+
+// AgentSettings returns the agent selection captured for this phase.
+func (p FlowPhase) AgentSettings() PhaseAgentSettings {
+	return PhaseAgentSettings{
+		Agent:           p.Agent,
+		Model:           p.Model,
+		ReasoningEffort: p.ReasoningEffort,
+	}
+}
+
+func (p FlowPhase) withAgentSettings(settings PhaseAgentSettings) FlowPhase {
+	p.Agent = settings.Agent
+	p.Model = settings.Model
+	p.ReasoningEffort = settings.ReasoningEffort
+	return p
+}
+
+// applyDeclaredPhaseAgentSettings treats each declared phase's settings as
+// all-or-nothing: a phase that declares none of the three takes the create
+// defaults, and a phase that declares any of them keeps its own triple, which
+// is then validated as a unit. Nothing is merged per field, so a phase that
+// declares a model without an agent fails rather than silently inheriting one.
+func applyDeclaredPhaseAgentSettings(phases []FlowPhase, defaults PhaseAgentSettings) ([]FlowPhase, error) {
+	for i, phase := range phases {
+		settings := phase.AgentSettings().Normalize()
+		if settings.IsZero() {
+			settings = defaults
+		}
+		if err := settings.Validate(); err != nil {
+			return nil, err
+		}
+		phases[i] = phase.withAgentSettings(settings)
+	}
+	return phases, nil
 }
 
 // Session references a provider session without duplicating transcript contents.
@@ -384,6 +479,12 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	if !filepath.IsAbs(record.RepoPath) {
 		return FlowRecord{}, fmt.Errorf("flow repo path must be absolute: %s", record.RepoPath)
 	}
+	// Validate the captured agent settings before any record is written, so a
+	// rejected selection can never leave a partial Flow behind.
+	phaseAgent := opts.PhaseAgent.Normalize()
+	if err := phaseAgent.Validate(); err != nil {
+		return FlowRecord{}, err
+	}
 	if record.FlowID == "" {
 		id, err := s.generateID(record.Title)
 		if err != nil {
@@ -421,12 +522,17 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 		if err := validatePreset(preset); err != nil {
 			return FlowRecord{}, err
 		}
-		record.Phases = seedPhases(preset.Phases, record.CreatedAt, record.UpdatedAt)
+		record.Phases = seedPhases(preset.Phases, phaseAgent, record.CreatedAt, record.UpdatedAt)
 		record = refreshPhaseReadiness(record, now)
 	} else {
 		if err := validateDeclaredPhaseDependencies(record.Phases); err != nil {
 			return FlowRecord{}, err
 		}
+		phases, err := applyDeclaredPhaseAgentSettings(record.Phases, phaseAgent)
+		if err != nil {
+			return FlowRecord{}, err
+		}
+		record.Phases = phases
 		authoritativeEdges := graphHasAuthoritativeEdges(record.Phases)
 		record.Phases = backfillLinearDependsOnForCreate(record.Phases)
 		if err := validateUniqueMergePhaseKind(record.Phases); err != nil {
@@ -619,6 +725,9 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			record = refreshPhaseReadiness(record, now)
 			return record, nil
 		}
+		// New children inherit the implementation parent's captured settings;
+		// existing children keep whatever they already carry, since
+		// AddChildPhase is re-run idempotently.
 		child := FlowPhase{
 			PhaseID:       update.PhaseID,
 			ParentPhaseID: update.ParentPhaseID,
@@ -628,7 +737,7 @@ func (s *Store) AddChildPhase(update ChildPhaseUpdate) (FlowRecord, error) {
 			Order:         update.Order,
 			CreatedAt:     now,
 			UpdatedAt:     now,
-		}
+		}.withAgentSettings(record.Phases[parentIndex].AgentSettings())
 		record.Phases = append(record.Phases, child)
 		record.Phases = orderImplementationChildren(record.Phases, update.ParentPhaseID)
 		record.UpdatedAt = now
@@ -1942,7 +2051,7 @@ func DeriveStatus(record FlowRecord) string {
 }
 
 func defaultPhases(createdAt, updatedAt time.Time) []FlowPhase {
-	return seedPhases(DefaultPreset().Phases, createdAt, updatedAt)
+	return seedPhases(DefaultPreset().Phases, PhaseAgentSettings{}, createdAt, updatedAt)
 }
 
 func (s *Store) generateID(title string) (string, error) {
@@ -2030,21 +2139,29 @@ type flowRecordForWrite struct {
 	UpdatedAt     time.Time           `json:"updated_at"`
 }
 
+// flowPhaseForWrite is a hand-maintained mirror of FlowPhase with no
+// compile-time link to it: every persisted phase field must be added here, with
+// the same JSON tag and in the same position, and copied in
+// flowPhaseForWriteFrom. A field added only to FlowPhase is silently erased on
+// the unresolved-graph write path.
 type flowPhaseForWrite struct {
-	PhaseID       string    `json:"phase_id"`
-	ParentPhaseID string    `json:"parent_phase_id,omitempty"`
-	Title         string    `json:"title"`
-	Kind          string    `json:"kind"`
-	DependsOn     *[]string `json:"depends_on,omitempty"`
-	Status        string    `json:"status"`
-	Order         int       `json:"order"`
-	Outcome       string    `json:"outcome,omitempty"`
-	Notes         string    `json:"notes,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	LaunchIDs     []string  `json:"launch_ids,omitempty"`
-	Sessions      []Session `json:"sessions,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	PhaseID         string    `json:"phase_id"`
+	ParentPhaseID   string    `json:"parent_phase_id,omitempty"`
+	Title           string    `json:"title"`
+	Kind            string    `json:"kind"`
+	Agent           string    `json:"agent,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	DependsOn       *[]string `json:"depends_on,omitempty"`
+	Status          string    `json:"status"`
+	Order           int       `json:"order"`
+	Outcome         string    `json:"outcome,omitempty"`
+	Notes           string    `json:"notes,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
+	LaunchIDs       []string  `json:"launch_ids,omitempty"`
+	Sessions        []Session `json:"sessions,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func flowPhaseForWriteFrom(phase FlowPhase, omitDependsOn bool) flowPhaseForWrite {
@@ -2053,20 +2170,23 @@ func flowPhaseForWriteFrom(phase FlowPhase, omitDependsOn bool) flowPhaseForWrit
 		dependsOn = &phase.DependsOn
 	}
 	return flowPhaseForWrite{
-		PhaseID:       phase.PhaseID,
-		ParentPhaseID: phase.ParentPhaseID,
-		Title:         phase.Title,
-		Kind:          phase.Kind,
-		DependsOn:     dependsOn,
-		Status:        phase.Status,
-		Order:         phase.Order,
-		Outcome:       phase.Outcome,
-		Notes:         phase.Notes,
-		Summary:       phase.Summary,
-		LaunchIDs:     phase.LaunchIDs,
-		Sessions:      phase.Sessions,
-		CreatedAt:     phase.CreatedAt,
-		UpdatedAt:     phase.UpdatedAt,
+		PhaseID:         phase.PhaseID,
+		ParentPhaseID:   phase.ParentPhaseID,
+		Title:           phase.Title,
+		Kind:            phase.Kind,
+		Agent:           phase.Agent,
+		Model:           phase.Model,
+		ReasoningEffort: phase.ReasoningEffort,
+		DependsOn:       dependsOn,
+		Status:          phase.Status,
+		Order:           phase.Order,
+		Outcome:         phase.Outcome,
+		Notes:           phase.Notes,
+		Summary:         phase.Summary,
+		LaunchIDs:       phase.LaunchIDs,
+		Sessions:        phase.Sessions,
+		CreatedAt:       phase.CreatedAt,
+		UpdatedAt:       phase.UpdatedAt,
 	}
 }
 
@@ -2298,7 +2418,18 @@ func normalizeRecordBase(record FlowRecord) FlowRecord {
 		record.Merge.Status = MergePending
 	}
 	record.Phases = backfillPhaseKinds(record.Phases)
+	record.Phases = normalizePhaseAgentSettings(record.Phases)
 	return record
+}
+
+// normalizePhaseAgentSettings trims and lowercases stored phase settings on
+// read. It deliberately does not validate them: an odd record still has to be
+// readable, and validation belongs to the create boundary.
+func normalizePhaseAgentSettings(phases []FlowPhase) []FlowPhase {
+	for i := range phases {
+		phases[i] = phases[i].withAgentSettings(phases[i].AgentSettings().Normalize())
+	}
+	return phases
 }
 
 func normalizeReviewOutcomes(record FlowRecord) FlowRecord {

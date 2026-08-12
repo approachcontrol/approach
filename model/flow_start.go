@@ -43,7 +43,7 @@ type FlowStartResult struct {
 // FlowStarterOptions groups the deeper orchestration adapters for starting a
 // Flow. Tests can replace these directly without widening Model.Options.
 type FlowStarterOptions struct {
-	CreateFlow           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	CreateFlow           func(flowstore.FlowRecord, flowstore.PhaseAgentSettings) (flowstore.FlowRecord, error)
 	CreateWorktree       func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	SetStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	SetPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -58,7 +58,7 @@ type FlowStarterOptions struct {
 // FlowStarter owns the persistence, worktree, bootstrap, and recovery sequence
 // for the initial Flow plan phase.
 type FlowStarter struct {
-	createFlow           func(flowstore.FlowRecord) (flowstore.FlowRecord, error)
+	createFlow           func(flowstore.FlowRecord, flowstore.PhaseAgentSettings) (flowstore.FlowRecord, error)
 	createWorktree       func(repoPath, title, baseRef string) (actions.FlowWorktreeCreateResult, error)
 	setStartMetadata     func(flowstore.StartMetadataUpdate) (flowstore.FlowRecord, error)
 	setPhase             func(flowstore.PhaseUpdate) (flowstore.FlowRecord, error)
@@ -84,7 +84,7 @@ func NewFlowStarter(opts FlowStarterOptions) FlowStarter {
 		flowPromptTemplates:  opts.FlowPromptTemplates,
 	}
 	if starter.createFlow == nil {
-		starter.createFlow = func(flowstore.FlowRecord) (flowstore.FlowRecord, error) {
+		starter.createFlow = func(flowstore.FlowRecord, flowstore.PhaseAgentSettings) (flowstore.FlowRecord, error) {
 			return flowstore.FlowRecord{}, fmt.Errorf("flow starter missing CreateFlow")
 		}
 	}
@@ -202,7 +202,7 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 		Instructions: req.Instructions,
 		RepoPath:     req.RepoPath,
 		BaseRef:      req.BaseRef,
-	})
+	}, phaseAgentSettingsForRequest(req))
 	if err != nil {
 		return FlowStartResult{}, err
 	}
@@ -239,6 +239,23 @@ func (s FlowStarter) PrepareFlow(req FlowStartRequest) (FlowStartResult, error) 
 	}
 
 	return result, nil
+}
+
+// phaseAgentSettingsForRequest captures the request's agent selection for the
+// seeded phases, but only when the triple is valid: Flow creation succeeded for
+// every agent selection before phases carried settings, and it must keep doing
+// so. An unusable selection stamps nothing, which means "resolve from the
+// global setting at launch".
+func phaseAgentSettingsForRequest(req FlowStartRequest) flowstore.PhaseAgentSettings {
+	settings := flowstore.PhaseAgentSettings{
+		Agent:           req.AgentCommand,
+		Model:           req.Model,
+		ReasoningEffort: req.ReasoningEffort,
+	}.Normalize()
+	if settings.Validate() != nil {
+		return flowstore.PhaseAgentSettings{}
+	}
+	return settings
 }
 
 func initialFlowLaunchPhase(flow flowstore.FlowRecord, requestedPhaseID string) (flowstore.FlowPhase, bool) {

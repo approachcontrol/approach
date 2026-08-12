@@ -604,12 +604,16 @@ func (m Model) createFlowAndLaunchPlanForRepo(repoPath, title, instructions, bas
 }
 
 func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) tea.Cmd {
+	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.createFlow(FlowStartRequest{
-			RepoPath:     repoPath,
-			Title:        title,
-			Instructions: instructions,
-			BaseRef:      baseRef,
+			RepoPath:        repoPath,
+			Title:           title,
+			Instructions:    instructions,
+			BaseRef:         baseRef,
+			AgentCommand:    command,
+			Model:           model,
+			ReasoningEffort: reasoningEffort,
 		})
 		if err != nil {
 			return FlowCreateFailedMsg{RepoPath: repoPath, FlowID: result.Flow.FlowID, Title: title, Err: err.Error()}
@@ -619,11 +623,15 @@ func (m Model) createFlowForRepo(repoPath, title, instructions, baseRef string) 
 }
 
 func (m Model) createReadyBeadFlow(repoPath, title, instructions string, request uint64) tea.Cmd {
+	command, model, reasoningEffort := m.flowLaunchAgentSettings()
 	return func() tea.Msg {
 		result, err := m.createFlow(FlowStartRequest{
-			RepoPath:     repoPath,
-			Title:        title,
-			Instructions: instructions,
+			RepoPath:        repoPath,
+			Title:           title,
+			Instructions:    instructions,
+			AgentCommand:    command,
+			Model:           model,
+			ReasoningEffort: reasoningEffort,
 		})
 		if err != nil {
 			return ReadyBeadFlowCreateFailedMsg{RepoPath: repoPath, Title: title, Err: err.Error(), Request: request}

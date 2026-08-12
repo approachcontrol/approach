@@ -221,11 +221,40 @@ previous PR status, clears that terminal metadata, marks the Merge phase
 `needs_attention`, and keeps the Flow recoverable instead of deriving it as
 `merged`.
 
+## Per-phase agent settings
+
+Every phase persists three optional fields — `agent`, `model`, and
+`reasoning_effort` — captured from the agent settings in effect when the Flow is
+created. All Flow creation paths stamp them: the TUI "create Flow" and "create
+Flow and plan now" actions, the Ready-Beads shortcut, and `approach flow create`
+(from the `[agent]` config). Implementation child phases inherit their parent
+implementation phase's values when they are first created; re-running
+`approach flow phase add-child` never overwrites them.
+
+The fields are validated at creation against the same rules as the `[agent]`
+config, with one addition: the stored model and reasoning effort are checked
+against the phase's own agent, so a model with no agent is rejected. A selection
+that cannot be validated (for example an agent Approach does not support) stamps
+nothing rather than failing Flow creation.
+
+Each field means something on its own:
+
+- Empty — nothing was captured; resolve that field from the global setting in
+  effect at launch.
+- `default` — captured, and means the provider default. It is stored verbatim.
+- Anything else — captured and concrete.
+
+Nothing consumes these values at launch yet: `FlowPhaseLauncher`,
+`FlowStarter.StartPlan`, and Flow repair still resolve the agent, model, and
+reasoning effort from the current global settings. The fields are recorded for
+the follow-up that surfaces and then honors them.
+
 ## Compatibility and migration
 
-- The persisted schema is unchanged: `schema_version` stays `1` and no status
-  strings were added, removed, or renamed. Existing Flow JSON needs no
-  migration.
+- The persisted schema gains three optional phase fields (`agent`, `model`,
+  `reasoning_effort`); `schema_version` stays `1` and no status strings were
+  added, removed, or renamed. Existing Flow JSON needs no migration, and records
+  written without those fields keep reading and writing without them.
 - Derived state is self-healing: phase-affecting mutations (`SetPhase`,
   `AddChildPhase`, `SetPR`, `AddPhaseLaunchID`,
   `ResetRecoverableRunningPhase`) re-derive readiness for any graph. Records
