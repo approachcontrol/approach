@@ -8,7 +8,6 @@ import (
 
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/agent"
-	"github.com/approachcontrol/approach/config"
 	"github.com/approachcontrol/approach/flowstore"
 	"github.com/approachcontrol/approach/internal/artifacts"
 	"github.com/approachcontrol/approach/ui"
@@ -195,7 +194,7 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 		}
 		// Headless is resolved above, so the tmux decision is made against the
 		// value that actually launches rather than the requested one.
-		if tmuxRoute, fellBack := l.tmuxLaunchRoute(command, ctx.Headless); tmuxRoute {
+		if tmuxRoute, fellBack := l.tmuxLaunchRoute(ctx); tmuxRoute {
 			route = FlowPhaseLaunchTmux
 			// A tmux window has no dock to prefill and renders its own output,
 			// so it is external-style: the TUI owns no part of the process.
@@ -207,20 +206,10 @@ func (l FlowPhaseLauncher) Prepare(req FlowPhaseLaunchPreparedRequest) (FlowPhas
 	return FlowPhaseLaunchResult{Context: ctx, Route: route, FallbackNote: fallbackNote}, nil
 }
 
-// tmuxLaunchRoute mirrors Model.tmuxLaunchRoute for the launcher's own copy of
+// tmuxLaunchRoute applies the shared routing rule to the launcher's own copy of
 // the backend and probe, which a lifecycle attempt snapshots at admission.
-func (l FlowPhaseLauncher) tmuxLaunchRoute(command string, headless bool) (route bool, fellBack bool) {
-	if normalizeLaunchBackend(l.Backend) != config.LaunchBackendTmux || !tmuxRouteEligible(command, headless) {
-		return false, false
-	}
-	available := actions.TmuxAvailable
-	if l.TmuxAvailable != nil {
-		available = l.TmuxAvailable
-	}
-	if !available() {
-		return false, true
-	}
-	return true, false
+func (l FlowPhaseLauncher) tmuxLaunchRoute(ctx actions.AgentLaunchContext) (route bool, fellBack bool) {
+	return tmuxLaunchRouteFor(l.Backend, l.TmuxAvailable, ctx)
 }
 
 func (l FlowPhaseLauncher) readPlan(planID string) (string, error) {

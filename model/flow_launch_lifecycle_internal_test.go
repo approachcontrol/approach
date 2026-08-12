@@ -33,10 +33,13 @@ type manualLaunchHarness struct {
 	agentContexts  []actions.AgentLaunchContext
 	tmuxContexts   []actions.AgentLaunchContext
 
-	launchBackend  string
-	tmuxAvailable  bool
-	tmuxLaunchErr  error
-	tmuxLaunchRuns int
+	launchBackend string
+	tmuxAvailable bool
+	tmuxLaunchErr error
+	// tmuxLaunchCleanups counts Cleanup calls. Cleanup deletes the self-deleting
+	// launch script, so a successful detached launch must never call it: the tmux
+	// window runs that script after the spawning command has already returned.
+	tmuxLaunchCleanups int
 
 	startTerminalErr error
 	setPhaseErr      error
@@ -104,7 +107,7 @@ func (h *manualLaunchHarness) options() Options {
 				Launch: actions.TerminalLaunchSpec{
 					Cmd:      exec.Command("true"),
 					Detached: true,
-					Cleanup:  func() { h.tmuxLaunchRuns-- },
+					Cleanup:  func() { h.tmuxLaunchCleanups++ },
 				},
 			}, nil
 		},
@@ -2599,6 +2602,12 @@ func TestManualFlowLaunchRunsInRepoTmuxSessionInTmuxMode(t *testing.T) {
 	if m.flowLaunchAttemptOccupied("flow-1") {
 		t.Fatal("attempt must be released once the tmux window is handed off")
 	}
+	// The agent runs the self-deleting script inside the window, after the
+	// spawning tmux command has returned. Cleanup deletes that script, so calling
+	// it on success would race the agent's own start.
+	if h.tmuxLaunchCleanups != 0 {
+		t.Fatalf("cleanups = %d, want none on a successful launch", h.tmuxLaunchCleanups)
+	}
 }
 
 func TestTmuxFlowLaunchSurvivesQuitWithoutConfirmation(t *testing.T) {
@@ -2666,7 +2675,7 @@ func TestTmuxFlowLaunchFailureRegressesPhase(t *testing.T) {
 	}
 }
 
-func TestAutoModeFlowLaunchUsesTmuxSessionWhenNotHeadless(t *testing.T) {
+func TestAutoModeFlowLaunchStaysEmbeddedBecauseItIsAlwaysHeadless(t *testing.T) {
 	record := autoLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)
 	h.launchBackend = "tmux"

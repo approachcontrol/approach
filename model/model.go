@@ -165,6 +165,7 @@ type Model struct {
 	tmuxLaunchAvailable       func() bool
 	launchRepoTmuxAgent       func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	repoTmuxSessionExists     func(string) bool
+	repoTmuxLaunchWindowLive  func(string, ...string) bool
 	tmuxAttachHint            bool
 	startEmbeddedTerminal     EmbeddedTerminalStarter
 	embeddedTerminals         []embeddedTerminalSlot
@@ -290,9 +291,13 @@ type Options struct {
 	TmuxLaunchAvailable   func() bool
 	LaunchRepoTmuxAgent   func(actions.AgentLaunchContext) (actions.RepoTmuxAgentSpec, error)
 	RepoTmuxSessionExists func(repoPath string) bool
-	StartEmbeddedTerminal EmbeddedTerminalStarter
-	FinalizeAgentSession  func(actions.AgentLaunchContext) error
-	SessionStateRoot      string
+	// RepoTmuxLaunchWindowLive probes whether any of these launches still has an
+	// open tmux window. It is only consulted on user-initiated reset, resume,
+	// and repair.
+	RepoTmuxLaunchWindowLive func(repoPath string, launchIDs ...string) bool
+	StartEmbeddedTerminal    EmbeddedTerminalStarter
+	FinalizeAgentSession     func(actions.AgentLaunchContext) error
+	SessionStateRoot         string
 	// FlowStore is the process's already-open Flow store. When set, the fallback
 	// mutators below reuse it instead of opening a second one against the same
 	// approach.db: two pools would bootstrap twice and then contend for SQLite's
@@ -615,6 +620,10 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 	if repoTmuxSessionExists == nil {
 		repoTmuxSessionExists = actions.RepoTmuxSessionExists
 	}
+	repoTmuxLaunchWindowLive := opts.RepoTmuxLaunchWindowLive
+	if repoTmuxLaunchWindowLive == nil {
+		repoTmuxLaunchWindowLive = actions.RepoTmuxLaunchWindowLive
+	}
 	startEmbeddedTerminal := opts.StartEmbeddedTerminal
 	if startEmbeddedTerminal == nil {
 		startEmbeddedTerminal = defaultEmbeddedTerminalStarter
@@ -754,6 +763,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		tmuxLaunchAvailable:      tmuxLaunchAvailable,
 		launchRepoTmuxAgent:      launchRepoTmuxAgent,
 		repoTmuxSessionExists:    repoTmuxSessionExists,
+		repoTmuxLaunchWindowLive: repoTmuxLaunchWindowLive,
 		tmuxAttachHint:           normalizeLaunchBackend(opts.LaunchBackend) == config.LaunchBackendTmux && tmuxLaunchAvailable(),
 		startEmbeddedTerminal:    startEmbeddedTerminal,
 		finalizeAgentSession:     finalizeAgentSession,
@@ -1896,6 +1906,9 @@ func (m Model) handleAgentResultAfterFinalization(msg AgentResultMsg, finalizeEr
 	if resultErr != "" {
 		return m.startFlowLaunchFailure(msg.LaunchContext, resultErr)
 	} else if msg.Detached {
+		// Only detached launches carry a status here; an interactive launch's own
+		// status is set before the TTY handover, since this message lands when the
+		// user's session ends rather than when it starts.
 		status := msg.LaunchedStatus
 		if strings.TrimSpace(status) == "" {
 			status = agentLaunchedStatus(msg.LaunchContext.Command)

@@ -198,6 +198,17 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 	}
 
 	currentRepoPath, _ := m.currentRepoPath()
+	// Repair's live-agent fence is hasFlowEmbeddedTerminalForFlow, and in tmux
+	// mode that slot does not exist: a phase running in a tmux window records no
+	// session until the provider hook fires, so it reads as recoverable and arms
+	// repair while its agent is mid-run. Without this, R would put an untracked
+	// second agent in the same worktree and instruct it to rewrite the running
+	// phase's persisted state. Probed here rather than in selectedFlowRepairReady
+	// for the same reason as reset and resume: that predicate feeds the footer.
+	if m.tmuxFlowAgentStillRunning(record, currentRepoPath) {
+		return m.setStatus(statusOther, tmuxFlowLiveWindowRefusal), nil
+	}
+
 	repoPath, worktreePath, pathOK := flowRepairLaunchPaths(record.RepoPath, record.WorktreePath, currentRepoPath)
 	if !pathOK {
 		return m.setStatus(statusOther, "Cannot find a usable worktree or repository directory for this Flow repair"), nil

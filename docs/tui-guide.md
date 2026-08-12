@@ -330,26 +330,41 @@ unless you opt in.
 
 What changes in tmux mode:
 
-- **Flow phase launches (`g`), AutoMode interactive launches, Flow phase
-  resumes (`r`), and Sessions-view resumes (`r`)** run as windows in the repo's
-  tmux session instead of the embedded dock.
-- **Worktree `a`, `N` (new worktree + agent), and plans-mode implement (`a` /
-  `i`)** run there too. This is a behavior change to launches that today open a
-  *new external terminal* attached to a per-worktree multiplexer session. If
-  you rely on that workflow, keep the default backend; it is untouched.
+- **Flow phase launches (`g`), Flow phase resumes (`r`), Sessions-view resumes
+  (`r`), and resumes picked from the embedded dock's session picker
+  (`ctrl+]` `l`)** run as windows in the repo's tmux session instead of the
+  embedded dock. AutoMode is not in this list: it always launches headless, and
+  headless stays embedded (see below). **A Flow's headless preference is on by
+  default**, so `g` on a freshly created Flow stays embedded until you turn
+  headless off with `h`; resumes (`r`) are always interactive and go to tmux
+  either way, so the same phase can launch embedded and resume in tmux.
+- **Worktree `a`, `N` (new worktree + agent), plans-mode implement (`a` / `i`),
+  and the worktree session resume (`x` then `enter`)** run there too. This is a
+  behavior change to launches that today open a *new external terminal* attached
+  to a per-worktree multiplexer session — or, if you are running Approach inside
+  tmux, switch your current client to that session. In tmux mode they open a
+  window in the repo's session and never switch your client, so use `T` or your
+  own tmux keys to get there. If you rely on the old workflow, keep the default
+  backend; it is untouched.
 - Every launch reports the window, the session, and the exact
   `tmux attach -t <session>` command in the status line.
 - Press `T` from the repos pane or any content pane to open your configured
-  external terminal attached to the selected repo's session. When no session
-  exists Approach says so rather than creating an empty one.
+  external terminal attached to the selected repo's session — or, on a Flow
+  surface, the selected Flow's repo, since active flows span repos. When no
+  session exists Approach says so rather than creating an empty one. While an
+  embedded terminal holds input focus it takes every key first, so `T` types
+  into that agent instead; leave the dock's input focus first.
 
 What does not change:
 
 - **Flow repair (`R`)** stays embedded: repair sessions are phase-untracked and
   their obstruction/recovery contract assumes the embedded slot.
-- **Headless launches** (Flow-level `h`, and therefore AutoMode) stay embedded.
-  `claude --print` buffers all output until it exits, so a self-closing tmux
-  window would render nothing and then discard it.
+- **Headless launches** (Flow-level `h`, and therefore every AutoMode launch,
+  which is always headless) stay embedded. `claude --print` buffers all output
+  until it exits, so a self-closing tmux window would render nothing and then
+  discard it.
+- **The plan launch that Flow creation performs** stays embedded. It shares its
+  spawn path with repair, which must stay in the dock.
 - **`codex-app`** launches remain external deep links.
 
 Lifecycle and ownership:
@@ -363,7 +378,12 @@ Lifecycle and ownership:
 - A window closes when its agent exits. The session ends with its last window
   and the next launch recreates it.
 - If `tmux` is missing, launches fall back to their default-backend route and
-  the status line says `tmux unavailable`. Nothing is refused.
+  the status line says `tmux unavailable`. The availability check never refuses
+  a launch; a tmux launch that then fails to spawn fails like any other launch
+  error rather than retrying somewhere else.
+- Resetting a phase (`x`), resuming one again (`r`), and repairing a Flow (`R`)
+  ask tmux whether a window is still open for it, and refuse while one is. See
+  Limitations.
 
 Limitations:
 
@@ -374,9 +394,28 @@ Limitations:
 - Removing a worktree while a tmux window is still `cd`'d into it is not
   fenced. Worktree removal is already destructive-gated; close the window
   first.
-- A window killed out of band (`tmux kill-session`) may never fire the provider
-  session hook, leaving a `live` session record that blocks that Flow until it
-  is repaired. This is the same exposure external launches already have.
+- **The live-agent guard is a probe, not a slot.** In the embedded dock, a running
+  slot is what stops `x` (reset), a repeat `r` (resume), and `R` (repair) from
+  starting a second agent on a phase that already has one. Persisted session
+  state cannot stand in for it — Claude records a session only when the agent
+  exits, and Codex records an `ended` one after each turn — so in tmux mode all
+  three actions instead ask tmux whether a window for that work is still open,
+  and refuse with "Flow phase still has an agent running in tmux" when one is.
+  `x` and `r` check the selected phase's launches; `R` checks every launch the
+  Flow has made, since a repair is Flow-wide. Consequences worth knowing:
+  - The probe runs when you confirm a reset or press `r` or `R`, not while
+    rendering, so the footer may still offer `x` for a phase whose reset is then
+    refused.
+  - It is advisory in one direction. If tmux cannot answer (server gone,
+    `list-windows` fails), the action proceeds rather than being blocked, so a
+    probe failure can never strand a phase.
+  - It matches windows by the launch ID that Approach put in the window name.
+    Renaming a window by hand makes it invisible to the probe.
+- A window killed out of band (`tmux kill-window`, a killed agent, a machine
+  sleeping) fires no provider hook, so the phase keeps whatever the last hook
+  recorded: `running` and awaiting session capture if none ever fired. The probe
+  then finds no window, so `x` resets it normally; use repair (`R`) if it needs
+  more than a reset.
 
 ## Plans View (bottom `2`)
 

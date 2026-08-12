@@ -11,7 +11,6 @@ import (
 	"github.com/approachcontrol/approach/actions"
 	"github.com/approachcontrol/approach/gitquery"
 	"github.com/approachcontrol/approach/model"
-	"github.com/approachcontrol/approach/ui"
 )
 
 type tmuxModeSpy struct {
@@ -19,9 +18,13 @@ type tmuxModeSpy struct {
 	externalContexts []actions.AgentLaunchContext
 	attachCommands   []string
 	attachCwds       []string
+	attachCmd        *exec.Cmd
 	tmuxAvailable    bool
 	sessionExists    bool
 	tmuxErr          error
+	// interactiveFallback makes the default-backend launch take over the TTY
+	// instead of detaching, which is what a Linux box with no TERMINAL does.
+	interactiveFallback bool
 }
 
 func (s *tmuxModeSpy) options(backend string) model.Options {
@@ -44,12 +47,18 @@ func (s *tmuxModeSpy) options(backend string) model.Options {
 		},
 		LaunchAgent: func(ctx actions.AgentLaunchContext) (actions.TerminalLaunchSpec, error) {
 			s.externalContexts = append(s.externalContexts, ctx)
+			if s.interactiveFallback {
+				return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Interactive: true}, nil
+			}
 			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
 		},
 		LaunchDetachedTerminal: func(shellCommand, cwd string) (actions.TerminalLaunchSpec, error) {
 			s.attachCommands = append(s.attachCommands, shellCommand)
 			s.attachCwds = append(s.attachCwds, cwd)
-			return actions.TerminalLaunchSpec{Cmd: exec.Command("true"), Detached: true}, nil
+			// Env stays nil, the way the real seam leaves it, so the caller's own
+			// environment hygiene is what the test observes.
+			s.attachCmd = exec.Command("true")
+			return actions.TerminalLaunchSpec{Cmd: s.attachCmd, Detached: true}, nil
 		},
 	}
 }
@@ -135,6 +144,45 @@ func TestModel_WorktreeAgentLaunchFallsBackToExternalWithoutTmux(t *testing.T) {
 	}
 }
 
+// TestModel_WorktreeAgentFallbackNoteReportedOnInteractiveLaunch guards the note
+// on the transport that does not detach. Its AgentResultMsg lands only when the
+// user's agent session ends, so the note has to be set before the TTY handover
+// or it is either lost or announced hours late.
+func TestModel_WorktreeAgentFallbackNoteReportedOnInteractiveLaunch(t *testing.T) {
+	spy := &tmuxModeSpy{tmuxAvailable: false, interactiveFallback: true}
+	m := worktreeModel(t, spy.options("tmux"))
+
+	next, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected an interactive launch command")
+	}
+	if len(spy.externalContexts) != 1 {
+		t.Fatalf("external launches = %d, want the fallback launch", len(spy.externalContexts))
+	}
+	if got := next.TransientError(); !strings.Contains(got, "tmux unavailable") {
+		t.Fatalf("status = %q, want the fallback note at launch time", got)
+	}
+	// The note decorates the launched status rather than repeating its wording.
+	if got := next.TransientError(); strings.Count(got, "terminal session") != 1 {
+		t.Fatalf("status = %q, want the transport named once", got)
+	}
+
+	// An interactive result announces nothing of its own, so the note is not
+	// repeated when the session ends hours later. Asserted on a fresh model so a
+	// status left over from the launch cannot be mistaken for one set here.
+	fresh := worktreeModel(t, (&tmuxModeSpy{tmuxAvailable: false, interactiveFallback: true}).options("tmux"))
+	ended := model.AgentResultMsg{LaunchContext: spy.externalContexts[0]}
+	after, finalizeCmd := update(fresh, ended)
+	if finalizeCmd != nil {
+		if msg := finalizeCmd(); msg != nil {
+			after, _ = update(after, msg)
+		}
+	}
+	if got := after.TransientError(); got != "" {
+		t.Fatalf("status from an interactive result = %q, want none", got)
+	}
+}
+
 func TestModel_WorktreeAgentTmuxLaunchFailureReportsError(t *testing.T) {
 	spy := &tmuxModeSpy{tmuxAvailable: true, tmuxErr: errors.New("tmux server refused")}
 	m := worktreeModel(t, spy.options("tmux"))
@@ -167,6 +215,19 @@ func TestModel_AttachKeyOpensExistingRepoTmuxSession(t *testing.T) {
 	}
 	if got := next.TransientError(); !strings.Contains(got, "Attaching to tmux session") {
 		t.Fatalf("status = %q", got)
+	}
+	// Running approach inside tmux must not hand TMUX to the attaching client:
+	// tmux refuses to nest and the attach would fail.
+	if spy.attachCmd == nil {
+		t.Fatal("expected the attach command captured")
+	}
+	if len(spy.attachCmd.Env) == 0 {
+		t.Fatal("attach command must carry an explicit environment, not inherit one")
+	}
+	for _, entry := range spy.attachCmd.Env {
+		if strings.HasPrefix(entry, "TMUX=") || strings.HasPrefix(entry, "ZELLIJ=") {
+			t.Fatalf("attach command must not inherit %q", entry)
+		}
 	}
 }
 
@@ -212,5 +273,3 @@ func TestModel_AttachHintFollowsBackend(t *testing.T) {
 		t.Fatal("tmux mode without tmux installed cannot attach")
 	}
 }
-
-var _ = ui.PaneRepos

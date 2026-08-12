@@ -230,7 +230,7 @@ Selects where CLI agent sessions (`codex`, `claude`) run.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `backend` | string | `embedded` (default) or `tmux`. `tmux` opts into tmux mode: interactive CLI agent launches run as windows in a per-repo tmux session on your default tmux server instead of in the embedded terminal. Any other value is a startup error. |
+| `backend` | string | `embedded` (default) or `tmux`. `tmux` opts into tmux mode: most interactive CLI agent launches run as windows in a per-repo tmux session on your default tmux server instead of in the embedded terminal. Any other value is a startup error. |
 | `prefer_multiplexer` | boolean | Superseded by `backend`. Still parsed so existing config files keep loading; it has no effect. |
 
 #### tmux mode
@@ -239,22 +239,28 @@ With `backend = "tmux"`:
 
 - Each repo gets one tmux session named `approach-<repo-dir>-<hash>` on your
   default tmux server, created on the first launch and reused after that. Each
-  launch is a new window in it, named after the phase or agent.
+  launch is a new window in it, named after the phase or agent. Dots in the
+  directory name become dashes, because tmux reads a dot in a target name as a
+  pane separator.
 - Sessions live on the default server, so `tmux ls` and `tmux attach` from your
   own terminal see them, and they survive Approach quitting. Quitting Approach
   never terminates them.
 - The window closes when the agent exits; the session ends with its last
   window and is recreated by the next launch.
-- If `tmux` is not on `PATH`, every launch falls back to its default-backend
-  behavior and says so in the status line. Launches are never refused.
-- Headless launches (Flow-level `headless`, including AutoMode) stay in the
-  embedded terminal even in tmux mode: `claude --print` buffers all output
-  until it exits, so a self-closing tmux window would show nothing.
-- `codex-app` launches are unchanged — they are deep links with no window to
-  run in.
+- If `tmux` is not on `PATH`, launches that would have taken the tmux route fall
+  back to their default-backend behavior and say so in the status line. The
+  availability check itself never refuses a launch, but a tmux launch that fails
+  to spawn is reported as a launch failure rather than falling back.
+- Headless launches (Flow-level `headless`, including every AutoMode launch,
+  which is always headless) stay in the embedded terminal even in tmux mode:
+  `claude --print` buffers all output until it exits, so a self-closing tmux
+  window would show nothing. They take the route silently — the fallback note is
+  only for launches that wanted tmux and could not have it.
+- Flow repair, the plan launch Flow creation performs, and `codex-app` launches
+  are unchanged.
 
-See `docs/tui-guide.md` for the behavior changes tmux mode makes to the
-worktree `a` and plans-mode implement launches, and for the attach key.
+`docs/tui-guide.md` lists exactly which launches move, what stays put, the
+attach key, and the limitations tmux mode's ownership model carries.
 
 ### `[agent]`
 
