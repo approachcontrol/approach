@@ -140,6 +140,7 @@ type Model struct {
 	markFlowManualMerge       func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	closeFlow                 func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
 	reopenFlow                func(string) (flowstore.FlowRecord, error)
+	reserveFlowRepairLaunch   func(string) (flowstore.FlowRecord, func(), error)
 	addFlowPhaseLaunchID      func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	resetFlowPhase            func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	deleteFlow                func(string) error
@@ -260,6 +261,7 @@ type Options struct {
 	MarkFlowManualMerge      func(flowstore.ManualMergeUpdate) (flowstore.FlowRecord, error)
 	CloseFlow                func(flowstore.ClosureUpdate) (flowstore.FlowRecord, error)
 	ReopenFlow               func(flowID string) (flowstore.FlowRecord, error)
+	ReserveFlowRepairLaunch  func(flowID string) (flowstore.FlowRecord, func(), error)
 	AddFlowPhaseLaunchID     func(flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error)
 	ResetFlowPhase           func(flowstore.PhaseResetUpdate) (flowstore.FlowRecord, error)
 	DeleteFlow               func(flowID string) error
@@ -487,6 +489,16 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 			return store.ReopenFlow(flowID)
 		}
 	}
+	reserveFlowRepairLaunch := opts.ReserveFlowRepairLaunch
+	if reserveFlowRepairLaunch == nil {
+		reserveFlowRepairLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			store, err := newFlowStore()
+			if err != nil {
+				return flowstore.FlowRecord{}, nil, err
+			}
+			return store.ReserveRepairLaunch(flowID)
+		}
+	}
 	addFlowPhaseLaunchID := opts.AddFlowPhaseLaunchID
 	if addFlowPhaseLaunchID == nil {
 		addFlowPhaseLaunchID = func(update flowstore.PhaseLaunchUpdate) (flowstore.FlowRecord, error) {
@@ -676,6 +688,7 @@ func NewWithOptions(repos []scanner.Repo, opts Options) Model {
 		markFlowManualMerge:      markFlowManualMerge,
 		closeFlow:                closeFlow,
 		reopenFlow:               reopenFlow,
+		reserveFlowRepairLaunch:  reserveFlowRepairLaunch,
 		addFlowPhaseLaunchID:     addFlowPhaseLaunchID,
 		resetFlowPhase:           resetFlowPhase,
 		deleteFlow:               deleteFlow,

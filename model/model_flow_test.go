@@ -4885,6 +4885,66 @@ func TestModel_RLaunchesUntrackedEmbeddedRepairFromBothFlowSurfaces(t *testing.T
 	}
 }
 
+func TestModel_RepairReservationRejectsCloseBeforeTerminalStart(t *testing.T) {
+	record := repairableFlowForShortcut()
+	started := 0
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReserveFlowRepairLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return flowstore.FlowRecord{}, nil, errors.New("cannot reserve repair because flow is closed")
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			started++
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if cmd == nil {
+		t.Fatal("R should schedule the authoritative repair reservation")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(model.FlowEmbeddedLaunchRequestedMsg)
+	if !ok {
+		t.Fatalf("repair command returned %T, want FlowEmbeddedLaunchRequestedMsg", msg)
+	}
+	m, _ = update(m, launchMsg)
+	if started != 0 {
+		t.Fatalf("closed Flow started %d repair terminals, want zero", started)
+	}
+	if !strings.Contains(m.TransientError(), "closed") {
+		t.Fatalf("status = %q, want closed reservation error", m.TransientError())
+	}
+}
+
+func TestModel_RepairReservationHeldUntilTerminalStarts(t *testing.T) {
+	record := repairableFlowForShortcut()
+	released := false
+	started := false
+	m := newTestModel(testRepos(), model.Options{
+		AgentCommand: "codex",
+		ReserveFlowRepairLaunch: func(string) (flowstore.FlowRecord, func(), error) {
+			return record, func() { released = true }, nil
+		},
+		StartEmbeddedTerminal: func(actions.AgentLaunchContext, int, int) (model.EmbeddedTerminal, error) {
+			if released {
+				t.Fatal("repair reservation released before terminal start")
+			}
+			started = true
+			return &fakeEmbeddedTerminal{state: "running"}, nil
+		},
+	})
+	m = flowsInRightPane(t, m, []flowstore.FlowRecord{record})
+
+	m, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	launchMsg := cmd().(model.FlowEmbeddedLaunchRequestedMsg)
+	m, _ = update(m, launchMsg)
+	if !started || !released {
+		t.Fatalf("repair start/release = %v/%v, want both true", started, released)
+	}
+}
+
 func TestModel_RepairLaunchRefreshUsesAuthoritativeFlowHeadlessPreference(t *testing.T) {
 	for _, tt := range []struct {
 		name          string

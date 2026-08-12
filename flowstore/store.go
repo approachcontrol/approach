@@ -83,6 +83,12 @@ const (
 type Store struct {
 	backend  backend
 	planSync planPhaseSyncer
+	// canonicalRoot and lockTimeout back the short cross-process repair-launch
+	// reservation shared with CloseFlow. The advisory lock orders the final
+	// closed-state read and terminal start without persisting transient launch
+	// metadata that a crash could strand.
+	canonicalRoot string
+	lockTimeout   time.Duration
 	// root outlives the storage seam because the plan side is only half behind
 	// it: SetPhase syncs through planSync (which captures root itself), but
 	// SetPlanLink still resolves plan paths and constructs a planstore.Store
@@ -229,6 +235,22 @@ type ClosureUpdate struct {
 // FlowClosed reports whether a Flow was deliberately closed.
 func FlowClosed(record FlowRecord) bool {
 	return record.Closed.ClosedAt != nil
+}
+
+func validateClosure(closure Closure) error {
+	reason := strings.TrimSpace(closure.Reason)
+	switch {
+	case closure.ClosedAt != nil && reason == "":
+		return errors.New("flow closure timestamp requires a reason")
+	case closure.ClosedAt == nil && reason != "":
+		return errors.New("flow closure reason requires a timestamp")
+	default:
+		return nil
+	}
+}
+
+func closedFlowMutationError(record FlowRecord, action string) error {
+	return fmt.Errorf("cannot %s flow %q because it is closed", action, record.FlowID)
 }
 
 // AutoModeUpdate changes whether the TUI may automatically launch ready phases
@@ -395,10 +417,12 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Store{
-		backend:  store,
-		planSync: planstoreSyncer{root: root},
-		root:     root,
-		now:      now,
+		backend:       store,
+		planSync:      planstoreSyncer{root: root},
+		root:          root,
+		canonicalRoot: store.root,
+		lockTimeout:   lockTimeout,
+		now:           now,
 	}, nil
 }
 
@@ -447,6 +471,9 @@ func (s *Store) CreateWithOptions(record FlowRecord, opts CreateOptions) (FlowRe
 	}
 	if !filepath.IsAbs(record.RepoPath) {
 		return FlowRecord{}, fmt.Errorf("flow repo path must be absolute: %s", record.RepoPath)
+	}
+	if err := validateClosure(record.Closed); err != nil {
+		return FlowRecord{}, err
 	}
 	if record.FlowID == "" {
 		// Create reads the clock twice: once to allocate the timestamped ID and
@@ -550,6 +577,9 @@ func (s *Store) SetPhase(update PhaseUpdate) (FlowRecord, error) {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if FlowClosed(record) && update.Status == PhaseRunning {
+			return FlowRecord{}, closedFlowMutationError(record, "set a phase running on")
+		}
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -629,6 +659,9 @@ func (s *Store) RestartPhase(update PhaseRestartUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("phase restart requires notes")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "restart a phase on")
+		}
 		phaseIndex := phaseIndexByID(record.Phases, update.PhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)
@@ -868,6 +901,9 @@ func (s *Store) SetMerge(update MergeUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "set merge metadata on")
+		}
 		merge, err := validateMergeUpdate(record, update)
 		if err != nil {
 			return FlowRecord{}, err
@@ -896,6 +932,9 @@ func (s *Store) MarkManualMerge(update ManualMergeUpdate) (FlowRecord, error) {
 			return FlowRecord{}, flowNotFoundError(update.FlowID)
 		}
 		record := stored.record
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "mark merged")
+		}
 		if err := validatePhaseGraphResolved(record); err != nil {
 			return FlowRecord{}, err
 		}
@@ -964,6 +1003,11 @@ func (s *Store) SetAutoMode(update AutoModeUpdate) (FlowRecord, error) {
 		return FlowRecord{}, err
 	}
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		// Disabling auto mode is safe cleanup on a closed Flow; only arming it
+		// could revive stale launch work after the close wins the race.
+		if FlowClosed(record) && update.Enabled {
+			return FlowRecord{}, closedFlowMutationError(record, "enable auto mode on")
+		}
 		if record.AutoMode == update.Enabled {
 			return record, nil
 		}
@@ -1003,6 +1047,11 @@ func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
 	if reason == "" {
 		return FlowRecord{}, errors.New("flow close requires a reason")
 	}
+	release, err := s.acquireRepairLaunchLock(update.FlowID)
+	if err != nil {
+		return FlowRecord{}, err
+	}
+	defer release()
 	return s.updateFlowMetadataOnly(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
 		if FlowClosed(record) {
 			return FlowRecord{}, fmt.Errorf("flow %q is already closed", update.FlowID)
@@ -1015,6 +1064,41 @@ func (s *Store) CloseFlow(update ClosureUpdate) (FlowRecord, error) {
 		record.UpdatedAt = now
 		return record, nil
 	})
+}
+
+// ReserveRepairLaunch holds the Flow's cross-process repair-launch lock and
+// returns the current record. Callers must invoke the returned release function
+// after the terminal has either started or failed to start. CloseFlow takes the
+// same lock, so exactly one ordering wins: a completed close makes this call
+// reject, while an admitted repair starts before a concurrent close proceeds.
+// The OS releases the advisory lock automatically if the process exits.
+func (s *Store) ReserveRepairLaunch(flowID string) (FlowRecord, func(), error) {
+	if err := validateFlowID(flowID); err != nil {
+		return FlowRecord{}, nil, err
+	}
+	release, err := s.acquireRepairLaunchLock(flowID)
+	if err != nil {
+		return FlowRecord{}, nil, err
+	}
+	record, err := s.Read(flowID)
+	if err != nil {
+		release()
+		return FlowRecord{}, nil, err
+	}
+	if FlowClosed(record) {
+		release()
+		return FlowRecord{}, nil, closedFlowMutationError(record, "reserve a repair launch for")
+	}
+	return record, release, nil
+}
+
+func (s *Store) acquireRepairLaunchLock(flowID string) (func(), error) {
+	path := filepath.Join(s.canonicalRoot, ".approach.flow-repair."+flowID+".lock")
+	release, err := artifacts.AcquireFileLockNoFollow(path, "Flow repair launch lock", s.lockTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("acquire repair launch reservation for flow %q: %w", flowID, err)
+	}
+	return release, nil
 }
 
 // ReopenFlow clears the closure from a closed Flow, restoring the launchability
@@ -1085,6 +1169,13 @@ func (s *Store) AddPhaseLaunchID(update PhaseLaunchUpdate) (FlowRecord, error) {
 		return FlowRecord{}, fmt.Errorf("launch id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			if update.AutoLaunch {
+				return FlowRecord{}, fmt.Errorf("auto launch target %q is not eligible because flow %q is closed: %w",
+					update.PhaseID, record.FlowID, errAutoLaunchOutdated)
+			}
+			return FlowRecord{}, closedFlowMutationError(record, "record a phase launch for")
+		}
 		// Launch bookkeeping targets the requested phase row. Legacy records may
 		// contain an earlier stale duplicate whose id only matches after
 		// normalization; prefer the exact row before deciding whether a resume
@@ -1234,6 +1325,9 @@ func (s *Store) ResetRecoverableRunningPhase(update PhaseResetUpdate) (FlowRecor
 		return FlowRecord{}, fmt.Errorf("phase id is required")
 	}
 	return s.updateFlow(update.FlowID, func(record FlowRecord, now time.Time) (FlowRecord, error) {
+		if FlowClosed(record) {
+			return FlowRecord{}, closedFlowMutationError(record, "reset a phase on")
+		}
 		phaseIndex := phaseIndexPreferringExactID(record.Phases, requestedPhaseID)
 		if phaseIndex < 0 {
 			return FlowRecord{}, fmt.Errorf("phase %q not found in flow %q", update.PhaseID, update.FlowID)

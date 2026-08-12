@@ -1069,6 +1069,47 @@ func TestFlowLaunchPrepareFailureLeavesPhaseAlone(t *testing.T) {
 	}
 }
 
+func TestFlowLaunchCloseBetweenReadAndPrepareStartsNoAgent(t *testing.T) {
+	record := manualLaunchFlowRecord()
+	h := newManualLaunchHarness(t, record)
+	m := h.model()
+
+	next, readCmd := m.handleLaunchNextFlowPhase()
+	m = next.(Model)
+	if readCmd == nil {
+		t.Fatal("manual launch should schedule the authoritative read")
+	}
+	readMsg := readCmd()
+	nextModel, prepareCmd := m.Update(readMsg)
+	m = nextModel.(Model)
+	if prepareCmd == nil {
+		t.Fatal("authoritative read should schedule preparation")
+	}
+
+	// The close lands after the lifecycle's authoritative read but before the
+	// transactional launch-ID reservation performed by Prepare.
+	h.addLaunchIDErr = errors.New("flow is closed")
+	preparedMsg := prepareCmd()
+	nextModel, handoffCmd := m.Update(preparedMsg)
+	m = nextModel.(Model)
+	if handoffCmd != nil {
+		m = h.drain(m, handoffCmd, 0)
+	}
+
+	if len(h.launchUpdates) != 1 {
+		t.Fatalf("launch reservations = %d, want one rejected reservation", len(h.launchUpdates))
+	}
+	if len(h.launchContexts) != 0 || len(h.agentContexts) != 0 {
+		t.Fatalf("closed Flow started an agent: embedded=%d external=%d", len(h.launchContexts), len(h.agentContexts))
+	}
+	if _, ok := m.flowLaunchAttempt(record.FlowID); ok {
+		t.Fatal("rejected prepare must release the launch attempt")
+	}
+	if got := m.status.Text; !strings.Contains(got, "closed") {
+		t.Fatalf("status = %q, want closed rejection", got)
+	}
+}
+
 func TestFlowLaunchEmbeddedInstallTransfersOwnership(t *testing.T) {
 	record := manualLaunchFlowRecord()
 	h := newManualLaunchHarness(t, record)

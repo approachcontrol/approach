@@ -2635,6 +2635,9 @@ func (m Model) launchAgentWithContext(ctx actions.AgentLaunchContext) (Model, te
 }
 
 func (m Model) launchFlowEmbeddedRequest(msg FlowEmbeddedLaunchRequestedMsg) (Model, tea.Cmd) {
+	if msg.RepairRelease != nil {
+		defer msg.RepairRelease()
+	}
 	var repairRecord *flowstore.FlowRecord
 	if msg.LaunchContext.FlowRepair && msg.RepairValidationErr == "" && strings.TrimSpace(msg.RepairRecord.FlowID) != "" {
 		repairRecord = &msg.RepairRecord

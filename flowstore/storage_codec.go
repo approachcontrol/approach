@@ -132,6 +132,9 @@ func encodeStoredFlow(record FlowRecord) ([]byte, flowProjection, error) {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: unknown graph recovery status %q",
 			record.FlowID, record.GraphRecovery.Status)
 	}
+	if err := validateClosure(record.Closed); err != nil {
+		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
+	}
 	updatedAt, err := formatStorageTime(record.UpdatedAt)
 	if err != nil {
 		return nil, flowProjection{}, fmt.Errorf("encode flow %q: %w", record.FlowID, err)
@@ -159,6 +162,9 @@ func decodeStoredFlow(flowID, repoPath, status, updatedAt string, data []byte) (
 		return storedFlow{}, fmt.Errorf("flow %q has unknown graph recovery status %q", flowID, dto.GraphRecovery.Status)
 	}
 	record := dto.record()
+	if err := validateClosure(record.Closed); err != nil {
+		return storedFlow{}, fmt.Errorf("decode flow %q record: %w", flowID, err)
+	}
 	if record.SchemaVersion != schemaVersion {
 		return storedFlow{}, fmt.Errorf("flow %q has unsupported schema version %d", flowID, record.SchemaVersion)
 	}

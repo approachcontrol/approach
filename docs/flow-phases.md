@@ -223,6 +223,10 @@ enforced at the launch gates instead: a closed Flow accepts no phase launch
 (manual, auto-mode, or store-side auto-launch validation), no repair, no
 mark-merged, no auto-mode arming, no phase reset, and no session resume, and it
 drops out of the Active Flows view the way merged Flows already do.
+The store repeats those checks inside the mutation transaction so a close that
+wins a stale launch/reset/merge request cannot be overwritten. Repair's final
+read and terminal start share a short cross-process advisory lock with close,
+giving concurrent repair and close operations an explicit order.
 
 `C` on a closed Flow reopens it through a `y/n` confirm, which clears the
 closure. Because phases were never touched, reopening restores exactly the

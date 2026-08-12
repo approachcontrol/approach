@@ -2,8 +2,10 @@ package flowstore_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -294,5 +296,324 @@ func TestCloseFlowStatusProjectionMatchesRecord(t *testing.T) {
 	}
 	if status != flowstore.StatusClosed {
 		t.Fatalf("status projection = %q, want closed", status)
+	}
+}
+
+func TestCreateRejectsIncompleteClosureMetadata(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name    string
+		closure flowstore.Closure
+		want    string
+	}{
+		{
+			name:    "timestamp without reason",
+			closure: flowstore.Closure{ClosedAt: &now},
+			want:    "reason",
+		},
+		{
+			name:    "whitespace reason with timestamp",
+			closure: flowstore.Closure{Reason: "   ", ClosedAt: &now},
+			want:    "reason",
+		},
+		{
+			name:    "reason without timestamp",
+			closure: flowstore.Closure{Reason: "missing timestamp"},
+			want:    "timestamp",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, root := newCloseTestStore(t, &now)
+			_, err := store.Create(flowstore.FlowRecord{
+				Title:        "Malformed closure",
+				Instructions: "must be rejected",
+				RepoPath:     filepath.Join(root, "repo"),
+				Closed:       tc.closure,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Create() error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadRejectsPersistedClosureWithoutReason(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	store, root := newCloseTestStore(t, &now)
+	created := createCloseTestFlow(t, store, root)
+	if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: created.FlowID, Reason: "valid before corruption"}); err != nil {
+		t.Fatalf("CloseFlow() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Store.Close() error = %v", err)
+	}
+
+	data := readSQLiteRecordForTest(t, root, created.FlowID)
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal stored record: %v", err)
+	}
+	closed, ok := payload["closed"].(map[string]any)
+	if !ok {
+		t.Fatalf("stored closed payload = %#v, want object", payload["closed"])
+	}
+	closed["reason"] = "   "
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal malformed record: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "approach.db"))
+	if err != nil {
+		t.Fatalf("open approach.db: %v", err)
+	}
+	if _, err := db.Exec("UPDATE flows SET record = ? WHERE flow_id = ?", data, created.FlowID); err != nil {
+		db.Close()
+		t.Fatalf("corrupt stored record: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close approach.db: %v", err)
+	}
+
+	store, err = flowstore.NewStore(flowstore.StoreOptions{Root: root})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	_, err = store.Read(created.FlowID)
+	if err == nil || !strings.Contains(err.Error(), "reason") {
+		t.Fatalf("Read() error = %v, want malformed closure reason rejection", err)
+	}
+}
+
+func TestClosedFlowRejectsTerminalMutationsAtStoreBoundary(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+
+	t.Run("manual launch", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: "Manual launch", Instructions: "reject stale launch", RepoPath: filepath.Join(root, "repo"),
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseReady, Order: 1}},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed while launch was pending"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "stale-manual"})
+		assertClosedMutationRejected(t, err)
+		assertNoPhaseLaunchID(t, store, record.FlowID, "implementation")
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: "Resume", Instructions: "reject stale resume", RepoPath: filepath.Join(root, "repo"),
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseCompleted, Order: 1}},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before resume"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err = store.AddPhaseLaunchID(flowstore.PhaseLaunchUpdate{FlowID: record.FlowID, PhaseID: "implementation", LaunchID: "stale-resume", Resume: true})
+		assertClosedMutationRejected(t, err)
+		assertNoPhaseLaunchID(t, store, record.FlowID, "implementation")
+	})
+
+	t.Run("phase reset", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: "Reset", Instructions: "reject stale reset", RepoPath: filepath.Join(root, "repo"),
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, LaunchIDs: []string{"stale-launch"}, Order: 1}},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before reset"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err = store.ResetRecoverableRunningPhase(flowstore.PhaseResetUpdate{FlowID: record.FlowID, PhaseID: "implementation"})
+		assertClosedMutationRejected(t, err)
+		read, readErr := store.Read(record.FlowID)
+		if readErr != nil {
+			t.Fatalf("Read() error = %v", readErr)
+		}
+		phase := phaseByID(t, read, "implementation")
+		if phase.Status != flowstore.PhaseRunning || len(phase.LaunchIDs) != 1 || phase.LaunchIDs[0] != "stale-launch" {
+			t.Fatalf("rejected reset changed phase: %#v", phase)
+		}
+	})
+
+	t.Run("auto mode arming", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record := createCloseTestFlow(t, store, root)
+		if _, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: false}); err != nil {
+			t.Fatalf("SetAutoMode(false) error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before stale toggle"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err := store.SetAutoMode(flowstore.AutoModeUpdate{FlowID: record.FlowID, Enabled: true})
+		assertClosedMutationRejected(t, err)
+		read, readErr := store.Read(record.FlowID)
+		if readErr != nil {
+			t.Fatalf("Read() error = %v", readErr)
+		}
+		if read.AutoMode {
+			t.Fatal("rejected auto-mode arm enabled auto mode")
+		}
+	})
+
+	t.Run("manual merge", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record := mustCreateManualMergeFlow(t, store, root, true, true)
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before merge verification returned"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err := store.MarkManualMerge(flowstore.ManualMergeUpdate{
+			FlowID: record.FlowID, PRNumber: 116,
+			PRURL:  "https://github.com/approachcontrol/approach/pull/116",
+			Commit: "abc123", MergedAt: now,
+		})
+		assertClosedMutationRejected(t, err)
+	})
+
+	t.Run("merge metadata", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record := mustCreateManualMergeFlow(t, store, root, true, true)
+		var err error
+		record, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "merge", Status: flowstore.PhaseCompleted})
+		if err != nil {
+			t.Fatalf("SetPhase(merge completed) error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before merge metadata returned"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err = store.SetMerge(flowstore.MergeUpdate{FlowID: record.FlowID, Status: flowstore.MergeMerged, Commit: "abc123", MergedAt: now})
+		assertClosedMutationRejected(t, err)
+	})
+}
+
+func assertClosedMutationRejected(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("mutation error = %v, want closed Flow rejection", err)
+	}
+}
+
+func assertNoPhaseLaunchID(t *testing.T, store *flowstore.Store, flowID, phaseID string) {
+	t.Helper()
+	read, err := store.Read(flowID)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if launchIDs := phaseByID(t, read, phaseID).LaunchIDs; len(launchIDs) != 0 {
+		t.Fatalf("rejected mutation recorded launch IDs %#v", launchIDs)
+	}
+}
+
+func TestClosedFlowRejectsRunningPhaseTransitions(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+
+	t.Run("restart", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: "Restart", Instructions: "reject restart", RepoPath: filepath.Join(root, "repo"),
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseBlocked, Notes: "blocked", Order: 1}},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before restart"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err = store.RestartPhase(flowstore.PhaseRestartUpdate{FlowID: record.FlowID, PhaseID: "implementation", Notes: "retry"})
+		assertClosedMutationRejected(t, err)
+	})
+
+	t.Run("set running", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: "Set running", Instructions: "reject running transition", RepoPath: filepath.Join(root, "repo"),
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseNeedsAttention, Notes: "review", Order: 1}},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed before agent retry"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		_, err = store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "implementation", Status: flowstore.PhaseRunning, Notes: "retry"})
+		assertClosedMutationRejected(t, err)
+	})
+
+	t.Run("running agent may finish", func(t *testing.T) {
+		store, root := newCloseTestStore(t, &now)
+		record, err := store.Create(flowstore.FlowRecord{
+			Title: "Finish", Instructions: "allow running agent result", RepoPath: filepath.Join(root, "repo"),
+			Phases: []flowstore.FlowPhase{{PhaseID: "implementation", Title: "Implementation", Status: flowstore.PhaseRunning, LaunchIDs: []string{"launch-1"}, Order: 1}},
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "closed while agent finishes"}); err != nil {
+			t.Fatalf("CloseFlow() error = %v", err)
+		}
+		updated, err := store.SetPhase(flowstore.PhaseUpdate{FlowID: record.FlowID, PhaseID: "implementation", Status: flowstore.PhaseCompleted, Summary: "finished after close"})
+		if err != nil {
+			t.Fatalf("SetPhase(completed) error = %v", err)
+		}
+		if updated.Status != flowstore.StatusClosed || phaseByID(t, updated, "implementation").Status != flowstore.PhaseCompleted {
+			t.Fatalf("completed agent result = %#v, want closed Flow with completed phase", updated)
+		}
+	})
+}
+
+func TestRepairLaunchReservationSerializesWithClose(t *testing.T) {
+	root := t.TempDir()
+	launchStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(launch) error = %v", err)
+	}
+	closeStore, err := flowstore.NewStore(flowstore.StoreOptions{Root: root, LockTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewStore(close) error = %v", err)
+	}
+	record := createCloseTestFlow(t, launchStore, root)
+
+	reserved, release, err := launchStore.ReserveRepairLaunch(record.FlowID)
+	if err != nil {
+		t.Fatalf("ReserveRepairLaunch() error = %v", err)
+	}
+	if reserved.FlowID != record.FlowID || flowstore.FlowClosed(reserved) {
+		t.Fatalf("reserved record = %#v, want current open Flow", reserved)
+	}
+
+	var once sync.Once
+	defer once.Do(release)
+	result := make(chan error, 1)
+	go func() {
+		_, err := closeStore.CloseFlow(flowstore.ClosureUpdate{FlowID: record.FlowID, Reason: "close raced repair"})
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		t.Fatalf("CloseFlow() returned before repair launch reservation released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	once.Do(release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("CloseFlow() after release error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CloseFlow() did not proceed after repair reservation release")
+	}
+
+	if _, _, err := launchStore.ReserveRepairLaunch(record.FlowID); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("ReserveRepairLaunch(closed) error = %v, want closed rejection", err)
 	}
 }

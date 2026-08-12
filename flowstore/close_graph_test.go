@@ -71,6 +71,9 @@ func TestStoreAddPhaseLaunchIDRejectsAutoLaunchOnClosedFlow(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not eligible") {
 		t.Fatalf("AddPhaseLaunchID(closed) error = %v, want not eligible", err)
 	}
+	if !flowstore.IsAutoLaunchOutdated(err) {
+		t.Fatalf("IsAutoLaunchOutdated(%v) = false, want true", err)
+	}
 	read, err := store.Read(record.FlowID)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)

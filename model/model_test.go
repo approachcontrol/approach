@@ -59,6 +59,26 @@ func newTestModel(repos []scanner.Repo, opts model.Options) model.Model {
 			return flowstore.FlowRecord{}, fmt.Errorf("flow %s not found", flowID)
 		}
 	}
+	if opts.ReserveFlowRepairLaunch == nil {
+		listFlows := opts.ListFlows
+		opts.ReserveFlowRepairLaunch = func(flowID string) (flowstore.FlowRecord, func(), error) {
+			if listFlows != nil {
+				records, err := listFlows(flowstore.FlowFilter{})
+				if err != nil {
+					return flowstore.FlowRecord{}, nil, err
+				}
+				for _, record := range records {
+					if record.FlowID == flowID {
+						return record, func() {}, nil
+					}
+				}
+			}
+			if record, ok := testFlowRecords[flowID]; ok {
+				return record, func() {}, nil
+			}
+			return flowstore.FlowRecord{}, nil, fmt.Errorf("flow %s not found", flowID)
+		}
+	}
 	return model.NewWithOptions(repos, opts)
 }
 

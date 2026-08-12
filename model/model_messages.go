@@ -500,6 +500,7 @@ type FlowEmbeddedLaunchRequestedMsg struct {
 	Request             uint64
 	RepairRecord        flowstore.FlowRecord
 	RepairValidationErr string
+	RepairRelease       func()
 }
 
 type flowPhaseResumePersistedMsg struct {

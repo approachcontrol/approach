@@ -226,21 +226,16 @@ func (m Model) handleRepairSelectedFlow() (tea.Model, tea.Cmd) {
 		InitialPrompt:    flowRepairPrompt(record, obstruction),
 	}
 	m = m.withPendingFlowRepairLaunch(record.FlowID, ctx.LaunchID)
-	listFlows := m.listFlows
+	reserveRepairLaunch := m.reserveFlowRepairLaunch
 	return m, func() tea.Msg {
 		msg := FlowEmbeddedLaunchRequestedMsg{LaunchContext: ctx}
-		records, err := listFlows(flowstore.FlowFilter{})
+		current, release, err := reserveRepairLaunch(ctx.FlowID)
 		if err != nil {
-			msg.RepairValidationErr = "Refresh persisted Flow before repair: " + err.Error()
+			msg.RepairValidationErr = "Reserve persisted Flow for repair: " + err.Error()
 			return msg
 		}
-		for _, current := range records {
-			if strings.TrimSpace(current.FlowID) == strings.TrimSpace(ctx.FlowID) {
-				msg.RepairRecord = current
-				return msg
-			}
-		}
-		msg.RepairValidationErr = fmt.Sprintf("Flow %s no longer exists", ctx.FlowID)
+		msg.RepairRecord = current
+		msg.RepairRelease = release
 		return msg
 	}
 }
