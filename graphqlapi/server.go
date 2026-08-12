@@ -216,8 +216,20 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) int {
 
 	// Only now is the cost limit decidable — it multiplies each list field by
 	// its real cardinality in this snapshot.
-	if err := inspectCost(&s.schema, document, snap.bounds()); err != nil {
-		return writeGraphQLError(w, http.StatusBadRequest, err.Error())
+	//
+	// It is asked only about a document that will actually execute. GraphQL
+	// validation rejects the whole document on any failure, so an invalid one
+	// resolves nothing and has no result to bound — but the cost walk would
+	// still charge it against snapshot cardinality, turning an ordinary
+	// GraphQL error into a transport-level 400 whose verdict depends on how
+	// much data happens to be on disk. `{ a0: repos a1: repos ... }` — a list
+	// field selected without a sub-selection — measured half a million values
+	// across 500 repos and 400'd, where the contract promises 200 with an
+	// errors array. graphql.Do validates again below and reports the errors.
+	if graphql.ValidateDocument(&s.schema, document, nil).IsValid {
+		if err := inspectCost(&s.schema, document, snap.bounds()); err != nil {
+			return writeGraphQLError(w, http.StatusBadRequest, err.Error())
+		}
 	}
 
 	if s.beforeExecute != nil {

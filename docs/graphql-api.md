@@ -174,8 +174,16 @@ shapes live here, and each has exactly one control in front of it:
   from them.
 
 The cost walk closes the third shape. It is the only limit that runs **after**
-the snapshot is built, because it is the only one that needs the data, and it
-carries **two budgets**:
+the snapshot is built, because it is the only one that needs the data. It is
+also the only one asked exclusively about documents that will really execute:
+`graphql.ValidateDocument` runs first, and an invalid document skips costing
+entirely and falls through to the 200-with-`errors` path. Validation fails a
+document as a whole, so an invalid one resolves nothing and has no result to
+bound — while the cost walk would still charge it against snapshot
+cardinality, making a plain GraphQL error a transport-level 400 whose verdict
+depends on how much data happens to be on disk.
+
+The walk carries **two budgets**:
 
 - **Values.** Each list field is multiplied by its real maximum cardinality in
   this snapshot. This bounds resolver calls and the nested maps `graphql-go`
@@ -300,9 +308,13 @@ Inline fragments are depth-transparent: they add no nesting level.
 
 The limit walk parses the document itself. A *parse failure* there is not a
 400: a syntactically invalid document is a GraphQL error, so the request falls
-through to execution and gets the 200-with-`errors` response. Only depth,
-node-count, fragment-cycle, cost, and response-size rejections — all of which
-require a successful parse — are 400s.
+through to execution and gets the 200-with-`errors` response. A *validation*
+failure is not a 400 either — the cost and response-size limits run only over
+a document `graphql.ValidateDocument` accepts, so an unknown field, a missing
+sub-selection, or a bad argument gets the same 200 no matter how large the
+store is. Only depth, node-count, fragment-cycle, cost, and response-size
+rejections are 400s; the first three are structural and apply to any document
+that parses, the last two only to one that would really execute.
 
 ### Errors and logs
 

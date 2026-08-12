@@ -859,6 +859,47 @@ func TestServerChargesAliasOfAnEmptyList(t *testing.T) {
 	}
 }
 
+func TestServerDoesNotCostDocumentsValidationWillReject(t *testing.T) {
+	// GraphQL validation fails a document as a whole, so an invalid one
+	// resolves nothing and has no result to bound. Costing it anyway charged
+	// it against snapshot cardinality, which turned ordinary GraphQL errors
+	// into transport-level 400s once a store got large — and made the verdict
+	// depend on how much data happened to be on disk.
+	handler := bigSnapshotServer(t, 500, 0, 0)
+	for name, query := range map[string]string{
+		"list field with no sub-selection": aliasedQuery("{ ", "%s: repos ", 999, "}"),
+		"unknown field":                    `{ repos { typo } }`,
+		"sub-selection on a leaf":          `{ repos { path { typo } } }`,
+		"unknown argument":                 `{ repos(nope: 1) { id } }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(queryBody(t, query)) > MaxRequestBytes {
+				t.Fatalf("fixture is %d bytes, which the body cap would have rejected first", len(queryBody(t, query)))
+			}
+			recorder := serve(handler, newGraphQLRequest(queryBody(t, query)))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 with a GraphQL errors array", recorder.Code)
+			}
+			var payload struct {
+				Errors []struct {
+					Message string `json:"message"`
+				} `json:"errors"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if len(payload.Errors) == 0 {
+				t.Fatal("body carried no errors; the fixture is not actually invalid")
+			}
+			for _, reported := range payload.Errors {
+				if strings.Contains(reported.Message, "too") {
+					t.Errorf("errors = %v, want validation errors rather than a limit verdict", payload.Errors)
+				}
+			}
+		})
+	}
+}
+
 func TestServerChargesTypename(t *testing.T) {
 	// __typename looks like introspection but resolves once per *snapshot
 	// object*, not against the fixed schema, so it puts data-proportional
